@@ -25,6 +25,8 @@ __title__ = "FreeCAD FEM calculix write inpfile femelement geometry"
 __author__ = "Bernd Hahnebach"
 __url__ = "https://www.freecad.org"
 
+from FreeCAD import Vector
+
 
 def write_femelement_geometry(f, ccxwriter):
 
@@ -32,112 +34,144 @@ def write_femelement_geometry(f, ccxwriter):
 
     f.write("\n{}\n".format(59 * "*"))
     f.write("** Sections\n")
-    for matgeoset in ccxwriter.mat_geo_sets:
-        if matgeoset["ccx_elset"]:
-            elsetdef = "ELSET={}, ".format(matgeoset["ccx_elset_name"])
-            material = "MATERIAL={}".format(matgeoset["mat_obj_name"])
 
-            if "beamsection_obj" in matgeoset:  # beam mesh
-                beamsec_obj = matgeoset["beamsection_obj"]
-                beam_axis_m = matgeoset["beam_axis_m"]
-                # in CalxuliX called the 1direction
-                # see meshtools.get_beam_main_axis_m(beam_direction, defined_angle)
-                section_nor = "{:.13G}, {:.13G}, {:.13G}\n".format(
-                    beam_axis_m[0], beam_axis_m[1], beam_axis_m[2]
-                )
-                if ccxwriter.solver_obj.ExcludeBendingStiffness:
-                    area = beamsec_obj.TrussArea.getValueAs("mm^2").Value
-                    section_def = f"*SOLID SECTION, {elsetdef}{material}\n"
-                    section_geo = f"{area:.13G}\n"
-                else:
-                    if beamsec_obj.SectionType == "Rectangular":
-                        # see meshtools.get_beam_main_axis_m(beam_direction, defined_angle)
-                        # the method get_beam_main_axis_m() which calculates the beam_axis_m vector
-                        # unless rotated, this vector points towards +y axis
-                        # doesn't follow 1,2-direction order of CalculiX
-                        # ^ (n, 2-direction)
-                        # |
-                        # |
-                        # .----> (m, 1-direction)
-                        #
-                        len_beam_axis_n = beamsec_obj.RectHeight.getValueAs("mm").Value
-                        len_beam_axis_m = beamsec_obj.RectWidth.getValueAs("mm").Value
-                        section_type = ", SECTION=RECT"
-                        section_geo = f"{len_beam_axis_m:.13G},{len_beam_axis_n:.13G}\n"
-                        section_def = f"*BEAM SECTION, {elsetdef}{material}{section_type}\n"
-                    elif beamsec_obj.SectionType == "Circular":
-                        diameter = beamsec_obj.CircDiameter.getValueAs("mm").Value
-                        section_type = ", SECTION=CIRC"
-                        section_geo = f"{diameter:.13G}\n"
-                        section_def = f"*BEAM SECTION, {elsetdef}{material}{section_type}\n"
-                    elif beamsec_obj.SectionType == "Elliptical":
-                        axis1 = beamsec_obj.Axis1Length.getValueAs("mm").Value
-                        axis2 = beamsec_obj.Axis2Length.getValueAs("mm").Value
-                        section_type = ", SECTION=CIRC"
-                        section_geo = f"{axis1:.13G},{axis2:.13G}\n"
-                        section_def = f"*BEAM SECTION, {elsetdef}{material}{section_type}\n"
-                    elif beamsec_obj.SectionType == "Pipe":
-                        radius = 0.5 * beamsec_obj.PipeDiameter.getValueAs("mm").Value
-                        thickness = beamsec_obj.PipeThickness.getValueAs("mm").Value
-                        section_type = ", SECTION=PIPE"
-                        section_geo = f"{radius:.13G},{thickness:.13G}\n"
-                        section_def = f"*BEAM SECTION, {elsetdef}{material}{section_type}\n"
-                    elif beamsec_obj.SectionType == "Box":
-                        box_width = beamsec_obj.BoxWidth.getValueAs("mm").Value
-                        box_height = beamsec_obj.BoxHeight.getValueAs("mm").Value
-                        box_t1 = beamsec_obj.BoxT1.getValueAs("mm").Value
-                        box_t2 = beamsec_obj.BoxT2.getValueAs("mm").Value
-                        box_t3 = beamsec_obj.BoxT3.getValueAs("mm").Value
-                        box_t4 = beamsec_obj.BoxT4.getValueAs("mm").Value
-                        section_type = ", SECTION=BOX"
-                        section_geo = f"{box_width:.13G},{box_height:.13G},{box_t1:.13G},{box_t2:.13G},{box_t3:.13G},{box_t4:.13G}\n"
-                        section_def = f"*BEAM SECTION, {elsetdef}{material}{section_type}\n"
+    def write_matgeoset(matgeoset, orientation):
+        elsetdef = "ELSET={}, ".format(matgeoset["ccx_elset_name"])
+        material = "MATERIAL={}".format(matgeoset["mat_obj_name"])
+        orientation_name = f'_OR_{matgeoset["ccx_elset_name"]}'
 
-                f.write(section_def)
-                f.write(section_geo)
-                if not ccxwriter.solver_obj.ExcludeBendingStiffness:
-                    f.write(section_nor)
-            elif "fluidsection_obj" in matgeoset:  # fluid mesh
-                fluidsec_obj = matgeoset["fluidsection_obj"]
-                if fluidsec_obj.SectionType == "Liquid":
-                    section_type = fluidsec_obj.LiquidSectionType
-                    if (section_type == "PIPE INLET") or (section_type == "PIPE OUTLET"):
-                        section_type = "PIPE INOUT"
-                    section_def = "*FLUID SECTION, {}TYPE={}, {}\n".format(
-                        elsetdef, section_type, material
-                    )
-                    section_geo = liquid_section_def(fluidsec_obj, section_type)
-                """
-                # deactivate as it would result in section_def and section_geo not defined
-                # deactivated in the App and Gui object and thus in the task panel as well
-                elif fluidsec_obj.SectionType == "Gas":
-                    section_type = fluidsec_obj.GasSectionType
-                elif fluidsec_obj.SectionType == "Open Channel":
-                    section_type = fluidsec_obj.ChannelSectionType
-                """
-                f.write(section_def)
-                f.write(section_geo)
-            elif "shellthickness_obj" in matgeoset:  # shell mesh
-                shellth_obj = matgeoset["shellthickness_obj"]
-                if ccxwriter.solver_obj.ModelSpace == "3D":
-                    offset = shellth_obj.Offset
-                    if ccxwriter.solver_obj.ExcludeBendingStiffness:
-                        section_def = (
-                            f"*MEMBRANE SECTION, {elsetdef}{material}, OFFSET={offset:.13G}\n"
-                        )
-                    else:
-                        section_def = (
-                            f"*SHELL SECTION, {elsetdef}{material}, OFFSET={offset:.13G}\n"
-                        )
-                else:
-                    section_def = f"*SOLID SECTION, {elsetdef}{material}\n"
-                thickness = shellth_obj.Thickness.getValueAs("mm").Value
-                section_geo = f"{thickness:.13G}\n"
-                f.write(section_def)
-                f.write(section_geo)
-            else:  # solid mesh
+        if orientation:
+            orientation_def = f"ORIENTATION,NAME={orientation_name}\n"
+            f.write(orientation_def)
+
+            def format_dim(v):
+                return "{:.13G}, {:.13G}, {:.13G}\n".format(v.x, v.y, v.z)
+
+            f.write(format_dim(orientation * Vector(1, 0, 0)))
+            f.write(format_dim(orientation * Vector(0, 1, 0)))
+            material = f"{material},ORIENTATION={orientation_name}"
+
+        if "beamsection_obj" in matgeoset:  # beam mesh
+            beamsec_obj = matgeoset["beamsection_obj"]
+            beam_axis_m = matgeoset["beam_axis_m"]
+            # in CalxuliX called the 1direction
+            # see meshtools.get_beam_main_axis_m(beam_direction, defined_angle)
+            section_nor = "{:.13G}, {:.13G}, {:.13G}\n".format(
+                beam_axis_m[0], beam_axis_m[1], beam_axis_m[2]
+            )
+            if ccxwriter.solver_obj.ExcludeBendingStiffness:
+                area = beamsec_obj.TrussArea.getValueAs("mm^2").Value
                 section_def = f"*SOLID SECTION, {elsetdef}{material}\n"
-                f.write(section_def)
+                section_geo = f"{area:.13G}\n"
+            else:
+                if beamsec_obj.SectionType == "Rectangular":
+                    # see meshtools.get_beam_main_axis_m(beam_direction, defined_angle)
+                    # the method get_beam_main_axis_m() which calculates the beam_axis_m vector
+                    # unless rotated, this vector points towards +y axis
+                    # doesn't follow 1,2-direction order of CalculiX
+                    # ^ (n, 2-direction)
+                    # |
+                    # |
+                    # .----> (m, 1-direction)
+                    #
+                    len_beam_axis_n = beamsec_obj.RectHeight.getValueAs("mm").Value
+                    len_beam_axis_m = beamsec_obj.RectWidth.getValueAs("mm").Value
+                    section_type = ", SECTION=RECT"
+                    section_geo = f"{len_beam_axis_m:.13G},{len_beam_axis_n:.13G}\n"
+                    section_def = f"*BEAM SECTION, {elsetdef}{material}{section_type}\n"
+                elif beamsec_obj.SectionType == "Circular":
+                    diameter = beamsec_obj.CircDiameter.getValueAs("mm").Value
+                    section_type = ", SECTION=CIRC"
+                    section_geo = f"{diameter:.13G}\n"
+                    section_def = f"*BEAM SECTION, {elsetdef}{material}{section_type}\n"
+                elif beamsec_obj.SectionType == "Elliptical":
+                    axis1 = beamsec_obj.Axis1Length.getValueAs("mm").Value
+                    axis2 = beamsec_obj.Axis2Length.getValueAs("mm").Value
+                    section_type = ", SECTION=CIRC"
+                    section_geo = f"{axis1:.13G},{axis2:.13G}\n"
+                    section_def = f"*BEAM SECTION, {elsetdef}{material}{section_type}\n"
+                elif beamsec_obj.SectionType == "Pipe":
+                    radius = 0.5 * beamsec_obj.PipeDiameter.getValueAs("mm").Value
+                    thickness = beamsec_obj.PipeThickness.getValueAs("mm").Value
+                    section_type = ", SECTION=PIPE"
+                    section_geo = f"{radius:.13G},{thickness:.13G}\n"
+                    section_def = f"*BEAM SECTION, {elsetdef}{material}{section_type}\n"
+                elif beamsec_obj.SectionType == "Box":
+                    box_width = beamsec_obj.BoxWidth.getValueAs("mm").Value
+                    box_height = beamsec_obj.BoxHeight.getValueAs("mm").Value
+                    box_t1 = beamsec_obj.BoxT1.getValueAs("mm").Value
+                    box_t2 = beamsec_obj.BoxT2.getValueAs("mm").Value
+                    box_t3 = beamsec_obj.BoxT3.getValueAs("mm").Value
+                    box_t4 = beamsec_obj.BoxT4.getValueAs("mm").Value
+                    section_type = ", SECTION=BOX"
+                    section_geo = f"{box_width:.13G},{box_height:.13G},{box_t1:.13G},{box_t2:.13G},{box_t3:.13G},{box_t4:.13G}\n"
+                    section_def = f"*BEAM SECTION, {elsetdef}{material}{section_type}\n"
+
+            f.write(section_def)
+            f.write(section_geo)
+            if not ccxwriter.solver_obj.ExcludeBendingStiffness:
+                f.write(section_nor)
+        elif "fluidsection_obj" in matgeoset:  # fluid mesh
+            fluidsec_obj = matgeoset["fluidsection_obj"]
+            if fluidsec_obj.SectionType == "Liquid":
+                section_type = fluidsec_obj.LiquidSectionType
+                if (section_type == "PIPE INLET") or (section_type == "PIPE OUTLET"):
+                    section_type = "PIPE INOUT"
+                section_def = "*FLUID SECTION, {}TYPE={}, {}\n".format(
+                    elsetdef, section_type, material
+                )
+                section_geo = liquid_section_def(fluidsec_obj, section_type)
+            """
+            # deactivate as it would result in section_def and section_geo not defined
+            # deactivated in the App and Gui object and thus in the task panel as well
+            elif fluidsec_obj.SectionType == "Gas":
+                section_type = fluidsec_obj.GasSectionType
+            elif fluidsec_obj.SectionType == "Open Channel":
+                section_type = fluidsec_obj.ChannelSectionType
+            """
+            f.write(section_def)
+            f.write(section_geo)
+        elif "shellthickness_obj" in matgeoset:  # shell mesh
+            shellth_obj = matgeoset["shellthickness_obj"]
+            if ccxwriter.solver_obj.ModelSpace == "3D":
+                offset = shellth_obj.Offset
+                if ccxwriter.solver_obj.ExcludeBendingStiffness:
+                    section_def = f"*MEMBRANE SECTION, {elsetdef}{material}, OFFSET={offset:.13G}\n"
+                else:
+                    section_def = f"*SHELL SECTION, {elsetdef}{material}, OFFSET={offset:.13G}\n"
+            else:
+                section_def = f"*SOLID SECTION, {elsetdef}{material}\n"
+            thickness = shellth_obj.Thickness.getValueAs("mm").Value
+            section_geo = f"{thickness:.13G}\n"
+            f.write(section_def)
+            f.write(section_geo)
+        else:  # solid mesh
+            section_def = f"*SOLID SECTION, {elsetdef}{material}\n"
+            f.write(section_def)
+
+    for matgeoset in ccxwriter.mat_geo_sets:
+        if not matgeoset["ccx_elset"]:
+            continue
+
+        heterogeneous = "element_ids" in matgeoset
+        orthotropic = "orientation" in matgeoset
+
+        if not heterogeneous:
+            if orthotropic:
+                orientation = matgeoset["orientation"]
+            else:
+                orientation = None
+            write_matgeoset(matgeoset, orientation=orientation)
+        else:
+            elset_name = matgeoset["ccx_elset_name"]
+            for i in matgeoset["element_ids"]:
+                elem_subs = {"ccx_elset_name": f"{elset_name}_{i}"}
+                elem_matgeoset = matgeoset | elem_subs
+                if orthotropic:
+                    orientation = matgeoset["orientation"][i]
+                else:
+                    orientation = None
+                write_matgeoset(elem_matgeoset, orientation=orientation)
 
 
 # ************************************************************************************************
