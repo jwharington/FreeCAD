@@ -26,6 +26,8 @@ __author__ = "Bernd Hahnebach"
 __url__ = "https://www.freecad.org"
 
 import FreeCAD
+from femmesh import meshtools
+import numpy as np
 
 
 def get_analysis_types():
@@ -56,11 +58,33 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
     # the pressure has to be output in MPa
     pressure = prs_obj.Pressure.getValueAs("MPa").Value
     pressure *= rev
+    femmesh = ccxwriter.mesh_object.FemMesh
+
+    def get_centroid(elem):
+        nodes = meshtools.get_femelement_faces_table(femmesh, [elem])
+        points = np.vstack([np.array(femmesh.Nodes[i]) for i in nodes[elem]])
+        return np.mean(points, axis=0)
+
+    def get_pressure_field(elem):
+        centroid = get_centroid(elem)
+        if res := prs_obj.get_pressure_field(centroid):
+            return res * rev
+        return pressure
+
+    def get_pressure_uniform(elem):
+        return pressure
+
+    if hasattr(prs_obj, "get_pressure_field"):
+        get_pressure = get_pressure_field
+    else:
+        get_pressure = get_pressure_uniform
+
     for feat, surf, is_sub_el in femobj["PressureFaces"]:
         f.write("** {0.Name}.{1[0]}\n".format(*feat))
+
         if is_sub_el:
             for elem, fno in surf:
-                f.write(f"{elem},P{fno},{pressure}\n")
+                f.write(f"{elem},P{fno},{get_pressure(elem)}\n")
         else:
             for elem in surf:
-                f.write(f"{elem},P,{-1*pressure}\n")
+                f.write(f"{elem},P,{-1*get_pressure(elem)}\n")
