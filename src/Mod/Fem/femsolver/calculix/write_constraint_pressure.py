@@ -26,6 +26,8 @@ __author__ = "Bernd Hahnebach"
 __url__ = "https://www.freecad.org"
 
 import FreeCAD
+import numpy as np
+from femmesh import meshtools
 
 
 def get_analysis_types():
@@ -44,8 +46,15 @@ def get_after_write_meshdata_constraint():
     return ""
 
 
-def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
+def has_pressure_field(prs_obj):
+    if not hasattr(prs_obj, "Proxy"):
+        return False
+    if hasattr(prs_obj.Proxy, "get_pressure_field"):
+        return True
+    return False
 
+
+def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
     # floats read from ccx should use {:.13G}, see comment in writer module
 
     if prs_obj.EnableAmplitude:
@@ -54,13 +63,33 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
         f.write("*DLOAD\n")
     rev = -1 if prs_obj.Reversed else 1
     # the pressure has to be output in MPa
-    pressure = prs_obj.Pressure.getValueAs("MPa").Value
-    pressure *= rev
+    femmesh = ccxwriter.mesh_object.FemMesh
+
+    def get_centroid(elem):
+        nodes = meshtools.get_femelement_faces_table(femmesh, [elem])
+        points = np.vstack([np.array(femmesh.Nodes[i]) for i in nodes[elem]])
+        return FreeCAD.Vector(np.mean(points, axis=0))
+
+    def get_pressure_field(elem):
+        centroid = get_centroid(elem)
+        if (res := prs_obj.Proxy.get_pressure_field(prs_obj, centroid)) is not None:
+            return res * rev
+        return 0.0
+
+    def get_pressure_uniform(elem):
+        return rev * prs_obj.Pressure.getValueAs("MPa").Value
+
+    if has_pressure_field(prs_obj):
+        get_pressure = get_pressure_field
+    else:
+        get_pressure = get_pressure_uniform
+
     for feat, surf, is_sub_el in femobj["PressureFaces"]:
         f.write("** {0.Name}.{1[0]}\n".format(*feat))
+
         if is_sub_el:
             for elem, fno in surf:
-                f.write(f"{elem},P{fno},{pressure}\n")
+                f.write(f"{elem},P{fno},{get_pressure(elem):.13G}\n")
         else:
             for elem in surf:
-                f.write(f"{elem},P,{-1*pressure}\n")
+                f.write(f"{elem},P,{-1*get_pressure(elem):.13G}\n")
