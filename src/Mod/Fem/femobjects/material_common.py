@@ -31,8 +31,8 @@ __url__ = "https://www.freecad.org"
 #  \ingroup FEM
 #  \brief material common object
 
-from FreeCAD import Base, Units
 import Materials
+from FreeCAD import Base, Units
 
 from . import base_fempythonobject
 
@@ -102,6 +102,15 @@ class MaterialCommon(base_fempythonobject.BaseFemPythonObject):
                 doc="Material name",
                 read_only=True,
                 value="",
+            )
+        )
+        prop.append(
+            _PropHelper(
+                type="App::PropertyLinkGlobal",
+                name="LocalCoordinateSystem",
+                group="References",
+                doc="Local coordinate system used for orthotropic materials",
+                value=None,
             )
         )
 
