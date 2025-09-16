@@ -834,8 +834,10 @@ class MeshSetsGetter:
 
     # shell
     def get_mat_geo_sets_single_mat_single_shell(self):
-        mat_obj = self.member.mats_linear[0]["Object"]
-        shellth_obj = self.member.geos_shellthickness[0]["Object"]
+        mat_data = self.member.mats_linear[0]
+        mat_obj = mat_data["Object"]
+        shellth_data = self.member.geos_shellthickness[0]
+        shellth_obj = shellth_data["Object"]
         elset_data = self.ccx_efaces
         names = [{"long": mat_obj.Name, "short": "M0"}, {"long": shellth_obj.Name, "short": "S0"}]
         matgeoset = {}
@@ -844,6 +846,20 @@ class MeshSetsGetter:
         matgeoset["mat_obj_name"] = mat_obj.Name
         matgeoset["ccx_mat_name"] = mat_obj.Material["Name"]
         matgeoset["shellthickness_obj"] = shellth_obj
+
+        def set_element_ids():
+            if "FEMElements" in shellth_data:
+                elements = shellth_data["FEMElements"]
+            elif "FEMElements" in mat_data:
+                elements = mat_data["FEMElements"]
+            else:
+                matgeoset["lcs"] = mat_obj.LocalCoordinateSystem
+                return
+            matgeoset["lcs"] = {id: mat_obj.LocalCoordinateSystem for id in elements}
+            matgeoset["element_ids"] = elements
+            print(matgeoset["element_ids"])
+
+        set_element_ids()
         self.mat_geo_sets.append(matgeoset)
 
     def get_mat_geo_sets_single_mat_multiple_shell(self):
