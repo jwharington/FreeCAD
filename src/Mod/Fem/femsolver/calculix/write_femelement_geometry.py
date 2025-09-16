@@ -35,19 +35,19 @@ def write_femelement_geometry(f, ccxwriter):
     f.write("\n{}\n".format(59 * "*"))
     f.write("** Sections\n")
 
-    def write_matgeoset(matgeoset, lcs):
+    def write_matgeoset(matgeoset, orientation):
         elsetdef = "ELSET={}, ".format(matgeoset["ccx_elset_name"])
         material = "MATERIAL={}".format(matgeoset["mat_obj_name"])
         orientation_name = f'_OR_{matgeoset["ccx_elset_name"]}'
 
-        if lcs:
+        if orientation:
             orientation_def = f"*ORIENTATION,NAME={orientation_name}\n"
             f.write(orientation_def)
 
             def format_dim(v):
                 return "{:.13G},{:.13G},{:.13G}".format(v.x, v.y, v.z)
 
-            T = lcs.getGlobalPlacement()
+            T = orientation
             p0 = T * Vector(0, 0, 0)
             dx = format_dim(T * Vector(1, 0, 0) - p0)
             dy = format_dim(T * Vector(0, 1, 0) - p0)
@@ -157,14 +157,14 @@ def write_femelement_geometry(f, ccxwriter):
             continue
 
         heterogeneous = "element_ids" in matgeoset
-        orthotropic = ("lcs" in matgeoset) and (matgeoset["lcs"] is not None)
+        orthotropic = ("orientation" in matgeoset) and (matgeoset["orientation"] is not None)
 
         if not heterogeneous:
             if orthotropic:
-                lcs = matgeoset["lcs"]
+                orientation = matgeoset["orientation"]
             else:
-                lcs = None
-            write_matgeoset(matgeoset, lcs=lcs)
+                orientation = None
+            write_matgeoset(matgeoset, orientation=orientation)
         else:
             elset_name = matgeoset["ccx_elset_name"]
             for i in matgeoset["element_ids"]:
@@ -173,10 +173,10 @@ def write_femelement_geometry(f, ccxwriter):
                 f.write(f"*ELSET,ELSET={elset_i_name}\n{i}\n")
                 elem_matgeoset = matgeoset | elem_subs
                 if orthotropic:
-                    lcs = matgeoset["lcs"][i]
+                    orientation = matgeoset["orientation"][i]
                 else:
-                    lcs = None
-                write_matgeoset(elem_matgeoset, lcs=lcs)
+                    orientation = None
+                write_matgeoset(elem_matgeoset, orientation=orientation)
 
 
 # ************************************************************************************************
