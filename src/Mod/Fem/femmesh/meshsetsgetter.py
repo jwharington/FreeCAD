@@ -855,6 +855,8 @@ class MeshSetsGetter:
             else:
                 matgeoset["lcs"] = mat_obj.LocalCoordinateSystem
                 return
+
+            print("TODO unwrap if option selected, via femmesh2mesh")
             matgeoset["lcs"] = {id: mat_obj.LocalCoordinateSystem for id in elements}
             matgeoset["element_ids"] = elements
             print(matgeoset["element_ids"])
