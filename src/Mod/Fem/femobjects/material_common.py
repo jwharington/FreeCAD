@@ -85,6 +85,15 @@ class MaterialCommon(base_fempythonobject.BaseFemPythonObject):
                 value="",
             )
         )
+        prop.append(
+            _PropHelper(
+                type="App::PropertyLinkGlobal",
+                name="LocalCoordinateSystem",
+                group="References",
+                doc="Local coordinate system used for orthotropic materials",
+                value=None,
+            )
+        )
 
         return prop
 
