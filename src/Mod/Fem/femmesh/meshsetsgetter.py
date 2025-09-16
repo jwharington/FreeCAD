@@ -848,18 +848,20 @@ class MeshSetsGetter:
         matgeoset["shellthickness_obj"] = shellth_obj
 
         def set_element_ids():
+            matgeoset["lcs"] = mat_obj.LocalCoordinateSystem
+
             if "FEMElements" in shellth_data:
                 elements = shellth_data["FEMElements"]
             elif "FEMElements" in mat_data:
                 elements = mat_data["FEMElements"]
             else:
-                matgeoset["lcs"] = mat_obj.LocalCoordinateSystem
                 return
 
-            print("TODO unwrap if option selected, via femmesh2mesh")
-            matgeoset["lcs"] = {id: mat_obj.LocalCoordinateSystem for id in elements}
+            if shellth_obj.Drape:
+                print("TODO unwrap if option selected, via femmesh2mesh")
+                matgeoset["lcs"] = {id: mat_obj.LocalCoordinateSystem for id in elements}
+
             matgeoset["element_ids"] = elements
-            print(matgeoset["element_ids"])
 
         set_element_ids()
         self.mat_geo_sets.append(matgeoset)
