@@ -590,7 +590,7 @@ class MeshSetsGetter:
             self.get_element_rotation1D_elements()
 
         # get the element ids for face and edge elements and write them into the objects
-        if len(self.member.geos_shellthickness) > 1:
+        if len(self.member.geos_shellthickness) > 0:
             self.get_element_geometry2D_elements()
         if len(self.member.geos_beamsection) > 1:
             self.get_element_geometry1D_elements()
