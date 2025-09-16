@@ -50,6 +50,34 @@ def write_femelement_material(f, ccxwriter):
             return True
         return False
 
+    def elastic_properties(material):
+
+        def get_nu(item):
+            return float(material[item])
+
+        def get_MPa(item):
+            value = FreeCAD.Units.Quantity(material[item])
+            return value.getValueAs("MPa").Value
+
+        if checksmaterials.is_linear_orthotropic(material):
+            res = "*ELASTIC,TYPE=ENGINEERING CONSTANTS\n"
+            res += f"{get_MPa('YoungsModulusX'):.13G},"
+            res += f"{get_MPa('YoungsModulusY'):.13G},"
+            res += f"{get_MPa('YoungsModulusZ'):.13G},"
+            res += f"{get_nu('PoissonRatioXY'):.13G},"
+            res += f"{get_nu('PoissonRatioXZ'):.13G},"
+            res += f"{get_nu('PoissonRatioYZ'):.13G},"
+            res += f"{get_MPa('ShearModulusXY'):.13G},"
+            res += f"{get_MPa('ShearModulusXZ'):.13G}\n"
+            res += f"{get_MPa('ShearModulusYZ'):.13G},"
+            res += "293.15\n"
+        else:
+            res = "*ELASTIC,TYPE=ISO\n"
+            YM_in_MPa = get_MPa("YoungsModulus")
+            PR = get_nu("PoissonRatio")
+            res += f"{YM_in_MPa:.13G},{PR:.13G}\n"
+        return res
+
     f.write("\n** Physical constants for SI(mm) unit system with Kelvins\n")
     f.write("*PHYSICAL CONSTANTS, ABSOLUTE ZERO=0, STEFAN BOLTZMANN=5.670374419e-11\n")
 
@@ -64,33 +92,6 @@ def write_femelement_material(f, ccxwriter):
         mat_label = mat_obj.Label
 
         # get material properties of solid material, Currently in SI units: M/kg/s/Kelvin
-
-        def elastic_properties(material):
-
-            def get_nu(item):
-                return float(material[item])
-
-            def get_MPa(item):
-                value = FreeCAD.Units.Quantity(material[item])
-                return value.getValueAs("MPa").Value
-
-            if checksmaterials.is_linear_orthotropic(material):
-                res = "*ELASTIC,TYPE=ENGINEERING CONSTANTS\n"
-                res += f"{get_MPa('YoungsModulusX'):.13G},"
-                res += f"{get_MPa('YoungsModulusY'):.13G},"
-                res += f"{get_MPa('YoungsModulusZ'):.13G},"
-                res += f"{get_nu('PoissonRatioXY'):.13G},"
-                res += f"{get_nu('PoissonRatioXZ'):.13G},"
-                res += f"{get_nu('PoissonRatioYZ'):.13G},"
-                res += f"{get_MPa('ShearModulusXY'):.13G},"
-                res += f"{get_MPa('ShearModulusXZ'):.13G}\n"
-                res += f"{get_MPa('ShearModulusYZ'):.13G},"
-                res += "293.15\n"
-            else:
-                res = "*ELASTIC,TYPE=ISO\n"
-                YM_in_MPa = get_MPa("YoungsModulus")
-                PR = get_nu("PoissonRatio")
-                res += f"{YM_in_MPa:.13G},{PR:.13G}\n"
 
         if is_density_needed() is True:
             density = FreeCAD.Units.Quantity(mat_obj.Material["Density"])
