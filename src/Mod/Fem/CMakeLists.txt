@@ -180,6 +180,7 @@ SET(FemMesh_SRCS
     femmesh/meshtools.py
     femmesh/netgentools.py
     femmesh/expanded_mesh_tools.py
+    femmesh/drapetools.py
 )
 
 SET(FemObjects_SRCS
