@@ -35,20 +35,23 @@ def write_femelement_geometry(f, ccxwriter):
     f.write("\n{}\n".format(59 * "*"))
     f.write("** Sections\n")
 
-    def write_matgeoset(matgeoset, orientation):
+    def write_matgeoset(matgeoset, lcs):
         elsetdef = "ELSET={}, ".format(matgeoset["ccx_elset_name"])
         material = "MATERIAL={}".format(matgeoset["mat_obj_name"])
         orientation_name = f'_OR_{matgeoset["ccx_elset_name"]}'
 
-        if orientation:
-            orientation_def = f"ORIENTATION,NAME={orientation_name}\n"
+        if lcs:
+            orientation_def = f"*ORIENTATION,NAME={orientation_name}\n"
             f.write(orientation_def)
 
             def format_dim(v):
-                return "{:.13G}, {:.13G}, {:.13G}\n".format(v.x, v.y, v.z)
+                return "{:.13G},{:.13G},{:.13G}".format(v.x, v.y, v.z)
 
-            f.write(format_dim(orientation * Vector(1, 0, 0)))
-            f.write(format_dim(orientation * Vector(0, 1, 0)))
+            T = lcs.getGlobalPlacement()
+            p0 = T * Vector(0, 0, 0)
+            dx = format_dim(T * Vector(1, 0, 0) - p0)
+            dy = format_dim(T * Vector(0, 1, 0) - p0)
+            f.write(f"{dx},{dy}\n")
             material = f"{material},ORIENTATION={orientation_name}"
 
         if "beamsection_obj" in matgeoset:  # beam mesh
@@ -154,24 +157,26 @@ def write_femelement_geometry(f, ccxwriter):
             continue
 
         heterogeneous = "element_ids" in matgeoset
-        orthotropic = "orientation" in matgeoset
+        orthotropic = "lcs" in matgeoset
 
         if not heterogeneous:
             if orthotropic:
-                orientation = matgeoset["orientation"]
+                lcs = matgeoset["lcs"]
             else:
-                orientation = None
-            write_matgeoset(matgeoset, orientation=orientation)
+                lcs = None
+            write_matgeoset(matgeoset, lcs=lcs)
         else:
             elset_name = matgeoset["ccx_elset_name"]
             for i in matgeoset["element_ids"]:
-                elem_subs = {"ccx_elset_name": f"{elset_name}_{i}"}
+                elset_i_name = f"{elset_name}_{i}"
+                elem_subs = {"ccx_elset_name": elset_i_name}
+                f.write(f"*ELSET,ELSET={elset_i_name}\n{i}\n")
                 elem_matgeoset = matgeoset | elem_subs
                 if orthotropic:
-                    orientation = matgeoset["orientation"][i]
+                    lcs = matgeoset["lcs"][i]
                 else:
-                    orientation = None
-                write_matgeoset(elem_matgeoset, orientation=orientation)
+                    lcs = None
+                write_matgeoset(elem_matgeoset, lcs=lcs)
 
 
 # ************************************************************************************************
