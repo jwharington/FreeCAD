@@ -32,7 +32,7 @@ import time
 
 import FreeCAD
 
-from femmesh import meshtools
+from femmesh import meshtools, drapetools
 from femtools.femutils import type_of_obj
 
 
@@ -833,21 +833,52 @@ class MeshSetsGetter:
                     self.mat_geo_sets.append(matgeoset)
 
     # shell
-    def get_mat_geo_sets_single_mat_single_shell(self):
-        mat_obj = self.member.mats_linear[0]["Object"]
-        shellth_obj = self.member.geos_shellthickness[0]["Object"]
-        elset_data = self.ccx_efaces
-        names = [{"long": mat_obj.Name, "short": "M0"}, {"long": shellth_obj.Name, "short": "S0"}]
+    def set_shell_ortho(self, mat_data, shellth_data):
+        shellth_obj = shellth_data["Object"]
+        matgeoset = {}
+        if "FEMElements" in shellth_data:
+            elements = shellth_data["FEMElements"]
+        elif "FEMElements" in mat_data:
+            elements = mat_data["FEMElements"]
+        else:
+            return matgeoset
+
+        if not self.mesh_object:
+            return matgeoset
+
+        if compshell_obj := drapetools.get_compshell_obj(shellth_obj):
+            matgeoset["orientation"] = drapetools.get_drape_lcs(
+                compshell_obj,
+                self.femmesh,
+                elements,
+            )
+            matgeoset["element_ids"] = elements
+        return matgeoset
+
+    def append_shell_matgeoset(self, elset_data, mat_data, shellth_data, names):
+        mat_obj = mat_data["Object"]
+        shellth_obj = shellth_data["Object"]
         matgeoset = {}
         matgeoset["ccx_elset"] = elset_data
         matgeoset["ccx_elset_name"] = get_elset_name_standard(names)
         matgeoset["mat_obj_name"] = mat_obj.Name
         matgeoset["ccx_mat_name"] = mat_obj.Material["Name"]
         matgeoset["shellthickness_obj"] = shellth_obj
+        matgeoset |= self.set_shell_ortho(mat_data, shellth_data)
         self.mat_geo_sets.append(matgeoset)
 
+    def get_mat_geo_sets_single_mat_single_shell(self):
+        mat_data = self.member.mats_linear[0]
+        mat_obj = mat_data["Object"]
+        shellth_data = self.member.geos_shellthickness[0]
+        shellth_obj = shellth_data["Object"]
+        elset_data = self.ccx_efaces
+        names = [{"long": mat_obj.Name, "short": "M0"}, {"long": shellth_obj.Name, "short": "S0"}]
+        self.append_shell_matgeoset(elset_data, mat_data, shellth_data, names)
+
     def get_mat_geo_sets_single_mat_multiple_shell(self):
-        mat_obj = self.member.mats_linear[0]["Object"]
+        mat_data = self.member.mats_linear[0]
+        mat_obj = mat_data["Object"]
         for shellth_data in self.member.geos_shellthickness:
             shellth_obj = shellth_data["Object"]
             elset_data = shellth_data["FEMElements"]
@@ -855,16 +886,11 @@ class MeshSetsGetter:
                 {"long": mat_obj.Name, "short": "M0"},
                 {"long": shellth_obj.Name, "short": shellth_data["ShortName"]},
             ]
-            matgeoset = {}
-            matgeoset["ccx_elset"] = elset_data
-            matgeoset["ccx_elset_name"] = get_elset_name_standard(names)
-            matgeoset["mat_obj_name"] = mat_obj.Name
-            matgeoset["ccx_mat_name"] = mat_obj.Material["Name"]
-            matgeoset["shellthickness_obj"] = shellth_obj
-            self.mat_geo_sets.append(matgeoset)
+            self.append_shell_matgeoset(elset_data, mat_data, shellth_data, names)
 
     def get_mat_geo_sets_multiple_mat_single_shell(self):
-        shellth_obj = self.member.geos_shellthickness[0]["Object"]
+        shellth_data = self.member.geos_shellthickness[0]
+        shellth_obj = shellth_data["Object"]
         for mat_data in self.member.mats_linear:
             mat_obj = mat_data["Object"]
             elset_data = mat_data["FEMElements"]
@@ -872,13 +898,7 @@ class MeshSetsGetter:
                 {"long": mat_obj.Name, "short": mat_data["ShortName"]},
                 {"long": shellth_obj.Name, "short": "S0"},
             ]
-            matgeoset = {}
-            matgeoset["ccx_elset"] = elset_data
-            matgeoset["ccx_elset_name"] = get_elset_name_standard(names)
-            matgeoset["mat_obj_name"] = mat_obj.Name
-            matgeoset["ccx_mat_name"] = mat_obj.Material["Name"]
-            matgeoset["shellthickness_obj"] = shellth_obj
-            self.mat_geo_sets.append(matgeoset)
+            self.append_shell_matgeoset(elset_data, mat_data, shellth_data, names)
 
     def get_mat_geo_sets_multiple_mat_multiple_shell(self):
         for shellth_data in self.member.geos_shellthickness:
@@ -894,17 +914,11 @@ class MeshSetsGetter:
                         {"long": mat_obj.Name, "short": mat_data["ShortName"]},
                         {"long": shellth_obj.Name, "short": shellth_data["ShortName"]},
                     ]
-                    matgeoset = {}
-                    matgeoset["ccx_elset"] = elset_data
-                    matgeoset["ccx_elset_name"] = get_elset_name_standard(names)
-                    matgeoset["mat_obj_name"] = mat_obj.Name
-                    matgeoset["ccx_mat_name"] = mat_obj.Material["Name"]
-                    matgeoset["shellthickness_obj"] = shellth_obj
-                    self.mat_geo_sets.append(matgeoset)
+                    self.append_shell_matgeoset(elset_data, mat_data, shellth_data, names)
 
-    # solid
     def get_mat_geo_sets_single_mat_solid(self):
-        mat_obj = self.member.mats_linear[0]["Object"]
+        mat_data = self.member.mats_linear[0]
+        mat_obj = mat_data["Object"]
         elset_data = self.ccx_evolumes
         names = [{"long": mat_obj.Name, "short": "M0"}, {"long": "Solid", "short": "Solid"}]
         matgeoset = {}
