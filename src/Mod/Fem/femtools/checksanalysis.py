@@ -35,6 +35,7 @@ from FreeCAD import Units
 
 from . import femutils
 from femsolver.calculix.solver import ANALYSIS_TYPES
+from .checksmaterials import check_linear_material
 
 
 def check_member_for_solver_calculix(analysis, solver, mesh, member):
@@ -125,15 +126,7 @@ def check_member_for_solver_calculix(analysis, solver, mesh, member):
         mat_map = m["Object"].Material
         mat_obj = m["Object"]
         if mat_obj.Category == "Solid":
-            if "YoungsModulus" in mat_map:
-                # print(Units.Quantity(mat_map["YoungsModulus"]).Value)
-                if not Units.Quantity(mat_map["YoungsModulus"]).Value:
-                    message += "Value of YoungsModulus is set to 0.0.\n"
-            else:
-                message += "No YoungsModulus defined for at least one material.\n"
-            if "PoissonRatio" not in mat_map:
-                # PoissonRatio is allowed to be 0.0 (in ccx), but it should be set anyway.
-                message += "No PoissonRatio defined for at least one material.\n"
+            message += check_linear_material(mat_map)
         if solver.AnalysisType == "frequency" or member.cons_selfweight:
             if "Density" not in mat_map:
                 message += "No Density defined for at least one material.\n"
