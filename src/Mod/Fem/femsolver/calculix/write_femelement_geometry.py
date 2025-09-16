@@ -157,7 +157,7 @@ def write_femelement_geometry(f, ccxwriter):
             continue
 
         heterogeneous = "element_ids" in matgeoset
-        orthotropic = "lcs" in matgeoset
+        orthotropic = ("lcs" in matgeoset) and (matgeoset["lcs"] is not None)
 
         if not heterogeneous:
             if orthotropic:
