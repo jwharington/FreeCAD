@@ -33,6 +33,7 @@ import time
 import FreeCAD
 
 from femmesh import meshtools
+from femmesh.drapetools import get_drape_lcs
 from femtools.femutils import type_of_obj
 
 
@@ -856,10 +857,15 @@ class MeshSetsGetter:
             else:
                 return
 
-            if shellth_obj.Drape:
-                print("TODO unwrap if option selected, via femmesh2mesh")
-                matgeoset["lcs"] = {id: mat_obj.LocalCoordinateSystem for id in elements}
-                matgeoset["element_ids"] = elements
+            if not shellth_obj.Drape:
+                return
+
+            print(shellth_data)
+
+            matgeoset["lcs"] = get_drape_lcs(
+                self.mesh_object, elements, mat_obj.LocalCoordinateSystem
+            )
+            matgeoset["element_ids"] = elements
 
         set_element_ids()
         self.mat_geo_sets.append(matgeoset)

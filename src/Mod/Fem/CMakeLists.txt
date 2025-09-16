@@ -175,6 +175,7 @@ SET(FemMesh_SRCS
     femmesh/meshsetsgetter.py
     femmesh/meshtools.py
     femmesh/netgentools.py
+    femmesh/drapetools.py
 )
 
 SET(FemObjects_SRCS
