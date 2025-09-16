@@ -383,6 +383,7 @@ SET(FemTestsApp_SRCS
     femtest/app/support_utils.py
     femtest/app/test_ccxtools.py
     femtest/app/test_common.py
+    femtest/app/test_fem_extension_registry.py
     femtest/app/test_femimport.py
     femtest/app/test_material.py
     femtest/app/test_mesh.py
@@ -588,6 +589,7 @@ SET(FemTools_SRCS
     femtools/ccxtools.py
     femtools/checksanalysis.py
     femtools/checksmaterials.py
+    femtools/fem_extension_registry.py
     femtools/constants.py
     femtools/errors.py
     femtools/femutils.py

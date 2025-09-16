@@ -28,6 +28,7 @@ __url__ = "https://www.freecad.org"
 
 import FreeCAD
 from femtools import constants
+from femtools import checksmaterials
 
 
 def write_femelement_material(f, ccxwriter):
@@ -49,12 +50,50 @@ def write_femelement_material(f, ccxwriter):
             return True
         return False
 
+    def elastic_properties(material):
+
+        def get_nu(item):
+            return float(material[item])
+
+        def get_MPa(item):
+            value = FreeCAD.Units.Quantity(material[item])
+            return value.getValueAs("MPa").Value
+
+        if checksmaterials.is_linear_orthotropic(material):
+            res = "*ELASTIC,TYPE=ENGINEERING CONSTANTS\n"
+            res += f"{get_MPa('YoungsModulusX'):.13G},"
+            res += f"{get_MPa('YoungsModulusY'):.13G},"
+            res += f"{get_MPa('YoungsModulusZ'):.13G},"
+            res += f"{get_nu('PoissonRatioXY'):.13G},"
+            res += f"{get_nu('PoissonRatioXZ'):.13G},"
+            res += f"{get_nu('PoissonRatioYZ'):.13G},"
+            res += f"{get_MPa('ShearModulusXY'):.13G},"
+            res += f"{get_MPa('ShearModulusXZ'):.13G}\n"
+            res += f"{get_MPa('ShearModulusYZ'):.13G},"
+            res += "293.15\n"
+        else:
+            res = "*ELASTIC\n"
+            YM_in_MPa = get_MPa("YoungsModulus")
+            PR = get_nu("PoissonRatio")
+            res += f"{YM_in_MPa:.13G},{PR:.13G}\n"
+        return res
+
     f.write("\n** Physical constants for SI(mm) unit system with Kelvins\n")
     f.write("*PHYSICAL CONSTANTS, ABSOLUTE ZERO=0, STEFAN BOLTZMANN=5.670374419e-11\n")
 
     f.write("\n{}\n".format(59 * "*"))
     f.write("** Materials\n")
     f.write("** see information about units at file end\n")
+
+    for femobj in ccxwriter.member.mats_laminate:
+        if not hasattr(femobj, "Proxy") or not femobj.Proxy:
+            continue
+        if not hasattr(femobj.Proxy, "get_materials"):
+            continue
+        lam_materials = femobj.Proxy.get_materials(femobj)
+        f.write(f"** FreeCAD indirect material name: {femobj.Name}\n")
+        f.write(lam_materials)
+
     for femobj in ccxwriter.member.mats_linear:
         # femobj --> dict, FreeCAD document object is femobj["Object"]
         mat_obj = femobj["Object"]
@@ -63,10 +102,7 @@ def write_femelement_material(f, ccxwriter):
         mat_label = mat_obj.Label
 
         # get material properties of solid material, Currently in SI units: M/kg/s/Kelvin
-        if mat_obj.Category == "Solid":
-            YM = FreeCAD.Units.Quantity(mat_obj.Material["YoungsModulus"])
-            YM_in_MPa = YM.getValueAs("MPa").Value
-            PR = float(mat_obj.Material["PoissonRatio"])
+
         if is_density_needed() is True:
             density = FreeCAD.Units.Quantity(mat_obj.Material["Density"])
             density_in_tonne_per_mm3 = density.getValueAs("t/mm^3").Value
@@ -119,8 +155,7 @@ def write_femelement_material(f, ccxwriter):
         f.write(f"** {mat_label}\n")
         f.write(f"*MATERIAL, NAME={mat_name}\n")
         if mat_obj.Category == "Solid":
-            f.write("*ELASTIC\n")
-            f.write(f"{YM_in_MPa:.13G},{PR:.13G}\n")
+            f.write(elastic_properties(mat_obj.Material))
         if is_density_needed() is True:
             f.write("*DENSITY\n")
             f.write(f"{density_in_tonne_per_mm3:.13G}\n")
