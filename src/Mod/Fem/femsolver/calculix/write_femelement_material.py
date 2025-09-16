@@ -28,7 +28,7 @@ __url__ = "https://www.freecad.org"
 
 import FreeCAD
 from femtools import constants
-import Materials
+from femtools import checksmaterials
 
 
 def write_femelement_material(f, ccxwriter):
@@ -67,24 +67,6 @@ def write_femelement_material(f, ccxwriter):
 
         def elastic_properties(material):
 
-            orthotropic_parms = [
-                "PoissonRatioXY",
-                "PoissonRatioXZ",
-                "PoissonRatioYZ",
-                "ShearModulusXY",
-                "ShearModulusXZ",
-                "ShearModulusYZ",
-                "YoungsModulusX",
-                "YoungsModulusY",
-                "YoungsModulusZ",
-            ]
-
-            def is_isotropic():
-                for i in orthotropic_parms:
-                    if i not in material:
-                        return False
-                return True
-
             def get_nu(item):
                 return float(material[item])
 
@@ -92,7 +74,7 @@ def write_femelement_material(f, ccxwriter):
                 value = FreeCAD.Units.Quantity(material[item])
                 return value.getValueAs("MPa").Value
 
-            if is_isotropic():
+            if checksmaterials.is_linear_orthotropic(material):
                 res = "*ELASTIC,TYPE=ENGINEERING CONSTANTS\n"
                 res += f"{get_MPa('YoungsModulusX'):.13G},"
                 res += f"{get_MPa('YoungsModulusY'):.13G},"
