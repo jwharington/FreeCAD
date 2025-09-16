@@ -59,12 +59,14 @@ class Draper:
         )
         return (exx, eyy, exy)
 
-    def get_lcs_table(self, mesh, lcs):
+    def get_flattener(self, mesh):
         points = np.array([[i.x, i.y, i.z] for i in mesh.Points])
         faces = np.array([list(i) for i in mesh.Topology[1]])
-
         flattener = flatmesh.FaceUnwrapper(points, faces)
         flattener.findFlatNodes(self.unwrap_steps, self.unwrap_relax_weight)
+        return flattener
+
+    def get_lcs_table(self, mesh, lcs):
 
         # locate origin in meshes ---------------------------------------
         # track which point index is mapped from the reference vertex O
@@ -85,6 +87,7 @@ class Draper:
             return imin
 
         i_O = find_nearest_vertex(v_O)
+        # print(f"nearest vertex {i_O}")
 
         # determine rotation required for flattened --------------------
         # - find a triangle (OAB) in 3d mesh that includes the reference
@@ -98,6 +101,7 @@ class Draper:
                     return res
 
         (i_A, i_B) = find_triangle(i_O)
+        # print(f"tris {i_A}, {i_B}")
 
         # - calculate vectors OA, OB
 
@@ -113,6 +117,9 @@ class Draper:
         # -> find 2d rotation matrix / angle so OA and OB coordinates
         #    = T * O'A' and T O'B' respectively
 
+        flattener = self.get_flattener(mesh)
+        # print(f"ze_nodes {flattener.ze_nodes}")
+
         def flat_vector(i):
             p = flattener.ze_nodes[i]
             return Vector(p[0], p[1], 0.0)
@@ -127,27 +134,19 @@ class Draper:
         O_ld = Vector(O_l.x, O_l.y, 0.0)
         T_fo = Rotation(O_f, O_ld)
 
-        # make wire from boundary edges, with rotation ------------------
-
-        def make_boundary():
-            boundaries = flattener.getFlatBoundaryNodes()
-            for edge in boundaries:
-                pi = Part.makePolygon([T_fo * Vector(*node) for node in edge])
-                Part.show(Part.Wire(pi))
-
         # analyse distortion and save local axes ------------------------
 
         def find_x_axis_mix(OA_f, OB_f):
             if abs(OA_f.y) < abs(OB_f.y):
-                # b = (OA_y / OB_y ) a
-                # a. OA_x + (OA_y / OB_y ) a OB_x = 1
-                a = 1 / (OA_f.x + OA_f.y / OB_f.y)
-                b = (OA_f.y / OB_f.y) * a
+                # b = -(OA_y / OB_y ) a
+                # a. OA_x - (OA_y / OB_y ) a OB_x = 1
+                a = 1 / (OA_f.x - OA_f.y / OB_f.y)
+                b = -(OA_f.y / OB_f.y) * a
             else:
-                # a = (OB_y / OA_y ) b
-                # (OB_y / OA_y ) b . OA_x + b OB_x = 1
-                b = 1 / (OB_f.x + OB_f.y / OA_f.y)
-                a = (OB_f.y / OA_f.y) * b
+                # a = -(OB_y / OA_y ) b
+                # (OB_y / OA_y ) b . OA_x - b OB_x = 1
+                b = 1 / (OB_f.x - OB_f.y / OA_f.y)
+                a = -(OB_f.y / OA_f.y) * b
             return (a, b)
 
         def calc_local_mesh(tri):
@@ -167,7 +166,7 @@ class Draper:
             OP = a * OA + b * OB
             normal = OA.cross(OB)
 
-            T_fl = Rotation(OP, normal).inverted()
+            T_fl = Rotation(OP, OP.cross(normal)).inverted()
 
             # now map OA, OB back to flat:
             OA_fd = T_fl * OA
@@ -180,13 +179,23 @@ class Draper:
             pr = T_fo * Vector(p[0], p[1], 0)
             return (pr.x, pr.y)
 
+        def make_boundary():
+            boundaries = flattener.getFlatBoundaryNodes()
+            for edge in boundaries:
+                pi = Part.makePolygon([T_fo * Vector(*node) for node in edge])
+                Part.show(Part.Wire(pi))
+
         # save texture coordinates for rendering pattern in 3d
         tex_coords = [calc_tex_coord(p) for p in flattener.ze_nodes]
 
         # save strain and local rot matrix
         tri_info = [calc_local_mesh(tri) for tri in mesh.Topology[1]]
 
-        # define extra allowance (outset shape)
+        # make wire from boundary edges, with rotation ------------------
+
+        make_boundary()
+        # TODO: define extra allowance (outset shape)
+
         return tex_coords, tri_info
 
 
@@ -209,11 +218,8 @@ def partial_femmesh_2_mesh(myFemMesh, elements):
 
 def get_drape_lcs(femmesh_obj, elements, lcs):
     mesh = partial_femmesh_2_mesh(femmesh_obj, elements)
-    print(elements)
-    # out_mesh = femmesh_2_mesh(mesh_obj)
+    Mesh.show(mesh)
     draper = Draper()
     (tex_coords, tri_info) = draper.get_lcs_table(mesh, lcs)
-    print(f"{tex_coords}")
-
-    print("TODO unwrap if option selected, via femmesh2mesh")
-    return {id: lcs for id in elements}
+    lcs_lookup = zip(elements, tri_info)
+    return {id: tri_info[0] for (id, tri_info) in lcs_lookup}
