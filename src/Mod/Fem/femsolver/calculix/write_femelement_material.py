@@ -72,7 +72,7 @@ def write_femelement_material(f, ccxwriter):
             res += f"{get_MPa('ShearModulusYZ'):.13G},"
             res += "293.15\n"
         else:
-            res = "*ELASTIC,TYPE=ISO\n"
+            res = "*ELASTIC\n"
             YM_in_MPa = get_MPa("YoungsModulus")
             PR = get_nu("PoissonRatio")
             res += f"{YM_in_MPa:.13G},{PR:.13G}\n"
