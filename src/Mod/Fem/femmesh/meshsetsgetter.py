@@ -837,8 +837,10 @@ class MeshSetsGetter:
     def set_shell_ortho(self, mat_data, shellth_data):
         mat_obj = mat_data["Object"]
         shellth_obj = shellth_data["Object"]
-        orientation = mat_obj.LocalCoordinateSystem.getGlobalPlacement()
-        matgeoset = {"orientation": orientation}
+        lcs = mat_obj.LocalCoordinateSystem
+        matgeoset = {}
+        if lcs:
+            matgeoset["orientation"] = lcs.getGlobalPlacement()
         if "FEMElements" in shellth_data:
             elements = shellth_data["FEMElements"]
         elif "FEMElements" in mat_data:
@@ -849,8 +851,8 @@ class MeshSetsGetter:
         if (not shellth_obj.Drape) or not self.mesh_object:
             return matgeoset
 
-        orientation = get_drape_lcs(self.femmesh, elements, mat_obj.LocalCoordinateSystem)
-        matgeoset["orientation"] = orientation
+        if lcs:
+            matgeoset["orientation"] = get_drape_lcs(self.femmesh, elements, lcs)
         matgeoset["element_ids"] = elements
         return matgeoset
 
@@ -918,7 +920,11 @@ class MeshSetsGetter:
     # solid
     def set_solid_ortho(self, mat_data):
         mat_obj = mat_data["Object"]
-        return {"orientation": mat_obj.LocalCoordinateSystem.getGlobalPlacement()}
+        lcs = mat_obj.LocalCoordinateSystem
+        if lcs:
+            return {"orientation": lcs.getGlobalPlacement()}
+        else:
+            return {}
 
     def get_mat_geo_sets_single_mat_solid(self):
         mat_data = self.member.mats_linear[0]
