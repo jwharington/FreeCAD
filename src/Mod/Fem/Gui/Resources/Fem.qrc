@@ -42,6 +42,7 @@
         <file>icons/FEM_ElementFluid1D.svg</file>
         <file>icons/FEM_ElementGeometry1D.svg</file>
         <file>icons/FEM_ElementGeometry2D.svg</file>
+        <file>icons/FEM_ElementGeometryDraped.svg</file>
         <file>icons/FEM_ElementRotation1D.svg</file>
         <file>icons/FEM_EquationDeformation.svg</file>
         <file>icons/FEM_EquationElasticity.svg</file>

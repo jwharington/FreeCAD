@@ -109,6 +109,7 @@ Gui::ToolBarItem* Workbench::setupToolBars() const
            << "FEM_ElementGeometry1D"
            << "FEM_ElementRotation1D"
            << "FEM_ElementGeometry2D"
+           << "FEM_ElementGeometryDraped"
            << "FEM_ElementFluid1D";
 
     Gui::ToolBarItem* electromag = new Gui::ToolBarItem(root);

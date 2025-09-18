@@ -411,6 +411,21 @@ def makeElementGeometry2D(doc, thickness=1.0, name="ElementGeometry2D"):
     return obj
 
 
+def makeElementGeometryDraped(doc, thickness=1.0, name="ElementGeometryDraped"):
+    """makeElementGeometryDraped(document, [thickness], [name]):
+    creates a 2D geometry element object to define a plate thickness with LCS"""
+    obj = doc.addObject("Fem::FeaturePython", name)
+    from femobjects import element_geometryDraped
+
+    element_geometryDraped.ElementGeometryDraped(obj)
+    obj.Thickness = thickness
+    if FreeCAD.GuiUp:
+        from femviewprovider import view_element_geometryDraped
+
+        view_element_geometryDraped.VPElementGeometryDraped(obj.ViewObject)
+    return obj
+
+
 def makeElementRotation1D(doc, name="ElementRotation1D"):
     """makeElementRotation1D(document, [name]):
     creates a 1D geometry rotation element object to rotate a 1D cross section"""

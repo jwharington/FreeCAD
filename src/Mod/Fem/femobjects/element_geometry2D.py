@@ -64,16 +64,6 @@ class ElementGeometry2D(base_femelement.BaseFemElement):
                 value=0.0,
             )
         )
-        prop.append(
-            _PropHelper(
-                type="App::PropertyBool",
-                name="Drape",
-                group="References",
-                doc="Drape orientation of material",
-                value=False,
-            )
-        )
-
         return prop
 
     def onDocumentRestored(self, obj):

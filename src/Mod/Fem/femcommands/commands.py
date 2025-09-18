@@ -399,6 +399,19 @@ class _ElementGeometry2D(CommandManager):
         self.do_activated = "add_obj_on_gui_set_edit"
 
 
+class _ElementGeometryDraped(CommandManager):
+    "The FEM_ElementGeometryDraped command definition"
+
+    def __init__(self):
+        super().__init__()
+        self.menutext = Qt.QT_TRANSLATE_NOOP("FEM_ElementGeometryDraped", "Draped shell")
+        self.tooltip = Qt.QT_TRANSLATE_NOOP(
+            "FEM_ElementGeometryDraped", "Creates a shell with draped coordinates"
+        )
+        self.is_active = "with_analysis"
+        self.do_activated = "add_obj_on_gui_set_edit"
+
+
 class _ElementRotation1D(CommandManager):
     "The Fem_ElementRotation1D command definition"
 
@@ -1258,6 +1271,7 @@ FreeCADGui.addCommand("FEM_ConstraintTie", _ConstraintTie())
 FreeCADGui.addCommand("FEM_ElementFluid1D", _ElementFluid1D())
 FreeCADGui.addCommand("FEM_ElementGeometry1D", _ElementGeometry1D())
 FreeCADGui.addCommand("FEM_ElementGeometry2D", _ElementGeometry2D())
+FreeCADGui.addCommand("FEM_ElementGeometryDraped", _ElementGeometryDraped())
 FreeCADGui.addCommand("FEM_ElementRotation1D", _ElementRotation1D())
 FreeCADGui.addCommand("FEM_EquationDeformation", _EquationDeformation())
 FreeCADGui.addCommand("FEM_EquationElasticity", _EquationElasticity())

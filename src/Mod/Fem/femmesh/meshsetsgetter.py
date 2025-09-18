@@ -32,8 +32,7 @@ import time
 
 import FreeCAD
 
-from femmesh import meshtools
-from femmesh.drapetools import get_drape_lcs
+from femmesh import meshtools, drapetools
 from femtools.femutils import type_of_obj
 
 
@@ -848,11 +847,12 @@ class MeshSetsGetter:
         else:
             return matgeoset
 
-        if (not shellth_obj.Drape) or not self.mesh_object:
+        if not hasattr(shellth_obj, "Drape") or not shellth_obj.Drape or not self.mesh_object:
             return matgeoset
 
-        if lcs:
-            matgeoset["orientation"] = get_drape_lcs(self.femmesh, elements, lcs)
+        lcs = getattr(shellth_obj, "LocalCoordinateSystem", lcs)
+        if hasattr(shellth_obj.Proxy, "get_drape_lcs"):
+            matgeoset["orientation"] = drapetools.get_drape_lcs(shellth_obj, self.femmesh, elements)
         matgeoset["element_ids"] = elements
         return matgeoset
 

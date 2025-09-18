@@ -1,14 +1,77 @@
 from FreeCAD import Vector, Rotation
-import Part
-import Mesh
 import numpy as np
 import flatmesh
+from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
+from scipy.spatial import Delaunay
 
 
 class Draper:
 
     unwrap_steps = 5
     unwrap_relax_weight = 0.95
+
+    def __init__(self, mesh, lcs):
+
+        points = np.array([[i.x, i.y, i.z] for i in mesh.Points])
+
+        def get_flattener(_mesh):
+            faces = np.array([list(i) for i in _mesh.Topology[1]])
+            flattener = flatmesh.FaceUnwrapper(points, faces)
+            flattener.findFlatNodes(
+                self.unwrap_steps,
+                self.unwrap_relax_weight,
+            )
+            return flattener
+
+        self.mesh = mesh
+        self.lcs = lcs
+        self.flattener = get_flattener(mesh)
+        self.T_local = self.lcs.getGlobalPlacement().inverse()
+
+        # br = Rotation(Vector(0, 0, 1), 20)
+        self.T_fo = self.calc_flat_rotation()  # * br
+        self.make_interp()
+
+    def make_interp(self):
+
+        def calc_local_mesh(tri):
+            (i_O, i_A, i_B) = tri
+            OX, OY, OZ = self.get_axes(i_O, i_A, i_B)
+            T_fl = Rotation(OX, OY, OZ, "ZXY").inverted()
+
+            center = (
+                self.mesh.Points[i_A].Vector
+                + self.mesh.Points[i_B].Vector
+                + self.mesh.Points[i_O].Vector
+            ) / 3
+
+            OA = self.mesh.Points[i_A].Vector - self.mesh.Points[i_O].Vector
+            OB = self.mesh.Points[i_B].Vector - self.mesh.Points[i_O].Vector
+
+            # now map OA, OB back to flat:
+            OA_fd = T_fl * OA
+            OB_fd = T_fl * OB
+
+            O_f = self.flat_vector(i_O)
+            OA_f = self.flat_vector(i_A) - O_f
+            OB_f = self.flat_vector(i_B) - O_f
+
+            strain = self.calculate_strain(OA_f, OB_f, OA_fd, OB_fd)
+            return center, T_fl, strain
+
+        # analyse distortion and save local axes ------------------------
+        centers = []
+        T_fls = []
+        # strains = []
+        for tri in self.mesh.Topology[1]:
+            center, T_fl, _ = calc_local_mesh(tri)
+            centers.append(np.array([center.x, center.y, center.z]))
+            T_fls.append(np.array(T_fl.Q))
+            # strains.append(strain)
+
+        delaunay = Delaunay(centers, qhull_options="Qbb Qc Qz Q12 QJ")
+        self.interp_T = LinearNDInterpolator(delaunay, T_fls)
+        self.interp_Tn = NearestNDInterpolator(centers, T_fls)
 
     @staticmethod
     def calculate_strain(OA, OB, OA_d, OB_d):
@@ -59,167 +122,126 @@ class Draper:
         )
         return (exx, eyy, exy)
 
-    def get_flattener(self, mesh):
-        points = np.array([[i.x, i.y, i.z] for i in mesh.Points])
-        faces = np.array([list(i) for i in mesh.Topology[1]])
-        flattener = flatmesh.FaceUnwrapper(points, faces)
-        flattener.findFlatNodes(self.unwrap_steps, self.unwrap_relax_weight)
-        return flattener
+    def find_nearest_vertex(self, vO):
+        dmin = None
+        imin = None
+        for i, p in enumerate(self.mesh.Points):
+            d = vO.distanceToPoint(p.Vector)
+            if (dmin is None) or (d < dmin):
+                dmin = d
+                imin = i
+        return imin
 
-    def get_lcs_table(self, mesh, lcs):
+    def find_triangle(self, i_O):
+        for tri in self.mesh.Topology[1]:
+            if i_O in tri:
+                res = list(tri)
+                res.remove(i_O)
+                return res
+        return None
 
+    @staticmethod
+    def find_x_axis_mix(OA_f, OB_f):
+        if abs(OA_f.y) < abs(OB_f.y):
+            # b = -(OA_y / OB_y ) a
+            # a. OA_x - (OA_y / OB_y ) a OB_x = 1
+            a = 1 / (OA_f.x - OA_f.y / OB_f.y)
+            b = -(OA_f.y / OB_f.y) * a
+        else:
+            # a = -(OB_y / OA_y ) b
+            # (OB_y / OA_y ) b . OA_x - b OB_x = 1
+            b = 1 / (OB_f.x - OB_f.y / OA_f.y)
+            a = -(OB_f.y / OA_f.y) * b
+        return (a, b)
+
+    @staticmethod
+    def find_y_axis_mix(OA_f, OB_f):
+        if abs(OA_f.x) < abs(OB_f.x):
+            a = 1 / (OA_f.y - OA_f.x / OB_f.x)
+            b = -(OA_f.x / OB_f.x) * a
+        else:
+            b = 1 / (OB_f.y - OB_f.x / OA_f.x)
+            a = -(OB_f.x / OA_f.x) * b
+        return (a, b)
+
+    def flat_vector(self, i):
+        return Vector(*self.flattener.ze_nodes[i])
+
+    def get_axes(self, i_O, i_A, i_B):
+        # mix OA, OB to make vertical line
+        O_f = self.flat_vector(i_O)
+        OA_f = self.flat_vector(i_A) - O_f
+        OB_f = self.flat_vector(i_B) - O_f
+        OO = self.mesh.Points[i_O].Vector
+        OA = self.mesh.Points[i_A].Vector - OO
+        OB = self.mesh.Points[i_B].Vector - OO
+
+        OZ = OA.cross(OB).normalize()
+
+        (a, b) = self.find_x_axis_mix(OA_f, OB_f)
+        OX = (a * OA + b * OB).normalize()
+
+        (a, b) = self.find_y_axis_mix(OA_f, OB_f)
+        OY = (a * OA + b * OB).normalize()
+
+        return OX, OY, OZ
+
+    def calc_flat_rotation(self):
         # locate origin in meshes ---------------------------------------
         # track which point index is mapped from the reference vertex O
         #   in the shape at the LCS origin
-
-        v_O = lcs.getGlobalPlacement().Base
+        v_O = self.lcs.getGlobalPlacement().Base
 
         # - find nearest vertex O in the mesh to the origin of the LCS
-
-        def find_nearest_vertex(vO):
-            dmin = None
-            imin = None
-            for i in mesh.Topology[1][0]:
-                d = vO.distanceToPoint(mesh.Points[i].Vector)
-                if (dmin is None) or (d < dmin):
-                    dmin = d
-                    imin = i
-            return imin
-
-        i_O = find_nearest_vertex(v_O)
-        # print(f"nearest vertex {i_O}")
+        i_O = self.find_nearest_vertex(v_O)
 
         # determine rotation required for flattened --------------------
         # - find a triangle (OAB) in 3d mesh that includes the reference
         # point O
 
-        def find_triangle(i_O):
-            for tri in mesh.Topology[1]:
-                if i_O in tri:
-                    res = list(tri)
-                    res.remove(i_O)
-                    return res
+        (i_A, i_B) = self.find_triangle(i_O)
+        OX, OY, OZ = self.get_axes(i_O, i_A, i_B)
 
-        (i_A, i_B) = find_triangle(i_O)
-        # print(f"tris {i_A}, {i_B}")
+        return Rotation(OX, OY, OZ, "ZXY").inverted() * self.T_local.Rotation.inverted()
 
-        # - calculate vectors OA, OB
-
-        OA = mesh.Points[i_A].Vector
-        OB = mesh.Points[i_B].Vector
-
-        # - cast to LCS OA_l, OB_l
-
-        T_gl = lcs.getGlobalPlacement().inverse()
-
-        # - find the coordinates of the vectors O'A' and O'B' in the
-        #   flat coordinate system
-        # -> find 2d rotation matrix / angle so OA and OB coordinates
-        #    = T * O'A' and T O'B' respectively
-
-        flattener = self.get_flattener(mesh)
-        # print(f"ze_nodes {flattener.ze_nodes}")
-
-        def flat_vector(i):
-            p = flattener.ze_nodes[i]
-            return Vector(p[0], p[1], 0.0)
-
-        if OA.Length > OB.Length:
-            O_l = T_gl * OA
-            O_f = flat_vector(i_A) - flat_vector(i_O)
-        else:
-            O_l = T_gl * OB
-            O_f = flat_vector(i_B) - flat_vector(i_O)
-
-        O_ld = Vector(O_l.x, O_l.y, 0.0)
-        T_fo = Rotation(O_f, O_ld)
-
-        # analyse distortion and save local axes ------------------------
-
-        def find_x_axis_mix(OA_f, OB_f):
-            if abs(OA_f.y) < abs(OB_f.y):
-                # b = -(OA_y / OB_y ) a
-                # a. OA_x - (OA_y / OB_y ) a OB_x = 1
-                a = 1 / (OA_f.x - OA_f.y / OB_f.y)
-                b = -(OA_f.y / OB_f.y) * a
-            else:
-                # a = -(OB_y / OA_y ) b
-                # (OB_y / OA_y ) b . OA_x - b OB_x = 1
-                b = 1 / (OB_f.x - OB_f.y / OA_f.y)
-                a = -(OB_f.y / OA_f.y) * b
-            return (a, b)
-
-        def calc_local_mesh(tri):
-            (i_O, i_A, i_B) = tri
-
-            # mix OA, OB to make vertical line
-            O_f = flat_vector(i_O)
-            OA_f = flat_vector(i_A) - O_f
-            OB_f = flat_vector(i_B) - O_f
-
-            # OP is unit direction in X on 2d space
-            # a . OA_f + b . OB_f = [1,0]'
-
-            (a, b) = find_x_axis_mix(OA_f, OB_f)
-            OA = mesh.Points[i_A].Vector - mesh.Points[i_O].Vector
-            OB = mesh.Points[i_B].Vector - mesh.Points[i_O].Vector
-            OP = a * OA + b * OB
-            normal = OA.cross(OB)
-
-            T_fl = Rotation(OP, OP.cross(normal)).inverted()
-
-            # now map OA, OB back to flat:
-            OA_fd = T_fl * OA
-            OB_fd = T_fl * OB
-
-            strain = self.calculate_strain(OA_f, OB_f, OA_fd, OB_fd)
-            return T_fl, strain
-
-        def calc_tex_coord(p):
-            pr = T_fo * Vector(p[0], p[1], 0)
-            return (pr.x, pr.y)
-
-        def make_boundary():
-            boundaries = flattener.getFlatBoundaryNodes()
-            for edge in boundaries:
-                pi = Part.makePolygon([T_fo * Vector(*node) for node in edge])
-                Part.show(Part.Wire(pi))
-
+    def get_tex_coords(self):
         # save texture coordinates for rendering pattern in 3d
-        tex_coords = [calc_tex_coord(p) for p in flattener.ze_nodes]
+        return [self.T_fo * Vector(*p) for p in self.flattener.ze_nodes]
 
-        # save strain and local rot matrix
-        tri_info = [calc_local_mesh(tri) for tri in mesh.Topology[1]]
+    def get_lcs(self, tri):
+        def get_q(c):
+            q = self.interp_T(c)
+            if np.isnan(q[0][0]):
+                q = self.interp_Tn(c)
+            return q[0]
 
-        # make wire from boundary edges, with rotation ------------------
+        center = (tri[0] + tri[1] + tri[2]) / 3
+        q = get_q([center.x, center.y, center.z])
+        return Rotation(*q)
 
-        make_boundary()
-        # TODO: define extra allowance (outset shape)
+    def get_boundaries(self):
+        wires = []
+        boundaries = self.flattener.getFlatBoundaryNodes()
+        for edge in boundaries:
+            points = [self.T_fo * Vector(*node) for node in edge]
+            wires.append(points)
+        return wires
 
-        return tex_coords, tri_info
 
+def get_drape_lcs(shellth_obj, femmesh_obj, elements):
 
-def partial_femmesh_2_mesh(myFemMesh, elements):
-    # simplified from femmesh_2_mesh
-    output_mesh = []
-    for e in elements:
-        element_nodes = myFemMesh.getElementNodes(e)
+    def element_info(e):
+        element_nodes = femmesh_obj.getElementNodes(e)
         if len(element_nodes) in [3, 6]:
             faceDef = {1: [0, 1, 2]}
         else:  # quad element
             faceDef = {1: [0, 1, 2, 3]}
 
         for key in faceDef:
+            tris = []
             for nodeIdx in faceDef[key]:
-                n = myFemMesh.getNodeById(element_nodes[nodeIdx])
-                output_mesh.append(n)
-    return Mesh.Mesh(output_mesh)
+                n = femmesh_obj.getNodeById(element_nodes[nodeIdx])
+                tris.append(n)
+            return shellth_obj.Proxy.get_drape_lcs(shellth_obj, tris)
 
-
-def get_drape_lcs(femmesh_obj, elements, lcs):
-    mesh = partial_femmesh_2_mesh(femmesh_obj, elements)
-    Mesh.show(mesh)
-    draper = Draper()
-    (tex_coords, tri_info) = draper.get_lcs_table(mesh, lcs)
-    lcs_lookup = zip(elements, tri_info)
-    return {id: tri_info[0] for (id, tri_info) in lcs_lookup}
+    return {e: element_info(e) for e in elements}

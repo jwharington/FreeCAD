@@ -199,6 +199,7 @@ SET(FemObjects_SRCS
     femobjects/element_fluid1D.py
     femobjects/element_geometry1D.py
     femobjects/element_geometry2D.py
+    femobjects/element_geometryDraped.py
     femobjects/element_rotation1D.py
     femobjects/material_common.py
     femobjects/material_mechanicalnonlinear.py
@@ -690,6 +691,7 @@ SET(FemGuiViewProvider_SRCS
     femviewprovider/view_element_fluid1D.py
     femviewprovider/view_element_geometry1D.py
     femviewprovider/view_element_geometry2D.py
+    femviewprovider/view_element_geometryDraped.py
     femviewprovider/view_element_rotation1D.py
     femviewprovider/view_material_common.py
     femviewprovider/view_material_mechanicalnonlinear.py
@@ -703,6 +705,10 @@ SET(FemGuiViewProvider_SRCS
     femviewprovider/view_result_mechanical.py
     femviewprovider/view_solver_calculix.py
     femviewprovider/view_solver_ccxtools.py
+    femviewprovider/grid_shaders/Grid_fragment_shader.glsl
+    femviewprovider/grid_shaders/Grid_vertex_shader.glsl
+    femviewprovider/grid_shaders/MeshGridShader.py
+    femviewprovider/grid_shaders/brick.png
 )
 
 if(BUILD_FEM_VTK_PYTHON)
