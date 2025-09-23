@@ -3434,7 +3434,7 @@ SOF, SOM, SOAREA
 ** Outputs --> frd file
 *NODE FILE
 U
-*EL FILE
+*EL FILE, GLOBAL=NO
 S, E
 ** outputs --> dat file
 ** reaction forces for Constraint fixed
