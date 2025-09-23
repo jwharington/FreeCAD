@@ -59,6 +59,10 @@ def write_femelement_material(f, ccxwriter):
             value = FreeCAD.Units.Quantity(material[item])
             return value.getValueAs("MPa").Value
 
+        if "Abaqus" in material:
+            res = material["Abaqus"]
+            return f"{res}\n"
+
         if checksmaterials.is_linear_orthotropic(material):
             res = "*ELASTIC,TYPE=ENGINEERING CONSTANTS\n"
             res += f"{get_MPa('YoungsModulusX'):.13G},"
