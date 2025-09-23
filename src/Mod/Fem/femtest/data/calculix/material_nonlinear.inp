@@ -20112,7 +20112,7 @@ Fixed,3
 ** Outputs --> frd file
 *NODE FILE
 U
-*EL FILE
+*EL FILE, GLOBAL=NO
 S, E, PEEQ
 ** outputs --> dat file
 ** reaction forces for Constraint fixed

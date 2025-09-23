@@ -238,7 +238,7 @@ Fixed,6
 ** Outputs --> frd file
 *NODE FILE, OUTPUT=3d
 U
-*EL FILE
+*EL FILE, GLOBAL=NO
 S, E
 ** outputs --> dat file
 ** reaction forces for Constraint fixed

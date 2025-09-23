@@ -18773,7 +18773,7 @@ ConstraintCentrif,CENTRIF,394784.1760436,0,0,0,0,0,1
 ** Outputs --> frd file
 *NODE FILE
 U
-*EL FILE
+*EL FILE, GLOBAL=NO
 S, E
 ** outputs --> dat file
 ** reaction forces for Constraint fixed
