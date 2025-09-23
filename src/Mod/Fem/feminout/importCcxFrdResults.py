@@ -216,6 +216,13 @@ def importFrd(filename, analysis=None, result_name_prefix="", result_analysis_ty
                             )
                             resulttools.add_principal_stress_reinforced(res_obj)
                             break
+
+                    sf_objs = []
+                    for obj in res_obj.getParentGroup().Group:
+                        if femutils.is_derived_from(obj, "Fem::FeaturePython"):
+                            sf_objs.append(obj)
+                    res_obj = resulttools.add_stress_exposure_factor(res_obj, sf_objs)
+
                     if has_reinforced_mat is False:
                         Console.PrintLog(
                             "No reinforced material object detected, "

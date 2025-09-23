@@ -249,6 +249,9 @@ class _TaskPanel:
             elif rt == "Peeq":
                 self.result_widget.rb_peeq.setChecked(True)
                 self.peeq_selected(True)
+            elif rt == "SEF":
+                self.result_widget.rb_stress_exposure_factor.setChecked(True)
+                self.stress_exposure_factor_selected(True)
 
             sd = FreeCAD.FEM_dialog["show_disp"]
             self.result_widget.cb_show_displacement.setChecked(sd)
@@ -441,6 +444,18 @@ class _TaskPanel:
             self.result_widget.rb_none.setChecked(True)
             self.none_selected(True)
 
+    def stress_exposure_factor_selected(self, state):
+        if len(self.result_obj.StressExposureFactor) > 0:
+            self.result_selected(
+                "SEF",
+                self.result_obj.StressExposureFactor,
+                "",
+                translate("FEM", "Stress Exposure Factor"),
+            )
+        else:
+            self.result_widget.rb_none.setChecked(True)
+            self.none_selected(True)
+
     def show_histogram_clicked(self):
         if len(plt.get_fignums()) > 0:
             plt.show()
@@ -494,6 +509,7 @@ class _TaskPanel:
         ry = np.array(self.result_obj.ReinforcementRatio_y)
         rz = np.array(self.result_obj.ReinforcementRatio_z)
         mc = np.array(self.result_obj.MohrCoulomb)
+        SEF = np.array(self.result_obj.StressExposureFactor)
         # vectors
         dispvectors = np.array(self.result_obj.DisplacementVectors)
         x = np.array(dispvectors[:, 0])
@@ -518,6 +534,7 @@ class _TaskPanel:
             s3x = np.array(ps3vector[:, 0])
             s3y = np.array(ps3vector[:, 1])
             s3z = np.array(ps3vector[:, 2])
+        sef = np.array(self.result_obj.StressExposureFactor)
 
         FreeCAD.FEM_dialog["results_type"] = "None"
         self.update()
@@ -569,6 +586,7 @@ class _TaskPanel:
             "s3x",
             "s3y",
             "s3z",
+            "SEF",
         ]
         tokrules.names = {}
         for i in identifiers:
@@ -725,6 +743,8 @@ class _TaskPanel:
             self.result_widget.rb_networkpressure.setEnabled(0)
         if len(self.result_obj.Peeq) == 0:
             self.result_widget.rb_peeq.setEnabled(0)
+        if len(self.result_obj.StressExposureFactor) == 0:
+            self.result_widget.rb_stress_exposure_factor.setEnabled(0)
 
     def update(self):
         self.reset_result_mesh()
