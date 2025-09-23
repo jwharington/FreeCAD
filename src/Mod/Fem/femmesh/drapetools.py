@@ -201,8 +201,8 @@ class Draper:
 
         (i_A, i_B) = self.find_triangle(i_O)
         OX, OY, OZ = self.get_axes(i_O, i_A, i_B)
-
-        return Rotation(OX, OY, OZ, "ZXY").inverted() * self.T_local.Rotation.inverted()
+        T_proj = Rotation(OX, OY, OZ, "ZXY").inverted()
+        return self.T_local.Rotation * T_proj.inverted()
 
     def get_tex_coords(self):
         # save texture coordinates for rendering pattern in 3d
