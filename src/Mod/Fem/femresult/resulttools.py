@@ -979,4 +979,70 @@ def calculate_disp_abs(displacements):
     return [np.linalg.norm(nd) for nd in displacements]
 
 
+def add_stress_exposure_factor(res_obj, objs):
+    from femmesh.meshtools import get_femnodes_by_refshape
+    from femresult.failuremodels import (
+        calc_stress_exposure_factor,
+        default_options,
+    )
+
+    print("TODO: handle expanded 3d shells")
+    # TODO: if type of obj is a shell, and we have 3d expanded shell elements,
+    # then look up element mappings from parse_12d in expanded_mesh_tools
+
+    node_stresses = np.vstack(
+        [
+            res_obj.NodeStressXX,
+            res_obj.NodeStressYY,
+            res_obj.NodeStressZZ,
+            res_obj.NodeStressXY,
+            res_obj.NodeStressXZ,
+            res_obj.NodeStressYZ,
+        ]
+    ).transpose()
+
+    node_strains = np.vstack(
+        [
+            res_obj.NodeStrainXX,
+            res_obj.NodeStrainYY,
+            res_obj.NodeStrainZZ,
+            res_obj.NodeStrainXY,
+            res_obj.NodeStrainXZ,
+            res_obj.NodeStrainYZ,
+        ]
+    ).transpose()
+
+    femmesh = res_obj.Mesh.FemMesh
+    nsr = femmesh.NodeCount  # nsr number of stress results
+    sf = np.zeros(nsr)
+
+    def update_stress_exposure_factor(i, model_options):
+        sf_new = calc_stress_exposure_factor(
+            stress_tensor=node_stresses[i],
+            strain_tensor=node_strains[i],
+            model_options=model_options,
+        )
+        sf[i] = max(sf[i], sf_new)
+
+    for obj in objs:
+        for ref in obj.References:
+            subobj = ref[0].getSubObject(ref[1])
+            print(f"--- get per obj/matl allowable for {ref[0]}, here using default_options")
+            model_options = default_options
+
+            for f in subobj:
+                tol_orig = f.Tolerance
+                f.Tolerance = 0.01
+                nodes = get_femnodes_by_refshape(femmesh, ref)
+                for cn in nodes:
+                    update_stress_exposure_factor(cn - 1, model_options)
+                f.Tolerance = tol_orig
+
+        FreeCAD.Console.PrintLog(f"Added stress exposure factor for {obj.Name}.\n")
+
+    res_obj.StressExposureFactor = sf.tolist()
+
+    return res_obj
+
+
 ##  @}

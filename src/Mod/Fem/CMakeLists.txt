@@ -251,6 +251,7 @@ endif(BUILD_FEM_VTK_PYTHON)
 SET(FemResult_SRCS
     femresult/__init__.py
     femresult/resulttools.py
+    femresult/failuremodels.py
 )
 
 SET(FemSolver_SRCS
@@ -384,6 +385,7 @@ SET(FemTestsApp_SRCS
     femtest/app/test_common.py
     femtest/app/test_fem_extension_registry.py
     femtest/app/test_femimport.py
+    femtest/app/test_failuremodels.py
     femtest/app/test_material.py
     femtest/app/test_mesh.py
     femtest/app/test_object.py
