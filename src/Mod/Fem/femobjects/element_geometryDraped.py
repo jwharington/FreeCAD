@@ -89,6 +89,13 @@ class ElementGeometryDraped(ElementGeometry2D):
                 if not mesh.Points:
                     continue
                 self.draper = Draper(mesh, lcs)
+
+                fp.Mesh.Mesh = self.get_mesh()
+
+                boundaries = self.get_boundaries()
+                for w in boundaries:
+                    fp.Plan.Shape = Part.Wire(Part.makePolygon(w))
+
                 fp.ViewObject.update()
 
     def get_mesh(self):

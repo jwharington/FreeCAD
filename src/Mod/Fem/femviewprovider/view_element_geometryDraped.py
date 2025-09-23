@@ -62,6 +62,8 @@ class VPElementGeometryDraped(view_base_femelement.VPBaseFemElement):
                 self.load_shader()
             if (not vobj.Visibility) and self.Active:
                 self.remove_shader()
+            self.child_mesh.Visibility = vobj.Visibility
+            self.child_plan.Visibility = vobj.Visibility
         if (prop == "Darken") and self.grid_shader:
             self.grid_shader.Darken = vobj.Darken
 
@@ -85,15 +87,15 @@ class VPElementGeometryDraped(view_base_femelement.VPBaseFemElement):
         if not hasattr(obj, "draper"):
             return
         print("load")
-        tex_coords = obj.get_tex_coords()
 
         vobj = self.Object
-        vobj.Mesh.Mesh = obj.get_mesh()
+        # vobj.Mesh.Mesh = obj.get_mesh()
 
-        boundaries = obj.get_boundaries()
-        for w in boundaries:
-            vobj.Plan.Shape = Part.Wire(Part.makePolygon(w))
+        # boundaries = obj.get_boundaries()
+        # for w in boundaries:
+        #     vobj.Plan.Shape = Part.Wire(Part.makePolygon(w))
 
+        tex_coords = obj.get_tex_coords()
         self.grid_shader.attach(vobj, vobj.Mesh, tex_coords)
         # self.grid_shader.colorise(sel[0], [])
         self.Active = True
