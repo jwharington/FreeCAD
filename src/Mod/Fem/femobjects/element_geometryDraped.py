@@ -17,7 +17,12 @@ class ElementGeometryDraped(ElementGeometry2D):
             )
 
         if not obj.Plan:
-            obj.Plan = obj.Document.addObject("Part::Feature", "Plan")
+            obj.Plan = obj.Document.addObject(
+                "Part::Feature",
+                "Plan",
+            )
+        obj.setPropertyStatus("Mesh", "LockDynamic")
+        obj.setPropertyStatus("Plan", "LockDynamic")
 
     def _get_properties(self):
         prop = super()._get_properties()
