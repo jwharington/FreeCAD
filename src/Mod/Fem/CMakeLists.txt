@@ -236,6 +236,7 @@ endif(BUILD_FEM_VTK_PYTHON)
 SET(FemResult_SRCS
     femresult/__init__.py
     femresult/resulttools.py
+    femresult/failuremodels.py
 )
 
 SET(FemSolver_SRCS

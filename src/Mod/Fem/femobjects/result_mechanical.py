@@ -227,9 +227,18 @@ class ResultMechanical(base_fempythonobject.BaseFemPythonObject):
         obj.addProperty("App::PropertyFloatList", "CriticalStrainRatio", "NodeData", "", True)
         obj.setPropertyStatus("CriticalStrainRatio", "LockDynamic")
 
+        obj.addProperty(
+            "App::PropertyFloatList",
+            "StressExposureFactor",
+            "NodeData",
+            "Stress exposure factor",
+            True,
+        )
+        obj.setPropertyStatus("StressExposureFactor", "LockDynamic")
+
         # initialize the Stats with the appropriate count of items
         # see fill_femresult_stats in femresult/resulttools.py
-        zero_list = 26 * [0]
+        zero_list = 27 * [0]
         obj.Stats = zero_list
 
     def onDocumentRestored(self, obj):
