@@ -189,6 +189,7 @@ SET(FemMesh_SRCS
     femmesh/netgentools.py
     femmesh/transfinitetools.py
     femmesh/adaptivetools.py
+    femmesh/expanded_mesh_tools.py
 )
 
 SET(FemObjects_SRCS
