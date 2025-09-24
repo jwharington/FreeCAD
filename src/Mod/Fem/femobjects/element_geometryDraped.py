@@ -111,7 +111,9 @@ class ElementGeometryDraped(ElementGeometry2D):
         return self.draper.get_tex_coords()
 
     def update_mesh(self, shape, fp):
-        return MeshPart.meshFromShape(Shape=shape, MaxLength=fp.MaxLength)
+        ml = fp.MaxLength
+        fp = max(ml, shape.BoundBox.DiagonalLength / 50.0)
+        return MeshPart.meshFromShape(Shape=shape, MaxLength=fp)
 
     def onDocumentRestored(self, fp):
         print("Draped: onDocumentRestored")
