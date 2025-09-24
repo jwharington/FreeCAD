@@ -135,9 +135,7 @@ class Draper:
     def find_triangle(self, i_O):
         for tri in self.mesh.Topology[1]:
             if i_O in tri:
-                res = list(tri)
-                res.remove(i_O)
-                return res
+                return list(tri)
         return None
 
     @staticmethod
@@ -199,7 +197,7 @@ class Draper:
         # - find a triangle (OAB) in 3d mesh that includes the reference
         # point O
 
-        (i_A, i_B) = self.find_triangle(i_O)
+        (i_O, i_A, i_B) = self.find_triangle(i_O)
         OX, OY, OZ = self.get_axes(i_O, i_A, i_B)
         T_proj = Rotation(OX, OY, OZ, "ZXY").inverted()
         return self.T_local.Rotation * T_proj.inverted()
