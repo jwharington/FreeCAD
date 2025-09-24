@@ -1,6 +1,5 @@
 from femtaskpanels import task_element_geometry2D
 from . import view_base_femelement
-import Part
 import FreeCADGui
 from .grid_shaders.MeshGridShader import MeshGridShader
 
