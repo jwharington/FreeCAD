@@ -247,6 +247,7 @@ Gui::MenuItem* Workbench::setupMenuBar() const
     *elegeom << "FEM_ElementGeometry1D"
              << "FEM_ElementRotation1D"
              << "FEM_ElementGeometry2D"
+             << "FEM_ElementGeometryDraped"
              << "FEM_ElementFluid1D";
 
     Gui::MenuItem* elec = new Gui::MenuItem;
