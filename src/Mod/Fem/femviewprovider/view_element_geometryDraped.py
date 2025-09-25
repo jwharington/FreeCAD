@@ -96,7 +96,6 @@ class VPElementGeometryDraped(view_base_femelement.VPBaseFemElement):
 
         tex_coords = obj.get_tex_coords()
         self.grid_shader.attach(vobj, vobj.Mesh, tex_coords)
-        # self.grid_shader.colorise(sel[0], [])
         self.Active = True
         FreeCADGui.Selection.addObserver(self)
 

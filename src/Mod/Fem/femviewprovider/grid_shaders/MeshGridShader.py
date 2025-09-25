@@ -1,6 +1,7 @@
 from pivy import coin
 from os import path
 import FreeCADGui
+from FreeCAD import Material
 
 
 def find_child(node, type_name):
@@ -156,19 +157,3 @@ class MeshGridShader:
         doc = FreeCADGui.getDocument(doc.Name)
         graph = doc.ActiveView.getSceneGraph()
         graph.removeChild(self.root)
-
-    def colorise(self, obj, face_colors):
-        root = obj.ViewObject.RootNode
-
-        # Search for the SoMaterial node
-        search_action = coin.SoSearchAction()
-        search_action.setType(coin.SoMaterial.getClassTypeId())
-        search_action.apply(root)
-        material_node = search_action.getPath().getTail()
-
-        # Define new colors for the mesh faces (example: all red)
-        num_faces = len(obj.Mesh.Facets)
-        face_colors = [(0.5, 0.5, 0.5)] * num_faces
-
-        # Apply the new colors
-        material_node.diffuseColor.setValues(0, num_faces, face_colors)
