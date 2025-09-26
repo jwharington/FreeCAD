@@ -174,13 +174,13 @@ class Draper:
         OA = self.mesh.Points[i_A].Vector - OO
         OB = self.mesh.Points[i_B].Vector - OO
 
-        OZ = OA.cross(OB).normalize()
-
         (a, b) = self.find_x_axis_mix(OA_f, OB_f)
         OX = (a * OA + b * OB).normalize()
 
         (a, b) = self.find_y_axis_mix(OA_f, OB_f)
         OY = (a * OA + b * OB).normalize()
+
+        OZ = OA.cross(OB).normalize()
 
         return OX, OY, OZ
 
@@ -199,8 +199,14 @@ class Draper:
 
         (i_O, i_A, i_B) = self.find_triangle(i_O)
         OX, OY, OZ = self.get_axes(i_O, i_A, i_B)
+        R = self.T_local.Rotation
+        OX = R * OX
+        OY = R * OY
+        OZ = R * OZ
+        print(f"{OX} {OY} {OZ}")
+        OZ = Vector(0, 0, 1)
         T_proj = Rotation(OX, OY, OZ, "ZXY").inverted()
-        return self.T_local.Rotation * T_proj.inverted()
+        return T_proj.inverted()
 
     def get_tex_coords(self):
         # save texture coordinates for rendering pattern in 3d
