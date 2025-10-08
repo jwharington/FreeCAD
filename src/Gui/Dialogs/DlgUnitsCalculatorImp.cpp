@@ -100,7 +100,7 @@ DlgUnitsCalculator::DlgUnitsCalculator(QWidget* parent, Qt::WindowFlags fl)
           << Unit::SpecificHeat << Unit::Stiffness << Unit::Temperature << Unit::ThermalConductivity
           << Unit::ThermalExpansionCoefficient << Unit::ThermalTransferCoefficient << Unit::TimeSpan
           << Unit::VacuumPermittivity << Unit::Velocity << Unit::Volume << Unit::VolumeFlowRate
-          << Unit::VolumetricThermalExpansionCoefficient << Unit::Work;
+          << Unit::VolumetricThermalExpansionCoefficient << Unit::Work << Unit::ArealMass;
     for (const Unit& it : units) {
         ui->unitsBox->addItem(QString::fromStdString(it.getTypeString()));
     }
