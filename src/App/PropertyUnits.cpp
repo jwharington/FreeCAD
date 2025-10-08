@@ -289,6 +289,19 @@ PropertyDensity::PropertyDensity()
     setUnit(Base::Unit::Density);
 }
 
+
+//**************************************************************************
+// PropertyArealMass
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+TYPESYSTEM_SOURCE(App::PropertyArealMass, App::PropertyQuantity)
+
+PropertyArealMass::PropertyArealMass()
+{
+    setUnit(Base::Unit::ArealMass);
+}
+
+
 //**************************************************************************
 // PropertyDissipationRate
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++

@@ -120,6 +120,10 @@ inline const UnitsSchemaSpec s3
             { 1e3             , "kg"         , 1.0             },
             { 0               , "t"          , 1e3             }}
         },
+        { "ArealMass", {
+            { 1e-3            , "g/m^2"      , 1.0e-9           },
+            { 0               , "kg/m^2"     , 1.0e-6           }}
+        },
         { "Density", {
             { 1e-4            , "kg/m^3"     , 1e-9            },
             { 1.0             , "kg/cm^3"    , 1e-3            },
@@ -352,6 +356,10 @@ inline const UnitsSchemaSpec s4
             { 1.0             , "g"          , 1e-3            },
             { 1e3             , "kg"         , 1.0             },
             { 0               , "t"          , 1e3             }}
+        },
+        { "ArealMass", {
+            { 1e-3            , "g/m^2"      , 1.0e-9           },
+            { 0               , "kg/m^2"     , 1.0e-6           }}
         },
         { "Density", {
             { 0.0001          , "kg/m^3"     , 0.000000001     },
