@@ -132,6 +132,10 @@ inline const UnitsSchemaSpec s3
         { "Inertia", {
             { 0               , "kg*mm^2"    , 1.0             }}
         },
+        { "ArealMass", {
+            { 1e-3            , "g/m^2"      , 1.0e-9           },
+            { 0               , "kg/m^2"     , 1.0e-6           }}
+        },
         { "Density", {
             { 1e-4            , "kg/m^3"     , 1e-9            },
             { 1.0             , "kg/cm^3"    , 1e-3            },
@@ -380,6 +384,10 @@ inline const UnitsSchemaSpec s4
         },
         { "Inertia", {
             { 0               , "kg*m^2"     , 1e6             }}
+        },
+        { "ArealMass", {
+            { 1e-3            , "g/m^2"      , 1.0e-9           },
+            { 0               , "kg/m^2"     , 1.0e-6           }}
         },
         { "Density", {
             { 0.0001          , "kg/m^3"     , 0.000000001     },
@@ -701,7 +709,8 @@ inline const std::vector schemaSpecs {s3, s4, s5, s6, s7, s8, s9, s0, s1, s2};
  * Special functions
  *
  * A schema unit can have custom formatting via a special function
- * Such functions must be included here and also registered in special functions caller (below)
+ * Such functions must be included here and also registered in special functions caller
+ * (below)
  */
 
 /** utility function for toFractional */

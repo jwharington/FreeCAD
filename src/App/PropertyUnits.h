@@ -204,6 +204,20 @@ public:
     ~PropertyArea() override = default;
 };
 
+
+/** Areal mass property
+ * This is a property for representing mass per area. It is basically a float
+ * property which must not be negative. On the Gui it has a quantity like kg/m^2.
+ */
+class AppExport PropertyArealMass: public PropertyQuantityConstraint
+{
+    TYPESYSTEM_HEADER_WITH_OVERRIDE();
+
+public:
+    PropertyArealMass();
+    ~PropertyArealMass() override = default;
+};
+
 /** CompressiveStrength property
  * This is a property for representing compressive strength. It is basically a
  * float property. On the Gui it has a quantity like Pa.
