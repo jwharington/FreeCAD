@@ -834,8 +834,12 @@ class MeshSetsGetter:
 
     # shell
     def set_shell_ortho(self, mat_data, shellth_data):
+        mat_obj = mat_data["Object"]
         shellth_obj = shellth_data["Object"]
         matgeoset = {}
+        lcs = mat_obj.LocalCoordinateSystem
+        if lcs:
+            matgeoset["orientation"] = lcs.getGlobalPlacement()
         if "FEMElements" in shellth_data:
             elements = shellth_data["FEMElements"]
         elif "FEMElements" in mat_data:
@@ -854,6 +858,15 @@ class MeshSetsGetter:
             )
             matgeoset["element_ids"] = elements
         return matgeoset
+
+    # solid
+    def set_solid_ortho(self, mat_data):
+        mat_obj = mat_data["Object"]
+        lcs = mat_obj.LocalCoordinateSystem
+        if lcs:
+            return {"orientation": lcs.getGlobalPlacement()}
+        else:
+            return {}
 
     def append_shell_matgeoset(self, elset_data, mat_data, shellth_data, names):
         mat_obj = mat_data["Object"]
@@ -926,6 +939,7 @@ class MeshSetsGetter:
         matgeoset["ccx_elset_name"] = get_elset_name_standard(names)
         matgeoset["mat_obj_name"] = mat_obj.Name
         matgeoset["ccx_mat_name"] = mat_obj.Material["Name"]
+        matgeoset |= self.set_solid_ortho(mat_data)
         self.mat_geo_sets.append(matgeoset)
         print(self.mat_geo_sets)
 
@@ -942,6 +956,7 @@ class MeshSetsGetter:
             matgeoset["ccx_elset_name"] = get_elset_name_standard(names)
             matgeoset["mat_obj_name"] = mat_obj.Name
             matgeoset["ccx_mat_name"] = mat_obj.Material["Name"]
+            matgeoset |= self.set_solid_ortho(mat_data)
             self.mat_geo_sets.append(matgeoset)
 
 
