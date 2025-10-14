@@ -573,11 +573,7 @@ class MeshSetsGetter:
             # get element ids and write them into the femobj
             self.get_solid_element_sets(self.member.mats_linear)
         if self.member.geos_shellthickness:
-            if not self.femelement_faces_table:
-                self.femelement_faces_table = meshtools.get_femelement_faces_table(self.femmesh)
-            meshtools.get_femelement_sets(
-                self.femmesh, self.femelement_faces_table, self.member.mats_linear
-            )
+            self.get_element_geometry2D_elements(femobjs=self.member.mats_linear)
         if self.member.geos_beamsection or self.member.geos_fluidsection:
             if not self.femelement_edges_table:
                 self.femelement_edges_table = meshtools.get_femelement_edges_table(self.femmesh)
