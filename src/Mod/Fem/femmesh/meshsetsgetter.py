@@ -508,14 +508,20 @@ class MeshSetsGetter:
             if (self.femelement_count_test is True) and (control is False):
                 self.femelement_count_test = False
 
-    def get_element_geometry2D_elements(self):
+    def get_element_geometry2D_elements(self, femobjs):
         # get element ids and write them into the objects
         FreeCAD.Console.PrintMessage("Shell thicknesses\n")
-        if not self.femelement_faces_table:
-            self.femelement_faces_table = meshtools.get_femelement_faces_table(self.femmesh)
-        meshtools.get_femelement_sets(
-            self.femmesh, self.femelement_faces_table, self.member.geos_shellthickness
-        )
+        all_found = False
+        if self.femmesh.GroupCount:
+            all_found = meshtools.get_femelement_sets_from_group_data(
+                self.femmesh, femobjs, shape_type="Face"
+            )
+            FreeCAD.Console.PrintMessage(all_found)
+            FreeCAD.Console.PrintMessage("\n")
+        if all_found is False:
+            if not self.femelement_faces_table:
+                self.femelement_faces_table = meshtools.get_femelement_faces_table(self.femmesh)
+            meshtools.get_femelement_sets(self.femmesh, self.femelement_faces_table, femobjs)
 
     def get_element_geometry1D_elements(self):
         # get element ids and write them into the objects
@@ -591,7 +597,7 @@ class MeshSetsGetter:
 
         # get the element ids for face and edge elements and write them into the objects
         if len(self.member.geos_shellthickness) > 0:
-            self.get_element_geometry2D_elements()
+            self.get_element_geometry2D_elements(femobjs=self.member.geos_shellthickness)
         if len(self.member.geos_beamsection) > 1:
             self.get_element_geometry1D_elements()
         if len(self.member.geos_fluidsection) > 1:
