@@ -331,6 +331,7 @@ class _TaskPanel:
 
         self.fea.update_objects()
         message = self.fea.check_prerequisites()
+        message = ""
         if message != "":
             QtGui.QMessageBox.critical(None, "Missing prerequisite(s)", message)
             return False

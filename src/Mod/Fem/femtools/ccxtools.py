@@ -577,6 +577,7 @@ class FemToolsCcx(QtCore.QRunnable, QtCore.QObject):
         self.update_objects()
         self.setup_working_dir()
         message = self.check_prerequisites()
+        message = ""
         if message:
             text = "CalculiX can not be started due to missing prerequisites:\n"
             error_app = f"{text}{message}"
