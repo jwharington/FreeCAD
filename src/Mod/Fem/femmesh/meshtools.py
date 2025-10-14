@@ -695,7 +695,7 @@ def get_femmesh_groupdata_sets_by_name(femmesh, fem_object, group_data_type):
 
 
 # ************************************************************************************************
-def get_femelement_sets_from_group_data(femmesh, fem_objects):
+def get_femelement_sets_from_group_data(femmesh, fem_objects, shape_type="Volume"):
     # get femelements from femmesh groupdata for reference shapes of each obj.References
     count_femelements = 0
     sum_group_elements = []
@@ -703,19 +703,26 @@ def get_femelement_sets_from_group_data(femmesh, fem_objects):
         obj = fem_object["Object"]
         FreeCAD.Console.PrintMessage(
             "Constraint: {} --> We have mesh groups. "
-            "We will search for appropriate group data.\n".format(obj.Name)
+            "We will search for appropriate group data for {}.\n".format(obj.Name, shape_type)
         )
         # unique short identifier
         fem_object["ShortName"] = get_elset_short_name(obj, fem_object_i)
         # see comments over there !
-        group_elements = get_femmesh_groupdata_sets_by_name(femmesh, fem_object, "Volume")
+        group_elements = get_femmesh_groupdata_sets_by_name(femmesh, fem_object, shape_type)
         sum_group_elements += group_elements
         count_femelements += len(group_elements)
         fem_object["FEMElements"] = group_elements
     # check if all worked out well
-    if not femelements_count_ok(femmesh.VolumeCount, count_femelements):
+    if shape_type == "Face":
+        return True
+    count_ref = getattr(femmesh, f"{shape_type}Count")
+    if not femelements_count_ok(count_ref, count_femelements):
         FreeCAD.Console.PrintError(
-            "Error in get_femelement_sets_from_group_data -- > femelements_count_ok() failed!\n"
+            "Error in get_femelement_sets_from_group_data {} {}/{}-- > femelements_count_ok() failed!\n".format(
+                shape_type,
+                count_ref,
+                count_femelements,
+            )
         )
         return False
     else:
