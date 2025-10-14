@@ -34,8 +34,12 @@ from femmesh import meshtools
 
 def write_mesh(ccxwriter):
 
-    element_param = 1  # highest element order only
-    group_param = False  # do not write mesh group data
+    if False:
+        element_param = 1  # highest element order only
+        group_param = False  # do not write mesh group data
+    else:
+        element_param = 0  # highest element order only
+        group_param = False  # do not write mesh group data
 
     # Use reduced integration beam elements or truss elements if this is enabled in ccx solver settings
     vol_variant = "standard"
