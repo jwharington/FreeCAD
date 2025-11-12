@@ -23,6 +23,7 @@
         <file>icons/FEM_ConstraintForce.svg</file>
         <file>icons/FEM_ConstraintGear.svg</file>
         <file>icons/FEM_ConstraintHeatflux.svg</file>
+        <file>icons/FEM_ConstraintHydrostaticPressure.svg</file>
         <file>icons/FEM_ConstraintInitialFlowVelocity.svg</file>
         <file>icons/FEM_ConstraintInitialPressure.svg</file>
         <file>icons/FEM_ConstraintInitialTemperature.svg</file>

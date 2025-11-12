@@ -80,6 +80,7 @@ SET(FemExamples_SRCS
     femexamples/constraint_contact_solid_solid.py
     femexamples/constraint_section_print.py
     femexamples/constraint_selfweight_cantilever.py
+    femexamples/constraint_hydrostaticpressure.py
     femexamples/constraint_tie.py
     femexamples/constraint_transform_beam_hinged.py
     femexamples/constraint_transform_torque.py
@@ -197,6 +198,7 @@ SET(FemObjects_SRCS
     femobjects/constraint_magnetization.py
     femobjects/constraint_sectionprint.py
     femobjects/constraint_selfweight.py
+    femobjects/constraint_hydrostaticpressure.py
     femobjects/constraint_tie.py
     femobjects/element_fluid1D.py
     femobjects/element_geometry1D.py
@@ -511,6 +513,7 @@ SET(FemTools_SRCS
     femtools/ccxtools.py
     femtools/checksanalysis.py
     femtools/constants.py
+    femtools/distributions.py
     femtools/errors.py
     femtools/femutils.py
     femtools/geomtools.py
@@ -688,6 +691,7 @@ SET(FemGuiViewProvider_SRCS
     femviewprovider/view_constraint_magnetization.py
     femviewprovider/view_constraint_sectionprint.py
     femviewprovider/view_constraint_selfweight.py
+    femviewprovider/view_constraint_hydrostaticpressure.py
     femviewprovider/view_constraint_tie.py
     femviewprovider/view_element_fluid1D.py
     femviewprovider/view_element_geometry1D.py

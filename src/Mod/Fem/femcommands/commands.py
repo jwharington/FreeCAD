@@ -351,6 +351,21 @@ class _ConstraintSelfWeight(CommandManager):
         self.do_activated = "add_obj_on_gui_noset_edit"
 
 
+class _ConstraintHydrostaticPressure(CommandManager):
+    "The FEM_ConstraintHydrostaticPressure command definition"
+
+    def __init__(self):
+        super().__init__()
+        self.menutext = Qt.QT_TRANSLATE_NOOP(
+            "FEM_ConstraintHydrostaticPressure", "Hydrostatic Load"
+        )
+        self.tooltip = Qt.QT_TRANSLATE_NOOP(
+            "FEM_ConstraintHydrostaticPressure", "Creates a hydrostatic pressure load"
+        )
+        self.is_active = "with_analysis"
+        self.do_activated = "add_obj_on_gui_set_edit"
+
+
 class _ConstraintTie(CommandManager):
     "The FEM_ConstraintTie command definition"
 
@@ -1264,6 +1279,7 @@ FreeCADGui.addCommand("FEM_ConstraintInitialPressure", _ConstraintInitialPressur
 FreeCADGui.addCommand("FEM_ConstraintMagnetization", _ConstraintMagnetization())
 FreeCADGui.addCommand("FEM_ConstraintSectionPrint", _ConstraintSectionPrint())
 FreeCADGui.addCommand("FEM_ConstraintSelfWeight", _ConstraintSelfWeight())
+FreeCADGui.addCommand("FEM_ConstraintHydrostaticPressure", _ConstraintHydrostaticPressure())
 FreeCADGui.addCommand("FEM_ConstraintTie", _ConstraintTie())
 FreeCADGui.addCommand("FEM_ElementFluid1D", _ElementFluid1D())
 FreeCADGui.addCommand("FEM_ElementGeometry1D", _ElementGeometry1D())

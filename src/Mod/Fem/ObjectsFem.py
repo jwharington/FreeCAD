@@ -300,6 +300,20 @@ def makeConstraintSelfWeight(doc, name="ConstraintSelfWeight"):
     return obj
 
 
+def makeConstraintHydrostaticPressure(doc, name="ConstraintHydrostaticPressure"):
+    """makeConstraintHydrostaticPressure(document, [name]):
+    creates a hydrostatic pressure object"""
+    obj = doc.addObject("Fem::ConstraintPython", name)
+    from femobjects import constraint_hydrostaticpressure
+
+    constraint_hydrostaticpressure.ConstraintHydrostaticPressure(obj)
+    if FreeCAD.GuiUp:
+        from femviewprovider import view_constraint_hydrostaticpressure
+
+        view_constraint_hydrostaticpressure.VPConstraintHydrostaticPressure(obj.ViewObject)
+    return obj
+
+
 def makeConstraintTemperature(doc, name="ConstraintTemperature"):
     """makeConstraintTemperature(document, [name]):
     makes a Fem ConstraintTemperature object"""

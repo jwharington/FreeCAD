@@ -140,7 +140,8 @@ Gui::ToolBarItem* Workbench::setupToolBars() const
           << "FEM_ConstraintForce"
           << "FEM_ConstraintPressure"
           << "FEM_ConstraintCentrif"
-          << "FEM_ConstraintSelfWeight";
+          << "FEM_ConstraintSelfWeight"
+          << "FEM_ConstraintHydrostaticPressure";
 
     Gui::ToolBarItem* thermal = new Gui::ToolBarItem(root);
     thermal->setCommand("Thermal Boundary Conditions and Loads");
@@ -280,7 +281,8 @@ Gui::MenuItem* Workbench::setupMenuBar() const
           << "FEM_ConstraintForce"
           << "FEM_ConstraintPressure"
           << "FEM_ConstraintCentrif"
-          << "FEM_ConstraintSelfWeight";
+          << "FEM_ConstraintSelfWeight"
+          << "FEM_ConstraintHydrostaticPressure";
 
     Gui::MenuItem* thermal = new Gui::MenuItem;
     thermal->setCommand("&Thermal Boundary Conditions and Loads");

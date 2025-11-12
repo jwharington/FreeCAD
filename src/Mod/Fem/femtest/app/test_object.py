@@ -224,6 +224,10 @@ class TestObjectType(unittest.TestCase):
             "Fem::ConstraintSelfWeight", type_of_obj(ObjectsFem.makeConstraintSelfWeight(doc))
         )
         self.assertEqual(
+            "Fem::ConstraintHydrostaticPressure",
+            type_of_obj(ObjectsFem.makeConstraintHydrostaticPressure(doc)),
+        )
+        self.assertEqual(
             "Fem::ConstraintCentrif", type_of_obj(ObjectsFem.makeConstraintCentrif(doc))
         )
         self.assertEqual(
@@ -697,6 +701,14 @@ class TestObjectType(unittest.TestCase):
         self.assertTrue(is_derived_from(constraint_self_weight, "App::DocumentObject"))
         self.assertTrue(is_derived_from(constraint_self_weight, "Fem::ConstraintPython"))
         self.assertTrue(is_derived_from(constraint_self_weight, "Fem::ConstraintSelfWeight"))
+
+        # ConstraintHydrostaticPressure
+        constraint_hydrostaticpressure = ObjectsFem.makeConstraintHydrostaticPressure(doc)
+        self.assertTrue(is_derived_from(constraint_hydrostaticpressure, "App::DocumentObject"))
+        self.assertTrue(is_derived_from(constraint_hydrostaticpressure, "Fem::ConstraintPython"))
+        self.assertTrue(
+            is_derived_from(constraint_hydrostaticpressure, "Fem::ConstraintHydrostaticPressure")
+        )
 
         # ConstraintCentrif
         constraint_centrif = ObjectsFem.makeConstraintCentrif(doc)
