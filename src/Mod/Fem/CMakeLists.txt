@@ -189,6 +189,7 @@ SET(FemObjects_SRCS
     femobjects/constant_vacuumpermittivity.py
     femobjects/constraint_bodyheatsource.py
     femobjects/constraint_centrif.py
+    femobjects/constraint_jig321.py
     femobjects/constraint_currentdensity.py
     femobjects/constraint_electricchargedensity.py
     femobjects/constraint_electrostaticpotential.py
@@ -258,6 +259,7 @@ SET(FemSolverCalculix_SRCS
     femsolver/calculix/tasks.py
     femsolver/calculix/write_constraint_bodyheatsource.py
     femsolver/calculix/write_constraint_centrif.py
+    femsolver/calculix/write_constraint_jig321.py
     femsolver/calculix/write_constraint_contact.py
     femsolver/calculix/write_constraint_displacement.py
     femsolver/calculix/write_constraint_electricchargedensity.py
@@ -682,6 +684,7 @@ SET(FemGuiViewProvider_SRCS
     femviewprovider/view_constant_vacuumpermittivity.py
     femviewprovider/view_constraint_bodyheatsource.py
     femviewprovider/view_constraint_centrif.py
+    femviewprovider/view_constraint_jig321.py
     femviewprovider/view_constraint_currentdensity.py
     femviewprovider/view_constraint_electricchargedensity.py
     femviewprovider/view_constraint_electrostaticpotential.py

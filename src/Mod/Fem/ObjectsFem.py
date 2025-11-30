@@ -30,7 +30,6 @@ __url__ = "https://www.freecad.org"
 
 import FreeCAD
 
-
 # PythonFeatures from package femobjects
 # standard object name == class name == type without 'Fem::'
 
@@ -101,6 +100,20 @@ def makeConstraintCentrif(doc, name="ConstraintCentrif"):
         from femviewprovider import view_constraint_centrif
 
         view_constraint_centrif.VPConstraintCentrif(obj.ViewObject)
+    return obj
+
+
+def makeConstraintJig321(doc, name="ConstraintJig321"):
+    """makeConstraintJig321(document, [name]):
+    creates a jig321 object to define 3-2-1 jig body displacement constraint"""
+    obj = doc.addObject("Fem::ConstraintPython", name)
+    from femobjects import constraint_jig321
+
+    constraint_jig321.ConstraintJig321(obj)
+    if FreeCAD.GuiUp:
+        from femviewprovider import view_constraint_jig321
+
+        view_constraint_jig321.VPConstraintJig321(obj.ViewObject)
     return obj
 
 

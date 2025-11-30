@@ -140,6 +140,7 @@ Gui::ToolBarItem* Workbench::setupToolBars() const
           << "FEM_ConstraintForce"
           << "FEM_ConstraintPressure"
           << "FEM_ConstraintCentrif"
+          << "FEM_ConstraintJig321"
           << "FEM_ConstraintSelfWeight"
           << "FEM_ConstraintHydrostaticPressure";
 
@@ -281,6 +282,7 @@ Gui::MenuItem* Workbench::setupMenuBar() const
           << "FEM_ConstraintForce"
           << "FEM_ConstraintPressure"
           << "FEM_ConstraintCentrif"
+          << "FEM_ConstraintJig321"
           << "FEM_ConstraintSelfWeight"
           << "FEM_ConstraintHydrostaticPressure";
 

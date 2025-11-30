@@ -31,9 +31,9 @@ __url__ = "https://www.freecad.org"
 import time
 
 import FreeCAD
+from femtools.femutils import type_of_obj
 
 from femmesh import meshtools
-from femtools.femutils import type_of_obj
 
 
 class MeshSetsGetter:
@@ -148,6 +148,7 @@ class MeshSetsGetter:
         # constraints node sets getter
         self.get_constraints_fixed_nodes()
         self.get_constraints_displacement_nodes()
+        self.get_constraints_jig321_nodes()
         self.get_constraints_rigidbody_nodes()
         self.get_constraints_planerotation_nodes()
 
@@ -231,6 +232,15 @@ class MeshSetsGetter:
             # add nodes to constraint_conflict_nodes, needed by constraint plane rotation
             for node in femobj["Nodes"]:
                 self.constraint_conflict_nodes.append(node)
+
+    def get_constraints_jig321_nodes(self):
+        if not self.member.cons_jig321:
+            return
+        # get nodes
+        for femobj in self.member.cons_jig321:
+            # femobj --> dict, FreeCAD document object is femobj["Object"]
+            print_obj_info(femobj["Object"])
+            femobj["Nodes"] = meshtools.get_femnodes_by_femobj_with_references(self.femmesh, femobj)
 
     def get_constraints_planerotation_nodes(self):
         if not self.member.cons_planerotation:
