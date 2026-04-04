@@ -76,7 +76,7 @@ Qt::KeyboardModifiers getFineSnapModifier()
         getGizmoParameterGroup()->GetInt("FineSnapModifier", static_cast<int>(Qt::ShiftModifier))
     );
     auto result = static_cast<Qt::KeyboardModifiers>(modifier);
-    switch (result.toInt()) {
+    switch (static_cast<int>(result)) {
         case Qt::ShiftModifier:
         case Qt::ControlModifier:
             return result;
