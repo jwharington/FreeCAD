@@ -843,10 +843,13 @@ Qt::KeyboardModifier GizmoContainer::getFineSnapModifier()
     auto modifier = static_cast<Qt::KeyboardModifier>(
         getGizmoParameterGroup()->GetInt("FineSnapModifier", static_cast<long>(Qt::ShiftModifier))
     );
-    if (modifier == Qt::ControlModifier) {
-        return modifier;
+    switch (static_cast<int>(modifier)) {
+        case Qt::ShiftModifier:
+        case Qt::ControlModifier:
+            return modifier;
+        default:
+            return Qt::ShiftModifier;
     }
-    return Qt::ShiftModifier;
 }
 
 InputHint::UserInput GizmoContainer::getFineSnapKey()
