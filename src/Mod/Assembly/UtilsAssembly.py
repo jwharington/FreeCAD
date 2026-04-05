@@ -25,6 +25,7 @@ import math
 
 import FreeCAD as App
 import Part
+from FreeCAD import Console
 
 if App.GuiUp:
     import FreeCADGui as Gui
@@ -659,6 +660,19 @@ def getJointGroup(assembly):
     return joint_group
 
 
+def getForceGroup(assembly):
+    force_group = None
+
+    for obj in assembly.OutList:
+        if obj.TypeId == "Assembly::ForceGroup":
+            force_group = obj
+            break
+
+    if not force_group:
+        force_group = assembly.newObject("Assembly::ForceGroup", "Forces")
+    return force_group
+
+
 def getViewGroup(assembly):
     view_group = None
 
@@ -983,9 +997,11 @@ So here we want to find a placement that corresponds to a local coordinate syste
 
 def findPlacement(ref, ignoreVertex=False):
     if not isRefValid(ref, 2):
+        Console.PrintMessage("no ref valid\n")
         return App.Placement()
     obj = getObject(ref)
     if not obj:
+        Console.PrintMessage("no object\n")
         return App.Placement()
 
     elt = getElementName(ref[1][0])

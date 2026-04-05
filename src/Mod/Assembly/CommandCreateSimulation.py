@@ -21,39 +21,37 @@
 #                                                                           *
 # **************************************************************************/
 
-import re
 import os
-import time
+import re
 import tempfile
+import time
 from pathlib import Path
 
 import FreeCAD as App
-
+from Part import Compound, LineSegment
 from pivy import coin
-from Part import LineSegment, Compound
-
 from PySide.QtCore import QT_TRANSLATE_NOOP
 
 if App.GuiUp:
     import FreeCADGui as Gui
     from PySide import QtCore, QtGui, QtWidgets
+    from PySide.QtCore import QPoint, Qt
+    from PySide.QtGui import QCursor, QGuiApplication, QIcon, QMessageBox
     from PySide.QtWidgets import (
-        QPushButton,
-        QMenu,
-        QDialog,
         QComboBox,
-        QLineEdit,
-        QGridLayout,
-        QLabel,
+        QDialog,
         QDialogButtonBox,
         QFileDialog,
+        QGridLayout,
+        QLabel,
+        QLineEdit,
         QProgressDialog,
+        QPushButton,
     )
-    from PySide.QtCore import Qt, QPoint
-    from PySide.QtGui import QCursor, QIcon, QGuiApplication, QMessageBox
 
-import UtilsAssembly
 import Preferences
+import UtilsAssembly
+from FemLink.LinkBody import LinkBody
 
 translate = App.Qt.translate
 
@@ -83,7 +81,7 @@ class CommandCreateSimulation:
             return False
 
         assembly = UtilsAssembly.activeAssembly()
-        joint_types = ["Revolute", "Slider", "Cylindrical"]
+        joint_types = ["Revolute", "Slider", "Cylindrical", "Ball"]
         joints = UtilsAssembly.getJointsOfType(assembly, joint_types)
         return len(joints) > 0
 
@@ -165,11 +163,24 @@ class Simulation:
                 locked=True,
             )
 
+        if not hasattr(feaPy, "Dynamic"):
+            feaPy.addProperty(
+                "App::PropertyBool",
+                "Dynamic",
+                "Simulation",
+                QT_TRANSLATE_NOOP(
+                    "App::Property",
+                    "Simulation dynamic.",
+                ),
+                locked=True,
+            )
+
         feaPy.aTimeStart = 0.0
         feaPy.bTimeEnd = 1.0
         feaPy.cTimeStepOutput = 1.0e-2
         feaPy.fGlobalErrorTolerance = 1.0e-6
         feaPy.jFramesPerSecond = 30
+        feaPy.Dynamic = False
 
         self.motionsChangedCallback = None
 
@@ -936,6 +947,14 @@ class TaskAssemblyCreateSimulation(QtCore.QObject):
         self.form.FrameLabel.setText(translate("Assembly", "Frame" + " " + str(val)))
         time = float(val * self.simFeaturePy.cTimeStepOutput)
         self.form.FrameTimeLabel.setText(f"{time:.2f} s")
+        self.recomputeFemLinks()
+
+    def recomputeFemLinks(self):
+        objs = self.assembly.getObjectsOfType("App::FeaturePython")
+        objs += self.assembly.getObjectsOfType("Part::FeaturePython")
+        for obj in objs:
+            if isinstance(obj.Proxy, LinkBody):
+                obj.recompute()
 
     def onFramesPerSecondChanged(self):
         self.simFeaturePy.jFramesPerSecond = self.form.FramesPerSecondSpinBox.value()
