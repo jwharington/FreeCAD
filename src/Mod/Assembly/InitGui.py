@@ -62,10 +62,20 @@ class AssemblyWorkbench(Workbench):
 
         # load the builtin modules
         import AssemblyGui
+        import CommandCreateAssembly
+        import CommandCreateBom
+        import CommandCreateForce
+        import CommandCreateJoint
+        import CommandCreateSimulation
+        import CommandCreateView
+        import CommandExportASMT
+        import CommandInsertLink
+        import CommandInsertNewPart
+        import CommandSolveAssembly
+        import FemLink
+        import Preferences
         from PySide import QtCore, QtGui
         from PySide.QtCore import QT_TRANSLATE_NOOP
-        import CommandCreateAssembly, CommandInsertLink, CommandInsertNewPart, CommandCreateJoint, CommandSolveAssembly, CommandExportASMT, CommandCreateView, CommandCreateSimulation, CommandCreateBom
-        import Preferences
 
         FreeCADGui.addLanguagePath(":/translations")
         FreeCADGui.addIconPath(":/icons")
@@ -109,13 +119,26 @@ class AssemblyWorkbench(Workbench):
             "Assembly_CreateJointGearBelt",
         ]
 
+        cmdListForces = [
+            "Assembly_CreateForceTorqueGeneral",
+            "Assembly_CreateForceTorqueInLine",
+        ]
+
         self.appendToolbar(QT_TRANSLATE_NOOP("Workbench", "Assembly"), cmdList)
         self.appendToolbar(QT_TRANSLATE_NOOP("Workbench", "Assembly Joints"), cmdListJoints)
+        self.appendToolbar(QT_TRANSLATE_NOOP("Workbench", "Assembly Forces"), cmdListForces)
 
         self.appendMenu(
             [QT_TRANSLATE_NOOP("Workbench", "&Assembly")],
-            cmdList + cmdListMenuOnly + ["Separator"] + cmdListJoints,
+            cmdList
+            + cmdListMenuOnly
+            + ["Separator"]
+            + cmdListJoints
+            + ["Separator"]
+            + cmdListForces,
         )
+
+        FemLink.InitGui(self)
 
     def Activated(self):
         # update the translation engine

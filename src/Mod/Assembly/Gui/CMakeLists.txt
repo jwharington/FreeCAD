@@ -28,6 +28,7 @@ set(AssemblyGui_UIC_SRCS
     TaskAssemblyCreateSimulation.ui
     TaskAssemblyCreateView.ui
     TaskAssemblyInsertLink.ui
+    TaskAssemblyLinkBody.ui
     Assembly.ui
 )
 
