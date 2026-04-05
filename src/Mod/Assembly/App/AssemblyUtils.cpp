@@ -50,6 +50,7 @@
 #include "AssemblyLink.h"
 
 #include "JointGroup.h"
+#include "ForceGroup.h"
 
 
 namespace PartApp = Part;
@@ -391,6 +392,27 @@ JointGroup* getJointGroup(const App::Part* part)
     return nullptr;
 }
 
+
+ForceGroup* getForceGroup(const App::Part* part)
+{
+    if (!part) {
+        return nullptr;
+    }
+
+    const auto* doc = part->getDocument();
+
+    const auto forceGroups = doc->getObjectsOfType(ForceGroup::getClassTypeId());
+    if (forceGroups.empty()) {
+        return nullptr;
+    }
+    for (auto forceGroup : forceGroups) {
+        if (part->hasObject(forceGroup)) {
+            return freecad_cast<ForceGroup*>(forceGroup);
+        }
+    }
+    return nullptr;
+}
+
 void setJointActivated(const App::DocumentObject* joint, bool val)
 {
     if (!joint) {
@@ -428,6 +450,22 @@ double getJointDistance(const App::DocumentObject* joint, const char* propertyNa
     return prop->getValue();
 }
 
+
+std::string getForceFunction(const App::DocumentObject* force, const char* propName)
+{
+    if (!force) {
+        return "";
+    }
+
+    const auto* prop = force->getPropertyByName<App::PropertyString>(propName);
+    if (!prop) {
+        return "";
+    }
+
+    return prop->getValue();
+}
+
+
 double getJointAngle(const App::DocumentObject* joint)
 {
     return getJointDistance(joint, "Angle");
@@ -455,6 +493,36 @@ JointType getJointType(const App::DocumentObject* joint)
     }
 
     return static_cast<JointType>(prop->getValue());
+}
+
+
+ForceType getForceType(const App::DocumentObject* force)
+{
+    if (!force) {
+        return ForceType::General;
+    }
+
+    const auto* prop = force->getPropertyByName<App::PropertyEnumeration>("ForceType");
+    if (!prop) {
+        return ForceType::General;
+    }
+
+    return static_cast<ForceType>(prop->getValue());
+}
+
+
+MarkerKSign getForceMarkerKSign(const App::DocumentObject* force)
+{
+    if (!force) {
+        return MarkerKSign::O;
+    }
+
+    const auto* prop = force->getPropertyByName<App::PropertyEnumeration>("MarkerKSign");
+    if (!prop) {
+        return MarkerKSign::O;
+    }
+
+    return static_cast<MarkerKSign>(prop->getValue());
 }
 
 std::vector<std::string> getSubAsList(const App::PropertyXLinkSub* prop)

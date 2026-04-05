@@ -36,19 +36,26 @@
 #include <App/PropertyPythonObject.h>
 #include <Base/Console.h>
 #include <Base/Placement.h>
+#include <Base/Quantity.h>
 #include <Base/Rotation.h>
 #include <Base/Tools.h>
 #include <Base/Interpreter.h>
 
 #include <Mod/Part/App/TopoShape.h>
+#include <Mod/Part/App/Attacher.h>
 #include <Mod/Part/App/AttachExtension.h>
+#include <Mod/Part/App/PartFeature.h>
+#include <GProp_GProps.hxx>
+#include <GProp_PrincipalProps.hxx>
 
-#include <FreeCADMbD/CREATE.h>
 #include <FreeCADMbD/ASMTSimulationParameters.h>
 #include <FreeCADMbD/ASMTAssembly.h>
 #include <FreeCADMbD/ASMTMarker.h>
 #include <FreeCADMbD/ASMTPart.h>
 #include <FreeCADMbD/ASMTJoint.h>
+#if __has_include(<OndselSolver/JointIJ.h>)
+# include <FreeCADMbD/JointIJ.h>
+#endif
 #include <FreeCADMbD/ASMTAngleJoint.h>
 #include <FreeCADMbD/ASMTFixedJoint.h>
 #include <FreeCADMbD/ASMTGearJoint.h>
@@ -74,14 +81,24 @@
 #include <FreeCADMbD/ASMTSphSphJoint.h>
 #include <FreeCADMbD/ASMTTime.h>
 #include <FreeCADMbD/ASMTConstantGravity.h>
+#if __has_include(<OndselSolver/ASMTForceTorqueGeneral.h>) \
+    && __has_include(<OndselSolver/ASMTForceTorqueInLine.h>)
+# define HAVE_ONDSELSOLVER_FORCE_TYPES 1
+# include <FreeCADMbD/ASMTForceTorqueGeneral.h>
+# include <FreeCADMbD/ASMTForceTorqueInLine.h>
+#else
+# define HAVE_ONDSELSOLVER_FORCE_TYPES 0
+#endif
 #include <FreeCADMbD/ExternalSystem.h>
 #include <FreeCADMbD/enum.h>
+#include <FreeCADMbD/MomentOfInertiaSolver.h>
 
 #include "AssemblyLink.h"
 #include "AssemblyObject.h"
 #include "AssemblyObjectPy.h"
 #include "AssemblyUtils.h"
 #include "JointGroup.h"
+#include "ForceGroup.h"
 #include "ViewGroup.h"
 
 FC_LOG_LEVEL_INIT("Assembly", true, true, true)
@@ -91,6 +108,33 @@ using namespace MbD;
 
 
 namespace PartApp = Part;
+
+namespace
+{
+
+template<typename T>
+void setMarkerICompat(const std::shared_ptr<T>& item, const std::shared_ptr<MbD::ASMTMarker>& marker)
+{
+    if constexpr (requires { item->setMarkerI(marker); }) {
+        item->setMarkerI(marker);
+    }
+    else {
+        item->setMarkerI(marker->name);
+    }
+}
+
+template<typename T>
+void setMarkerJCompat(const std::shared_ptr<T>& item, const std::shared_ptr<MbD::ASMTMarker>& marker)
+{
+    if constexpr (requires { item->setMarkerJ(marker); }) {
+        item->setMarkerJ(marker);
+    }
+    else {
+        item->setMarkerJ(marker->name);
+    }
+}
+
+}  // namespace
 
 
 // ================================ Assembly Object ============================
@@ -107,8 +151,6 @@ AssemblyObject::AssemblyObject()
     , lastHasMalformedConstraints(false)
     , lastSolverStatus(0)
 {
-    mbdAssembly->externalSystem->freecadAssemblyObject = this;
-
     lastDoF = numberOfComponents() * 6;
     signalSolverUpdate();
 }
@@ -153,6 +195,7 @@ int AssemblyObject::solve(bool enableRedo)
 
     mbdAssembly = makeMbdAssembly();
     objectPartMap.clear();
+    objectJointMap.clear();
     motions.clear();
 
     auto groundedObjs = fixGroundedParts();
@@ -166,6 +209,9 @@ int AssemblyObject::solve(bool enableRedo)
     removeUnconnectedJoints(joints, groundedObjs);
 
     jointParts(joints);
+
+    std::vector<App::DocumentObject*> forces = getForces(updateJCS);
+    forceParts(forces);
 
     if (enableRedo) {
         savePlacementsForUndo();
@@ -225,7 +271,7 @@ void AssemblyObject::updateSolveStatus()
 
 
     // Iterate through all joints and motions in the MBD system
-    mbdAssembly->mbdSystem->jointsMotionsDo([&](std::shared_ptr<MbD::Joint> jm) {
+    mbdAssembly->mbdSystem->jointsMotionsLimitsDo([&](std::shared_ptr<MbD::ConstraintSet> jm) {
         if (!jm) {
             return;
         }
@@ -277,6 +323,7 @@ int AssemblyObject::generateSimulation(App::DocumentObject* sim)
 {
     mbdAssembly = makeMbdAssembly();
     objectPartMap.clear();
+    objectJointMap.clear();
 
     motions = getMotionsFromSimulation(sim);
 
@@ -292,20 +339,340 @@ int AssemblyObject::generateSimulation(App::DocumentObject* sim)
 
     jointParts(joints);
 
+    std::vector<App::DocumentObject*> forces = getForces();
+    forceParts(forces);
+
     create_mbdSimulationParameters(sim);
 
+    {
+        double g = -9810.0;
+        auto* gprop = dynamic_cast<App::PropertyFloat*>(
+            sim->getPropertyByName("GravitationalAcceleration")
+        );
+        if (gprop) {
+            g = gprop->getValue();
+        }
+        else {
+            g = App::GetApplication()
+                    .GetParameterGroupByPath("User parameter:BaseApp/Preferences/Mod/Assembly")
+                    ->GetFloat("GravitationalAcceleration", g);
+        }
+
+        auto constantGravity = ASMTConstantGravity::With();
+        auto gAcceleration = std::make_shared<FullColumn<double>>(ListD {0.0, 0.0, g});
+        constantGravity->setg(gAcceleration);
+        mbdAssembly->setConstantGravity(constantGravity);
+    }
+
+    auto* prop = dynamic_cast<App::PropertyBool*>(sim->getPropertyByName("Dynamic"));
+    const bool dynamic = (prop && prop->getValue());
+    int retval = 0;
+
     try {
-        mbdAssembly->runKINEMATIC();
+        if (dynamic) {
+            mbdAssembly->runDYNAMIC();
+        }
+        else {
+            mbdAssembly->runKINEMATIC();
+        }
+    }
+    catch (const std::exception& e) {
+        FC_ERR("Simulation failed: " << e.what());
+        retval = -1;
     }
     catch (...) {
+        FC_ERR("Solve failed: unhandled exception");
+        retval = -1;
+    }
+    if (retval < 0) {
         Base::Console().error("Generation of simulation failed\n");
-        motions.clear();
-        return -1;
     }
 
     motions.clear();
 
     return 0;
+}
+
+
+AssemblyObject::JointPartInfo AssemblyObject::getJointPart(App::DocumentObject* joint, const int index)
+{
+    const char* ref_name = (index == 0) ? "Reference1" : "Reference2";
+    const char* plc_name = (index == 0) ? "Placement1" : "Placement2";
+    JointPartInfo info;
+    info.joint = joint;
+    info.jointName = joint->getFullLabel();  // getNameInDocument();
+    auto* pPlc = dynamic_cast<App::PropertyPlacement*>(joint->getPropertyByName(plc_name));
+    if (pPlc) {
+        info.placement = pPlc->getValue();
+    }
+    info.part = getMovingPartFromRef(joint, ref_name);
+    if (!info.part) {
+        info.part = getObjFromRef(joint, ref_name);
+    }
+    if (!info.part) {
+        auto* pJoint = dynamic_cast<App::PropertyXLinkSub*>(joint->getPropertyByName("Joint"));
+        if (pJoint) {
+            App::DocumentObject* motionJoint = pJoint->getValue();
+            return getJointPart(motionJoint, index);
+        }
+    }
+    return info;
+}
+
+
+std::ostream& operator<<(std::ostream& os, const Base::Vector3d& vector)
+{
+    os << vector.x << " " << vector.y << " " << vector.z;
+    return os;
+}
+
+
+Base::Vector3d m2f(FColDsptr vec)
+{
+    return Base::Vector3d(vec->at(0), vec->at(1), vec->at(2));
+}
+
+
+void AssemblyObject::ReactionInfo::print() const
+{
+    std::cout << "    Reaction at joint: " << jointInfo.jointName << "\n";
+    std::cout << "      position: " << position << "\n";
+    std::cout << "      force:    " << force << "\n";
+    std::cout << "      torque:   " << torque << "\n";
+    std::cout << "      side:   " << side << "\n";
+}
+
+
+void setJointProperty(
+    App::DocumentObject* joint,
+    const Base::Vector3d& vec,
+    const char* propName,
+    const int side,
+    const bool acc = false
+)
+{
+    const std::string suffix = std::to_string(side + 1);
+    const std::string fullPropName = std::string(propName) + suffix;
+    const std::string groupName = std::string("Reaction") + suffix;
+    App::Property* prop = joint->getPropertyByName(fullPropName.c_str());
+    if (!prop) {
+        prop = joint->addDynamicProperty(
+            "App::PropertyVector",
+            fullPropName.c_str(),
+            groupName.c_str(),
+            nullptr,
+            App::Prop_ReadOnly
+        );
+    }
+    if (prop) {
+        auto vprop = dynamic_cast<App::PropertyVector*>(prop);
+        if (vprop) {
+            if (acc) {
+                vprop->setValue(vec + vprop->getValue());
+            }
+            else {
+                vprop->setValue(Base::Vector3d(0, 0, 0));
+            }
+        }
+    }
+}
+
+
+void setBodyPropertyScalar(App::DocumentObject* body, const double value, const char* propName)
+{
+    App::Property* prop = body->getPropertyByName(propName);
+    if (!prop) {
+        prop = body->addDynamicProperty(
+            "App::PropertyFloat",
+            propName,
+            "Dynamics",
+            nullptr,
+            App::Prop_ReadOnly
+        );
+    }
+    if (prop) {
+        auto vprop = dynamic_cast<App::PropertyFloat*>(prop);
+        if (vprop) {
+            vprop->setValue(value);
+        }
+    }
+}
+
+
+void setBodyProperty(App::DocumentObject* body, const Base::Vector3d& vec, const char* propName)
+{
+    App::Property* prop = body->getPropertyByName(propName);
+    if (!prop) {
+        prop = body->addDynamicProperty(
+            "App::PropertyVector",
+            propName,
+            "Dynamics",
+            nullptr,
+            App::Prop_ReadOnly
+        );
+    }
+    if (prop) {
+        auto vprop = dynamic_cast<App::PropertyVector*>(prop);
+        if (vprop) {
+            vprop->setValue(vec);
+        }
+    }
+}
+
+
+AssemblyObject::ReactionInfo AssemblyObject::getReactionInfo(
+    const AssemblyObject::JointPartInfo& info,
+    const Base::Vector3d& cFIO,
+    const Base::Vector3d& cTIO,
+    const int side
+)
+{
+    const Base::Placement base_plc = getPlacementFromProp(info.part->getLinkedObject(), "Placement");
+    const Base::Placement body_plc = getPlacementFromProp(info.part, "Placement").inverse();
+    ReactionInfo reaction_info;
+    reaction_info.jointInfo = info;
+    reaction_info.position = (base_plc * info.placement).getPosition();
+    const Base::Rotation body_rot = base_plc.getRotation() * body_plc.getRotation();
+    reaction_info.force = body_rot.multVec(cFIO);
+    reaction_info.torque = body_rot.multVec(cTIO);
+    reaction_info.side = side;
+    // these are relative to body coords of attached body
+    return reaction_info;
+}
+
+
+void AssemblyObject::jointInfoForFrame(const size_t index)
+{
+    std::unordered_map<App::DocumentObject*, std::vector<ReactionInfo>> objectReactionMap;
+
+    for (auto& pair : objectJointMap) {
+        App::DocumentObject* joint = pair.first;
+        auto mbdItemIJ = pair.second.joint;
+
+        // aFIO = F on I, aTIO = T on I
+        // std::cout << "item " << mbdItemIJ->name << " index: " << index << std::endl;
+        try {
+            const Base::Vector3d aFIO = m2f(mbdItemIJ->aFIO(index));
+            // std::cout << "    inertial F: " << aFIO << "\n" << std::flush;
+
+            const Base::Vector3d aTIO = m2f(mbdItemIJ->aTIO(index));
+            // std::cout << "    inertial T: " << aTIO << "\n" << std::flush;
+
+            for (int j = 0; j < 2; j++) {
+                const JointPartInfo info = getJointPart(joint, j);
+                if (!info.part) {
+                    std::cout << "    no part for side " << j << " of joint "
+                              << joint->getFullName() << "\n";
+                    continue;
+                }
+
+                const float sign = (j == 0) ? 1.0f : -1.0f;
+                const ReactionInfo reaction_info = getReactionInfo(info, aFIO * sign, aTIO * sign, j);
+                objectReactionMap[info.part].push_back(reaction_info);
+                // these are relative to body coords of attached body
+            }
+        }
+        catch (const std::exception& e) {
+            FC_ERR("Simulation failed: " << e.what());
+            std::cerr << "exception handling joint info for frame " << index << std::endl
+                      << std::flush;
+        }
+        catch (...) {
+            std::cerr << "exception handling joint info for frame " << index << std::endl
+                      << std::flush;
+        }
+    }
+
+    // std::cout << "time: " << index << "\n";
+    // std::cout << std::flush;
+
+    for (auto& pair : objectReactionMap) {
+        App::DocumentObject* part = pair.first;
+        std::shared_ptr<ASMTPart> mbdPart = nullptr;
+        for (auto& o_pair : objectPartMap) {
+            App::DocumentObject* o_part = o_pair.first;
+            if (o_part == part) {
+                mbdPart = o_pair.second.part;
+                break;
+            }
+        }
+        if (!mbdPart) {
+            continue;
+        }
+        double x, y, z;
+        mbdPart->principalMassMarker->getPosition3D(x, y, z);
+
+        const Base::Placement base_plc = getPlacementFromProp(part->getLinkedObject(), "Placement");
+        const Base::Placement body_plc = getPlacementFromProp(part, "Placement").inverse();
+        const Base::Rotation body_rot = base_plc.getRotation() * body_plc.getRotation();
+        const Base::Vector3d com = base_plc.toMatrix() * Base::Vector3d(x, y, z);
+
+        const double mass = mbdPart->principalMassMarker->mass;
+        setBodyPropertyScalar(part, mass * 1000.0, "Mass");
+
+        // std::cout << "Part: "
+        //           << part->getFullLabel()
+        //           // << " mass: " << mass
+        //           << std::endl
+        //           << std::flush;
+
+        // std::cout << "  Position of Mass Center: " << com << "\n";
+
+        const Base::Vector3d velocity = body_rot.multVec(m2f(mbdPart->getVelocity3D(index)));
+        const Base::Vector3d angularVelocity = body_rot.multVec(m2f(mbdPart->getOmega3D(index)));
+        const Base::Vector3d acceleration = body_rot.multVec(m2f(mbdPart->getAcceleration3D(index)))
+            - body_rot.multVec(m2f(mbdAssembly->constantGravity->getg()));
+        const Base::Vector3d angularAcceleration = body_rot.multVec(m2f(mbdPart->getAlpha3D(index)));
+
+        // std::cout << "  Velocity:            " << velocity << "\n";
+        // std::cout << "  Angular Velocity:    " << angularVelocity << "\n";
+        // std::cout << "  Acceleration total:        " << acceleration << "\n";
+        // std::cout << "  Acceleration raw:        "
+        //           << body_rot.multVec(m2f(mbdPart->getAcceleration3D(index))) << "\n";
+        // std::cout << "  Acceleration gravity:        "
+        //           << body_rot.multVec(m2f(mbdAssembly->constantGravity->getg())) << "\n";
+        // std::cout << std::flush;
+        // std::cout << "  Angular Acceleration:" << angularAcceleration << "\n";
+
+        setBodyProperty(part, com, "CenterOfMass");
+        setBodyProperty(part, velocity, "LinearVelocity");
+        setBodyProperty(part, angularVelocity, "AngularVelocity");
+        setBodyProperty(part, acceleration, "LinearAcceleration");
+        setBodyProperty(part, angularAcceleration, "AngularAcceleration");
+
+        for (int acc = 0; acc < 2; ++acc) {
+            for (auto& reaction_info : pair.second) {
+                // reaction_info.print();
+                setJointProperty(
+                    reaction_info.jointInfo.joint,
+                    reaction_info.position,
+                    "Origin",
+                    reaction_info.side,
+                    acc
+                );
+            }
+        }
+
+        for (int acc = 0; acc < 2; ++acc) {
+            for (auto& reaction_info : pair.second) {
+                setJointProperty(
+                    reaction_info.jointInfo.joint,
+                    reaction_info.force,
+                    "Force",
+                    reaction_info.side,
+                    acc
+                );
+                setJointProperty(
+                    reaction_info.jointInfo.joint,
+                    reaction_info.torque,
+                    "Torque",
+                    reaction_info.side,
+                    acc
+                );
+            }
+        }
+        // std::cout << std::flush;
+    }
 }
 
 std::vector<App::DocumentObject*> AssemblyObject::getMotionsFromSimulation(App::DocumentObject* sim)
@@ -324,11 +691,12 @@ std::vector<App::DocumentObject*> AssemblyObject::getMotionsFromSimulation(App::
 
 int Assembly::AssemblyObject::updateForFrame(size_t index)
 {
+    // std::cout << "update for frame " << index << "\n";
     if (!mbdAssembly) {
         return -1;
     }
 
-    auto nfrms = mbdAssembly->numberOfFrames();
+    auto nfrms = numberOfFrames();
     if (index >= nfrms) {
         return -1;
     }
@@ -337,12 +705,22 @@ int Assembly::AssemblyObject::updateForFrame(size_t index)
     setNewPlacements();
     auto jointDocs = getJoints();
     redrawJointPlacements(jointDocs);
+    jointInfoForFrame(index);
+
+    // TODO JMW
+    // auto forceDocs = getForces(updateJCS);
+    // redrawForcePlacements(forceDocs);
+    // forceInfoForFrame(index);
+
     return 0;
 }
 
 size_t Assembly::AssemblyObject::numberOfFrames()
 {
-    return mbdAssembly->numberOfFrames();
+    if (mbdAssembly->times == nullptr) {
+        return 0;
+    }
+    return mbdAssembly->times->size();
 }
 
 void AssemblyObject::preDrag(std::vector<App::DocumentObject*> dragParts)
@@ -399,11 +777,11 @@ void AssemblyObject::doDragStep()
             // Update the MBD part's position
             Base::Placement plc = getPlacementFromProp(part, "Placement");
             Base::Vector3d pos = plc.getPosition();
+
             mbdPart->updateMbDFromPosition3D(
                 std::make_shared<FullColumn<double>>(ListD {pos.x, pos.y, pos.z})
             );
-
-            // Update the MBD part's rotation
+            // // Update the MBD part's rotation
             Base::Rotation rot = plc.getRotation();
             Base::Matrix4D mat;
             rot.getValue(mat);
@@ -538,7 +916,8 @@ void AssemblyObject::undoSolve()
     previousPositions.clear();
 
     // update joint placements:
-    getJoints();
+    getJoints(/*updateJCS*/ true, /*delBadJoints*/ false);
+    getForces(/*updateJCS*/ true, /*delBadForces*/ false);
 }
 
 void AssemblyObject::clearUndo()
@@ -550,11 +929,15 @@ void AssemblyObject::exportAsASMT(std::string fileName)
 {
     mbdAssembly = makeMbdAssembly();
     objectPartMap.clear();
+    objectJointMap.clear();
     fixGroundedParts();
 
     std::vector<App::DocumentObject*> joints = getJoints();
 
     jointParts(joints);
+
+    std::vector<App::DocumentObject*> forces = getForces();
+    forceParts(forces);
 
     mbdAssembly->outputFile(fileName);
 }
@@ -580,10 +963,17 @@ void AssemblyObject::setNewPlacements()
         if (!pair.second.offsetPlc.isIdentity()) {
             newPlacement = newPlacement * pair.second.offsetPlc;
         }
+        // JMW can get accel3d etc
         if (!propPlacement->getValue().isSame(newPlacement)) {
             propPlacement->setValue(newPlacement);
             obj->purgeTouched();
         }
+
+        // std::vector<App::DocumentObject*> joints = getJointsOfPart(obj);
+        // std::cout << "  part: " << obj->getFullName() << std::endl;
+        // for (auto joint : joints) {
+        //     std::cout << "    joint: " << joint->getFullName() << std::endl;
+        // }
     }
 }
 
@@ -630,15 +1020,13 @@ void AssemblyObject::redrawJointPlacement(App::DocumentObject* joint)
 
 std::shared_ptr<ASMTAssembly> AssemblyObject::makeMbdAssembly()
 {
-    auto assembly = CREATE<ASMTAssembly>::With();
-    assembly->externalSystem->freecadAssemblyObject = this;
+    auto assembly = ASMTAssembly::With();
     assembly->setName("OndselAssembly");
 
     ParameterGrp::handle hPgr = App::GetApplication().GetParameterGroupByPath(
         "User parameter:BaseApp/Preferences/Mod/Assembly"
     );
 
-    assembly->setDebug(hPgr->GetBool("LogSolverDebug", false));
     return assembly;
 }
 
@@ -703,6 +1091,11 @@ JointGroup* AssemblyObject::getJointGroup() const
     return Assembly::getJointGroup(this);
 }
 
+ForceGroup* AssemblyObject::getForceGroup() const
+{
+    return Assembly::getForceGroup(this);
+}
+
 ViewGroup* AssemblyObject::getExplodedViewGroup() const
 {
     App::Document* doc = getDocument();
@@ -719,7 +1112,57 @@ ViewGroup* AssemblyObject::getExplodedViewGroup() const
     return nullptr;
 }
 
-std::vector<App::DocumentObject*> AssemblyObject::getJoints(bool delBadJoints, bool subJoints)
+std::vector<App::DocumentObject*> AssemblyObject::getForces(bool updateJCS, bool delBadForces)
+{
+    std::vector<App::DocumentObject*> forces = {};
+
+    ForceGroup* forceGroup = getForceGroup();
+    if (!forceGroup) {
+        // std::cerr << "No ForceGroup found in Assembly" << std::endl << std::flush;
+        return {};
+    }
+
+    Base::PyGILStateLocker lock;
+    for (auto force : forceGroup->getObjects()) {
+        if (!force) {
+            continue;
+        }
+
+        auto* prop = dynamic_cast<App::PropertyBool*>(force->getPropertyByName("Suppressed"));
+        if (force->isError() || !prop || prop->getValue()) {
+            // Filter grounded forces and deactivated forces.
+            std::cerr << "Removing bad force 1 " << force->getFullName() << std::endl << std::flush;
+            if (delBadForces) {
+                getDocument()->removeObject(force->getNameInDocument());
+            }
+            continue;
+        }
+
+        auto* part1 = getMovingPartFromRef(force, "Reference1");
+        auto* part2 = getMovingPartFromRef(force, "Reference2");
+        if (!part1 || !part2 || part1->getFullName() == part2->getFullName()) {
+            // Remove incomplete forces. Left-over when the user deletes a part.
+            // Remove incoherent forces (self-pointing forces)
+            std::cerr << "Removing bad force 2 " << force->getFullName() << std::endl << std::flush;
+            if (delBadForces) {
+                getDocument()->removeObject(force->getNameInDocument());
+            }
+            continue;
+        }
+
+        forces.push_back(force);
+    }
+
+    // Make sure the forces are up to date.
+    if (updateJCS) {
+        redrawJointPlacements(forces);
+    }
+
+    return forces;
+}
+
+
+std::vector<App::DocumentObject*> AssemblyObject::getJoints(bool updateJCS, bool delBadJoints, bool subJoints)
 {
     std::vector<App::DocumentObject*> joints = {};
 
@@ -765,6 +1208,10 @@ std::vector<App::DocumentObject*> AssemblyObject::getJoints(bool delBadJoints, b
             auto subJoints = assembly->getJoints();
             joints.insert(joints.end(), subJoints.begin(), subJoints.end());
         }
+    }
+
+    if (updateJCS) {
+        redrawJointPlacements(joints);
     }
 
     return joints;
@@ -906,12 +1353,22 @@ void AssemblyObject::fixGroundedPart(App::DocumentObject* obj, Base::Placement& 
     markerName1 = "/OndselAssembly/" + mbdMarker1->name;
     markerName2 = "/OndselAssembly/" + mbdPart->name + "/" + mbdMarker2->name;
 
-    auto mbdJoint = CREATE<ASMTFixedJoint>::With();
+    auto mbdJoint = ASMTFixedJoint::With();
     mbdJoint->setName(name);
-    mbdJoint->setMarkerI(markerName1);
-    mbdJoint->setMarkerJ(markerName2);
+    setMarkerICompat(mbdJoint, mbdMarker1);
+    setMarkerJCompat(mbdJoint, mbdMarker2);
 
     mbdAssembly->addJoint(mbdJoint);
+    addObjectsToJointMap(mbdJoint, obj);
+}
+
+void AssemblyObject::addObjectsToJointMap(
+    std::shared_ptr<MbD::ASMTItemIJ> mbdJoint,
+    App::DocumentObject* joint
+)
+{
+    MbDJointData data = {mbdJoint};
+    objectJointMap[joint] = data;  // Store the association
 }
 
 bool AssemblyObject::isJointConnectingPartToGround(App::DocumentObject* joint, const char* propname)
@@ -1131,6 +1588,25 @@ bool AssemblyObject::isPartConnected(App::DocumentObject* obj)
     return false;
 }
 
+
+void AssemblyObject::forceParts(std::vector<App::DocumentObject*> forces)
+{
+    for (auto* force : forces) {
+        if (!force) {
+            continue;
+        }
+
+        std::vector<std::shared_ptr<MbD::ASMTForceTorque>> mbdForceTorques = makeMbdForceTorque(force);
+        for (auto& mbdForceTorque : mbdForceTorques) {
+            mbdAssembly->addForceTorque(mbdForceTorque);
+            // TODO JMW
+            addObjectsToJointMap(mbdForceTorque, force);
+            std::cout << "Added force/torque " << mbdForceTorque->name << std::endl;
+            std::cout << std::flush;
+        }
+    }
+}
+
 void AssemblyObject::jointParts(std::vector<App::DocumentObject*> joints)
 {
     for (auto* joint : joints) {
@@ -1141,9 +1617,11 @@ void AssemblyObject::jointParts(std::vector<App::DocumentObject*> joints)
         std::vector<std::shared_ptr<MbD::ASMTJoint>> mbdJoints = makeMbdJoint(joint);
         for (auto& mbdJoint : mbdJoints) {
             mbdAssembly->addJoint(mbdJoint);
+            addObjectsToJointMap(mbdJoint, joint);
         }
     }
 }
+
 
 void Assembly::AssemblyObject::create_mbdSimulationParameters(App::DocumentObject* sim)
 {
@@ -1173,41 +1651,41 @@ std::shared_ptr<ASMTJoint> AssemblyObject::makeMbdJointOfType(App::DocumentObjec
             if (bundleFixed) {
                 return nullptr;
             }
-            return CREATE<ASMTFixedJoint>::With();
+            return ASMTFixedJoint::With();
 
         case JointType::Revolute:
-            return CREATE<ASMTRevoluteJoint>::With();
+            return ASMTRevoluteJoint::With();
 
         case JointType::Cylindrical:
-            return CREATE<ASMTCylindricalJoint>::With();
+            return ASMTCylindricalJoint::With();
 
         case JointType::Slider:
-            return CREATE<ASMTTranslationalJoint>::With();
+            return ASMTTranslationalJoint::With();
 
         case JointType::Ball:
-            return CREATE<ASMTSphericalJoint>::With();
+            return ASMTSphericalJoint::With();
 
         case JointType::Distance:
             return makeMbdJointDistance(joint);
 
         case JointType::Parallel:
-            return CREATE<ASMTParallelAxesJoint>::With();
+            return ASMTParallelAxesJoint::With();
 
         case JointType::Perpendicular:
-            return CREATE<ASMTPerpendicularJoint>::With();
+            return ASMTPerpendicularJoint::With();
 
         case JointType::Angle: {
             double angle = fabs(Base::toRadians(getJointAngle(joint)));
             if (fmod(angle, 2 * std::numbers::pi) < Precision::Confusion()) {
-                return CREATE<ASMTParallelAxesJoint>::With();
+                return ASMTParallelAxesJoint::With();
             }
-            auto mbdJoint = CREATE<ASMTAngleJoint>::With();
+            auto mbdJoint = ASMTAngleJoint::With();
             mbdJoint->theIzJz = angle;
             return mbdJoint;
         }
 
         case JointType::RackPinion: {
-            auto mbdJoint = CREATE<ASMTRackPinionJoint>::With();
+            auto mbdJoint = ASMTRackPinionJoint::With();
             mbdJoint->pitchRadius = getJointDistance(joint);
             return mbdJoint;
         }
@@ -1222,20 +1700,20 @@ std::shared_ptr<ASMTJoint> AssemblyObject::makeMbdJointOfType(App::DocumentObjec
                 swapJCS(joint);  // make sure that sliding is first.
             }
 
-            auto mbdJoint = CREATE<ASMTScrewJoint>::With();
+            auto mbdJoint = ASMTScrewJoint::With();
             mbdJoint->pitch = getJointDistance(joint);
             return mbdJoint;
         }
 
         case JointType::Gears: {
-            auto mbdJoint = CREATE<ASMTGearJoint>::With();
+            auto mbdJoint = ASMTGearJoint::With();
             mbdJoint->radiusI = getJointDistance(joint);
             mbdJoint->radiusJ = getJointDistance2(joint);
             return mbdJoint;
         }
 
         case JointType::Belt: {
-            auto mbdJoint = CREATE<ASMTGearJoint>::With();
+            auto mbdJoint = ASMTGearJoint::With();
             mbdJoint->radiusI = getJointDistance(joint);
             mbdJoint->radiusJ = -getJointDistance2(joint);
             return mbdJoint;
@@ -1260,28 +1738,28 @@ std::shared_ptr<ASMTJoint> AssemblyObject::makeMbdJointDistance(App::DocumentObj
             // Point to point distance, or ball joint if distance=0.
             double distance = getJointDistance(joint);
             if (distance < Precision::Confusion()) {
-                return CREATE<ASMTSphericalJoint>::With();
+                return ASMTSphericalJoint::With();
             }
-            auto mbdJoint = CREATE<ASMTSphSphJoint>::With();
+            auto mbdJoint = ASMTSphSphJoint::With();
             mbdJoint->distanceIJ = distance;
             return mbdJoint;
         }
 
         // Edge - edge cases
         case DistanceType::LineLine: {
-            auto mbdJoint = CREATE<ASMTRevCylJoint>::With();
+            auto mbdJoint = ASMTRevCylJoint::With();
             mbdJoint->distanceIJ = getJointDistance(joint);
             return mbdJoint;
         }
 
         case DistanceType::LineCircle: {
-            auto mbdJoint = CREATE<ASMTRevCylJoint>::With();
+            auto mbdJoint = ASMTRevCylJoint::With();
             mbdJoint->distanceIJ = getJointDistance(joint) + getEdgeRadius(obj2, elt2);
             return mbdJoint;
         }
 
         case DistanceType::CircleCircle: {
-            auto mbdJoint = CREATE<ASMTRevCylJoint>::With();
+            auto mbdJoint = ASMTRevCylJoint::With();
             mbdJoint->distanceIJ = getJointDistance(joint) + getEdgeRadius(obj1, elt1)
                 + getEdgeRadius(obj2, elt2);
             return mbdJoint;
@@ -1289,65 +1767,65 @@ std::shared_ptr<ASMTJoint> AssemblyObject::makeMbdJointDistance(App::DocumentObj
 
         // Face - Face cases
         case DistanceType::PlanePlane: {
-            auto mbdJoint = CREATE<ASMTPlanarJoint>::With();
+            auto mbdJoint = ASMTPlanarJoint::With();
             mbdJoint->offset = getJointDistance(joint);
             return mbdJoint;
         }
 
         case DistanceType::PlaneCylinder: {
-            auto mbdJoint = CREATE<ASMTLineInPlaneJoint>::With();
+            auto mbdJoint = ASMTLineInPlaneJoint::With();
             mbdJoint->offset = getJointDistance(joint) + getFaceRadius(obj2, elt2);
             return mbdJoint;
         }
 
         case DistanceType::PlaneSphere: {
-            auto mbdJoint = CREATE<ASMTPointInPlaneJoint>::With();
+            auto mbdJoint = ASMTPointInPlaneJoint::With();
             mbdJoint->offset = getJointDistance(joint) + getFaceRadius(obj2, elt2);
             return mbdJoint;
         }
 
         case DistanceType::PlaneTorus: {
-            auto mbdJoint = CREATE<ASMTPlanarJoint>::With();
+            auto mbdJoint = ASMTPlanarJoint::With();
             mbdJoint->offset = getJointDistance(joint);
             return mbdJoint;
         }
 
         case DistanceType::CylinderCylinder: {
-            auto mbdJoint = CREATE<ASMTRevCylJoint>::With();
+            auto mbdJoint = ASMTRevCylJoint::With();
             mbdJoint->distanceIJ = getJointDistance(joint) + getFaceRadius(obj1, elt1)
                 + getFaceRadius(obj2, elt2);
             return mbdJoint;
         }
 
         case DistanceType::CylinderSphere: {
-            auto mbdJoint = CREATE<ASMTCylSphJoint>::With();
+            auto mbdJoint = ASMTCylSphJoint::With();
             mbdJoint->distanceIJ = getJointDistance(joint) + getFaceRadius(obj1, elt1)
                 + getFaceRadius(obj2, elt2);
             return mbdJoint;
         }
 
         case DistanceType::CylinderTorus: {
-            auto mbdJoint = CREATE<ASMTRevCylJoint>::With();
+            auto mbdJoint = ASMTRevCylJoint::With();
             mbdJoint->distanceIJ = getJointDistance(joint) + getFaceRadius(obj1, elt1)
                 + getFaceRadius(obj2, elt2);
             return mbdJoint;
         }
 
         case DistanceType::TorusTorus: {
-            auto mbdJoint = CREATE<ASMTPlanarJoint>::With();
+            auto mbdJoint = ASMTPlanarJoint::With();
             mbdJoint->offset = getJointDistance(joint);
             return mbdJoint;
         }
 
         case DistanceType::TorusSphere: {
-            auto mbdJoint = CREATE<ASMTCylSphJoint>::With();
+            auto mbdJoint = ASMTCylSphJoint::With();
             mbdJoint->distanceIJ = getJointDistance(joint) + getFaceRadius(obj1, elt1)
                 + getFaceRadius(obj2, elt2);
             return mbdJoint;
         }
 
         case DistanceType::SphereSphere: {
-            auto mbdJoint = CREATE<ASMTSphSphJoint>::With();
+            auto mbdJoint = ASMTSphSphJoint::With();
             mbdJoint->distanceIJ = getJointDistance(joint) + getFaceRadius(obj1, elt1)
                 + getFaceRadius(obj2, elt2);
             return mbdJoint;
@@ -1355,33 +1833,33 @@ std::shared_ptr<ASMTJoint> AssemblyObject::makeMbdJointDistance(App::DocumentObj
 
         // Point - Face cases
         case DistanceType::PointPlane: {
-            auto mbdJoint = CREATE<ASMTPointInPlaneJoint>::With();
+            auto mbdJoint = ASMTPointInPlaneJoint::With();
             mbdJoint->offset = getJointDistance(joint);
             return mbdJoint;
         }
 
         case DistanceType::PointCylinder: {
-            auto mbdJoint = CREATE<ASMTCylSphJoint>::With();
+            auto mbdJoint = ASMTCylSphJoint::With();
             mbdJoint->distanceIJ = getJointDistance(joint) + getFaceRadius(obj1, elt1);
             return mbdJoint;
         }
 
         case DistanceType::PointSphere: {
-            auto mbdJoint = CREATE<ASMTSphSphJoint>::With();
+            auto mbdJoint = ASMTSphSphJoint::With();
             mbdJoint->distanceIJ = getJointDistance(joint) + getFaceRadius(obj1, elt1);
             return mbdJoint;
         }
 
         // Edge - Face cases
         case DistanceType::LinePlane: {
-            auto mbdJoint = CREATE<ASMTLineInPlaneJoint>::With();
+            auto mbdJoint = ASMTLineInPlaneJoint::With();
             mbdJoint->offset = getJointDistance(joint);
             return mbdJoint;
         }
 
         // Point - Edge cases
         case DistanceType::PointLine: {
-            auto mbdJoint = CREATE<ASMTCylSphJoint>::With();
+            auto mbdJoint = ASMTCylSphJoint::With();
             mbdJoint->distanceIJ = getJointDistance(joint);
             return mbdJoint;
         }
@@ -1391,19 +1869,101 @@ std::shared_ptr<ASMTJoint> AssemblyObject::makeMbdJointDistance(App::DocumentObj
             // Maybe it would be best tangent / distance to the conic?
             // For arcs and circles we could use ASMTRevSphJoint. But is it better than
             // pointInPlane?
-            auto mbdJoint = CREATE<ASMTPointInPlaneJoint>::With();
+            auto mbdJoint = ASMTPointInPlaneJoint::With();
             mbdJoint->offset = getJointDistance(joint);
             return mbdJoint;
         }
 
         default: {
             // by default we make a planar joint.
-            auto mbdJoint = CREATE<ASMTPlanarJoint>::With();
+            auto mbdJoint = ASMTPlanarJoint::With();
             mbdJoint->offset = getJointDistance(joint);
             return mbdJoint;
         }
     }
 }
+
+
+std::shared_ptr<MbD::ASMTForceTorque> AssemblyObject::makeMbdForceTorqueOfType(
+    App::DocumentObject* force,
+    const ForceType forceType
+)
+{
+#if HAVE_ONDSELSOLVER_FORCE_TYPES
+    // TODO JMW check validity of the force here
+    switch (forceType) {
+        case ForceType::General: {
+            std::shared_ptr<ASMTForceTorqueGeneral> mbdForceTorque = ASMTForceTorqueGeneral::With();
+            mbdForceTorque->aFIeKe->atiput(0, getForceFunction(force, "ForceX"));
+            mbdForceTorque->aFIeKe->atiput(1, getForceFunction(force, "ForceY"));
+            mbdForceTorque->aFIeKe->atiput(2, getForceFunction(force, "ForceZ"));
+            mbdForceTorque->aTIeKe->atiput(0, getForceFunction(force, "TorqueX"));
+            mbdForceTorque->aTIeKe->atiput(1, getForceFunction(force, "TorqueY"));
+            mbdForceTorque->aTIeKe->atiput(2, getForceFunction(force, "TorqueZ"));
+            const auto markerKSign = getForceMarkerKSign(force);
+            switch (markerKSign) {
+                case MarkerKSign::I:
+                    mbdForceTorque->markerKSign = "I";
+                    break;
+                case MarkerKSign::J:
+                    mbdForceTorque->markerKSign = "J";
+                    break;
+                default:
+                    mbdForceTorque->markerKSign = "O";
+            }
+            return mbdForceTorque;
+        } break;
+        case ForceType::InLine: {
+            std::shared_ptr<ASMTForceTorqueInLine> mbdForceTorque = ASMTForceTorqueInLine::With();
+            mbdForceTorque->tensionFunc = getForceFunction(force, "Tension");
+            mbdForceTorque->twistFunc = getForceFunction(force, "Twist");
+            return mbdForceTorque;
+        } break;
+        default:
+            std::cerr << "Unsupported force type for force " << force->getFullName() << std::endl;
+            std::cerr << std::flush;
+            return nullptr;
+    }
+#else
+    (void)forceType;
+    std::cerr << "Current OndselSolver in 3rdParty does not provide force torque specializations"
+              << " required for force export (" << force->getFullName() << ")" << std::endl;
+    std::cerr << std::flush;
+    return nullptr;
+#endif
+}
+
+std::vector<std::shared_ptr<MbD::ASMTForceTorque>> AssemblyObject::makeMbdForceTorque(
+    App::DocumentObject* force
+)
+{
+    if (!force) {
+        return {};
+    }
+
+    const ForceType forceType = getForceType(force);
+    std::shared_ptr<ASMTForceTorque> mbdForceTorque = makeMbdForceTorqueOfType(force, forceType);
+
+    if (!mbdForceTorque) {
+        return {};
+    }
+
+    marker_pair markers;
+    markers.first = handleOneSideOfJoint(force, "Reference1", "Placement1");
+    markers.second = handleOneSideOfJoint(force, "Reference2", "Placement2");
+    if ((markers.first == nullptr) || (markers.second == nullptr)) {
+        std::cerr << "Could not get markers for force " << force->getFullName() << std::endl;
+        std::cerr << std::flush;
+        return {};
+    }
+
+    mbdForceTorque->setName(force->getFullName());
+    mbdForceTorque->setLabel(force->getFullLabel());
+    setMarkerICompat(mbdForceTorque, markers.first);
+    setMarkerJCompat(mbdForceTorque, markers.second);
+    return {mbdForceTorque};
+}
+
 
 std::vector<std::shared_ptr<MbD::ASMTJoint>> AssemblyObject::makeMbdJoint(App::DocumentObject* joint)
 {
@@ -1418,21 +1978,22 @@ std::vector<std::shared_ptr<MbD::ASMTJoint>> AssemblyObject::makeMbdJoint(App::D
         return {};
     }
 
-    std::string fullMarkerNameI, fullMarkerNameJ;
+    marker_pair markers;
     if (jointType == JointType::RackPinion) {
-        getRackPinionMarkers(joint, fullMarkerNameI, fullMarkerNameJ);
+        markers = getRackPinionMarkers(joint);
     }
     else {
-        fullMarkerNameI = handleOneSideOfJoint(joint, "Reference1", "Placement1");
-        fullMarkerNameJ = handleOneSideOfJoint(joint, "Reference2", "Placement2");
+        markers.first = handleOneSideOfJoint(joint, "Reference1", "Placement1");
+        markers.second = handleOneSideOfJoint(joint, "Reference2", "Placement2");
     }
-    if (fullMarkerNameI == "" || fullMarkerNameJ == "") {
+    if ((markers.first == nullptr) || (markers.second == nullptr)) {
         return {};
     }
 
     mbdJoint->setName(joint->getFullName());
-    mbdJoint->setMarkerI(fullMarkerNameI);
-    mbdJoint->setMarkerJ(fullMarkerNameJ);
+    mbdJoint->setLabel(joint->getFullLabel());
+    setMarkerICompat(mbdJoint, markers.first);
+    setMarkerJCompat(mbdJoint, markers.second);
 
     // Add limits if needed. We do not add if this is a simulation or their might clash.
     if (motions.empty()) {
@@ -1468,8 +2029,8 @@ std::vector<std::shared_ptr<MbD::ASMTJoint>> AssemblyObject::makeMbdJoint(App::D
                 if (minEnabled) {
                     auto limit = ASMTTranslationLimit::With();
                     limit->setName(joint->getFullName() + "-LimitLenMin");
-                    limit->setMarkerI(fullMarkerNameI);
-                    limit->setMarkerJ(fullMarkerNameJ);
+                    setMarkerICompat(limit, markers.first);
+                    setMarkerJCompat(limit, markers.second);
                     limit->settype("=>");
                     limit->setlimit(std::to_string(minLength));
                     limit->settol("1.0e-9");
@@ -1479,8 +2040,8 @@ std::vector<std::shared_ptr<MbD::ASMTJoint>> AssemblyObject::makeMbdJoint(App::D
                 if (maxEnabled) {
                     auto limit2 = ASMTTranslationLimit::With();
                     limit2->setName(joint->getFullName() + "-LimitLenMax");
-                    limit2->setMarkerI(fullMarkerNameI);
-                    limit2->setMarkerJ(fullMarkerNameJ);
+                    setMarkerICompat(limit2, markers.first);
+                    setMarkerJCompat(limit2, markers.second);
                     limit2->settype("=<");
                     limit2->setlimit(std::to_string(maxLength));
                     limit2->settol("1.0e-9");
@@ -1519,8 +2080,8 @@ std::vector<std::shared_ptr<MbD::ASMTJoint>> AssemblyObject::makeMbdJoint(App::D
                 if (minEnabled) {
                     auto limit = ASMTRotationLimit::With();
                     limit->setName(joint->getFullName() + "-LimitRotMin");
-                    limit->setMarkerI(fullMarkerNameI);
-                    limit->setMarkerJ(fullMarkerNameJ);
+                    setMarkerICompat(limit, markers.first);
+                    setMarkerJCompat(limit, markers.second);
                     limit->settype("=>");
                     limit->setlimit(std::to_string(minAngle) + "*pi/180.0");
                     limit->settol("1.0e-9");
@@ -1530,8 +2091,8 @@ std::vector<std::shared_ptr<MbD::ASMTJoint>> AssemblyObject::makeMbdJoint(App::D
                 if (maxEnabled) {
                     auto limit2 = ASMTRotationLimit::With();
                     limit2->setName(joint->getFullName() + "-LimitRotMax");
-                    limit2->setMarkerI(fullMarkerNameI);
-                    limit2->setMarkerJ(fullMarkerNameJ);
+                    setMarkerICompat(limit2, markers.first);
+                    setMarkerJCompat(limit2, markers.second);
                     limit2->settype("=<");
                     limit2->setlimit(std::to_string(maxAngle) + "*pi/180.0");
                     limit2->settol("1.0e-9");
@@ -1617,39 +2178,41 @@ std::vector<std::shared_ptr<MbD::ASMTJoint>> AssemblyObject::makeMbdJoint(App::D
 
             replaceInitialValue(formula2, joint, motionType2);
 
-            auto ASMTmotion = CREATE<ASMTGeneralMotion>::With();
+            auto ASMTmotion = ASMTGeneralMotion::With();
             ASMTmotion->setName(joint->getFullName() + "-ScrewMotion");
-            ASMTmotion->setMarkerI(fullMarkerNameI);
-            ASMTmotion->setMarkerJ(fullMarkerNameJ);
+            setMarkerICompat(ASMTmotion, markers.first);
+            setMarkerJCompat(ASMTmotion, markers.second);
             ASMTmotion->rIJI->atiput(2, motionType == "Angular" ? formula2 : formula);
             ASMTmotion->angIJJ->atiput(2, motionType == "Angular" ? formula : formula2);
             mbdAssembly->addMotion(ASMTmotion);
-
             done.push_back(motion2);
+            addObjectsToJointMap(ASMTmotion, motion2);
         }
 
         if (motionType == "Angular") {
-            auto ASMTmotion = CREATE<ASMTRotationalMotion>::With();
+            auto ASMTmotion = ASMTRotationalMotion::With();
             ASMTmotion->setName(joint->getFullName() + "-AngularMotion");
-            ASMTmotion->setMarkerI(fullMarkerNameI);
-            ASMTmotion->setMarkerJ(fullMarkerNameJ);
+            setMarkerICompat(ASMTmotion, markers.first);
+            setMarkerJCompat(ASMTmotion, markers.second);
             ASMTmotion->setRotationZ(formula);
             mbdAssembly->addMotion(ASMTmotion);
+            addObjectsToJointMap(ASMTmotion, motion);
         }
         else if (motionType == "Linear") {
-            auto ASMTmotion = CREATE<ASMTTranslationalMotion>::With();
+            auto ASMTmotion = ASMTTranslationalMotion::With();
             ASMTmotion->setName(joint->getFullName() + "-LinearMotion");
-            ASMTmotion->setMarkerI(fullMarkerNameI);
-            ASMTmotion->setMarkerJ(fullMarkerNameJ);
-            ASMTmotion->setTranslationZ(formula);
+            setMarkerICompat(ASMTmotion, markers.first);
+            setMarkerJCompat(ASMTmotion, markers.second);
+            ASMTmotion->translationZ = formula;
             mbdAssembly->addMotion(ASMTmotion);
+            addObjectsToJointMap(ASMTmotion, motion);
         }
     }
 
     return {mbdJoint};
 }
 
-std::string AssemblyObject::handleOneSideOfJoint(
+std::shared_ptr<ASMTMarker> AssemblyObject::handleOneSideOfJoint(
     App::DocumentObject* joint,
     const char* propRefName,
     const char* propPlcName
@@ -1661,7 +2224,7 @@ std::string AssemblyObject::handleOneSideOfJoint(
     if (!part || !obj) {
         Base::Console()
             .warning("The property %s of Joint %s is bad.\n", propRefName, joint->getFullName());
-        return "";
+        return nullptr;
     }
 
     MbDPartData data = getMbDData(part);
@@ -1669,9 +2232,20 @@ std::string AssemblyObject::handleOneSideOfJoint(
     Base::Placement plc = getPlacementFromProp(joint, propPlcName);
     // Now we have plc which is the JCS placement, but its relative to the Object, not to the
     // containing Part.
+
     auto* ref = dynamic_cast<App::PropertyXLinkSub*>(joint->getPropertyByName(propRefName));
-    if (!ref) {
-        return "";
+
+    if (obj->getNameInDocument() != part->getNameInDocument()) {
+
+        if (!ref) {
+            return nullptr;
+        }
+
+        Base::Placement obj_global_plc = getGlobalPlacement(obj, ref);
+        plc = obj_global_plc * plc;
+
+        Base::Placement part_global_plc = getGlobalPlacement(part, ref);
+        plc = part_global_plc.inverse() * plc;
     }
 
     // This plc adjustment should be necessary only if obj != part. But for some objects like
@@ -1692,24 +2266,21 @@ std::string AssemblyObject::handleOneSideOfJoint(
     auto mbdMarker = makeMbdMarker(markerName, plc);
     mbdPart->addMarker(mbdMarker);
 
-    return "/OndselAssembly/" + mbdPart->name + "/" + markerName;
+    return mbdMarker;
 }
 
-void AssemblyObject::getRackPinionMarkers(
-    App::DocumentObject* joint,
-    std::string& markerNameI,
-    std::string& markerNameJ
-)
+AssemblyObject::marker_pair AssemblyObject::getRackPinionMarkers(App::DocumentObject* joint)
 {
     // ASMT rack pinion joint must get the rack as I and pinion as J.
     // - rack marker has to have Z axis parallel to pinion Z axis.
     // - rack marker has to have X axis parallel to the sliding axis.
     // The user will have selected the sliding marker so we need to transform it.
     // And we need to detect which marker is the rack.
+    auto null_pair = marker_pair(nullptr, nullptr);
 
     int slidingIndex = slidingPartIndex(joint);
     if (slidingIndex == 0) {
-        return;
+        return null_pair;
     }
 
     if (slidingIndex != 1) {
@@ -1725,18 +2296,18 @@ void AssemblyObject::getRackPinionMarkers(
 
     if (!part1 || !obj1) {
         Base::Console().warning("Reference1 of Joint %s is bad.\n", joint->getFullName());
-        return;
+        return null_pair;
     }
 
     // For the pinion nothing special needed :
-    markerNameJ = handleOneSideOfJoint(joint, "Reference2", "Placement2");
+    auto markerJ = handleOneSideOfJoint(joint, "Reference2", "Placement2");
 
     // For the rack we need to change the placement :
     // make the pinion plc relative to the rack placement.
     auto* ref1 = dynamic_cast<App::PropertyXLinkSub*>(joint->getPropertyByName("Reference1"));
     auto* ref2 = dynamic_cast<App::PropertyXLinkSub*>(joint->getPropertyByName("Reference2"));
     if (!ref1 || !ref2) {
-        return;
+        return null_pair;
     }
     Base::Placement pinion_global_plc = getGlobalPlacement(obj2, ref2);
     plc2 = pinion_global_plc * plc2;
@@ -1782,10 +2353,9 @@ void AssemblyObject::getRackPinionMarkers(
     }
 
     std::string markerName = joint->getFullName();
-    auto mbdMarker = makeMbdMarker(markerName, plc1);
-    mbdPart->addMarker(mbdMarker);
-
-    markerNameI = "/OndselAssembly/" + mbdPart->name + "/" + markerName;
+    auto markerI = makeMbdMarker(markerName, plc1);
+    mbdPart->addMarker(markerI);
+    return marker_pair(markerI, markerJ);
 }
 
 int AssemblyObject::slidingPartIndex(App::DocumentObject* joint)
@@ -1819,8 +2389,8 @@ int AssemblyObject::slidingPartIndex(App::DocumentObject* joint)
             }
 
             if (found != 0) {
-                // check the placements plcjt and (jcs1 or jcs2 depending on found value) Z axis are
-                // colinear ie if their pitch and roll are the same.
+                // check the placements plcjt and (jcs1 or jcs2 depending on found value) Z axis
+                // are colinear ie if their pitch and roll are the same.
                 double y1, p1, r1, y2, p2, r2;
                 plcjt.getRotation().getYawPitchRoll(y1, p1, r1);
                 plci.getRotation().getYawPitchRoll(y2, p2, r2);
@@ -1856,20 +2426,133 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
     return true;
 }
 
+
+AssemblyObject::MbDInertialData AssemblyObject::getMbDInertial(App::DocumentObject* part)
+{
+    MbDInertialData data;
+    double density = 1.0e-9;
+    // const Base::Placement orig_plc = getPlacementFromProp(part, "Placement");
+
+    if (auto propMaterial
+        = dynamic_cast<Materials::PropertyMaterial*>(part->getPropertyByName("ShapeMaterial"))) {
+        auto& mat = propMaterial->getValue();
+        try {
+            Base::Quantity densityQuantity = mat.getPhysicalQuantity("Density");
+            density = densityQuantity.getValue() / 1000.0;  // convert from kg/m^3 to t/mm^3
+            // units = densityQuantity.getUnit().getString()
+        }
+        catch (const std::exception& e) {
+            // std::cerr << "Error accessing Density as Quantity: " << e.what() << std::endl;
+        }
+    }
+    else {
+        std::cout << "  No material specified" << std::endl;
+        std::cout << std::flush;
+    }
+    if (part->isDerivedFrom(App::Link::getClassTypeId())) {
+        part = static_cast<const App::Link*>(part)->getLinkedObject();
+        if (!part) {
+            return data;
+        }
+    }
+    else if (part->isDerivedFrom<App::Part>()) {
+        // || part->isDerivedFrom<App::DocumentObjectGroup>())
+        for (auto child : static_cast<App::Part*>(part)->getObjects()) {
+            // std::cout << "  child: " << child->getFullName() << std::endl;
+        }
+    }
+
+    // These measures are all relative to linked placement
+    // need to transform from this to new placement
+    auto* base = dynamic_cast<PartApp::Feature*>(part);
+    if (!base) {
+        return data;
+    }
+    const auto& shape = base->Shape.getShape();
+    const Base::Placement plc = getPlacementFromProp(part, "Placement").inverse();
+    try {
+        const GProp_GProps gpr = Attacher::AttachEngine::getInertialPropsOfShape({&shape});
+
+        //////////
+        const gp_Pnt centerOfMass = gpr.CentreOfMass();
+        const Base::Vector3d com = plc.toMatrix()
+            * Base::Vector3d(centerOfMass.X(), centerOfMass.Y(), centerOfMass.Z());
+        const GProp_PrincipalProps pr = gpr.PrincipalProperties();
+        const gp_Vec ax1 = pr.FirstAxisOfInertia();
+        const gp_Vec ax2 = pr.SecondAxisOfInertia();
+        const gp_Vec ax3 = pr.ThirdAxisOfInertia();
+        const Base::Vector3d v1(ax1.X(), ax1.Y(), ax1.Z());
+        const Base::Vector3d v2(ax2.X(), ax2.Y(), ax2.Z());
+        const Base::Vector3d v3(ax3.X(), ax3.Y(), ax3.Z());
+
+        Base::Rotation rotation = plc.getRotation() * Base::Rotation::makeRotationByAxes(v1, v2, v3);
+        data.pcs = Base::Placement(com, rotation);
+
+        double ixx, iyy, izz;
+        pr.Moments(ixx, iyy, izz);
+        data.inertia = Base::Vector3d(ixx * density, iyy * density, izz * density);
+        data.mass = gpr.Mass() * density;
+
+        if (false) {
+            if (pr.HasSymmetryPoint()) {
+                std::cout << "  has symmetry point" << std::endl;
+                // ok to return matrix of inertia
+            }
+            else if (pr.HasSymmetryAxis()) {
+                std::cout << "  has symmetry axis" << std::endl;
+                // 2 of three Ixx, Iyy, Izz are identical
+            }
+            else {
+                std::cout << "  no symmetry axis" << std::endl;
+            }
+
+            std::cout << "  density: " << density << " " << std::endl;
+            std::cout << "  mass: " << data.mass << std::endl;
+            std::cout << "  inertias: " << data.inertia.x << " " << data.inertia.y << " "
+                      << data.inertia.z << std::endl;
+            std::cout << "  com: " << com.x << " " << com.y << " " << com.z << std::endl;
+
+            // for (auto child in obj.ViewObject.claimChildrenRecursive()
+        }
+    }
+    catch (const ::Part::AttachEngineException& e) {
+        std::cerr << "Error computing inertial properties: " << e.what() << std::endl;
+        Base::Vector3d com;
+        const double l = 50.0;
+        const double volume = l * l * l;  // assume 50mm cube
+        data.mass = volume * density;
+        const double ixx = data.mass * l * l / 6.0;  // inertia of cube around center
+        shape.getCenterOfGravity(com);
+        data.pcs = Base::Placement(com, Base::Rotation());
+        data.inertia = Base::Vector3d(ixx, ixx, ixx);
+    }
+    return data;
+}
+
 AssemblyObject::MbDPartData AssemblyObject::getMbDData(App::DocumentObject* part)
 {
     auto it = objectPartMap.find(part);
+    std::string str = part->getFullName();
+
     if (it != objectPartMap.end()) {
         // part has been associated with an ASMTPart before
+        // std::cout << "update part: " << str << std::endl;
+        Base::Placement plc = getPlacementFromProp(part, "Placement");
+        const AssemblyObject::MbDInertialData inertial_data = getMbDInertial(part);
+        updateMbdPart(it->second.part, plc, inertial_data);
         return it->second;
     }
 
     // part has not been associated with an ASMTPart before
-    std::string str = part->getFullName();
-    Base::Placement plc = getPlacementFromProp(part, "Placement");
-    std::shared_ptr<ASMTPart> mbdPart = makeMbdPart(str, plc);
+    // std::cout << "new part " << str << std::endl;
+    std::shared_ptr<ASMTPart> mbdPart = makeMbdPart(str);
+
+    Base::Placement plc;
+    const AssemblyObject::MbDInertialData inertial_data = getMbDInertial(part);
+    updateMbdPart(mbdPart, plc, inertial_data);
+
     mbdAssembly->addPart(mbdPart);
-    MbDPartData data = {mbdPart, Base::Placement()};
+    MbDPartData data = {mbdPart, plc};
     objectPartMap[part] = data;  // Store the association
 
     // Associate other objects connected with fixed joints
@@ -1911,15 +2594,36 @@ std::shared_ptr<ASMTPart> AssemblyObject::getMbDPart(App::DocumentObject* part)
     return getMbDData(part).part;
 }
 
-std::shared_ptr<ASMTPart> AssemblyObject::makeMbdPart(std::string& name, Base::Placement plc, double mass)
+std::shared_ptr<ASMTPart> AssemblyObject::makeMbdPart(std::string& name)
 {
-    auto mbdPart = CREATE<ASMTPart>::With();
+    auto mbdPart = ASMTPart::With();
     mbdPart->setName(name);
+    return mbdPart;
+}
 
-    auto massMarker = CREATE<ASMTPrincipalMassMarker>::With();
-    massMarker->setMass(mass);
+void AssemblyObject::updateMbdPart(
+    std::shared_ptr<ASMTPart> mbdPart,
+    Base::Placement plc,
+    const AssemblyObject::MbDInertialData& data
+)
+{
+    auto massMarker = ASMTPrincipalMassMarker::With();
+
+    auto aAPcm = FullMatrix<double>::With(3, 3);
+    auto T = data.pcs.toMatrix();
+    for (size_t i = 0; i < 3; i++) {
+        for (size_t j = 0; j < 3; j++) {
+            aAPcm->at(i)->at(j) = T[i][j];
+        }
+    }
+    auto com = data.pcs.getPosition();
+    auto rPcmP = std::make_shared<FullColumn<double>>(ListD {com.x, com.y, com.z});
+
+    massMarker->setMass(data.mass);
     massMarker->setDensity(1.0);
-    massMarker->setMomentOfInertias(1.0, 1.0, 1.0);
+    massMarker->setMomentOfInertias(data.inertia.x, data.inertia.y, data.inertia.z);
+    massMarker->setPosition3D(rPcmP);
+    massMarker->setRotationMatrix(aAPcm);
     mbdPart->setPrincipalMassMarker(massMarker);
 
     Base::Vector3d pos = plc.getPosition();
@@ -1933,13 +2637,11 @@ std::shared_ptr<ASMTPart> AssemblyObject::makeMbdPart(std::string& name, Base::P
     Base::Vector3d r1 = mat.getRow(1);
     Base::Vector3d r2 = mat.getRow(2);
     mbdPart->setRotationMatrix(r0.x, r0.y, r0.z, r1.x, r1.y, r1.z, r2.x, r2.y, r2.z);
-
-    return mbdPart;
 }
 
 std::shared_ptr<ASMTMarker> AssemblyObject::makeMbdMarker(std::string& name, Base::Placement& plc)
 {
-    auto mbdMarker = CREATE<ASMTMarker>::With();
+    auto mbdMarker = ASMTMarker::With();
     mbdMarker->setName(name);
 
     Base::Vector3d pos = plc.getPosition();

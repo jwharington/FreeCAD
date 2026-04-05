@@ -41,6 +41,8 @@ class ASMTAssembly;
 class ASMTJoint;
 class ASMTMarker;
 class ASMTPart;
+class ASMTItemIJ;
+class ASMTForceTorque;
 }  // namespace MbD
 
 namespace App
@@ -60,8 +62,11 @@ namespace Assembly
 
 class AssemblyLink;
 class JointGroup;
+class ForceGroup;
 class ViewGroup;
 enum class JointType;
+enum class ForceType;
+enum class MarkerKSign;
 
 
 struct ObjRef
@@ -93,7 +98,8 @@ public:
     being in an active transaction (joint creation).*/
     int solve(bool enableRedo = false);
     int generateSimulation(App::DocumentObject* sim);
-    int updateForFrame(size_t index);
+    int updateForFrame(size_t index, bool updateJCS = true);
+    void jointInfoForFrame(const size_t index);
     size_t numberOfFrames();
     void preDrag(std::vector<App::DocumentObject*> dragParts);
     void doDragStep();
@@ -118,16 +124,32 @@ public:
     // Ondsel Solver interface
     std::shared_ptr<MbD::ASMTAssembly> makeMbdAssembly();
     void create_mbdSimulationParameters(App::DocumentObject* sim);
-    std::shared_ptr<MbD::ASMTPart> makeMbdPart(
-        std::string& name,
+    struct MbDInertialData
+    {
+        MbDInertialData()
+            : mass(1.0)
+            , inertia(1.0, 1.0, 1.0) {};
+        double mass;
+        Base::Placement pcs;
+        Base::Vector3d inertia;
+    };
+    MbDInertialData getMbDInertial(App::DocumentObject* part);
+    std::shared_ptr<MbD::ASMTPart> makeMbdPart(std::string& name);
+    void updateMbdPart(
+        std::shared_ptr<MbD::ASMTPart> mbdPart,
         Base::Placement plc = Base::Placement(),
-        double mass = 1.0
+        const MbDInertialData& data = MbDInertialData()
     );
+
     std::shared_ptr<MbD::ASMTPart> getMbDPart(App::DocumentObject* obj);
     // To help the solver, during dragging, we are bundling parts connected by a fixed joint.
     // So several assembly components are bundled in a single ASMTPart.
     // So we need to store the plc of each bundled object relative to the bundle origin (first obj
     // of objectPartMap).
+    struct MbDJointData
+    {
+        std::shared_ptr<MbD::ASMTItemIJ> joint;
+    };
     struct MbDPartData
     {
         std::shared_ptr<MbD::ASMTPart> part;
@@ -138,25 +160,40 @@ public:
     std::vector<std::shared_ptr<MbD::ASMTJoint>> makeMbdJoint(App::DocumentObject* joint);
     std::shared_ptr<MbD::ASMTJoint> makeMbdJointOfType(App::DocumentObject* joint, JointType jointType);
     std::shared_ptr<MbD::ASMTJoint> makeMbdJointDistance(App::DocumentObject* joint);
-    std::string handleOneSideOfJoint(
+    std::shared_ptr<MbD::ASMTMarker> handleOneSideOfJoint(
         App::DocumentObject* joint,
         const char* propRefName,
         const char* propPlcName
     );
-    void getRackPinionMarkers(
-        App::DocumentObject* joint,
-        std::string& markerNameI,
-        std::string& markerNameJ
-    );
+
+    typedef std::pair<std::shared_ptr<MbD::ASMTMarker>, std::shared_ptr<MbD::ASMTMarker>> marker_pair;
+
+    marker_pair getRackPinionMarkers(App::DocumentObject* joint);
     int slidingPartIndex(App::DocumentObject* joint);
+
+    std::vector<std::shared_ptr<MbD::ASMTForceTorque>> makeMbdForceTorque(App::DocumentObject* force);
+    std::shared_ptr<MbD::ASMTForceTorque> makeMbdForceTorqueOfType(
+        App::DocumentObject* force,
+        const ForceType forceType
+    );
 
     void jointParts(std::vector<App::DocumentObject*> joints);
     JointGroup* getJointGroup() const;
+
+    void forceParts(std::vector<App::DocumentObject*> forces);
+    ForceGroup* getForceGroup() const;
+
     ViewGroup* getExplodedViewGroup() const;
     template<typename T>
     T* getGroup();
 
-    std::vector<App::DocumentObject*> getJoints(bool delBadJoints = false, bool subJoints = true);
+    std::vector<App::DocumentObject*> getForces(bool updateJCS = true, bool delBadForces = false);
+
+    std::vector<App::DocumentObject*> getJoints(
+        bool updateJCS = true,
+        bool delBadJoints = false,
+        bool subJoints = true
+    );
     std::vector<App::DocumentObject*> getGroundedJoints();
     std::vector<App::DocumentObject*> getJointsOfObj(App::DocumentObject* obj);
     std::vector<App::DocumentObject*> getJointsOfPart(App::DocumentObject* part);
@@ -255,10 +292,38 @@ public:
     }
     fastsignals::signal<void()> signalSolverUpdate;
 
+protected:
+    void addObjectsToJointMap(std::shared_ptr<MbD::ASMTItemIJ> mbdJoint, App::DocumentObject* joint);
+
+    struct JointPartInfo
+    {
+        App::DocumentObject* joint;
+        std::string jointName;
+        App::DocumentObject* part;
+        Base::Placement placement;
+    };
+    JointPartInfo getJointPart(App::DocumentObject* joint, const int index);
+    struct ReactionInfo
+    {
+        JointPartInfo jointInfo;
+        Base::Vector3d position;
+        Base::Vector3d force;
+        Base::Vector3d torque;
+        int side;
+        void print() const;
+    };
+    ReactionInfo getReactionInfo(
+        const JointPartInfo& info,
+        const Base::Vector3d& cFIO,
+        const Base::Vector3d& cTIO,
+        const int side
+    );
+
 private:
     std::shared_ptr<MbD::ASMTAssembly> mbdAssembly;
 
     std::unordered_map<App::DocumentObject*, MbDPartData> objectPartMap;
+    std::unordered_map<App::DocumentObject*, MbDJointData> objectJointMap;
     std::vector<std::pair<App::DocumentObject*, double>> objMasses;
     std::vector<App::DocumentObject*> draggedParts;
     std::vector<App::DocumentObject*> motions;
@@ -278,6 +343,8 @@ private:
     std::vector<std::string> lastConflictingJoints;
     std::vector<std::string> lastPartialRedundantJoints;
     std::vector<std::string> lastMalformedJoints;
+
+    void summary_joints();
 };
 
 }  // namespace Assembly

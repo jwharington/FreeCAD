@@ -31,6 +31,7 @@
 #include "BomObject.h"
 #include "BomGroup.h"
 #include "JointGroup.h"
+#include "ForceGroup.h"
 #include "ViewGroup.h"
 #include "SimulationGroup.h"
 
@@ -67,6 +68,7 @@ PyMOD_INIT_FUNC(AssemblyApp)
 
     Assembly::BomGroup ::init();
     Assembly::JointGroup ::init();
+    Assembly::ForceGroup ::init();
     Assembly::ViewGroup ::init();
     Assembly::SimulationGroup ::init();
 
