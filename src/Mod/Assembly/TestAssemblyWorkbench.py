@@ -24,9 +24,10 @@
 import TestApp
 from AssemblyTests.TestCommandInsertLink import TestCommandInsertLink
 from AssemblyTests.TestCore import TestCore
-from AssemblyTests.TestFemMbDyn import TestFemLinkUtils
+from AssemblyTests.TestFemMbDyn import TestFemLinkUtils, TestFPBase
 
 # Use the modules so that code checkers don't complain (flake8)
 True if TestCore else False
 True if TestCommandInsertLink else False
 True if TestFemLinkUtils else False
+True if TestFPBase else False

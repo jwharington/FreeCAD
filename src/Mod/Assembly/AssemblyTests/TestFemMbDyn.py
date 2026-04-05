@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
-# Tests for commit aa9155ed05:
-#   Assembly: add FemLink module infrastructure
+# Tests for commits:
+#   aa9155ed05  Assembly: add FemLink module infrastructure
+#   d369c72d37  Assembly: add LinkBody command and FemLink integration
 
 import unittest
 
@@ -77,3 +78,53 @@ class TestFemLinkUtils(unittest.TestCase):
 
         result = get_femlinks(self.assembly)
         self.assertEqual(result, [])
+
+
+# ---------------------------------------------------------------------------
+# d369c72d37 – FPBase infrastructure (FemLink.FPBase)
+# ---------------------------------------------------------------------------
+
+
+class TestFPBase(unittest.TestCase):
+
+    def setUp(self):
+        self.doc = _make_doc(self.__class__.__name__)
+
+    def tearDown(self):
+        App.closeDocument(self.doc.Name)
+
+    def test_fpbase_getstate_returns_empty_dict(self):
+        """FPBase.__getstate__ must return {} for serialisation."""
+        _msg("  Test FPBase.__getstate__")
+        from FemLink.FPBase import FPBase
+
+        class ConcreteFP(FPBase):
+            pass
+
+        obj = self.doc.addObject("App::FeaturePython", "FP")
+        fp = ConcreteFP(obj)
+        self.assertEqual(fp.__getstate__(), {})
+
+    def test_fpbase_setstate_returns_none(self):
+        """FPBase.__setstate__ must return None (no-op restore)."""
+        _msg("  Test FPBase.__setstate__")
+        from FemLink.FPBase import FPBase
+
+        class ConcreteFP(FPBase):
+            pass
+
+        obj = self.doc.addObject("App::FeaturePython", "FP2")
+        fp = ConcreteFP(obj)
+        self.assertIsNone(fp.__setstate__({}))
+
+    def test_fpbase_getassembly_returns_none_for_standalone(self):
+        """FPBase.getAssembly returns None when object has no Assembly parent."""
+        _msg("  Test FPBase.getAssembly standalone")
+        from FemLink.FPBase import FPBase
+
+        class ConcreteFP(FPBase):
+            pass
+
+        obj = self.doc.addObject("App::FeaturePython", "FP3")
+        fp = ConcreteFP(obj)
+        self.assertIsNone(fp.getAssembly(obj))
