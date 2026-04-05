@@ -4,12 +4,13 @@ include_directories(
     /usr/local/include
 )
 
-
 add_subdirectory(App)
 
 if(BUILD_GUI)
     add_subdirectory(Gui)
 endif(BUILD_GUI)
+
+add_subdirectory(FemLink)
 
 set(Assembly_Scripts
     Init.py
@@ -50,6 +51,7 @@ SET(AssemblyTests_SRCS
     AssemblyTests/__init__.py
     AssemblyTests/TestCore.py
     AssemblyTests/TestCommandInsertLink.py
+    AssemblyTests/TestFemMbDyn.py
     AssemblyTests/mocks/__init__.py
     AssemblyTests/mocks/MockGui.py
 )
