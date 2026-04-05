@@ -5,7 +5,7 @@ set(Assembly_LIBS
     PartDesign
     Spreadsheet
     FreeCADApp
-    OndselSolver
+    FreeCADMbD
 )
 
 generate_from_py(AssemblyObject)
@@ -69,10 +69,12 @@ target_include_directories(
     PRIVATE
     ${CMAKE_BINARY_DIR}
     ${CMAKE_SOURCE_DIR}/src
+    /usr/local/lib/FreeCADMbD
     ${CMAKE_BINARY_DIR}/src
     ${CMAKE_CURRENT_BINARY_DIR}
 )
 target_link_libraries(Assembly ${Assembly_LIBS})
+target_link_directories(Assembly PRIVATE /usr/local/lib)
 if (FREECAD_WARN_ERROR)
     target_compile_warn_error(Assembly)
 endif()

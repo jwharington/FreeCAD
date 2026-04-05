@@ -32,7 +32,7 @@
 #include <App/Part.h>
 #include <App/PropertyLinks.h>
 
-#include <OndselSolver/enum.h>
+#include <FreeCADMbD/enum.h>
 
 namespace MbD
 {

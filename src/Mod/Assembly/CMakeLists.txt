@@ -1,15 +1,9 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-if (NOT FREECAD_USE_EXTERNAL_ONDSELSOLVER)
 include_directories(
-    ${CMAKE_SOURCE_DIR}/src/3rdParty/OndselSolver
+    /usr/local/include
 )
-else ()
-    check_include_file_cxx(OndselSolver/enum.h HAVE_ONDSELSOLVER_H)
-    if (NOT HAVE_ONDSELSOLVER_H)
-        message(FATAL_ERROR "FREECAD_USE_EXTERNAL_ONDSELSOLVER is set but the required system includes are not available")
-    endif ()
-endif ()
+
 
 add_subdirectory(App)
 
