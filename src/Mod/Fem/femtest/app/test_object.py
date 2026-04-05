@@ -30,8 +30,8 @@ import unittest
 from os.path import join
 
 import FreeCAD
-
 import ObjectsFem
+
 from . import support_utils as testtools
 from .support_utils import fcc_print
 
@@ -224,8 +224,13 @@ class TestObjectType(unittest.TestCase):
             "Fem::ConstraintSelfWeight", type_of_obj(ObjectsFem.makeConstraintSelfWeight(doc))
         )
         self.assertEqual(
+            "Fem::ConstraintHydrostaticPressure",
+            type_of_obj(ObjectsFem.makeConstraintHydrostaticPressure(doc)),
+        )
+        self.assertEqual(
             "Fem::ConstraintCentrif", type_of_obj(ObjectsFem.makeConstraintCentrif(doc))
         )
+        self.assertEqual("Fem::ConstraintJig321", type_of_obj(ObjectsFem.makeConstraintJig321(doc)))
         self.assertEqual(
             "Fem::ConstraintTemperature", type_of_obj(ObjectsFem.makeConstraintTemperature(doc))
         )
@@ -427,6 +432,7 @@ class TestObjectType(unittest.TestCase):
             is_of_type(ObjectsFem.makeConstraintSelfWeight(doc), "Fem::ConstraintSelfWeight")
         )
         self.assertTrue(is_of_type(ObjectsFem.makeConstraintCentrif(doc), "Fem::ConstraintCentrif"))
+        self.assertTrue(is_of_type(ObjectsFem.makeConstraintJig321(doc), "Fem::ConstraintJig321"))
         self.assertTrue(
             is_of_type(ObjectsFem.makeConstraintTemperature(doc), "Fem::ConstraintTemperature")
         )
@@ -730,11 +736,25 @@ class TestObjectType(unittest.TestCase):
         self.assertTrue(is_derived_from(constraint_self_weight, "Fem::ConstraintPython"))
         self.assertTrue(is_derived_from(constraint_self_weight, "Fem::ConstraintSelfWeight"))
 
+        # ConstraintHydrostaticPressure
+        constraint_hydrostaticpressure = ObjectsFem.makeConstraintHydrostaticPressure(doc)
+        self.assertTrue(is_derived_from(constraint_hydrostaticpressure, "App::DocumentObject"))
+        self.assertTrue(is_derived_from(constraint_hydrostaticpressure, "Fem::ConstraintPython"))
+        self.assertTrue(
+            is_derived_from(constraint_hydrostaticpressure, "Fem::ConstraintHydrostaticPressure")
+        )
+
         # ConstraintCentrif
         constraint_centrif = ObjectsFem.makeConstraintCentrif(doc)
         self.assertTrue(is_derived_from(constraint_centrif, "App::DocumentObject"))
         self.assertTrue(is_derived_from(constraint_centrif, "Fem::ConstraintPython"))
         self.assertTrue(is_derived_from(constraint_centrif, "Fem::ConstraintCentrif"))
+
+        # ConstraintJig321
+        constraint_jig321 = ObjectsFem.makeConstraintJig321(doc)
+        self.assertTrue(is_derived_from(constraint_jig321, "App::DocumentObject"))
+        self.assertTrue(is_derived_from(constraint_jig321, "Fem::ConstraintPython"))
+        self.assertTrue(is_derived_from(constraint_jig321, "Fem::ConstraintJig321"))
 
         # ConstraintTemperature
         constraint_temperature = ObjectsFem.makeConstraintTemperature(doc)
