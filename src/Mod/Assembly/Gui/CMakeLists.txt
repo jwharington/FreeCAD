@@ -25,6 +25,7 @@ generate_from_py(ViewProviderAssembly)
 set(AssemblyGui_UIC_SRCS
     TaskAssemblyCreateBom.ui
     TaskAssemblyCreateJoint.ui
+    TaskAssemblyCreateForce.ui
     TaskAssemblyCreateSimulation.ui
     TaskAssemblyCreateView.ui
     TaskAssemblyInsertLink.ui

@@ -2,6 +2,7 @@
 # Tests for commits:
 #   aa9155ed05  Assembly: add FemLink module infrastructure
 #   d369c72d37  Assembly: add LinkBody command and FemLink integration
+#   73538fc78f  Assembly: add force command and refactor task utilities
 
 import unittest
 
@@ -128,3 +129,58 @@ class TestFPBase(unittest.TestCase):
         obj = self.doc.addObject("App::FeaturePython", "FP3")
         fp = ConcreteFP(obj)
         self.assertIsNone(fp.getAssembly(obj))
+
+
+# ---------------------------------------------------------------------------
+# 73538fc78f – force command and task utilities (ForceObject)
+# ---------------------------------------------------------------------------
+
+
+class TestForceObject(unittest.TestCase):
+
+    def setUp(self):
+        self.doc = _make_doc(self.__class__.__name__)
+        self.assembly = self.doc.addObject("Assembly::AssemblyObject", "Assembly")
+        self.assembly.newObject("Assembly::JointGroup", "Joints")
+
+    def tearDown(self):
+        App.closeDocument(self.doc.Name)
+
+    def test_force_types_list_integrity(self):
+        """ForceTypes and TranslatedForceTypes must have the same length and expected values."""
+        _msg("  Test ForceTypes list integrity")
+        import ForceObject
+
+        self.assertEqual(len(ForceObject.ForceTypes), len(ForceObject.TranslatedForceTypes))
+        self.assertIn("General", ForceObject.ForceTypes)
+        self.assertIn("InLine", ForceObject.ForceTypes)
+
+    def test_force_torque_general_has_force_type_property(self):
+        """ForceTorqueGeneral must initialise with a ForceType property set to 'General'."""
+        _msg("  Test ForceTorqueGeneral ForceType property")
+        import ForceObject
+
+        force_obj = self.assembly.newObject("App::FeaturePython", "Force")
+        ForceObject.ForceTorqueGeneral(force_obj)
+        self.assertTrue(hasattr(force_obj, "ForceType"))
+        self.assertEqual(force_obj.ForceType, "General")
+
+    def test_force_torque_inline_has_force_type_property(self):
+        """ForceTorqueInLine must initialise with a ForceType property set to 'InLine'."""
+        _msg("  Test ForceTorqueInLine ForceType property")
+        import ForceObject
+
+        force_obj = self.assembly.newObject("App::FeaturePython", "ForceInLine")
+        ForceObject.ForceTorqueInLine(force_obj)
+        self.assertTrue(hasattr(force_obj, "ForceType"))
+        self.assertEqual(force_obj.ForceType, "InLine")
+
+    def test_force_torque_general_has_reference_properties(self):
+        """ForceTorqueGeneral must initialise Reference1 and Reference2 properties."""
+        _msg("  Test ForceTorqueGeneral reference properties")
+        import ForceObject
+
+        force_obj = self.assembly.newObject("App::FeaturePython", "Force2")
+        ForceObject.ForceTorqueGeneral(force_obj)
+        self.assertTrue(hasattr(force_obj, "Reference1"))
+        self.assertTrue(hasattr(force_obj, "Reference2"))

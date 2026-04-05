@@ -20,11 +20,14 @@ set(Assembly_Scripts
     CommandInsertNewPart.py
     CommandSolveAssembly.py
     CommandCreateJoint.py
+    CommandCreateForce.py
     CommandCreateView.py
     CommandCreateSimulation.py
     CommandExportASMT.py
+    TaskAssemblyItemIJ.py
     TestAssemblyWorkbench.py
     JointObject.py
+    ForceObject.py
     Preferences.py
     AssemblyImport.py
     SoSwitchMarker.py
