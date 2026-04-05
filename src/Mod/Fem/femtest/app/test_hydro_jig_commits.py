@@ -21,6 +21,9 @@ from types import SimpleNamespace
 
 import FreeCAD
 import ObjectsFem
+from femobjects.constraint_hydrostaticpressure import (
+    ConstraintHydrostaticPressure,
+)
 from femsolver.calculix import write_step_output
 from femtools import checksanalysis
 from femtools.membertools import AnalysisMember
@@ -129,3 +132,16 @@ class TestHydroJigCommits(unittest.TestCase):
         doc.recompute()
 
         self.assertEqual(jig.CenterOfMass, jig.CenterOfRotation)
+
+    # ********************************************************************************************
+    def test_hydrostatic_clip_negative_interpolator(self):
+        obj = self.document.addObject("Fem::ConstraintPython", "Hydro")
+        proxy = ConstraintHydrostaticPressure(obj)
+
+        obj.ModelType = "Hydrostatic"
+        obj.ClipNegative = True
+
+        _, interp = proxy.get_interpolator(obj)
+
+        self.assertEqual(0.0, interp([0.0, 0.0, -5.0])[0])
+        self.assertEqual(5.0, interp([0.0, 0.0, 5.0])[0])
