@@ -70,7 +70,7 @@ std::vector<App::DocumentObject*> JointGroup::getJoints()
 
         auto proxy = dynamic_cast<App::PropertyPythonObject*>(joint->getPropertyByName("Proxy"));
         if (proxy) {
-            if (proxy->getValue().hasAttr("setJointConnectors")) {
+            if (proxy->getValue().hasAttr("JointType")) {
                 joints.push_back(joint);
             }
         }

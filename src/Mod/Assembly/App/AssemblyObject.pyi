@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Final
 
-from Base.Metadata import constmethod, export
-
-from App.Part import Part
 from App.DocumentObject import DocumentObject
+from App.Part import Part
+from Base.Metadata import constmethod, export
 
 @export(Include="Mod/Assembly/App/AssemblyObject.h", Namespace="Assembly")
 class AssemblyObject(Part):
@@ -175,3 +174,6 @@ class AssemblyObject(Part):
         ...
     Joints: Final[list]
     """A list of all joints this assembly has."""
+
+    Forces: Final[list]
+    """A list of all forces this assembly has."""

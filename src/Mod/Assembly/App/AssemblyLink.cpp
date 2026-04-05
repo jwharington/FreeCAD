@@ -45,6 +45,7 @@
 #include "AssemblyObject.h"
 #include "AssemblyUtils.h"
 #include "JointGroup.h"
+#include "ForceGroup.h"
 
 #include "AssemblyLink.h"
 #include "AssemblyLinkPy.h"
@@ -309,6 +310,7 @@ void AssemblyLink::updateContents()
     else {
         synchronizeJoints();
     }
+    synchronizeForces();
     purgeTouched();
 }
 
@@ -611,6 +613,58 @@ void AssemblyLink::synchronizeJoints()
 }
 
 
+void AssemblyLink::synchronizeForces()
+{
+    App::Document* doc = getDocument();
+    AssemblyObject* assembly = getLinkedAssembly();
+    if (!assembly) {
+        return;
+    }
+
+    ForceGroup* fGroup = ensureForceGroup();
+
+    std::vector<App::DocumentObject*> assemblyForces = assembly->getForces(false);
+    std::vector<App::DocumentObject*> assemblyLinkForces = getForces();
+    // We delete the excess of forces if any
+    for (size_t i = assemblyForces.size(); i < assemblyLinkForces.size(); ++i) {
+        doc->removeObject(assemblyLinkForces[i]->getNameInDocument());
+    }
+
+    // We make sure the forces match.
+    for (size_t i = 0; i < assemblyForces.size(); ++i) {
+        App::DocumentObject* force = assemblyForces[i];
+        App::DocumentObject* lForce;
+        if (i < assemblyLinkForces.size()) {
+            lForce = assemblyLinkForces[i];
+        }
+        else {
+            auto ret = doc->copyObject({force});
+            if (ret.size() != 1) {
+                continue;
+            }
+            lForce = ret[0];
+            fGroup->addObject(lForce);
+        }
+
+        // Then we have to check the properties one by one.
+        copyPropertyIfDifferent<App::PropertyBool>(force, lForce, "Suppressed");
+        copyPropertyIfDifferent<App::PropertyEnumeration>(force, lForce, "ForceType");
+
+        // The reference needs to be handled specifically
+        handleJointReference(force, lForce, "Reference1");
+        handleJointReference(force, lForce, "Reference2");
+    }
+
+    assemblyLinkForces = getForces();
+
+    AssemblyObject::redrawJointPlacements(assemblyLinkForces);
+
+    for (auto* force : assemblyLinkForces) {
+        force->purgeTouched();
+    }
+}
+
+
 void AssemblyLink::handleJointReference(
     App::DocumentObject* joint,
     App::DocumentObject* lJoint,
@@ -681,6 +735,7 @@ void AssemblyLink::ensureNoJointGroup()
         getDocument()->removeObject(jGroup->getNameInDocument());
     }
 }
+
 JointGroup* AssemblyLink::ensureJointGroup()
 {
     // Make sure there is a jointGroup
@@ -694,6 +749,22 @@ JointGroup* AssemblyLink::ensureJointGroup()
         Group.setValues(grp);
     }
     return jGroup;
+}
+
+
+ForceGroup* AssemblyLink::ensureForceGroup()
+{
+    // Make sure there is a forceGroup
+    ForceGroup* fGroup = getForceGroup(this);
+    if (!fGroup) {
+        fGroup = new ForceGroup();
+        getDocument()->addObject(fGroup, tr("Forces").toStdString().c_str());
+
+        std::vector<DocumentObject*> grp = Group.getValues();
+        grp.insert(grp.begin(), fGroup);
+        Group.setValues(grp);
+    }
+    return fGroup;
 }
 
 App::DocumentObject* AssemblyLink::getLinkedObject2(bool recursive) const
@@ -753,6 +824,16 @@ std::vector<App::DocumentObject*> AssemblyLink::getJoints()
         return {};
     }
     return jointGroup->getJoints();
+}
+
+std::vector<App::DocumentObject*> AssemblyLink::getForces()
+{
+    ForceGroup* forceGroup = getForceGroup(this);
+
+    if (!forceGroup) {
+        return {};
+    }
+    return forceGroup->getForces();
 }
 
 bool AssemblyLink::allowDuplicateLabel() const

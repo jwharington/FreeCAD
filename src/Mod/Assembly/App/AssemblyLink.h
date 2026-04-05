@@ -37,6 +37,7 @@ namespace Assembly
 {
 class AssemblyObject;
 class JointGroup;
+class ForceGroup;
 
 class AssemblyExport AssemblyLink: public App::Part
 {
@@ -83,6 +84,10 @@ public:
     void ensureNoJointGroup();
     JointGroup* ensureJointGroup();
     std::vector<App::DocumentObject*> getJoints();
+
+    void synchronizeForces();
+    ForceGroup* ensureForceGroup();
+    std::vector<App::DocumentObject*> getForces();
 
     bool allowDuplicateLabel() const override;
 

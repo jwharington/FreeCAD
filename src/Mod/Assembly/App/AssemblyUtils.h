@@ -63,6 +63,20 @@ enum class JointType
     Belt,
 };
 
+// This enum has to be the same as the one in ForceObject.py
+enum class ForceType
+{
+    General,
+    InLine,
+};
+
+enum class MarkerKSign
+{
+    O,
+    I,
+    J,
+};
+
 enum class GeometryType
 {
     Point = 0,
@@ -130,6 +144,7 @@ enum class DistanceType
 
 class AssemblyObject;
 class JointGroup;
+class ForceGroup;
 
 AssemblyExport void swapJCS(const App::DocumentObject* joint);
 
@@ -148,16 +163,23 @@ AssemblyExport double getEdgeRadius(const App::DocumentObject* obj, const std::s
 
 AssemblyExport DistanceType getDistanceType(App::DocumentObject* joint);
 AssemblyExport JointGroup* getJointGroup(const App::Part* part);
+AssemblyExport ForceGroup* getForceGroup(const App::Part* part);
 
 AssemblyExport std::vector<App::DocumentObject*> getAssemblyComponents(const AssemblyObject* assembly);
 
 // getters to get from properties
+AssemblyExport std::string getForceFunction(const App::DocumentObject* force, const char* propName);
+AssemblyExport MarkerKSign getForceMarkerKSign(const App::DocumentObject* force);
+
 AssemblyExport void setJointActivated(const App::DocumentObject* joint, bool val);
 AssemblyExport bool getJointActivated(const App::DocumentObject* joint);
 AssemblyExport double getJointAngle(const App::DocumentObject* joint);
 AssemblyExport double getJointDistance(const App::DocumentObject* joint);
 AssemblyExport double getJointDistance2(const App::DocumentObject* joint);
 AssemblyExport JointType getJointType(const App::DocumentObject* joint);
+
+AssemblyExport ForceType getForceType(const App::DocumentObject* force);
+
 AssemblyExport std::string getElementFromProp(const App::DocumentObject* obj, const char* propName);
 AssemblyExport std::string getElementTypeFromProp(const App::DocumentObject* obj, const char* propName);
 AssemblyExport App::DocumentObject* getObjFromProp(

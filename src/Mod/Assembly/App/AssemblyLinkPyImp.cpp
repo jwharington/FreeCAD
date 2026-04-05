@@ -55,3 +55,16 @@ Py::List AssemblyLinkPy::getJoints() const
 
     return ret;
 }
+
+
+Py::List AssemblyLinkPy::getForces() const
+{
+    Py::List ret;
+    std::vector<App::DocumentObject*> list = getAssemblyLinkPtr()->getForces();
+
+    for (auto It : list) {
+        ret.append(Py::Object(It->getPyObject(), true));
+    }
+
+    return ret;
+}

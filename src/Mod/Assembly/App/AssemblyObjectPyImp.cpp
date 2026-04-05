@@ -209,6 +209,20 @@ Py::List AssemblyObjectPy::getJoints() const
     return ret;
 }
 
+
+Py::List AssemblyObjectPy::getForces() const
+{
+    Py::List ret;
+    std::vector<App::DocumentObject*> list = getAssemblyObjectPtr()->getForces(false);
+
+    for (auto It : list) {
+        ret.append(Py::Object(It->getPyObject(), true));
+    }
+
+    return ret;
+}
+
+
 PyObject* AssemblyObjectPy::getDownstreamParts(PyObject* args) const
 {
     PyObject* pyPart;

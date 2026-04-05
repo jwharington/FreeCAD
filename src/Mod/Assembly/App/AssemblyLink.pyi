@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import Final
 
-from Base.Metadata import export
-
 from App.Part import Part
+from Base.Metadata import export
 
 @export(
     Include="Mod/Assembly/App/AssemblyLink.h",
@@ -22,3 +21,6 @@ class AssemblyLink(Part):
 
     Joints: Final[list]
     """A list of all joints this assembly link has."""
+
+    Forces: Final[list]
+    """A list of all forces this assembly link has."""
