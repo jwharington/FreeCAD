@@ -25,7 +25,7 @@ __title__ = "FreeCAD FEM calculix constraint pressure"
 __author__ = "Bernd Hahnebach"
 __url__ = "https://www.freecad.org"
 
-import FreeCAD
+from FreeCAD import Console
 
 
 def get_analysis_types():
@@ -44,8 +44,15 @@ def get_after_write_meshdata_constraint():
     return ""
 
 
-def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
+def has_pressure_field(prs_obj):
+    if not hasattr(prs_obj, "Proxy"):
+        return False
+    if hasattr(prs_obj.Proxy, "get_pressure_field"):
+        return True
+    return False
 
+
+def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
     # floats read from ccx should use {:.13G}, see comment in writer module
 
     if prs_obj.EnableAmplitude:
@@ -53,14 +60,69 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
     else:
         f.write("*DLOAD\n")
     rev = -1 if prs_obj.Reversed else 1
+
+    def get_pressure_field(elem_info):
+        prs_obj.Proxy.get_pressure_field(prs_obj, elem_info)
+
+    def get_pressure_uniform(elem_info):
+        for info in elem_info:
+            info["pressure"] = prs_obj.Pressure.getValueAs("MPa").Value
+
+    if has_pressure_field(prs_obj):
+        get_pressure = get_pressure_field
+    else:
+        get_pressure = get_pressure_uniform
+
+    elem_info = {
+        "feat": [],
+        "elem": [],
+        "fno": [],
+        "centroid": [],
+        "normal": [],
+        "area": [],
+        "pressure": [],
+        "rev": [],
+        "felem": [],
+    }
+
     # the pressure has to be output in MPa
-    pressure = prs_obj.Pressure.getValueAs("MPa").Value
-    pressure *= rev
-    for feat, surf, is_sub_el in femobj["PressureFaces"]:
-        f.write("** {0.Name}.{1[0]}\n".format(*feat))
-        if is_sub_el:
-            for elem, fno in surf:
-                f.write(f"{elem},P{fno},{pressure}\n")
-        else:
-            for elem in surf:
-                f.write(f"{elem},P,{-1*pressure}\n")
+    femmesh = ccxwriter.mesh_object.FemMesh
+
+    for feature, surface, is_sub_el in femobj["PressureFaces"]:
+
+        def find_face_element(face):
+            # TODO speed this up
+            ref_nodes = set(femobj["PressureNodeInfo"][tuple(face)])
+            for fe in femmesh.Faces:
+                nodes = femmesh.getElementNodes(fe)
+                if set(nodes) == ref_nodes:
+                    return fe
+            return None
+
+        def add_elem_info(face, elem, face_no, rev):
+            elem_info["feat"].append(feature)
+            elem_info["elem"].append(elem)
+            elem_info["fno"].append(face_no)
+            elem_info["pressure"].append(0.0)
+            centroid, area, normal = femobj["PressureFaceInfo"][tuple(face)]
+            elem_info["centroid"].append(centroid)
+            elem_info["area"].append(area)
+            elem_info["normal"].append(normal)
+            elem_info["rev"].append(rev)
+            felem = find_face_element(face)
+            elem_info["felem"].append(felem)
+
+        for face in surface:
+            if is_sub_el:
+                elem, face_no = face
+                add_elem_info(face, elem, face_no, rev)
+            else:
+                add_elem_info(face, face, "", -rev)
+
+    get_pressure(elem_info)
+
+    for i in range(len(elem_info["elem"])):
+        pressure = elem_info["pressure"][i]
+        if pressure != 0.0:
+            # f.write("** {0.Name}.{1[0]}\n".format(*feat))
+            f.write(f"{elem_info['elem'][i]},P{elem_info['fno'][i]},{pressure:.13G}\n")

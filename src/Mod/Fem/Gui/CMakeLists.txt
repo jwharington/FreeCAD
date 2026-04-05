@@ -461,6 +461,7 @@ SET(FemGuiPythonUI_SRCS
     Resources/ui/PostLineplotFieldAppEdit.ui
     Resources/ui/PostLineplotIndexAppEdit.ui
     Resources/ui/PostTableFieldViewEdit.ui
+    Resources/colormaps/roma.py
 )
 
 ADD_CUSTOM_TARGET(FemPythonUi ALL
