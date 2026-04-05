@@ -26,6 +26,7 @@
         <file>icons/Assembly_SelectJointsOfComponent.svg</file>
         <file>icons/Assembly_SolveAssembly.svg</file>
         <file>icons/Assembly_JointGroup.svg</file>
+        <file>icons/Assembly_ForceGroup.svg</file>
         <file>icons/Assembly_ExplodedView.svg</file>
         <file>icons/Assembly_ExplodedViewGroup.svg</file>
         <file>icons/Assembly_CreateSimulation.svg</file>

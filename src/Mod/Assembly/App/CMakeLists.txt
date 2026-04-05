@@ -13,6 +13,7 @@ generate_from_py(AssemblyLink)
 generate_from_py(BomObject)
 generate_from_py(BomGroup)
 generate_from_py(JointGroup)
+generate_from_py(ForceGroup)
 generate_from_py(ViewGroup)
 generate_from_py(SimulationGroup)
 
@@ -28,6 +29,8 @@ SET(Python_SRCS
     BomGroupPyImp.cpp
     JointGroup.pyi
     JointGroupPyImp.cpp
+    ForceGroup.pyi
+    ForceGroupPyImp.cpp
     ViewGroup.pyi
     ViewGroupPyImp.cpp
     SimulationGroup.pyi
@@ -55,6 +58,8 @@ SET(Assembly_SRCS
     BomGroup.h
     JointGroup.cpp
     JointGroup.h
+    ForceGroup.cpp
+    ForceGroup.h
     ViewGroup.cpp
     ViewGroup.h
     SimulationGroup.cpp

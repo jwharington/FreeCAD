@@ -22,54 +22,59 @@
  ***************************************************************************/
 
 
+#include <App/Application.h>
+#include <App/Document.h>
+#include <App/FeaturePythonPyImp.h>
+#include <App/PropertyPythonObject.h>
 #include <Base/Console.h>
-#include <Base/Interpreter.h>
-#include <Base/PyObjectBase.h>
+#include <Base/Tools.h>
 
-#include "Commands.h"
-#include "ViewProviderAssembly.h"
-#include "ViewProviderAssemblyLink.h"
-#include "ViewProviderBom.h"
-#include "ViewProviderBomGroup.h"
-#include "ViewProviderJointGroup.h"
-#include "ViewProviderForceGroup.h"
-#include "ViewProviderViewGroup.h"
-#include "ViewProviderSimulationGroup.h"
+#include "ForceGroup.h"
+#include "ForceGroupPy.h"
 
-namespace AssemblyGui
+using namespace Assembly;
+
+
+PROPERTY_SOURCE(Assembly::ForceGroup, App::DocumentObjectGroup)
+
+ForceGroup::ForceGroup()
+{}
+
+ForceGroup::~ForceGroup() = default;
+
+PyObject* ForceGroup::getPyObject()
 {
-extern PyObject* initModule();
+    if (PythonObject.is(Py::_None())) {
+        // ref counter is set to 1
+        PythonObject = Py::Object(new ForceGroupPy(this), true);
+    }
+    return Py::new_reference_to(PythonObject);
 }
 
-/* Python entry */
-PyMOD_INIT_FUNC(AssemblyGui)
+
+std::vector<App::DocumentObject*> ForceGroup::getForces()
 {
-    // load dependent module
-    try {
-        Base::Interpreter().runString("import SpreadsheetGui");
+    std::vector<App::DocumentObject*> forces = {};
+
+    Base::PyGILStateLocker lock;
+    for (auto force : getObjects()) {
+        if (!force) {
+            continue;
+        }
+
+        auto* prop = dynamic_cast<App::PropertyBool*>(force->getPropertyByName("Suppressed"));
+        if (!prop || prop->getValue()) {
+            // Filter grounded forces and deactivated forces.
+            continue;
+        }
+
+        auto proxy = dynamic_cast<App::PropertyPythonObject*>(force->getPropertyByName("Proxy"));
+        if (proxy) {
+            if (proxy->getValue().hasAttr("ForceType")) {
+                forces.push_back(force);
+            }
+        }
     }
-    catch (const Base::Exception& e) {
-        PyErr_SetString(PyExc_ImportError, e.what());
-        PyMOD_Return(nullptr);
-    }
 
-    PyObject* mod = AssemblyGui::initModule();
-    Base::Console().log("Loading AssemblyGui module... done\n");
-
-    AssemblyGui::CreateAssemblyCommands();
-
-    // NOTE: To finish the initialization of our own type objects we must
-    // call PyType_Ready, otherwise we run into a segmentation fault, later on.
-    // This function is responsible for adding inherited slots from a type's base class.
-
-    AssemblyGui::ViewProviderAssembly::init();
-    AssemblyGui::ViewProviderAssemblyLink::init();
-    AssemblyGui::ViewProviderBom::init();
-    AssemblyGui::ViewProviderBomGroup::init();
-    AssemblyGui::ViewProviderJointGroup::init();
-    AssemblyGui::ViewProviderForceGroup::init();
-    AssemblyGui::ViewProviderViewGroup::init();
-    AssemblyGui::ViewProviderSimulationGroup::init();
-
-    PyMOD_Return(mod);
+    return forces;
 }
