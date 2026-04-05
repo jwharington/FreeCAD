@@ -31,9 +31,9 @@ __url__ = "https://www.freecad.org"
 import time
 
 import FreeCAD
+from femtools.femutils import type_of_obj
 
 from femmesh import meshtools
-from femtools.femutils import type_of_obj
 
 
 class MeshSetsGetter:
@@ -148,6 +148,7 @@ class MeshSetsGetter:
         # constraints node sets getter
         self.get_constraints_fixed_nodes()
         self.get_constraints_displacement_nodes()
+        self.get_constraints_jig321_nodes()
         self.get_constraints_rigidbody_nodes()
         self.get_constraints_planerotation_nodes()
 
@@ -232,6 +233,18 @@ class MeshSetsGetter:
             # add nodes to constraint_conflict_nodes, needed by constraint plane rotation
             for node in femobj["Nodes"]:
                 self.constraint_conflict_nodes.append(node)
+
+    def get_constraints_jig321_nodes(self):
+        if not self.member.cons_jig321:
+            return
+        # get nodes
+        for femobj in self.member.cons_jig321:
+            # femobj --> dict, FreeCAD document object is femobj["Object"]
+            print_obj_info(femobj["Object"])
+            nodes = meshtools.get_femnodes_by_femobj_with_references(self.femmesh, femobj)
+            femobj["Nodes"] = femobj["Object"].Proxy.find_largest_triangle(
+                femobj["Object"], self.femmesh, nodes
+            )
 
     def get_constraints_planerotation_nodes(self):
         if not self.member.cons_planerotation:
@@ -375,11 +388,56 @@ class MeshSetsGetter:
 
     # faces sets
     def get_constraints_pressure_faces(self):
+
+        def get_triangle_info(P1, P2, P3):
+            vec1 = P2 - P1
+            vec2 = P3 - P1
+            vec3 = vec1.cross(vec2)
+            return (P1 + P2 + P3) / 3.0, 0.5 * vec3.Length, vec3.normalize()
+
         for femobj in self.member.cons_pressure:
             obj = femobj["Object"]
             result = self._get_ccx_elements(obj)
 
             femobj["PressureFaces"] = result
+
+            face_info = {}
+            node_info = {}
+
+            for o, elem_tup in obj.References:
+                for elem in elem_tup:
+                    ref_face = meshtools.sub_shape_at_global_placement(o, elem)
+
+                    # face_table:
+                    #    { meshfaceID : ( nodeID, ... , nodeID ) }
+
+                    face_table = {}
+                    ref_face_volume_elements = self.femmesh.getccxVolumesByFace(ref_face)
+                    ref_face_nodes = self.femmesh.getNodesByFace(ref_face)
+                    for ve in ref_face_volume_elements:
+                        veID = ve[0]
+                        # faID = ve[1]
+                        ve_ref_face_nodes = []
+                        for nodeID in self.femelement_table[veID]:
+                            if nodeID in ref_face_nodes:
+                                ve_ref_face_nodes.append(nodeID)
+
+                        if ve_ref_face_nodes:
+                            face_table[veID] = ve_ref_face_nodes
+
+                    mf = meshtools.build_mesh_faces_of_volume_elements(
+                        face_table, self.femelement_table
+                    )
+                    for ve in ref_face_volume_elements:
+                        sorted_nodes = mf[ve[0]]
+                        P1 = self.femnodes_mesh[sorted_nodes[0]]
+                        P2 = self.femnodes_mesh[sorted_nodes[1]]
+                        P3 = self.femnodes_mesh[sorted_nodes[2]]
+                        face_info[tuple(ve)] = get_triangle_info(P1, P2, P3)
+                        node_info[tuple(ve)] = sorted_nodes
+
+            femobj["PressureFaceInfo"] = face_info
+            femobj["PressureNodeInfo"] = node_info
 
     def get_constraints_electrostatic_faces(self):
         for femobj in self.member.cons_electrostatic:

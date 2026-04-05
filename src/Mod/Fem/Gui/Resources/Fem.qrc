@@ -12,6 +12,7 @@
         <file>icons/FEM_ConstraintBearing.svg</file>
         <file>icons/FEM_ConstraintBodyHeatSource.svg</file>
         <file>icons/FEM_ConstraintCentrif.svg</file>
+        <file>icons/FEM_ConstraintJig321.svg</file>
         <file>icons/FEM_ConstraintContact.svg</file>
         <file>icons/FEM_ConstraintCurrentDensity.svg</file>
         <file>icons/FEM_ConstraintDisplacement.svg</file>
@@ -23,6 +24,7 @@
         <file>icons/FEM_ConstraintForce.svg</file>
         <file>icons/FEM_ConstraintGear.svg</file>
         <file>icons/FEM_ConstraintHeatflux.svg</file>
+        <file>icons/FEM_ConstraintHydrostaticPressure.svg</file>
         <file>icons/FEM_ConstraintInitialFlowVelocity.svg</file>
         <file>icons/FEM_ConstraintInitialPressure.svg</file>
         <file>icons/FEM_ConstraintInitialTemperature.svg</file>
