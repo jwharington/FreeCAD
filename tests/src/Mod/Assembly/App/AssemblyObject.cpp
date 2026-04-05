@@ -10,6 +10,7 @@
 #include <App/ObjectIdentifier.h>
 #include <Mod/Assembly/App/AssemblyLink.h>
 #include <Mod/Assembly/App/AssemblyObject.h>
+#include <Mod/Assembly/App/ForceGroup.h>
 #include <Mod/Assembly/App/JointGroup.h>
 #include <src/App/InitApplication.h>
 
@@ -27,6 +28,7 @@ protected:
         _doc = App::GetApplication().newDocument(_docName.c_str(), "testUser");
         _assemblyObj = _doc->addObject<Assembly::AssemblyObject>();
         _jointGroupObj = _assemblyObj->addObject<Assembly::JointGroup>("jointGroupTest");
+        _forceGroupObj = _assemblyObj->addObject<Assembly::ForceGroup>("forceGroupTest");
     }
 
     void TearDown() override
@@ -48,6 +50,7 @@ private:
     // TODO: use shared_ptr or something else here?
     Assembly::AssemblyObject* _assemblyObj;
     Assembly::JointGroup* _jointGroupObj;
+    Assembly::ForceGroup* _forceGroupObj;
     App::Document* _doc;
     std::string _docName;
 };
@@ -94,4 +97,19 @@ TEST_F(AssemblyObjectTest, assemblyLinkHasForcesProperty)  // NOLINT
     auto* link = getDoc()->addObject<Assembly::AssemblyLink>();
     ASSERT_NE(link, nullptr);
     EXPECT_NE(link->getPropertyByName("Forces"), nullptr);
+}
+
+// Tests for commit: Assembly: add ForceGroup C++ infrastructure
+
+TEST_F(AssemblyObjectTest, getForceGroupReturnsNonNull)  // NOLINT
+{
+    // ForceGroup was added to the assembly in SetUp; getForceGroup should find it
+    EXPECT_NE(getObject()->getForceGroup(), nullptr);
+}
+
+TEST_F(AssemblyObjectTest, forceGroupGetForcesEmptyInitially)  // NOLINT
+{
+    auto* fg = getObject()->getForceGroup();
+    ASSERT_NE(fg, nullptr);
+    EXPECT_TRUE(fg->getForces().empty());
 }
