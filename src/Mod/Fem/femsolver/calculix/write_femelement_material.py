@@ -45,6 +45,8 @@ def write_femelement_material(f, ccxwriter):
             return True
         if ccxwriter.member.cons_centrif:
             return True
+        if ccxwriter.member.cons_jig321:
+            return True
         if ccxwriter.member.cons_selfweight:
             return True
         return False

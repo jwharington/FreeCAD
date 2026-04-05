@@ -31,12 +31,12 @@ __url__ = "https://www.freecad.org"
 
 import FreeCAD
 import FreeCADGui
+from femsolver.settings import get_default_solver
+from femtools.femutils import expandParentObject, is_of_type
 from FreeCAD import Qt
+from PySide import QtCore, QtGui
 
 from .manager import CommandManager
-from femtools.femutils import expandParentObject
-from femtools.femutils import is_of_type
-from femsolver.settings import get_default_solver
 
 # Python command definitions:
 # for C++ command definitions see src/Mod/Fem/Command.cpp
@@ -110,9 +110,11 @@ class _ClippingPlaneAdd(CommandManager):
         return resources
 
     def Activated(self):
+        from femtools.femutils import (
+            getBoundBoxOfAllDocumentShapes,
+            getSelectedFace,
+        )
         from pivy import coin
-        from femtools.femutils import getBoundBoxOfAllDocumentShapes
-        from femtools.femutils import getSelectedFace
 
         overallboundbox = getBoundBoxOfAllDocumentShapes(FreeCAD.ActiveDocument)
         # print(overallboundbox)
@@ -219,6 +221,17 @@ class _ConstraintCentrif(CommandManager):
         super().__init__()
         self.menutext = Qt.QT_TRANSLATE_NOOP("FEM_ConstraintCentrif", "Centrifugal Load")
         self.tooltip = Qt.QT_TRANSLATE_NOOP("FEM_ConstraintCentrif", "Creates a centrifugal load")
+        self.is_active = "with_analysis"
+        self.do_activated = "add_obj_on_gui_set_edit"
+
+
+class _ConstraintJig321(CommandManager):
+    "The FEM_ConstraintJig321 command definition"
+
+    def __init__(self):
+        super().__init__()
+        self.menutext = Qt.QT_TRANSLATE_NOOP("FEM_ConstraintJig321", "3-2-1 Jig")
+        self.tooltip = Qt.QT_TRANSLATE_NOOP("FEM_ConstraintJig321", "Creates a 3-2-1 Jig support")
         self.is_active = "with_analysis"
         self.do_activated = "add_obj_on_gui_set_edit"
 
@@ -356,6 +369,21 @@ class _ConstraintSelfWeight(CommandManager):
         self.tooltip = Qt.QT_TRANSLATE_NOOP("FEM_ConstraintSelfWeight", "Creates a gravity load")
         self.is_active = "with_analysis"
         self.do_activated = "add_obj_on_gui_noset_edit"
+
+
+class _ConstraintHydrostaticPressure(CommandManager):
+    "The FEM_ConstraintHydrostaticPressure command definition"
+
+    def __init__(self):
+        super().__init__()
+        self.menutext = Qt.QT_TRANSLATE_NOOP(
+            "FEM_ConstraintHydrostaticPressure", "Hydrostatic Load"
+        )
+        self.tooltip = Qt.QT_TRANSLATE_NOOP(
+            "FEM_ConstraintHydrostaticPressure", "Creates a hydrostatic pressure load"
+        )
+        self.is_active = "with_analysis"
+        self.do_activated = "add_obj_on_gui_set_edit"
 
 
 class _ConstraintTie(CommandManager):
@@ -1390,9 +1418,11 @@ FreeCADGui.addCommand("FEM_ConstraintElectromagnetic", _ConstraintElectromagneti
 FreeCADGui.addCommand("FEM_ConstraintFlowVelocity", _ConstraintFlowVelocity())
 FreeCADGui.addCommand("FEM_ConstraintInitialFlowVelocity", _ConstraintInitialFlowVelocity())
 FreeCADGui.addCommand("FEM_ConstraintInitialPressure", _ConstraintInitialPressure())
+FreeCADGui.addCommand("FEM_ConstraintJig321", _ConstraintJig321())
 FreeCADGui.addCommand("FEM_ConstraintMagnetization", _ConstraintMagnetization())
 FreeCADGui.addCommand("FEM_ConstraintSectionPrint", _ConstraintSectionPrint())
 FreeCADGui.addCommand("FEM_ConstraintSelfWeight", _ConstraintSelfWeight())
+FreeCADGui.addCommand("FEM_ConstraintHydrostaticPressure", _ConstraintHydrostaticPressure())
 FreeCADGui.addCommand("FEM_ConstraintTie", _ConstraintTie())
 FreeCADGui.addCommand("FEM_ElementFluid1D", _ElementFluid1D())
 FreeCADGui.addCommand("FEM_ElementGeometry1D", _ElementGeometry1D())
@@ -1446,10 +1476,9 @@ if "BUILD_FEM_VTK_PYTHON" in FreeCAD.__cmake__:
     FreeCADGui.addCommand("FEM_PostFilterGlyph", _PostFilterGlyph())
 
     # setup all visualization commands (register by importing)
-    import femobjects.post_lineplot
     import femobjects.post_histogram
+    import femobjects.post_lineplot
     import femobjects.post_table
-
     from femguiutils import post_visualization
 
     post_visualization.setup_commands("FEM_PostVisualization")

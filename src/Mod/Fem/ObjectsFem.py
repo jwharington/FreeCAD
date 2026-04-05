@@ -103,7 +103,21 @@ def makeConstraintCentrif(doc, name="CentrifugalForce"):
     return obj
 
 
-def makeConstraintCurrentDensity(doc, name="CurrentDensity"):
+def makeConstraintJig321(doc, name="ConstraintJig321"):
+    """makeConstraintJig321(document, [name]):
+    creates a jig321 object to define 3-2-1 jig body displacement constraint"""
+    obj = doc.addObject("Fem::ConstraintPython", name)
+    from femobjects import constraint_jig321
+
+    constraint_jig321.ConstraintJig321(obj)
+    if FreeCAD.GuiUp:
+        from femviewprovider import view_constraint_jig321
+
+        view_constraint_jig321.VPConstraintJig321(obj.ViewObject)
+    return obj
+
+
+def makeConstraintCurrentDensity(doc, name="ConstraintCurrentDensity"):
     """makeConstraintCurrentDensity(document, [name]):
     makes a Fem CurrentDensity object"""
     obj = doc.addObject("Fem::ConstraintPython", name)
@@ -299,7 +313,21 @@ def makeConstraintSelfWeight(doc, name="Gravity"):
     return obj
 
 
-def makeConstraintTemperature(doc, name="Temperature"):
+def makeConstraintHydrostaticPressure(doc, name="ConstraintHydrostaticPressure"):
+    """makeConstraintHydrostaticPressure(document, [name]):
+    creates a hydrostatic pressure object"""
+    obj = doc.addObject("Fem::ConstraintPython", name)
+    from femobjects import constraint_hydrostaticpressure
+
+    constraint_hydrostaticpressure.ConstraintHydrostaticPressure(obj)
+    if FreeCAD.GuiUp:
+        from femviewprovider import view_constraint_hydrostaticpressure
+
+        view_constraint_hydrostaticpressure.VPConstraintHydrostaticPressure(obj.ViewObject)
+    return obj
+
+
+def makeConstraintTemperature(doc, name="ConstraintTemperature"):
     """makeConstraintTemperature(document, [name]):
     makes a Fem ConstraintTemperature object"""
     obj = doc.addObject("Fem::ConstraintTemperature", name)

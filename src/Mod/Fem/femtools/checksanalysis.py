@@ -191,7 +191,12 @@ def check_member_for_solver_calculix(analysis, solver, mesh, member):
     # no check in the regard of loads existence (constraint force, pressure, self weight)
     # is done, because an analysis without loads at all is a valid analysis too
     if solver.AnalysisType == "static":
-        if not (member.cons_fixed or member.cons_displacement or member.cons_rigidbody):
+        if not (
+            member.cons_fixed
+            or member.cons_displacement
+            or member.cons_rigidbody
+            or member.cons_jig321
+        ):
             message += "Static analysis: No mechanical boundary conditions defined.\n"
     if solver.AnalysisType == "thermomech":
         if not member.cons_initialtemperature:

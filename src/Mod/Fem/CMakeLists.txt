@@ -83,6 +83,7 @@ SET(FemExamples_SRCS
     femexamples/constraint_contact_solid_solid.py
     femexamples/constraint_section_print.py
     femexamples/constraint_selfweight_cantilever.py
+    femexamples/constraint_hydrostaticpressure.py
     femexamples/constraint_tie.py
     femexamples/constraint_transform_beam_hinged.py
     femexamples/constraint_transform_torque.py
@@ -186,6 +187,7 @@ SET(FemMesh_SRCS
     femmesh/gmshtools.py
     femmesh/meshsetsgetter.py
     femmesh/meshtools.py
+    femmesh/meshderived.py
     femmesh/netgentools.py
     femmesh/transfinitetools.py
     femmesh/adaptivetools.py
@@ -199,6 +201,7 @@ SET(FemObjects_SRCS
     femobjects/constant_vacuumpermittivity.py
     femobjects/constraint_bodyheatsource.py
     femobjects/constraint_centrif.py
+    femobjects/constraint_jig321.py
     femobjects/constraint_currentdensity.py
     femobjects/constraint_electricchargedensity.py
     femobjects/constraint_electromagnetic.py
@@ -208,6 +211,7 @@ SET(FemObjects_SRCS
     femobjects/constraint_magnetization.py
     femobjects/constraint_sectionprint.py
     femobjects/constraint_selfweight.py
+    femobjects/constraint_hydrostaticpressure.py
     femobjects/constraint_tie.py
     femobjects/element_fluid1D.py
     femobjects/element_geometry1D.py
@@ -274,6 +278,7 @@ SET(FemSolverCalculix_SRCS
     femsolver/calculix/calculixutils.py
     femsolver/calculix/write_constraint_bodyheatsource.py
     femsolver/calculix/write_constraint_centrif.py
+    femsolver/calculix/write_constraint_jig321.py
     femsolver/calculix/write_constraint_contact.py
     femsolver/calculix/write_constraint_displacement.py
     femsolver/calculix/write_constraint_electricchargedensity.py
@@ -384,6 +389,7 @@ SET(FemTestsApp_SRCS
     femtest/app/test_ccxtools.py
     femtest/app/test_common.py
     femtest/app/test_femimport.py
+    femtest/app/test_hydro_jig_commits.py
     femtest/app/test_material.py
     femtest/app/test_mesh.py
     femtest/app/test_object.py
@@ -588,6 +594,7 @@ SET(FemTools_SRCS
     femtools/ccxtools.py
     femtools/checksanalysis.py
     femtools/constants.py
+    femtools/distributions.py
     femtools/errors.py
     femtools/femutils.py
     femtools/geomtools.py
@@ -768,6 +775,7 @@ SET(FemGuiViewProvider_SRCS
     femviewprovider/view_constant_vacuumpermittivity.py
     femviewprovider/view_constraint_bodyheatsource.py
     femviewprovider/view_constraint_centrif.py
+    femviewprovider/view_constraint_jig321.py
     femviewprovider/view_constraint_currentdensity.py
     femviewprovider/view_constraint_electricchargedensity.py
     femviewprovider/view_constraint_electromagnetic.py
@@ -777,6 +785,7 @@ SET(FemGuiViewProvider_SRCS
     femviewprovider/view_constraint_magnetization.py
     femviewprovider/view_constraint_sectionprint.py
     femviewprovider/view_constraint_selfweight.py
+    femviewprovider/view_constraint_hydrostaticpressure.py
     femviewprovider/view_constraint_tie.py
     femviewprovider/view_element_fluid1D.py
     femviewprovider/view_element_geometry1D.py
