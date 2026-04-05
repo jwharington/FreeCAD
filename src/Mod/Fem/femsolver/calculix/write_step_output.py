@@ -92,6 +92,13 @@ def write_step_output(f, ccxwriter):
                 ):
                     f.write("*NODE PRINT, NSET={}, TOTALS=ONLY\n".format(femobj["Object"].Name))
                     f.write("RF\n")
+        if ccxwriter.member.cons_jig321:
+            # reaction forces for Constraint jig321 constraining translation
+            f.write("** reaction forces for Constraint jig321 constraining translation\n")
+            for femobj in ccxwriter.member.cons_jig321:
+                for i in range(3):
+                    f.write(f"*NODE PRINT, NSET={femobj['Object'].Name}-{i}, TOTALS=ONLY\n")
+                    f.write("RF\n")
         if ccxwriter.member.cons_rigidbody:
             # displacements and reaction forces/moments for Constraint rigid body
             f.write("** displacements and reaction forces/moments for Constraint rigid body\n")

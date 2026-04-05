@@ -33,18 +33,35 @@ import time
 from os.path import join
 
 import FreeCAD
+from femtools import constants
 from FreeCAD import Units
 
-from . import write_constraint_centrif as con_centrif
+from .. import writerbase
+from . import (
+    write_amplitude,
+    write_femelement_geometry,
+    write_femelement_material,
+    write_femelement_matgeosets,
+    write_footer,
+    write_mesh,
+    write_step_equation,
+    write_step_output,
+)
 from . import write_constraint_bodyheatsource as con_bodyheatsource
+from . import write_constraint_centrif as con_centrif
 from . import write_constraint_contact as con_contact
 from . import write_constraint_displacement as con_displacement
+from . import (
+    write_constraint_electricchargedensity as con_electricchargedensity,
+)
+from . import write_constraint_electrostatic as con_electrostatic
+from . import write_constraint_finaltemperature as con_ftemp
 from . import write_constraint_fixed as con_fixed
 from . import write_constraint_fluidsection as con_fluidsection
 from . import write_constraint_force as con_force
 from . import write_constraint_heatflux as con_heatflux
 from . import write_constraint_initialtemperature as con_itemp
-from . import write_constraint_finaltemperature as con_ftemp
+from . import write_constraint_jig321 as con_jig321
 from . import write_constraint_planerotation as con_planerotation
 from . import write_constraint_pressure as con_pressure
 from . import write_constraint_rigidbody as con_rigidbody
@@ -54,18 +71,6 @@ from . import write_constraint_selfweight as con_selfweight
 from . import write_constraint_temperature as con_temperature
 from . import write_constraint_tie as con_tie
 from . import write_constraint_transform as con_transform
-from . import write_constraint_electricchargedensity as con_electricchargedensity
-from . import write_constraint_electrostatic as con_electrostatic
-from . import write_femelement_geometry
-from . import write_femelement_material
-from . import write_femelement_matgeosets
-from . import write_footer
-from . import write_mesh
-from . import write_amplitude
-from . import write_step_equation
-from . import write_step_output
-from .. import writerbase
-from femtools import constants
 
 # Interesting forum topic: https://forum.freecad.org/viewtopic.php?&t=48451
 # TODO somehow set units at beginning and every time a value is retrieved use this identifier
@@ -157,6 +162,7 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
         self.write_constraints_meshsets(inpfile, self.member.cons_fixed, con_fixed)
         self.write_constraints_meshsets(inpfile, self.member.cons_rigidbody, con_rigidbody)
         self.write_constraints_meshsets(inpfile, self.member.cons_displacement, con_displacement)
+        self.write_constraints_meshsets(inpfile, self.member.cons_jig321, con_jig321)
         self.write_constraints_meshsets(inpfile, self.member.cons_planerotation, con_planerotation)
         self.write_constraints_meshsets(inpfile, self.member.cons_transform, con_transform)
         self.write_constraints_meshsets(inpfile, self.member.cons_temperature, con_temperature)
@@ -198,6 +204,7 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
         self.write_constraints_propdata(inpfile, self.member.cons_sectionprint, con_sectionprint)
         self.write_constraints_propdata(inpfile, self.member.cons_selfweight, con_selfweight)
         self.write_constraints_propdata(inpfile, self.member.cons_centrif, con_centrif)
+        self.write_constraints_propdata(inpfile, self.member.cons_jig321, con_jig321)
         self.write_constraints_propdata(
             inpfile, self.member.cons_bodyheatsource, con_bodyheatsource
         )
