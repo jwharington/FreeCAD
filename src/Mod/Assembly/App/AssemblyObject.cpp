@@ -53,9 +53,7 @@
 #include <FreeCADMbD/ASMTMarker.h>
 #include <FreeCADMbD/ASMTPart.h>
 #include <FreeCADMbD/ASMTJoint.h>
-#if __has_include(<OndselSolver/JointIJ.h>)
-# include <FreeCADMbD/JointIJ.h>
-#endif
+#include <FreeCADMbD/JointIJ.h>
 #include <FreeCADMbD/ASMTAngleJoint.h>
 #include <FreeCADMbD/ASMTFixedJoint.h>
 #include <FreeCADMbD/ASMTGearJoint.h>
@@ -81,14 +79,8 @@
 #include <FreeCADMbD/ASMTSphSphJoint.h>
 #include <FreeCADMbD/ASMTTime.h>
 #include <FreeCADMbD/ASMTConstantGravity.h>
-#if __has_include(<OndselSolver/ASMTForceTorqueGeneral.h>) \
-    && __has_include(<OndselSolver/ASMTForceTorqueInLine.h>)
-# define HAVE_ONDSELSOLVER_FORCE_TYPES 1
-# include <FreeCADMbD/ASMTForceTorqueGeneral.h>
-# include <FreeCADMbD/ASMTForceTorqueInLine.h>
-#else
-# define HAVE_ONDSELSOLVER_FORCE_TYPES 0
-#endif
+#include <FreeCADMbD/ASMTForceTorqueGeneral.h>
+#include <FreeCADMbD/ASMTForceTorqueInLine.h>
 #include <FreeCADMbD/ExternalSystem.h>
 #include <FreeCADMbD/enum.h>
 #include <FreeCADMbD/MomentOfInertiaSolver.h>
@@ -1889,7 +1881,6 @@ std::shared_ptr<MbD::ASMTForceTorque> AssemblyObject::makeMbdForceTorqueOfType(
     const ForceType forceType
 )
 {
-#if HAVE_ONDSELSOLVER_FORCE_TYPES
     // TODO JMW check validity of the force here
     switch (forceType) {
         case ForceType::General: {
@@ -1924,13 +1915,6 @@ std::shared_ptr<MbD::ASMTForceTorque> AssemblyObject::makeMbdForceTorqueOfType(
             std::cerr << std::flush;
             return nullptr;
     }
-#else
-    (void)forceType;
-    std::cerr << "Current OndselSolver in 3rdParty does not provide force torque specializations"
-              << " required for force export (" << force->getFullName() << ")" << std::endl;
-    std::cerr << std::flush;
-    return nullptr;
-#endif
 }
 
 std::vector<std::shared_ptr<MbD::ASMTForceTorque>> AssemblyObject::makeMbdForceTorque(

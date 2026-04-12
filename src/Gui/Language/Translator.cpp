@@ -310,7 +310,7 @@ TStringMap Translator::supportedLocales() const
             const auto lang
                 = file.mid(file.lastIndexOf('_') + 1).chopped(sizeof(".qm") - 1).toStdString();
             for (const auto& domainMap : d->mapLanguageTopLevelDomain) {
-                if (lang == domainMap.second) {
+                if (lang == QLatin1String(domainMap.second.c_str())) {
                     // Emplace only inserts if no element exists at the key yet,
                     // avoiding string copies here.
                     d->mapSupportedLocales.emplace(domainMap.first, domainMap.second);
