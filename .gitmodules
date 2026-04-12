@@ -1,6 +1,9 @@
 [submodule "src/3rdParty/OndselSolver"]
 	path = src/3rdParty/OndselSolver
 	url = https://github.com/FreeCAD/OndselSolver.git
+[submodule "tests/lib"]
+	path = tests/lib
+	url = https://github.com/google/googletest
 [submodule "src/3rdParty/GSL"]
 	path = src/3rdParty/GSL
 	url = https://github.com/microsoft/GSL
@@ -15,3 +18,6 @@
 	path = src/3rdParty/pivy
 	url = https://github.com/FreeCAD/pivy.git
 	branch = freecad-master
+[submodule "src/3rdParty/OndselMbD"]
+	path = src/3rdParty/OndselMbD
+	url = git@github.com:jwharington/OndselMbD.git
