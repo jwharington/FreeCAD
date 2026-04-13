@@ -30,6 +30,7 @@ __url__ = "https://www.freecad.org"
 #  \brief constraint jig 321 object
 
 import FreeCAD as App
+import numpy as np
 from FreeCAD import Console, Vector
 
 from . import base_fempythonobject
@@ -138,65 +139,58 @@ class ConstraintJig321(base_fempythonobject.BaseFemPythonObject):
                 fp.Supports = []
             return []
 
-        # - choose two points furthest away from each other, A,B.  This is X
-        # - choose third point C furthest from AB line.
-        # - AC projected perpendicular to AB is Y
-        # - do only on surface faces
+        points = np.array([femmesh.Nodes[i] for i in unique_node_idxs], dtype=float)
 
-        # ref: https://stackoverflow.com/questions/1621364/how-to-find-largest-triangle-in-convex-hull-aside-from-brute-force-search
+        # The largest-area triangle is formed by hull vertices. For planar/degenerate
+        # point clouds where 3D hull construction fails, use a 2D projected hull.
+        candidate_ids = None
+        try:
+            hull = ConvexHull(points)
+            candidate_ids = list(hull.vertices)
+        except Exception as exc:
+            Console.PrintWarning(
+                "ConstraintJig321: 3D ConvexHull failed for supports; "
+                "trying 2D projected hull: "
+                f"{exc}\n"
+            )
+            centered = points - np.mean(points, axis=0)
+            _, _, vt = np.linalg.svd(centered, full_matrices=False)
+            projected = centered @ vt[:2].T
+            try:
+                hull2d = ConvexHull(projected)
+                candidate_ids = list(hull2d.vertices)
+            except Exception as exc2:
+                Console.PrintWarning(
+                    "ConstraintJig321: 2D ConvexHull failed for supports; "
+                    "falling back to all points: "
+                    f"{exc2}\n"
+                )
+                candidate_ids = list(range(len(unique_node_idxs)))
 
-        points = [femmesh.Nodes[i] for i in unique_node_idxs]
-        hull = ConvexHull(points=points)
-        n = len(hull.vertices)
+        if len(candidate_ids) < 3:
+            candidate_ids = list(range(len(unique_node_idxs)))
 
-        def vec(idx):
-            return Vector(*hull.points[idx])
+        best_area2 = -1.0
+        best_triplet = None
 
-        def area(a, b, c):
-            return 0.5 * (vec(b) - vec(a)).cross(vec(c) - vec(b)).Length
+        for ia in range(len(candidate_ids) - 2):
+            a = candidate_ids[ia]
+            for ib in range(ia + 1, len(candidate_ids) - 1):
+                b = candidate_ids[ib]
+                ab = points[b] - points[a]
+                for ic in range(ib + 1, len(candidate_ids)):
+                    c = candidate_ids[ic]
+                    ac = points[c] - points[a]
+                    area2 = np.linalg.norm(np.cross(ab, ac))
+                    if area2 > best_area2:
+                        best_area2 = area2
+                        best_triplet = (a, b, c)
 
-        def incwrap(idx):
-            return (idx + 1) % n
+        if best_triplet is None:
+            best_triplet = (candidate_ids[0], candidate_ids[1], candidate_ids[2])
 
-        # Assume points have been sorted already, as 0...(n-1)
-        A, B, C = (0, 1, 2)
-        best = (A, B, C)
-        # The "best" triple of points
-
-        while True:
-            # loop A
-
-            while True:
-                # loop B
-
-                while area(A, B, C) <= area(A, B, incwrap(C)):
-                    # loop C
-                    C = incwrap(C)
-
-                if area(A, B, C) <= area(A, incwrap(B), C):
-                    B = incwrap(B)
-                    continue
-                else:
-                    break
-
-            if area(A, B, C) > area(*best):
-                best = (A, B, C)
-
-            A = incwrap(A)
-            B = incwrap(A)
-            C = incwrap(B)
-            if A == 0:
-                break
-
-        # locate indices of points in original mesh:
-        def find_p(idx):
-            for i in unique_node_idxs:
-                if Vector(*femmesh.Nodes[i]) == vec(idx):
-                    return i
-            return -1
-
-        best_node_indices = [find_p(p) for p in best]
-        Console.PrintMessage(f"Best supports: {best}\n")
+        best_node_indices = [unique_node_idxs[i] for i in best_triplet]
+        Console.PrintMessage(f"Best supports: {best_node_indices}\n")
         if hasattr(fp, "Supports"):
             fp.Supports = [Vector(*femmesh.Nodes[i]) for i in best_node_indices]
         return best_node_indices

@@ -122,10 +122,44 @@ def setup(doc=None, solvertype="ccxtools"):
     femmesh_obj.ElementDimension = "3D"
     femmesh_obj.CharacteristicLengthMax = "250 mm"
 
+    from femmesh import meshtools
     from femmesh.gmshtools import GmshTools
 
     gmsh_mesh = GmshTools(femmesh_obj)
     gmsh_mesh.create_mesh()
 
+    # Precompute 3-2-1 support nodes for immediate marker visualization.
+    if meshtools.is_solid_femmesh(femmesh_obj.FemMesh):
+        support_nodes = set()
+        ref_objects = {ref[0] for ref in con_jig321.References}
+        for robj in ref_objects:
+            for i, _ in enumerate(robj.Shape.Faces, start=1):
+                face = meshtools.sub_shape_at_global_placement(
+                    robj,
+                    f"Face{i}",
+                )
+                support_nodes.update(
+                    meshtools.get_nodes_by_face_with_fallback(
+                        femmesh_obj.FemMesh,
+                        face,
+                    )
+                )
+        support_nodes = sorted(support_nodes)
+    else:
+        support_nodes = meshtools.get_femnodes_by_references(
+            femmesh_obj.FemMesh,
+            con_jig321.References,
+        )
+    con_jig321.Proxy.find_largest_triangle(
+        con_jig321,
+        femmesh_obj.FemMesh,
+        support_nodes,
+    )
+
     doc.recompute()
+
+    if FreeCAD.GuiUp:
+        geom_obj.ViewObject.Document.activeView().viewAxonometric()
+        geom_obj.ViewObject.Document.activeView().fitAll()
+
     return doc

@@ -107,23 +107,13 @@ namespace
 template<typename T>
 void setMarkerICompat(const std::shared_ptr<T>& item, const std::shared_ptr<MbD::ASMTMarker>& marker)
 {
-    if constexpr (requires { item->setMarkerI(marker); }) {
-        item->setMarkerI(marker);
-    }
-    else {
-        item->setMarkerI(marker->name);
-    }
+    item->setMarkerI(marker);
 }
 
 template<typename T>
 void setMarkerJCompat(const std::shared_ptr<T>& item, const std::shared_ptr<MbD::ASMTMarker>& marker)
 {
-    if constexpr (requires { item->setMarkerJ(marker); }) {
-        item->setMarkerJ(marker);
-    }
-    else {
-        item->setMarkerJ(marker->name);
-    }
+    item->setMarkerJ(marker);
 }
 
 }  // namespace
@@ -202,7 +192,7 @@ int AssemblyObject::solve(bool enableRedo)
 
     jointParts(joints);
 
-    std::vector<App::DocumentObject*> forces = getForces(updateJCS);
+    std::vector<App::DocumentObject*> forces = getForces();
     forceParts(forces);
 
     if (enableRedo) {
@@ -681,7 +671,7 @@ std::vector<App::DocumentObject*> AssemblyObject::getMotionsFromSimulation(App::
     return prop->getValue();
 }
 
-int Assembly::AssemblyObject::updateForFrame(size_t index)
+int Assembly::AssemblyObject::updateForFrame(size_t index, bool updateJCS)
 {
     // std::cout << "update for frame " << index << "\n";
     if (!mbdAssembly) {
@@ -695,14 +685,12 @@ int Assembly::AssemblyObject::updateForFrame(size_t index)
 
     mbdAssembly->updateForFrame(index);
     setNewPlacements();
-    auto jointDocs = getJoints();
+    auto jointDocs = getJoints(updateJCS);
     redrawJointPlacements(jointDocs);
     jointInfoForFrame(index);
 
-    // TODO JMW
-    // auto forceDocs = getForces(updateJCS);
-    // redrawForcePlacements(forceDocs);
-    // forceInfoForFrame(index);
+    auto forceDocs = getForces(updateJCS);
+    redrawJointPlacements(forceDocs);
 
     return 0;
 }
@@ -2415,10 +2403,19 @@ AssemblyObject::MbDInertialData AssemblyObject::getMbDInertial(App::DocumentObje
 {
     MbDInertialData data;
     double density = 1.0e-9;
+    App::DocumentObject* materialPart = part;
     // const Base::Placement orig_plc = getPlacementFromProp(part, "Placement");
 
-    if (auto propMaterial
-        = dynamic_cast<Materials::PropertyMaterial*>(part->getPropertyByName("ShapeMaterial"))) {
+    if (part->isDerivedFrom(App::Link::getClassTypeId())) {
+        auto* link = static_cast<const App::Link*>(part);
+        if (auto* linked = link->getLinkedObject()) {
+            materialPart = linked;
+        }
+    }
+
+    if (auto propMaterial = dynamic_cast<Materials::PropertyMaterial*>(
+            materialPart->getPropertyByName("ShapeMaterial")
+        )) {
         auto& mat = propMaterial->getValue();
         try {
             Base::Quantity densityQuantity = mat.getPhysicalQuantity("Density");
@@ -2429,7 +2426,7 @@ AssemblyObject::MbDInertialData AssemblyObject::getMbDInertial(App::DocumentObje
             // std::cerr << "Error accessing Density as Quantity: " << e.what() << std::endl;
         }
     }
-    else {
+    else if (dynamic_cast<PartApp::Feature*>(materialPart)) {
         std::cout << "  No material specified" << std::endl;
         std::cout << std::flush;
     }
@@ -2441,9 +2438,9 @@ AssemblyObject::MbDInertialData AssemblyObject::getMbDInertial(App::DocumentObje
     }
     else if (part->isDerivedFrom<App::Part>()) {
         // || part->isDerivedFrom<App::DocumentObjectGroup>())
-        for (auto child : static_cast<App::Part*>(part)->getObjects()) {
-            // std::cout << "  child: " << child->getFullName() << std::endl;
-        }
+        // for (auto child : static_cast<App::Part*>(part)->getObjects()) {
+        //     std::cout << "  child: " << child->getFullName() << std::endl;
+        // }
     }
 
     // These measures are all relative to linked placement

@@ -22,7 +22,11 @@
 # **************************************************************************/
 
 import FreeCAD
-import FreeCADGui
+
+if FreeCAD.GuiUp:
+    import FreeCADGui
+else:
+    FreeCADGui = None
 
 translate = FreeCAD.Qt.translate
 
@@ -33,6 +37,8 @@ def preferences():
 
 class PreferencesPage:
     def __init__(self, parent=None):
+        if FreeCADGui is None:
+            raise RuntimeError("PreferencesPage requires FreeCADGui")
         self.form = FreeCADGui.PySideUic.loadUi(":preferences/Assembly.ui")
 
     def saveSettings(self):

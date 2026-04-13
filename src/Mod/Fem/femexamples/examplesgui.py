@@ -27,13 +27,10 @@ https://forum.freecad.org/viewtopic.php?f=10&t=48427
 """
 
 import os
-
 from importlib import import_module
 
-from PySide import QtCore
-from PySide import QtGui
-
 import FreeCADGui
+from PySide import QtCore, QtGui
 
 
 class FemExamples(QtGui.QWidget):
@@ -58,6 +55,7 @@ class FemExamples(QtGui.QWidget):
         not_files = [
             "__init__.py",
             "__pycache__",
+            "assembly_linkbody_pendulum.py",
             "boxanalysis_base.py",
             "ccx_cantilever_base_edge.py",
             "ccx_cantilever_base_face.py",
@@ -85,6 +83,8 @@ class FemExamples(QtGui.QWidget):
             module = import_module("femexamples." + f)
             if hasattr(module, "get_information"):
                 info = getattr(module, "get_information")()
+                if info["name"] in self.files_name:
+                    continue
                 files_info[f] = info
                 self.files_name[info["name"]] = f
 

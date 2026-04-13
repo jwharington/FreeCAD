@@ -31,6 +31,7 @@ __url__ = "https://www.freecad.org"
 
 from pprint import pformat
 
+import FreeCAD
 import numpy as np
 from femtools.distributions import ReactionContactType
 from FreeCAD import Console, Vector
@@ -102,9 +103,8 @@ class ConstraintReaction(base_fempythonobject.BaseFemPythonObject):
     def execute(self, obj):
         if not hasattr(self, "elem_info"):
             self.elem_info = None
-
-        # if FreeCAD.GuiUp and obj.ViewObject:
-        #     obj.ViewObject.update()
+        if FreeCAD.GuiUp and obj.ViewObject:
+            obj.ViewObject.update()
         return False
 
     def get_contact(self, obj, n_i, l_i):

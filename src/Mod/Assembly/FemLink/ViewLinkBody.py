@@ -16,10 +16,39 @@ colors = {
     LineType.LINEAR_ACCELERATION: (0.0, 0.0, 1.0),
 }
 
-text_color_rgb = (0.1, 0.1, 0.1)
+
+def _rgba_to_rgb255(color_rgba):
+    return (
+        (color_rgba >> 24) & 0xFF,
+        (color_rgba >> 16) & 0xFF,
+        (color_rgba >> 8) & 0xFF,
+    )
 
 
-def make_symbol(p0, p1, mag, line_type: LineType, short=False):
+def _view_background_luma_255():
+    view_params = App.ParamGet("User parameter:BaseApp/Preferences/View")
+
+    if view_params.GetBool("Gradient", False):
+        r1, g1, b1 = _rgba_to_rgb255(view_params.GetUnsigned("BackgroundColor2", 0xC8DCF0FF))
+        r2, g2, b2 = _rgba_to_rgb255(view_params.GetUnsigned("BackgroundColor3", 0x445566FF))
+        r = (r1 + r2) / 2.0
+        g = (g1 + g2) / 2.0
+        b = (b1 + b2) / 2.0
+    else:
+        r, g, b = _rgba_to_rgb255(view_params.GetUnsigned("BackgroundColor", 0xFFFFFFFF))
+
+    # Relative luminance approximation in 0..255 space.
+    return r * 0.299 + g * 0.587 + b * 0.114
+
+
+def _adaptive_text_color_rgb():
+    # Dark background -> bright text, bright background -> dark text.
+    if _view_background_luma_255() < 128.0:
+        return (0.95, 0.95, 0.95)
+    return (0.10, 0.10, 0.10)
+
+
+def make_symbol(p0, p1, mag, line_type: LineType, text_color_rgb, short=False):
     sep = coin.SoSeparator()
 
     pick = coin.SoPickStyle()
@@ -59,7 +88,8 @@ def make_symbol(p0, p1, mag, line_type: LineType, short=False):
 
     match line_type:
         case LineType.FORCE:
-            text.string.setValue(f"F: {mag:.2E} N")
+            # Assembly dynamics stores force-like terms in kN-equivalent model units.
+            text.string.setValue(f"F: {mag * 1000.0:.2E} N")
 
             cylinder = coin.SoCylinder()
             cylinder.radius.setValue(0.25)
@@ -80,7 +110,8 @@ def make_symbol(p0, p1, mag, line_type: LineType, short=False):
             arrow.addChild(trans)
 
         case LineType.TORQUE:
-            text.string.setValue(f"T: {mag / 1000.0:.2E} N.m")
+            # Torque-like terms are already in N.m-equivalent model units.
+            text.string.setValue(f"T: {mag:.2E} N.m")
             cylinder = coin.SoCylinder()
             cylinder.radius.setValue(0.25)
             cylinder.height.setValue(l1)
@@ -251,7 +282,8 @@ class VPLinkBody(VPBase):
                 case _:
                     pass
 
-            sep = make_symbol(p0, p1, v.Length, line_type, short=is_short())
+            text_color_rgb = _adaptive_text_color_rgb()
+            sep = make_symbol(p0, p1, v.Length, line_type, text_color_rgb, short=is_short())
             self.symbols.append(sep)
             self.symbol_set.addChild(sep)
 

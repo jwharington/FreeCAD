@@ -38,7 +38,7 @@ from femexamples.constraint_reaction import setup
 setup()
 
 This setup example shows how to define a reaction-based distributed
-pressure constraint on selected faces.
+pressure constraint acting on the cylindrical face of a beam cutout.
 
 """
 
@@ -56,12 +56,47 @@ def setup(doc=None, solvertype=None):
         get_explanation(manager.get_header(get_information())),
     )
 
-    # geometric object
-    geom_obj = doc.addObject("Part::Box", "Box")
-    geom_obj.Height = geom_obj.Width = 2000
-    geom_obj.Length = 8000
+    # geometric object: beam with cylindrical cutout
+    beam = doc.addObject("Part::Box", "Beam")
+    beam.Height = beam.Width = 2000
+    beam.Length = 8000
+
+    cutout = doc.addObject("Part::Cylinder", "Cutout")
+    cutout.Radius = 500
+    cutout.Height = beam.Width
+    cutout.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(4000, cutout.Height, 1000),
+        FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), 90),
+    )
+
+    geom_obj = doc.addObject("Part::Cut", "BeamWithCutout")
+    geom_obj.Base = beam
+    geom_obj.Tool = cutout
+
     doc.recompute()
+
+    # Use geometric queries instead of hard-coded face indices to keep the
+    # example robust against face renumbering after boolean operations.
+    face_names = [f"Face{i}" for i, _ in enumerate(geom_obj.Shape.Faces, start=1)]
+    fixed_face_name = min(
+        enumerate(geom_obj.Shape.Faces, start=1),
+        key=lambda item: item[1].CenterOfMass.x,
+    )[0]
+    fixed_face_name = f"Face{fixed_face_name}"
+
+    cylindrical_faces = []
+    for i, face in enumerate(geom_obj.Shape.Faces, start=1):
+        surface = getattr(face, "Surface", None)
+        if surface is not None and hasattr(surface, "Radius"):
+            cylindrical_faces.append(f"Face{i}")
+
+    if not cylindrical_faces:
+        # Fallback: apply reaction to all non-fixed faces.
+        cylindrical_faces = [name for name in face_names if name != fixed_face_name]
+
     if FreeCAD.GuiUp:
+        beam.ViewObject.hide()
+        cutout.ViewObject.hide()
         geom_obj.ViewObject.Document.activeView().viewAxonometric()
         geom_obj.ViewObject.Document.activeView().fitAll()
 
@@ -86,25 +121,19 @@ def setup(doc=None, solvertype=None):
 
     # constraint fixed
     con_fixed = ObjectsFem.makeConstraintFixed(doc, "ConstraintFixed")
-    con_fixed.References = [(geom_obj, "Face1")]
+    con_fixed.References = [(geom_obj, fixed_face_name)]
     analysis.addObject(con_fixed)
 
     # reaction constraint
     con_reaction = ObjectsFem.makeConstraintReaction(doc, "ConstraintReaction")
     con_reaction.ModelType = "Cosine"
-    con_reaction.Force = FreeCAD.Vector(0, 0, -2000000)
-    con_reaction.Torque = FreeCAD.Vector(0, 500000000, 0)
+    con_reaction.Force = FreeCAD.Vector(0, 0, -2000)
+    con_reaction.Torque = FreeCAD.Vector(10, 0, 0)
     con_reaction.Origin = FreeCAD.Placement(
-        FreeCAD.Vector(0, 1000, 1000),
+        FreeCAD.Vector(4000, 1000, 1000),
         FreeCAD.Rotation(),
     )
-    con_reaction.References = [
-        (geom_obj, "Face2"),
-        (geom_obj, "Face3"),
-        (geom_obj, "Face4"),
-        (geom_obj, "Face5"),
-        (geom_obj, "Face6"),
-    ]
+    con_reaction.References = [(geom_obj, face_name) for face_name in cylindrical_faces]
     analysis.addObject(con_reaction)
 
     # mesh
@@ -122,4 +151,9 @@ def setup(doc=None, solvertype=None):
     gmsh_mesh.create_mesh()
 
     doc.recompute()
+
+    if FreeCAD.GuiUp:
+        geom_obj.ViewObject.Document.activeView().viewAxonometric()
+        geom_obj.ViewObject.Document.activeView().fitAll()
+
     return doc

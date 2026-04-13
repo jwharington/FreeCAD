@@ -28,6 +28,7 @@ from AssemblyTests.TestFemMbDyn import (
     TestFemLinkUtils,
     TestForceObject,
     TestFPBase,
+    TestLinkBody,
 )
 
 # Use the modules so that code checkers don't complain (flake8)
@@ -36,3 +37,4 @@ True if TestCommandInsertLink else False
 True if TestFemLinkUtils else False
 True if TestFPBase else False
 True if TestForceObject else False
+True if TestLinkBody else False

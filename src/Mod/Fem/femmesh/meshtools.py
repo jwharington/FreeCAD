@@ -27,11 +27,17 @@ __url__ = "https://www.freecad.org"
 ## \addtogroup FEM
 #  @{
 
-import numpy as np
-
 import FreeCAD
-
+import numpy as np
+import Part
 from femtools import geomtools
+
+_FACE_FALLBACK_WARNED = {
+    "nodes": False,
+    "faces": False,
+    "volumes": False,
+    "solids": False,
+}
 
 
 # ************************************************************************************************
@@ -110,12 +116,12 @@ def get_femnodes_by_refshape(femmesh, ref):
         elif r.ShapeType == "Edge":
             nodes += femmesh.getNodesByEdge(r)
         elif r.ShapeType == "Face":
-            nodes += femmesh.getNodesByFace(r)
+            nodes += get_nodes_by_face_with_fallback(femmesh, r)
         elif r.ShapeType == "Solid":
-            nodes += femmesh.getNodesBySolid(r)
+            nodes += get_nodes_by_solid_with_fallback(femmesh, r)
         elif r.ShapeType == "Compound":
             for s in r.Solids:
-                nodes += femmesh.getNodesBySolid(s)
+                nodes += get_nodes_by_solid_with_fallback(femmesh, s)
         else:
             FreeCAD.Console.PrintMessage("  No Vertice, Edge, Face or Solid as reference shapes!\n")
     return nodes
@@ -1129,12 +1135,14 @@ def get_ref_facenodes_table(femmesh, femelement_table, ref_face):
             # they are not sorted, we just have the nodes.
             # We need to sort them according to the
             # shell mesh notation of tria3, tria6, quad4, quad8
-            ref_face_nodes = femmesh.getNodesByFace(ref_face)
+            ref_face_nodes = get_nodes_by_face_with_fallback(femmesh, ref_face)
             # try to use getccxVolumesByFace() to get the volume ids
             # of element with elementfaces on the ref_face
             # --> should work for tetra4 and tetra10
             # list of tuples (mv, ccx_face_nr)
-            ref_face_volume_elements = femmesh.getccxVolumesByFace(ref_face)
+            ref_face_volume_elements = get_volumes_by_face_with_fallback(
+                femmesh, ref_face, femelement_table, ref_face_nodes
+            )
             if ref_face_volume_elements:  # mesh with tetras
                 FreeCAD.Console.PrintLog(
                     "  Use of getccxVolumesByFace() has "
@@ -1168,11 +1176,11 @@ def get_ref_facenodes_table(femmesh, femelement_table, ref_face):
                 # we need to resort the nodes to make them build an element face
                 face_table = build_mesh_faces_of_volume_elements(face_table, femelement_table)
         else:  # the femmesh has face_data
-            faces = femmesh.getFacesByFace(ref_face)  # (mv, mf)
+            faces = get_faces_by_face_with_fallback(femmesh, ref_face)  # (mv, mf)
             for mf in faces:
                 face_table[mf] = femmesh.getElementNodes(mf)
     elif is_face_femmesh(femmesh):
-        ref_face_nodes = femmesh.getNodesByFace(ref_face)
+        ref_face_nodes = get_nodes_by_face_with_fallback(femmesh, ref_face)
         ref_face_elements = get_femelements_by_femnodes_std(femelement_table, ref_face_nodes)
         for mf in ref_face_elements:
             face_table[mf] = femelement_table[mf]
@@ -1375,7 +1383,7 @@ def build_mesh_faces_of_volume_elements(face_table, femelement_table):
                 # node order of a tria3 face of tetra4
                 node_numbers = (1, 2, 3)
             elif face_node_indexs == [1, 2, 4]:
-                node_numbers = (1, 4, 2, 8)
+                node_numbers = (1, 4, 2)
             elif face_node_indexs == [1, 3, 4]:
                 node_numbers = (1, 3, 4)
             elif face_node_indexs == [2, 3, 4]:
@@ -2194,12 +2202,115 @@ def compact_mesh(old_femmesh):
 
 # ************************************************************************************************
 def sub_shape_at_global_placement(obj, sub_name):
-    sub_sh = obj.getSubObject(sub_name)
-    # get partner shape
-    partner = sub_sh.transformed(FreeCAD.Placement().Matrix)
-    partner.Placement = obj.getGlobalPlacement() * obj.Placement.inverse() * sub_sh.Placement
+    # Use canonical sub-element lookup from the source shape. Some transformed
+    # typed sub-shapes are rejected by FemMesh node-query bindings.
+    return obj.Shape.getElement(sub_name)
 
-    return partner
+
+def face_for_femmesh_query(face):
+    if getattr(face, "ShapeType", "") != "Face":
+        return face
+
+    try:
+        # Some transformed sub-shapes are typed Part.Face instances that FemMesh
+        # face-node bindings reject; an identity transform re-wraps them into
+        # a compatible shape handle for the binding.
+        return face.transformed(FreeCAD.Matrix())
+    except Exception:
+        return face
+
+
+def get_nodes_by_face_with_fallback(femmesh, face, tol=1e-7):
+    face = face_for_femmesh_query(face)
+    try:
+        return femmesh.getNodesByFace(face)
+    except TypeError:
+        if not _FACE_FALLBACK_WARNED["nodes"]:
+            FreeCAD.Console.PrintWarning(
+                "    FemMesh.getNodesByFace rejected face type, using geometric fallback.\n"
+            )
+            _FACE_FALLBACK_WARNED["nodes"] = True
+        return get_nodes_by_face_geometric(femmesh, face, tol)
+
+
+def get_faces_by_face_with_fallback(femmesh, face, tol=1e-7):
+    face = face_for_femmesh_query(face)
+    try:
+        return femmesh.getFacesByFace(face)
+    except TypeError:
+        if not _FACE_FALLBACK_WARNED["faces"]:
+            FreeCAD.Console.PrintWarning(
+                "    FemMesh.getFacesByFace rejected face type, using geometric fallback.\n"
+            )
+            _FACE_FALLBACK_WARNED["faces"] = True
+        face_nodes = set(get_nodes_by_face_geometric(femmesh, face, tol))
+        mesh_faces = []
+        for mf in femmesh.Faces:
+            elem_nodes = femmesh.getElementNodes(mf)
+            if elem_nodes and all(node_id in face_nodes for node_id in elem_nodes):
+                mesh_faces.append(mf)
+        return mesh_faces
+
+
+def get_volumes_by_face_with_fallback(femmesh, face, femelement_table, face_nodes):
+    face = face_for_femmesh_query(face)
+    try:
+        return femmesh.getccxVolumesByFace(face)
+    except TypeError:
+        if not _FACE_FALLBACK_WARNED["volumes"]:
+            FreeCAD.Console.PrintWarning(
+                "    FemMesh.getccxVolumesByFace rejected face type, using node-based fallback.\n"
+            )
+            _FACE_FALLBACK_WARNED["volumes"] = True
+        return get_femvolumeelements_by_femfacenodes(femelement_table, face_nodes)
+
+
+def get_nodes_by_face_geometric(femmesh, face, tol=1e-7):
+    node_ids = femmesh.Nodes
+    if hasattr(node_ids, "keys"):
+        node_ids = node_ids.keys()
+
+    ref_face = face_for_femmesh_query(face)
+    result = []
+    for node_id in node_ids:
+        node = femmesh.getNodeById(node_id)
+        point = node if hasattr(node, "x") else FreeCAD.Vector(node[0], node[1], node[2])
+        try:
+            dist = ref_face.distToShape(Part.Vertex(point))[0]
+        except Exception:
+            continue
+        if dist <= tol:
+            result.append(node_id)
+    return result
+
+
+def get_nodes_by_solid_with_fallback(femmesh, solid, tol=1e-7):
+    try:
+        return femmesh.getNodesBySolid(solid)
+    except TypeError:
+        if not _FACE_FALLBACK_WARNED["solids"]:
+            FreeCAD.Console.PrintWarning(
+                "    FemMesh.getNodesBySolid rejected solid type, using geometric fallback.\n"
+            )
+            _FACE_FALLBACK_WARNED["solids"] = True
+        return get_nodes_by_solid_geometric(femmesh, solid, tol)
+
+
+def get_nodes_by_solid_geometric(femmesh, solid, tol=1e-7):
+    node_ids = femmesh.Nodes
+    if hasattr(node_ids, "keys"):
+        node_ids = node_ids.keys()
+
+    result = []
+    for node_id in node_ids:
+        node = femmesh.getNodeById(node_id)
+        point = node if hasattr(node, "x") else FreeCAD.Vector(node[0], node[1], node[2])
+        try:
+            if solid.isInside(point, tol, True):
+                result.append(node_id)
+        except Exception:
+            continue
+    return result
 
 
 ##  @}
