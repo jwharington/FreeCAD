@@ -24,7 +24,6 @@
 
 import FreeCAD
 
-
 # ************************************************************************************************
 # setup and run examples by Python
 
@@ -63,6 +62,9 @@ def run_all():
     run_example("ccx_cantilever_prescribeddisplacement", run_solver=True)
     run_example("constraint_contact_shell_shell", run_solver=True)
     run_example("constraint_contact_solid_solid", run_solver=True)
+    run_example("constraint_hydrostaticpressure", run_solver=True)
+    run_example("constraint_jig321", run_solver=True)
+    run_example("constraint_reaction", run_solver=True)
     run_example("constraint_section_print", run_solver=True)
     run_example("constraint_selfweight_cantilever", run_solver=True)
     run_example("constraint_tie", run_solver=True)
@@ -104,6 +106,9 @@ def setup_all():
     run_example("ccx_cantilever_prescribeddisplacement")
     run_example("constraint_contact_shell_shell")
     run_example("constraint_contact_solid_solid")
+    run_example("constraint_hydrostaticpressure")
+    run_example("constraint_jig321")
+    run_example("constraint_reaction")
     run_example("constraint_section_print")
     run_example("constraint_selfweight_cantilever")
     run_example("constraint_tie")
@@ -182,8 +187,8 @@ def run_mesh_generation(doc, analysis=None):
 
 def run_analysis(doc, base_name, analysis=None, filepath="", run_solver=False,  blocking=True):
 
-    from os.path import join, exists
     from os import makedirs
+    from os.path import exists, join
     from tempfile import gettempdir as gettmp
 
     # computable?
