@@ -299,7 +299,21 @@ def makeConstraintPulley(doc, name="Pulley"):
     return obj
 
 
-def makeConstraintSelfWeight(doc, name="Gravity"):
+def makeConstraintReaction(doc, name="ConstraintReaction"):
+    """makeConstraintReaction(document, [name]):
+    creates a Reaction object"""
+    obj = doc.addObject("Fem::ConstraintPython", name)
+    from femobjects import constraint_reaction
+
+    constraint_reaction.ConstraintReaction(obj)
+    if FreeCAD.GuiUp:  # GUI for reaction is not implemented yet
+        from femviewprovider import view_constraint_reaction
+
+        view_constraint_reaction.VPConstraintReaction(obj.ViewObject)
+    return obj
+
+
+def makeConstraintSelfWeight(doc, name="ConstraintSelfWeight"):
     """makeConstraintSelfWeight(document, [name]):
     creates a self weight object to define a gravity load"""
     obj = doc.addObject("Fem::ConstraintPython", name)
