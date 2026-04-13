@@ -65,8 +65,48 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
         prs_obj.Proxy.get_pressure_field(prs_obj, elem_info)
 
     def get_pressure_uniform(elem_info):
-        for info in elem_info:
-            info["pressure"] = prs_obj.Pressure.getValueAs("MPa").Value
+        uniform_pressure = prs_obj.Pressure.getValueAs("MPa").Value
+        for i in range(len(elem_info["pressure"])):
+            elem_info["pressure"][i] = uniform_pressure
+
+    def face_key(face):
+        return tuple(face) if isinstance(face, (list, tuple)) else (face,)
+
+    face_table_entry_cache = {}
+
+    def get_face_table_entry(table_name, face):
+        key = face_key(face)
+        cache_key = (table_name, key)
+        if cache_key in face_table_entry_cache:
+            return face_table_entry_cache[cache_key]
+
+        table = femobj[table_name]
+        if key in table:
+            val = table[key]
+            face_table_entry_cache[cache_key] = val
+            return val
+
+        # Some mesh tables are keyed by scalar face id for shell faces.
+        scalar_key = key[0] if len(key) == 1 else None
+        if scalar_key is not None and scalar_key in table:
+            val = table[scalar_key]
+            face_table_entry_cache[cache_key] = val
+            return val
+
+        if scalar_key is not None:
+            for table_key, table_val in table.items():
+                if isinstance(table_key, (list, tuple)):
+                    if len(table_key) > 0 and table_key[0] == scalar_key:
+                        face_table_entry_cache[cache_key] = table_val
+                        return table_val
+
+        # Fallback for callers passing scalar face ids directly.
+        if face in table:
+            val = table[face]
+            face_table_entry_cache[cache_key] = val
+            return val
+
+        raise KeyError(key)
 
     if has_pressure_field(prs_obj):
         get_pressure = get_pressure_field
@@ -88,23 +128,72 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
     # the pressure has to be output in MPa
     femmesh = ccxwriter.mesh_object.FemMesh
 
+    warned_faceinfo_fallback = False
+
+    # Speed-up: avoid repeated O(n_faces) scans when resolving a mesh face by
+    # its node set; build a one-time node-signature index.
+    mesh_faces = tuple(femmesh.Faces)
+    mesh_faces_set = set(mesh_faces)
+    mesh_face_by_nodes = {}
+    for fe in mesh_faces:
+        nodes_key = frozenset(femmesh.getElementNodes(fe))
+        # Keep first match to preserve previous behavior in ambiguous cases.
+        if nodes_key not in mesh_face_by_nodes:
+            mesh_face_by_nodes[nodes_key] = fe
+
+    face_element_cache = {}
+
+    def fallback_face_info(elem):
+        elem_id = elem[0] if isinstance(elem, (list, tuple)) else elem
+        elem_nodes = femmesh.getElementNodes(elem_id)
+        p1 = femmesh.Nodes[elem_nodes[0]]
+        p2 = femmesh.Nodes[elem_nodes[1]]
+        p3 = femmesh.Nodes[elem_nodes[2]]
+        v1 = p2 - p1
+        v2 = p3 - p1
+        cross = v1.cross(v2)
+        mag = cross.Length
+        normal = cross if mag == 0 else cross / mag
+        area = 0.5 * mag
+        centroid = (p1 + p2 + p3) / 3.0
+        return centroid, area, normal
+
+    def find_face_element(face):
+        face_k = face_key(face)
+        if face_k in face_element_cache:
+            return face_element_cache[face_k]
+
+        try:
+            ref_nodes = get_face_table_entry("PressureNodeInfo", face)
+            fe = mesh_face_by_nodes.get(frozenset(ref_nodes))
+        except KeyError:
+            face_id = face_k[0] if len(face_k) == 1 else None
+            fe = face_id if (face_id is not None and face_id in mesh_faces_set) else None
+
+        face_element_cache[face_k] = fe
+        return fe
+
     for feature, surface, is_sub_el in femobj["PressureFaces"]:
 
-        def find_face_element(face):
-            # TODO speed this up
-            ref_nodes = set(femobj["PressureNodeInfo"][tuple(face)])
-            for fe in femmesh.Faces:
-                nodes = femmesh.getElementNodes(fe)
-                if set(nodes) == ref_nodes:
-                    return fe
-            return None
-
         def add_elem_info(face, elem, face_no, rev):
+            nonlocal warned_faceinfo_fallback
             elem_info["feat"].append(feature)
             elem_info["elem"].append(elem)
             elem_info["fno"].append(face_no)
             elem_info["pressure"].append(0.0)
-            centroid, area, normal = femobj["PressureFaceInfo"][tuple(face)]
+            try:
+                centroid, area, normal = get_face_table_entry(
+                    "PressureFaceInfo",
+                    face,
+                )
+            except KeyError:
+                centroid, area, normal = fallback_face_info(elem)
+                if not warned_faceinfo_fallback:
+                    Console.PrintWarning(
+                        "PressureFaceInfo key mismatch detected. "
+                        "Using mesh-element fallback for pressure face data.\n"
+                    )
+                    warned_faceinfo_fallback = True
             elem_info["centroid"].append(centroid)
             elem_info["area"].append(area)
             elem_info["normal"].append(normal)

@@ -1,5 +1,5 @@
 # ***************************************************************************
-# *   Copyright (c) 2025 John Wharington <jwharington@gmail.com>            *
+# *   Copyright (c) 2026 John Wharington <jwharington@gmail.com>            *
 # *                                                                         *
 # *   This file is part of the FreeCAD CAx development system.              *
 # *                                                                         *
@@ -21,7 +21,8 @@
 # *                                                                         *
 # ***************************************************************************
 
-import Fem
+import os
+
 import FreeCAD
 import ObjectsFem
 
@@ -31,7 +32,7 @@ from .manager import get_meshname, init_doc
 
 def get_information():
     return {
-        "name": "Constraint Hydrostatic Pressure",
+        "name": "Constraint Hydrostatic Pressure (Data File)",
         "meshtype": "face",
         "meshelement": "Tria6",
         "constraints": ["fixed", "hydrostaticpressure"],
@@ -42,29 +43,28 @@ def get_information():
 
 
 def get_explanation(header=""):
-    return (
-        header
-        + """
+    return header + """
 
 To run the example from Python console use:
-from femexamples.constraint_hydrostaticpressure import setup
+from femexamples.constraint_hydrostaticpressure_datafile import setup
 setup()
 
+This example configures the hydrostatic pressure constraint to read
+pressure-distribution values from a CSV file.
+
 """
-    )
 
 
 def setup(doc=None, solvertype="ccxtools"):
 
-    # init FreeCAD document
     if doc is None:
         doc = init_doc()
 
-    # explanation object
-    # just keep the following line and change text string in get_explanation method
-    manager.add_explanation_obj(doc, get_explanation(manager.get_header(get_information())))
+    manager.add_explanation_obj(
+        doc,
+        get_explanation(manager.get_header(get_information())),
+    )
 
-    # geometric object
     geom_obj = doc.addObject("Part::Box", "Box")
     geom_obj.Height = geom_obj.Width = 2000
     geom_obj.Length = 8000
@@ -73,12 +73,13 @@ def setup(doc=None, solvertype="ccxtools"):
         geom_obj.ViewObject.Document.activeView().viewAxonometric()
         geom_obj.ViewObject.Document.activeView().fitAll()
 
-    # analysis
     analysis = ObjectsFem.makeAnalysis(doc, "Analysis")
 
-    # solver
     if solvertype == "ccxtools":
-        solver_obj = ObjectsFem.makeSolverCalculiXCcxTools(doc, "CalculiXCcxTools")
+        solver_obj = ObjectsFem.makeSolverCalculiXCcxTools(
+            doc,
+            "CalculiXCcxTools",
+        )
         solver_obj.WorkingDir = ""
     else:
         FreeCAD.Console.PrintWarning(
@@ -94,9 +95,11 @@ def setup(doc=None, solvertype="ccxtools"):
         solver_obj.IterationsControlParameterTimeUse = False
     analysis.addObject(solver_obj)
 
-    # material
-
-    thickness_obj = ObjectsFem.makeElementGeometry2D(doc, 1.0, "ShellThickness")
+    thickness_obj = ObjectsFem.makeElementGeometry2D(
+        doc,
+        1.0,
+        "ShellThickness",
+    )
     analysis.addObject(thickness_obj)
 
     material_obj = ObjectsFem.makeMaterialSolid(doc, "FemMaterial")
@@ -107,32 +110,40 @@ def setup(doc=None, solvertype="ccxtools"):
     material_obj.Material = mat
     analysis.addObject(material_obj)
 
-    # constraint fixed
     con_fixed = ObjectsFem.makeConstraintFixed(doc, "ConstraintFixed")
     con_fixed.References = [(geom_obj, "Face1")]
     analysis.addObject(con_fixed)
 
-    # constraint selfweight
-    con_hydrostaticpressure = ObjectsFem.makeConstraintHydrostaticPressure(doc, "ConstraintHydrostaticPressure")
-    con_hydrostaticpressure.ModelType = "Hydrostatic"
-    con_hydrostaticpressure.MediumDensity = "1000 kg/m^3"
-    con_hydrostaticpressure.References = [(geom_obj, "Face2"),
-                                          (geom_obj, "Face3"),
-                                          (geom_obj, "Face4"),
-                                          (geom_obj, "Face5"),
-                                          (geom_obj, "Face6"),]
+    con_hydrostaticpressure = ObjectsFem.makeConstraintHydrostaticPressure(
+        doc, "ConstraintHydrostaticPressure"
+    )
+    con_hydrostaticpressure.ModelType = "NearestNeighbour"
+    con_hydrostaticpressure.BasePressureScale = "1 MPa"
+    con_hydrostaticpressure.DataFile = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "constraint_hydrostaticpressure_datafile.csv",
+    )
+    con_hydrostaticpressure.References = [
+        (geom_obj, "Face2"),
+        (geom_obj, "Face3"),
+        (geom_obj, "Face4"),
+        (geom_obj, "Face5"),
+        (geom_obj, "Face6"),
+    ]
     analysis.addObject(con_hydrostaticpressure)
 
-    # mesh
-    femmesh_obj = analysis.addObject(ObjectsFem.makeMeshGmsh(doc, get_meshname()))[0]
+    femmesh_obj = analysis.addObject(
+        ObjectsFem.makeMeshGmsh(doc, get_meshname())
+    )[0]
     femmesh_obj.Shape = geom_obj
     femmesh_obj.SecondOrderLinear = False
     femmesh_obj.ElementDimension = "2D"
     femmesh_obj.CharacteristicLengthMax = "250 mm"
 
     from femmesh.gmshtools import GmshTools
+
     gmsh_mesh = GmshTools(femmesh_obj)
-    error = gmsh_mesh.create_mesh()
+    gmsh_mesh.create_mesh()
 
     doc.recompute()
 

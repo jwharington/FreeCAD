@@ -1,9 +1,5 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-include_directories(
-    /usr/local/include
-)
-
 add_subdirectory(App)
 
 if(BUILD_GUI)

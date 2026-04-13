@@ -43,9 +43,18 @@ class VPConstraintJig321(view_base_femconstraint.VPBaseFemConstraint):
 
     def attach(self, vobj):
         super().attach(vobj)
+        self.symbols_switch = coin.SoSwitch()
         self.symbols_group = coin.SoGroup()
-        vobj.addDisplayMode(self.symbols_group, "Symbols")
+        self.symbols_switch.addChild(self.symbols_group)
+        vobj.addDisplayMode(self.symbols_switch, "Symbols")
+        self._sync_symbols_visibility(vobj.Visibility)
         self.updateSymbols()
+
+    def _sync_symbols_visibility(self, is_visible):
+        if is_visible:
+            self.symbols_switch.whichChild.setValue(coin.SoSwitch.SO_SWITCH_ALL)
+        else:
+            self.symbols_switch.whichChild.setValue(coin.SoSwitch.SO_SWITCH_NONE)
 
     def updateSymbols(self):
         # Clear previous symbols
@@ -76,6 +85,13 @@ class VPConstraintJig321(view_base_femconstraint.VPBaseFemConstraint):
         z_axis = (
             z_axis / np.linalg.norm(z_axis) if np.linalg.norm(z_axis) > 0 else np.array([0, 0, 1])
         )
+        support_span = max(
+            np.linalg.norm(v3 - v2),
+            np.linalg.norm(v3 - v1),
+            np.linalg.norm(v2 - v1),
+        )
+        arr_len = max(25.0, 0.15 * support_span)
+        arr_head = 0.2 * arr_len
 
         # Arrow drawing helper
         def add_arrow(origin, direction, color):
@@ -83,9 +99,10 @@ class VPConstraintJig321(view_base_femconstraint.VPBaseFemConstraint):
             mat = coin.SoBaseColor()
             mat.rgb.setValue(color)
             sep.addChild(mat)
+            draw_style = coin.SoDrawStyle()
+            draw_style.lineWidth = 2.0
+            sep.addChild(draw_style)
             coords = coin.SoCoordinate3()
-            arr_len = 2.0  # length of arrow
-            arr_head = 0.5  # size of arrow head
             start = origin
             end = origin + direction * arr_len
             coords.point.set1Value(0, *start)
@@ -128,6 +145,10 @@ class VPConstraintJig321(view_base_femconstraint.VPBaseFemConstraint):
     def updateData(self, obj, prop):
         if prop in ("Supports"):
             self.updateSymbols()
+
+    def onChanged(self, vobj, prop):
+        if prop == "Visibility":
+            self._sync_symbols_visibility(vobj.Visibility)
 
     def getDisplayModes(self, obj):
         return ["Symbols"]

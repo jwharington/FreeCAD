@@ -335,7 +335,21 @@ class MeshSetsGetter:
         for femobj in self.member.cons_jig321:
             # femobj --> dict, FreeCAD document object is femobj["Object"]
             print_obj_info(femobj["Object"])
-            nodes = meshtools.get_femnodes_by_femobj_with_references(self.femmesh, femobj)
+            if meshtools.is_solid_femmesh(self.femmesh):
+                nodes = set()
+                ref_objects = {ref[0] for ref in femobj["Object"].References}
+                for robj in ref_objects:
+                    for i, _ in enumerate(robj.Shape.Faces, start=1):
+                        face = meshtools.sub_shape_at_global_placement(robj, f"Face{i}")
+                        nodes.update(
+                            meshtools.get_nodes_by_face_with_fallback(
+                                self.femmesh,
+                                face,
+                            )
+                        )
+                nodes = sorted(nodes)
+            else:
+                nodes = meshtools.get_femnodes_by_femobj_with_references(self.femmesh, femobj)
             femobj["Nodes"] = femobj["Object"].Proxy.find_largest_triangle(
                 femobj["Object"], self.femmesh, nodes
             )
@@ -489,8 +503,14 @@ class MeshSetsGetter:
             vec3 = vec1.cross(vec2)
             return (P1 + P2 + P3) / 3.0, 0.5 * vec3.Length, vec3.normalize()
 
+        # Cache per geometric reference pair across all pressure-like constraints
+        # (Pressure, HydrostaticPressure, Reaction). This avoids repeated expensive
+        # face lookups for different constraints targeting the same geometry.
+        ref_pair_cache = {}
+
         for femobj in self.member.cons_pressure:
             obj = femobj["Object"]
+            ref_pairs = meshtools.pair_obj_reference(obj.References)
             result = self._get_elements(obj)
 
             femobj["PressureFaces"] = result
@@ -498,37 +518,66 @@ class MeshSetsGetter:
             face_info = {}
             node_info = {}
 
-            for o, elem_tup in obj.References:
-                for elem in elem_tup:
+            for ref_pair in ref_pairs:
+                cache_key = (id(ref_pair[0]), ref_pair[1])
+                cached = ref_pair_cache.get(cache_key)
+                if cached is None:
+                    o, elem = ref_pair
                     ref_face = meshtools.sub_shape_at_global_placement(o, elem)
 
                     # face_table:
                     #    { meshfaceID : ( nodeID, ... , nodeID ) }
-
                     face_table = {}
-                    ref_face_volume_elements = self.femmesh.getccxVolumesByFace(ref_face)
-                    ref_face_nodes = self.femmesh.getNodesByFace(ref_face)
+                    ref_face_nodes = meshtools.get_nodes_by_face_with_fallback(
+                        self.femmesh, ref_face
+                    )
+                    ref_face_nodes_set = set(ref_face_nodes)
+                    ref_face_volume_elements = meshtools.get_volumes_by_face_with_fallback(
+                        self.femmesh,
+                        ref_face,
+                        self.femelement_table,
+                        ref_face_nodes,
+                    )
                     for ve in ref_face_volume_elements:
-                        veID = ve[0]
-                        # faID = ve[1]
-                        ve_ref_face_nodes = []
-                        for nodeID in self.femelement_table[veID]:
-                            if nodeID in ref_face_nodes:
-                                ve_ref_face_nodes.append(nodeID)
-
+                        veID = ve[0] if isinstance(ve, (list, tuple)) else ve
+                        ve_ref_face_nodes = [
+                            nodeID
+                            for nodeID in self.femelement_table[veID]
+                            if nodeID in ref_face_nodes_set
+                        ]
                         if ve_ref_face_nodes:
                             face_table[veID] = ve_ref_face_nodes
 
-                    mf = meshtools.build_mesh_faces_of_volume_elements(
-                        face_table, self.femelement_table
+                    has_sub_faces = any(
+                        isinstance(ve, (list, tuple)) for ve in ref_face_volume_elements
                     )
+                    mf = {}
+                    if has_sub_faces:
+                        mf = meshtools.build_mesh_faces_of_volume_elements(
+                            face_table, self.femelement_table
+                        )
+
+                    cached_face_info = {}
+                    cached_node_info = {}
                     for ve in ref_face_volume_elements:
-                        sorted_nodes = mf[ve[0]]
+                        veID = ve[0] if isinstance(ve, (list, tuple)) else ve
+                        if isinstance(ve, (list, tuple)):
+                            sorted_nodes = mf[veID]
+                        else:
+                            sorted_nodes = self.femelement_table[veID]
                         P1 = self.femnodes_mesh[sorted_nodes[0]]
                         P2 = self.femnodes_mesh[sorted_nodes[1]]
                         P3 = self.femnodes_mesh[sorted_nodes[2]]
-                        face_info[tuple(ve)] = get_triangle_info(P1, P2, P3)
-                        node_info[tuple(ve)] = sorted_nodes
+                        ve_key = tuple(ve) if isinstance(ve, (list, tuple)) else (ve,)
+                        cached_face_info[ve_key] = get_triangle_info(P1, P2, P3)
+                        cached_node_info[ve_key] = sorted_nodes
+
+                    cached = (cached_face_info, cached_node_info)
+                    ref_pair_cache[cache_key] = cached
+
+                cached_face_info, cached_node_info = cached
+                face_info.update(cached_face_info)
+                node_info.update(cached_node_info)
 
             femobj["PressureFaceInfo"] = face_info
             femobj["PressureNodeInfo"] = node_info

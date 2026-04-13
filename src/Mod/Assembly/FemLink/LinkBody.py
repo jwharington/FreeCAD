@@ -31,21 +31,6 @@ def analysis_label(body_label):
     return f"Analysis {body_label}"
 
 
-def obj_save_load(obj, id, state, vars, mode, mass):
-    for var in vars:
-        if var == "LinearAcceleration":
-            scale = mass
-        else:
-            scale = 1.0
-        match mode:
-            case UpdateMode.SAVE:
-                state[(id, var)] = getattr(obj, var) * scale
-            case UpdateMode.LOAD:
-                setattr(obj, var, state[(id, var)] / scale)
-            case _:
-                pass
-
-
 def get_reference_subobject(reference):
     obj, subs = reference
     sel_obj = None
@@ -71,7 +56,56 @@ def clear_post_pipelines(analysis):
         analysis.Document.removeObject(p.Name)
 
 
+def _material_matches_body(material_obj, body):
+    references = getattr(material_obj, "References", [])
+    if not references:
+        return True
+
+    for reference in references:
+        if not reference:
+            continue
+        ref_obj = reference[0]
+        if ref_obj == body:
+            return True
+    return False
+
+
+def _get_mechanical_material(doc, body):
+    for analysis in doc.findObjects(Type="Fem::FemAnalysis"):
+        for obj in getattr(analysis, "Group", []):
+            material = getattr(obj, "Material", None)
+            if material is None:
+                continue
+            material_data = dict(material)
+            if "YoungsModulus" not in material_data or "PoissonRatio" not in material_data:
+                continue
+            if _material_matches_body(obj, body):
+                return material_data
+
+    material_data = dict(body.ShapeMaterial)
+    material_data.setdefault("Name", body.Label)
+    material_data.setdefault("YoungsModulus", "210000 MPa")
+    material_data.setdefault("PoissonRatio", "0.30")
+    material_data.setdefault("Density", "7900 kg/m^3")
+    return material_data
+
+
 class LinkBody(FPBase):
+    """Link assembly constraints and motion to FEM inputs for static FEA.
+
+    This object transfers dynamic and kinematic constraint information from an
+    assembly body into a per-part FEM analysis setup. Joint reaction forces and
+    moments are applied at selected reaction surfaces, while
+    motion-related effects are represented in the CalculiX solve through
+    equivalent load terms.
+
+    The workflow is treated as quasi-steady, following D'Alembert's principle:
+    inertia effects are converted into statically equivalent actions for each
+    sampled state. Small residual forces and moments can remain because of
+    rounding and other numerical approximations. A 3-2-1 jig constraint is
+    therefore added to support the model, and its influence should normally be
+    negligible in the resulting stress field.
+    """
 
     def __init__(self, obj, body=None):
 
@@ -103,10 +137,20 @@ class LinkBody(FPBase):
             return
         if not fp.Body.getLinkedObject():
             return
+        if self._get_body_mass_tons(fp.Body) is None:
+            return
 
-        analysis = self.findAnalysis(fp)
+        self.updateFEMLinks(fp, mode=UpdateMode.EXECUTE)
 
-        # self.updateFEMLinks(fp, mode=UpdateMode.EXECUTE)
+        # line_info lives on the Python proxy, so force a ViewProvider refresh
+        # after execute to keep symbols in sync during frame-by-frame playback.
+        if FreeCAD.GuiUp and hasattr(fp, "ViewObject") and fp.ViewObject:
+            vp_proxy = getattr(fp.ViewObject, "Proxy", None)
+            if vp_proxy and hasattr(vp_proxy, "updateData"):
+                try:
+                    vp_proxy.updateData(fp, "line_info")
+                except Exception:
+                    pass
 
     def createAnalysis(self, fp):
         Console.PrintMessage(f"Creating FEM analysis for body {fp.Body.Label}\n")
@@ -120,10 +164,12 @@ class LinkBody(FPBase):
         solver_obj.Label = f"Solver_{body.Label}"
         analysis.addObject(solver_obj)
 
-        material_label = body.ShapeMaterial.Name
+        material_data = _get_mechanical_material(doc, body)
+        material_label = material_data.get("Name", body.Label)
         material_obj = ObjectsFem.makeMaterialSolid(doc, material_label)
-        material_obj.Material = body.ShapeMaterial
+        material_obj.Material = material_data
         material_obj.Label = f"Material_{body.Label}"
+        material_obj.References = [(body, "Solid1")]
         analysis.addObject(material_obj)
 
         mesh_label = f"Mesh_{body.Label}"
@@ -133,14 +179,15 @@ class LinkBody(FPBase):
         femmesh_obj.ElementOrder = "2nd"
         femmesh_obj.Label = mesh_label
         # femmesh_obj.CharacteristicLengthMax = "1 mm"
-        femmesh_obj.ViewObject.Visibility = False
+        if femmesh_obj.ViewObject is not None:
+            femmesh_obj.ViewObject.Visibility = False
 
         doc.recompute()
 
         # generate the mesh
         from femmesh import gmshtools
 
-        gmsh_mesh = gmshtools.GmshTools(femmesh_obj, analysis)
+        gmsh_mesh = gmshtools.GmshTools(femmesh_obj)
         gmsh_mesh.create_mesh()
 
         # if fp.ViewObject:
@@ -165,13 +212,34 @@ class LinkBody(FPBase):
         if hasattr(solver, "WorkingDirectory") and not solver.WorkingDirectory:
             solver.WorkingDirectory = get_pref_working_dir(solver)
 
+        # Remove any stale DAT file objects from previous runs so that
+        # load_results_ccxdat (called inside run_fem_solver) always creates
+        # a fresh object with the canonical name "ccx_dat_file".
+        stale_dat = [
+            o
+            for o in analysis.Group
+            if o.TypeId == "App::TextDocument" and o.Name.startswith("ccx_dat_file")
+        ]
+        for o in stale_dat:
+            analysis.Document.removeObject(o.Name)
+
         def get_results():
             result_series = find_common_group_objects(analysis, "Fem::FemResultObjectPython")
             return {r.Label: r for r in result_series}
 
         results_old = get_results()
 
-        run_fem_solver(solver, solver.WorkingDirectory)
+        # Prevent Assembly recompute from re-solving and overwriting simulation
+        # frame history while a per-frame FEM solve is running.
+        assembly_prefs = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Mod/Assembly")
+        solve_on_recompute = assembly_prefs.GetBool("SolveOnRecompute", True)
+        try:
+            if solve_on_recompute:
+                assembly_prefs.SetBool("SolveOnRecompute", False)
+            run_fem_solver(solver, solver.WorkingDirectory)
+        finally:
+            if solve_on_recompute:
+                assembly_prefs.SetBool("SolveOnRecompute", True)
 
         if not hasattr(self, "result_map"):
             self.result_map = {}
@@ -190,11 +258,23 @@ class LinkBody(FPBase):
     def findAnalysis(self, fp):
         label = analysis_label(fp.Body.getLinkedObject().Label)
         doc = fp.Document
-        objs = doc.findObjects(Type="Fem::FemAnalysis", Label=label)
-        if objs:
-            return objs[0]
-        else:
-            return self.createAnalysis(fp)
+        objs = getattr(doc, "Objects", None)
+        if objs is None and hasattr(doc, "findObjects"):
+            try:
+                objs = doc.findObjects(Type="Fem::FemAnalysis")
+            except TypeError:
+                objs = doc.findObjects()
+        if objs is None:
+            objs = []
+        for obj in objs:
+            type_id = getattr(obj, "TypeId", None)
+            if type_id is not None and type_id != "Fem::FemAnalysis":
+                continue
+            obj_label = getattr(obj, "Label", None)
+            # Objects returned by findObjects(Type=...) may not expose Label in tests.
+            if obj_label is None or obj_label == label:
+                return obj
+        return self.createAnalysis(fp)
 
     def onChanged(self, fp, prop):
         if FreeCAD.ActiveDocument.Restoring:
@@ -204,10 +284,14 @@ class LinkBody(FPBase):
             case "Body":
                 self.execute(fp)
 
-    def get_analysis_obj(self, analysis, label, maker, typeid, on_new=None):
+    def get_analysis_obj(self, analysis, label, maker, typeid, on_new=None, matcher=None):
 
         def find_analysis_obj():
             objs = find_common_group_objects(analysis, typeid)
+            if matcher is not None:
+                for obj in objs:
+                    if matcher(obj):
+                        return obj
             for obj in objs:
                 if obj.Label == label:
                     return obj
@@ -223,31 +307,88 @@ class LinkBody(FPBase):
             analysis.addObject(obj)
         return obj
 
-    def get_analysis_constraint(self, analysis, label, maker, on_new=None):
-        return self.get_analysis_obj(analysis, label, maker, "Fem::ConstraintPython", on_new)
+    def get_analysis_constraint(self, analysis, label, maker, on_new=None, matcher=None):
+        return self.get_analysis_obj(
+            analysis,
+            label,
+            maker,
+            "Fem::ConstraintPython",
+            on_new,
+            matcher=matcher,
+        )
+
+    def _constraint_references_object(self, constraint_obj, target_obj):
+        refs = getattr(constraint_obj, "References", [])
+        for ref in refs:
+            if not ref:
+                continue
+            ref_obj = ref[0] if isinstance(ref, tuple) else ref
+            if ref_obj == target_obj:
+                return True
+        return False
+
+    def _cleanup_duplicate_jigs(self, analysis, target_obj, keep_obj):
+        constraints = find_common_group_objects(analysis, "Fem::ConstraintPython")
+        for obj in constraints:
+            if obj == keep_obj:
+                continue
+            proxy = getattr(obj, "Proxy", None)
+            if not proxy or getattr(proxy, "Type", "") != "Fem::ConstraintJig321":
+                continue
+            if not self._constraint_references_object(obj, target_obj):
+                continue
+            analysis.Document.removeObject(obj.Name)
 
     def getMass(self, fp):
-        return fp.Body.Mass / 1000.0
+        mass = self._get_body_mass_tons(fp.Body)
+        return mass if mass is not None else 0.0
+
+    def _get_body_mass_tons(self, body):
+        if body is None:
+            return None
+
+        mass = getattr(body, "Mass", None)
+        if mass is None and hasattr(body, "getLinkedObject"):
+            linked = body.getLinkedObject()
+            if linked is not None:
+                mass = getattr(linked, "Mass", None)
+
+        if mass is None:
+            return None
+
+        try:
+            mass = float(mass)
+        except (TypeError, ValueError):
+            return None
+
+        if mass <= 0.0:
+            return None
+
+        return mass / 1000.0
 
     def updateFEMLinks(self, fp, mode: UpdateMode):
         # upon changes to assembly items, update linked FEM items
-        analysis = self.findAnalysis(fp)
+        analysis = None
+        if mode is not UpdateMode.SAVE:
+            analysis = self.findAnalysis(fp)
         assembly = fp.getParentGroup()
         if mode is UpdateMode.SAVE:
             self.state = {}
 
         for body in get_assembly_bodies(assembly):
             key = (body.Label, "Placement")
-            match mode:
-                case UpdateMode.SAVE:
-                    self.state[key] = self.getBodyPlacement(body)
-                case _:
-                    if not hasattr(self, "state"):
-                        self.state = {}
-                    placement = self.state.get(key, self.getBodyPlacement(body))
-                    self.setBodyPlacement(body, placement)
-                    if body == fp.Body:
-                        self.mesh_placement = placement
+            if mode is UpdateMode.SAVE:
+                placement = self.getBodyPlacement(body)
+                self.state[key] = placement
+            elif mode is UpdateMode.LOAD:
+                if not hasattr(self, "state"):
+                    self.state = {}
+                placement = self.state.get(key, self.getBodyPlacement(body))
+                self.setBodyPlacement(body, placement)
+            else:  # EXECUTE: use current live position, no state manipulation
+                placement = self.getBodyPlacement(body)
+            if body == fp.Body:
+                self.mesh_placement = placement
 
         self.line_info = []
 
@@ -261,48 +402,94 @@ class LinkBody(FPBase):
             self.capture()
 
     def updateJig(self, fp, analysis, body, mode: UpdateMode):
+        body_obj = body.getLinkedObject()
 
-        def on_new(obj):
-            obj.References = [body.getLinkedObject()]
+        def jig_matcher(obj):
+            proxy = getattr(obj, "Proxy", None)
+            if not proxy or getattr(proxy, "Type", "") != "Fem::ConstraintJig321":
+                return False
+            return self._constraint_references_object(obj, body_obj)
 
-        obj = self.get_analysis_constraint(
-            analysis, f"Jig_{body.Label}", ObjectsFem.makeConstraintJig321, on_new=on_new
-        )
+        if mode is UpdateMode.LOAD:
 
-        if hasattr(body, "CenterOfMass"):
-            obj.CenterOfMass = body.CenterOfMass
-            mass = body.Mass / 1000.0
-            if fp.SimpleEquilibrium:
-                obj.LinearAcceleration = self.force_total / mass
-                obj.LinearVelocity = Vector(0, 0, 0)
-                obj.AngularVelocity = Vector(0, 0, 0)
-            else:
-                obj.LinearAcceleration = body.LinearAcceleration
-                obj.LinearVelocity = body.LinearVelocity
-                obj.AngularVelocity = body.AngularVelocity
+            def on_new(obj):
+                obj.References = [body_obj]
 
-            self.force_total -= obj.LinearAcceleration * mass
-
+            obj = self.get_analysis_constraint(
+                analysis,
+                f"Jig_{body.Label}",
+                ObjectsFem.makeConstraintJig321,
+                on_new=on_new,
+                matcher=jig_matcher,
+            )
+            if not self._constraint_references_object(obj, body_obj):
+                obj.References = [body_obj]
+            self._cleanup_duplicate_jigs(analysis, body_obj, obj)
+            # Restore constraint values from saved state; skip live body read.
             id = body.Label
-
-            obj_save_load(
-                obj,
-                id,
-                self.state,
-                ["LinearAcceleration", "LinearVelocity", "AngularVelocity"],
-                mode=mode,
-                mass=mass,
-            )
-
-            self.line_info.append(
-                (
-                    obj.CenterOfMass,
-                    obj.LinearAcceleration,
-                    LineType.LINEAR_ACCELERATION,
-                )
-            )
+            mass = self._get_body_mass_tons(body)
+            if (id, "LinearAcceleration") in self.state:
+                if mass is None:
+                    Console.PrintWarning(
+                        f"LinkBody: Mass unavailable for {body.Label}; "
+                        "skipping linear acceleration restoration.\n"
+                    )
+                else:
+                    obj.LinearAcceleration = self.state[(id, "LinearAcceleration")] / mass
+                obj.LinearVelocity = self.state[(id, "LinearVelocity")]
+                obj.AngularVelocity = self.state[(id, "AngularVelocity")]
             return True
-        return False
+
+        # SAVE or EXECUTE: read live body kinematics.
+        if not hasattr(body, "CenterOfMass"):
+            return False
+
+        center_of_mass = body.CenterOfMass
+        mass = self._get_body_mass_tons(body)
+        if mass is None:
+            Console.PrintWarning(
+                f"LinkBody: Mass unavailable for {body.Label}; skipping jig update.\n"
+            )
+            return False
+        if fp.SimpleEquilibrium:
+            linear_acceleration = self.force_total / mass
+            linear_velocity = Vector(0, 0, 0)
+            angular_velocity = Vector(0, 0, 0)
+        else:
+            linear_acceleration = body.LinearAcceleration
+            linear_velocity = body.LinearVelocity
+            angular_velocity = body.AngularVelocity
+
+        if mode is UpdateMode.EXECUTE or (mode is UpdateMode.SAVE and analysis is not None):
+
+            def on_new(obj):
+                obj.References = [body_obj]
+
+            obj = self.get_analysis_constraint(
+                analysis,
+                f"Jig_{body.Label}",
+                ObjectsFem.makeConstraintJig321,
+                on_new=on_new,
+                matcher=jig_matcher,
+            )
+            if not self._constraint_references_object(obj, body_obj):
+                obj.References = [body_obj]
+            self._cleanup_duplicate_jigs(analysis, body_obj, obj)
+            obj.CenterOfMass = center_of_mass
+            obj.LinearAcceleration = linear_acceleration
+            obj.LinearVelocity = linear_velocity
+            obj.AngularVelocity = angular_velocity
+
+        self.force_total -= linear_acceleration * mass
+
+        if mode is UpdateMode.SAVE:
+            id = body.Label
+            self.state[(id, "LinearAcceleration")] = linear_acceleration * mass
+            self.state[(id, "LinearVelocity")] = linear_velocity
+            self.state[(id, "AngularVelocity")] = angular_velocity
+
+        self.line_info.append((center_of_mass, linear_acceleration, LineType.LINEAR_ACCELERATION))
+        return True
 
     def updateJoint(self, fp, analysis, body, joint, side, mode: UpdateMode):
         # get force/torque/position from assembly joint
@@ -316,26 +503,70 @@ class LinkBody(FPBase):
 
         id = f"Reaction_{body.Label}_{joint.Label}"
 
-        obj = self.get_analysis_constraint(
-            analysis,
-            id,
-            ObjectsFem.makeConstraintReaction,
-            on_new=on_new,
-        )
+        if mode is UpdateMode.LOAD:
+            obj = self.get_analysis_constraint(
+                analysis,
+                id,
+                ObjectsFem.makeConstraintReaction,
+                on_new=on_new,
+            )
+            # Restore constraint values from saved state; skip live joint read.
+            if (id, "Force") in self.state:
+                obj.Force = self.state[(id, "Force")]
+                obj.Torque = self.state[(id, "Torque")]
+            return
 
-        obj.Force = attr_side("Force", Vector(0, 0, 0))
-        obj.Torque = attr_side("Torque", Vector(0, 0, 0))
-        obj.Origin.Base = attr_side("Origin", Vector(0, 0, 0))
+        # SAVE or EXECUTE: read live joint reactions.
+        force = attr_side("Force", Vector(0, 0, 0))
+        torque = attr_side("Torque", Vector(0, 0, 0))
+        origin = attr_side("Origin", Vector(0, 0, 0))
 
-        obj_save_load(obj, id, self.state, ["Force", "Torque"], mode=mode, mass=body.Mass / 1000.0)
+        if mode is UpdateMode.EXECUTE or (mode is UpdateMode.SAVE and analysis is not None):
+            obj = self.get_analysis_constraint(
+                analysis,
+                id,
+                ObjectsFem.makeConstraintReaction,
+                on_new=on_new,
+            )
+            obj.Force = force
+            obj.Torque = torque
+            obj.Origin.Base = origin
 
-        self.force_total += obj.Force
-        self.line_info.append((obj.Origin.Base, obj.Force, LineType.FORCE))
-        self.line_info.append((obj.Origin.Base, obj.Torque, LineType.TORQUE))
+        if mode is UpdateMode.SAVE:
+            self.state[(id, "Force")] = force
+            self.state[(id, "Torque")] = torque
+
+        self.force_total += force
+        self.line_info.append((origin, force, LineType.FORCE))
+        self.line_info.append((origin, torque, LineType.TORQUE))
 
     def updateJoints(self, fp, analysis, assembly, body, mode: UpdateMode):
 
         body_name = body.Name
+        linked_body = body.getLinkedObject() if hasattr(body, "getLinkedObject") else None
+        linked_body_name = linked_body.Name if linked_body is not None else None
+
+        def is_target_body(part):
+            if part is None:
+                return False
+            if getattr(part, "Name", None) in (body_name, linked_body_name):
+                return True
+            if hasattr(part, "getLinkedObject"):
+                linked = part.getLinkedObject()
+                if linked is not None and getattr(linked, "Name", None) in (
+                    body_name,
+                    linked_body_name,
+                ):
+                    return True
+            return False
+
+        def get_reference_object(joint_ref):
+            try:
+                return UtilsAssembly.getObject(joint_ref)
+            except Exception:
+                if isinstance(joint_ref, (list, tuple)) and joint_ref:
+                    return joint_ref[0]
+                return None
 
         def joint_match(assembly, joint, side):
             reference = f"Reference{side}"
@@ -343,8 +574,22 @@ class LinkBody(FPBase):
                 # Console.PrintMessage(f"grounded {joint.Label} ignored\n")
                 return
 
-            part = UtilsAssembly.getMovingPart(assembly, getattr(joint, reference))
-            if part.Name == body_name:
+            joint_ref = getattr(joint, reference)
+            part = None
+            if mode is UpdateMode.SAVE:
+                # Avoid getMovingPart() during SAVE since it can trigger model
+                # updates while we are sampling already-solved frame history.
+                ref_obj = get_reference_object(joint_ref)
+                if is_target_body(ref_obj):
+                    part = ref_obj
+            else:
+                try:
+                    part = UtilsAssembly.getMovingPart(assembly, joint_ref)
+                except TypeError:
+                    # Newer UtilsAssembly signature takes only the reference tuple.
+                    part = UtilsAssembly.getMovingPart(joint_ref)
+
+            if is_target_body(part):
                 self.updateJoint(fp, analysis, body, joint, side, mode=mode)
 
         joint_groups = find_common_group_objects(assembly, "Assembly::JointGroup")

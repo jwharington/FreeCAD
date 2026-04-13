@@ -143,6 +143,43 @@ class TestObjectType(unittest.TestCase):
         )
 
     # ********************************************************************************************
+    def test_constraint_reaction_defaults_and_contact(self):
+        doc = self.document
+        con_reaction = ObjectsFem.makeConstraintReaction(doc)
+
+        self.assertEqual(con_reaction.ModelType, "Cosine")
+        self.assertEqual(con_reaction.Force, FreeCAD.Vector(0, 0, 0))
+        self.assertEqual(con_reaction.Torque, FreeCAD.Vector(0, 0, 0))
+        self.assertFalse(con_reaction.Reversed)
+        self.assertFalse(con_reaction.EnableAmplitude)
+
+        n_i = FreeCAD.Vector(0, 0, 1)
+        l_i = FreeCAD.Vector(0, 0, -2)
+
+        con_reaction.ModelType = "Uniform"
+        self.assertEqual(con_reaction.Proxy.get_contact(con_reaction, n_i, l_i), 1.0)
+
+        con_reaction.ModelType = "Cosine"
+        self.assertEqual(con_reaction.Proxy.get_contact(con_reaction, n_i, l_i), 1.0)
+
+        con_reaction.ModelType = "Parabolic"
+        self.assertEqual(con_reaction.Proxy.get_contact(con_reaction, n_i, l_i), 1.0)
+
+        con_reaction.ModelType = "Gencoz"
+        self.assertGreater(con_reaction.Proxy.get_contact(con_reaction, n_i, l_i), 0.0)
+
+        # Positive dot product means separation, so contact is zero.
+        l_sep = FreeCAD.Vector(0, 0, 2)
+        con_reaction.ModelType = "Cosine"
+        self.assertEqual(con_reaction.Proxy.get_contact(con_reaction, n_i, l_sep), 0.0)
+
+        # Zero load vector has no defined contact direction.
+        con_reaction.ModelType = "Uniform"
+        self.assertEqual(
+            con_reaction.Proxy.get_contact(con_reaction, n_i, FreeCAD.Vector(0, 0, 0)), 0.0
+        )
+
+    # ********************************************************************************************
     def test_femobjects_type(self):
         doc = self.document
         create_all_fem_objects_doc
@@ -226,6 +263,9 @@ class TestObjectType(unittest.TestCase):
         self.assertEqual(
             "Fem::ConstraintHydrostaticPressure",
             type_of_obj(ObjectsFem.makeConstraintHydrostaticPressure(doc)),
+        )
+        self.assertEqual(
+            "Fem::ConstraintReaction", type_of_obj(ObjectsFem.makeConstraintReaction(doc))
         )
         self.assertEqual(
             "Fem::ConstraintCentrif", type_of_obj(ObjectsFem.makeConstraintCentrif(doc))
@@ -430,6 +470,9 @@ class TestObjectType(unittest.TestCase):
         )
         self.assertTrue(
             is_of_type(ObjectsFem.makeConstraintSelfWeight(doc), "Fem::ConstraintSelfWeight")
+        )
+        self.assertTrue(
+            is_of_type(ObjectsFem.makeConstraintReaction(doc), "Fem::ConstraintReaction")
         )
         self.assertTrue(is_of_type(ObjectsFem.makeConstraintCentrif(doc), "Fem::ConstraintCentrif"))
         self.assertTrue(is_of_type(ObjectsFem.makeConstraintJig321(doc), "Fem::ConstraintJig321"))
@@ -743,6 +786,12 @@ class TestObjectType(unittest.TestCase):
         self.assertTrue(
             is_derived_from(constraint_hydrostaticpressure, "Fem::ConstraintHydrostaticPressure")
         )
+
+        # ConstraintReaction
+        constraint_reaction = ObjectsFem.makeConstraintReaction(doc)
+        self.assertTrue(is_derived_from(constraint_reaction, "App::DocumentObject"))
+        self.assertTrue(is_derived_from(constraint_reaction, "Fem::ConstraintPython"))
+        self.assertTrue(is_derived_from(constraint_reaction, "Fem::ConstraintReaction"))
 
         # ConstraintCentrif
         constraint_centrif = ObjectsFem.makeConstraintCentrif(doc)
@@ -1096,6 +1145,9 @@ class TestObjectType(unittest.TestCase):
             ObjectsFem.makeConstraintSelfWeight(doc).isDerivedFrom("Fem::ConstraintPython")
         )
         self.assertTrue(
+            ObjectsFem.makeConstraintReaction(doc).isDerivedFrom("Fem::ConstraintPython")
+        )
+        self.assertTrue(
             ObjectsFem.makeConstraintCentrif(doc).isDerivedFrom("Fem::ConstraintPython")
         )
         self.assertTrue(
@@ -1259,6 +1311,7 @@ def create_all_fem_objects_doc(doc):
     analysis.addObject(ObjectsFem.makeConstraintPulley(doc, name="ConstraintPulley"))
     analysis.addObject(ObjectsFem.makeConstraintSectionPrint(doc, name="ConstraintSectionPrint"))
     analysis.addObject(ObjectsFem.makeConstraintSelfWeight(doc, name="ConstraintSelfWeight"))
+    analysis.addObject(ObjectsFem.makeConstraintReaction(doc, name="ConstraintReaction"))
     analysis.addObject(ObjectsFem.makeConstraintCentrif(doc, name="ConstraintCentrif"))
     analysis.addObject(ObjectsFem.makeConstraintTemperature(doc, name="ConstraintTemperature"))
     analysis.addObject(ObjectsFem.makeConstraintTie(doc, name="ConstraintTie"))

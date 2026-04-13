@@ -33,4 +33,13 @@ from . import view_constraint_hydrostaticpressure
 
 
 class VPConstraintReaction(view_constraint_hydrostaticpressure.VPConstraintHydrostaticPressure):
-    pass
+
+    def render_constraint(self, obj):
+        fp = obj.Proxy
+        if hasattr(fp, "elem_info") and fp.elem_info and fp.pressure_valid(obj):
+            # Post-solve: show pressure field colours via parent.
+            super().render_constraint(obj)
+            return
+
+        # Pre-solve fallback: use tessellated references with distribution colours.
+        self._render_reference_faces(obj, color=(0.2, 0.8, 0.2), transparency=0.5)

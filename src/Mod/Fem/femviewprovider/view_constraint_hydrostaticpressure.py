@@ -29,11 +29,8 @@ __url__ = "https://www.freecad.org"
 #  \ingroup FEM
 #  \brief view provider for constraint self weight object
 
-from typing import List
-
 import numpy as np
 from femtools.membertools import get_several_member
-from FreeCAD import Console
 from pivy import coin
 from Resources.colormaps.roma import roma_map
 
@@ -42,38 +39,12 @@ from . import view_base_femconstraint
 # FemGui::ViewProviderFemConstraintPressure
 
 
-def calc_node_colors(femmesh, info, map_val):
-
-    def calc_node_values():
-        node_vals = {}
-        for face_id, p in info:
-            for node in femmesh.getElementNodes(face_id):
-                if node not in node_vals:
-                    node_vals[node] = []
-                node_vals[node].append(p)
-        return node_vals
-
-    def get_color(v):
-        return map_val(np.average(v))
-
-    node_vals = calc_node_values()
-    map_colors = {k: get_color(v) for k, v in node_vals.items()}
-    blank = map_val(0)
-    blank_colors = {k: blank for k in femmesh.Nodes.keys()}
-    return blank_colors | map_colors
-
-
-def calc_element_colors(femmesh, info, map_val):
-
-    def calc_element_values():
-        return {face_id: p for face_id, p in info}
-
-    def get_color(v):
-        return map_val(np.average(v))
-
-    element_vals = calc_element_values()
-    map_colors = {k: get_color(v) for k, v in element_vals.items()}
-    return map_colors
+def _to_xyz(node):
+    if hasattr(node, "x"):
+        return (node.x, node.y, node.z)
+    if hasattr(node, "X"):
+        return (node.X, node.Y, node.Z)
+    return (node[0], node[1], node[2])
 
 
 class VPConstraintHydrostaticPressure(view_base_femconstraint.VPBaseFemConstraint):
@@ -92,18 +63,19 @@ class VPConstraintHydrostaticPressure(view_base_femconstraint.VPBaseFemConstrain
         # vobj.loadSymbol(self.resource_symbol_dir + "ConstraintPressure.iv")
 
         self.mesh_coin = coin.SoGroup()
-        vobj.addDisplayMode(self.mesh_coin, "Base")
         vobj.addDisplayMode(self.mesh_coin, "Mesh")
+        self.render_constraint(self.Object)
 
     def onChanged(self, fp, prop):
-        if (prop == "DisplayMode") and fp.DisplayMode == "Mesh":
-            self.colorise_mesh(self.Object)
-        else:
-            self.unrender_mesh(self.Object)
+        if prop == "DisplayMode":
+            if fp.DisplayMode == "Mesh":
+                self.render_constraint(self.Object)
+            else:
+                self.clear_render()
 
     def updateData(self, obj, prop):
         if self.ViewObject.DisplayMode == "Mesh":
-            self.colorise_mesh(obj)
+            self.render_constraint(obj)
 
     def get_meshes(self, obj):
         analysis = obj.getParentGroup()
@@ -112,29 +84,143 @@ class VPConstraintHydrostaticPressure(view_base_femconstraint.VPBaseFemConstrain
         meshes = get_several_member(analysis, "Fem::FemMeshObject")
         return [mobj["Object"] for mobj in meshes]
 
-    def unrender_mesh(self, obj):
-        meshes = self.get_meshes(obj)
-        for mobj in meshes:
-            vobj = mobj.ViewObject
-            # vobj.ColorMode = "ByNode"
-            vobj.NodeColor = {}
-            vobj.ElementColor = {}
-            vobj.resetNodeColor()
-            vobj.ColorMode = "Overall"
+    def clear_render(self):
+        self.mesh_coin.removeAllChildren()
 
-    def colorise_mesh(self, obj):
+    def _render_reference_faces(
+        self,
+        obj,
+        color=(0.2, 0.6, 1.0),
+        transparency=0.55,
+        tessellation_deflection=0.25,
+    ):
+        """Fallback preview: render tessellated referenced faces before elem_info exists."""
+        self.clear_render()
+        if not hasattr(obj, "References") or not obj.References:
+            return
+
+        tri_data = []
+        rev = 1 if getattr(obj, "Reversed", False) else -1
+        for ref_obj, subnames in obj.References:
+            for face_name in subnames:
+                try:
+                    face_idx = int(face_name.replace("Face", "")) - 1
+                    face = ref_obj.Shape.Faces[face_idx]
+                except Exception:
+                    continue
+                verts, tris = face.tessellate(tessellation_deflection, True)
+                for tri in tris:
+                    p1 = verts[tri[0]]
+                    p2 = verts[tri[1]]
+                    p3 = verts[tri[2]]
+                    v1 = p2 - p1
+                    v2 = p3 - p1
+                    cross = v1.cross(v2)
+                    mag = cross.Length
+                    if mag <= 0.0:
+                        continue
+                    tri_data.append(
+                        {
+                            "p": (p1, p2, p3),
+                            "centroid": (p1 + p2 + p3) / 3.0,
+                            "normal": cross / mag,
+                            "area": 0.5 * mag,
+                            "rev": rev,
+                        }
+                    )
+
+        if not tri_data:
+            return
+
+        pressures = None
+        fp = obj.Proxy
+        if hasattr(fp, "get_pressure_field"):
+            preview_elem_info = {
+                "elem": list(range(len(tri_data))),
+                "centroid": [t["centroid"] for t in tri_data],
+                "normal": [t["normal"] for t in tri_data],
+                "area": [t["area"] for t in tri_data],
+                "rev": [t["rev"] for t in tri_data],
+                "pressure": [0.0 for _ in tri_data],
+            }
+            old_elem_info = getattr(fp, "elem_info", None)
+            try:
+                ok = fp.get_pressure_field(obj, preview_elem_info)
+                ptmp = np.asarray(preview_elem_info["pressure"], dtype=float)
+                # Reaction may return False if its nonlinear solve is imperfect,
+                # but preview values can still carry useful spatial variation.
+                if ok or np.all(np.isfinite(ptmp)):
+                    pressures = ptmp.tolist()
+            except Exception:
+                pressures = None
+            finally:
+                if hasattr(fp, "elem_info"):
+                    fp.elem_info = old_elem_info
+
+        if pressures is not None and len(pressures) == len(tri_data):
+            pvals = np.asarray(pressures, dtype=float)
+            pmin = float(np.min(pvals))
+            pmax = float(np.max(pvals))
+            span = pmax - pmin
+
+            if span > 1.0e-12:
+
+                def map_val(x):
+                    s = (float(x) - pmin) / span
+                    s = max(0.0, min(1.0, s))
+                    return roma_map(s)[0:3]
+
+                face_colors = [map_val(p) for p in pvals]
+            else:
+                # Near-constant field: keep a gentle uniform tint.
+                face_colors = [color for _ in tri_data]
+        else:
+            face_colors = [color for _ in tri_data]
+
+        points = []
+        coord_index = []
+        for i, tri in enumerate(tri_data):
+            base = 3 * i
+            p1, p2, p3 = tri["p"]
+            points.extend([_to_xyz(p1), _to_xyz(p2), _to_xyz(p3)])
+            coord_index.extend([base, base + 1, base + 2, -1])
+
+        sep = coin.SoSeparator()
+        mat = coin.SoMaterial()
+        for i, face_color in enumerate(face_colors):
+            mat.diffuseColor.set1Value(i, *face_color)
+        mat.transparency.setValue(transparency)
+
+        material_binding = coin.SoMaterialBinding()
+        material_binding.value.setValue(coin.SoMaterialBinding.PER_FACE)
+
+        coords = coin.SoCoordinate3()
+        for i, point in enumerate(points):
+            coords.point.set1Value(i, *point)
+        face_set = coin.SoIndexedFaceSet()
+        face_set.coordIndex.setValues(0, len(coord_index), coord_index)
+
+        sep.addChild(mat)
+        sep.addChild(material_binding)
+        sep.addChild(coords)
+        sep.addChild(face_set)
+        self.mesh_coin.addChild(sep)
+
+    def render_constraint(self, obj):
 
         fp = obj.Proxy
         if not hasattr(fp, "elem_info"):
+            self._render_reference_faces(obj)
             return
         if (not fp.elem_info) or (not fp.pressure_valid(obj)):
-            self.unrender_mesh(obj)
+            self._render_reference_faces(obj)
             return
 
         pressure = fp.elem_info["pressure"]
         felem_ids = fp.elem_info["felem"]
-        p_min = np.min(pressure + [0])
-        p_max = np.max(pressure + [0])
+        pvals = np.asarray(pressure, dtype=float)
+        p_min = float(np.min(np.append(pvals, 0.0)))
+        p_max = float(np.max(np.append(pvals, 0.0)))
 
         def map_val(x):
             if x > 0:
@@ -145,25 +231,64 @@ class VPConstraintHydrostaticPressure(view_base_femconstraint.VPBaseFemConstrain
                 s = 0.5
             return roma_map(s)[0:3]
 
-        info = zip(felem_ids, pressure)
-        for mesh in self.get_meshes(obj):
-            vobj = mesh.ViewObject
-            vobj.resetNodeColor()
-            if True:
-                vobj.ColorMode = "ByNode"
-                vobj.NodeColor = calc_node_colors(mesh.FemMesh, info, map_val)
-            else:
-                vobj.ColorMode = "ByElement"
-                vobj.ElementColor = calc_element_colors(mesh.FemMesh, info, map_val)
+        info = list(zip(felem_ids, pressure))
+        points = []
+        coord_index = []
+        face_colors = []
+        node_lookup = {}
 
-    def getDisplayModes(self, obj) -> List[str]:
+        for mesh in self.get_meshes(obj):
+            femmesh = mesh.FemMesh
+            for face_id, p in info:
+                try:
+                    nodes = femmesh.getElementNodes(face_id)
+                except Exception:
+                    continue
+                if not nodes or len(nodes) < 3:
+                    continue
+                for node_id in nodes:
+                    node_key = (mesh.Name, node_id)
+                    if node_key not in node_lookup:
+                        node_lookup[node_key] = len(points)
+                        points.append(_to_xyz(femmesh.Nodes[node_id]))
+                    coord_index.append(node_lookup[node_key])
+                coord_index.append(-1)
+                face_colors.append(map_val(p))
+
+        self.clear_render()
+        if not points or not face_colors:
+            return
+
+        sep = coin.SoSeparator()
+
+        material = coin.SoMaterial()
+        for i, color in enumerate(face_colors):
+            material.diffuseColor.set1Value(i, *color)
+
+        material_binding = coin.SoMaterialBinding()
+        material_binding.value.setValue(coin.SoMaterialBinding.PER_FACE)
+
+        coords = coin.SoCoordinate3()
+        for i, point in enumerate(points):
+            coords.point.set1Value(i, *point)
+
+        face_set = coin.SoIndexedFaceSet()
+        face_set.coordIndex.setValues(0, len(coord_index), coord_index)
+
+        sep.addChild(material)
+        sep.addChild(material_binding)
+        sep.addChild(coords)
+        sep.addChild(face_set)
+        self.mesh_coin.addChild(sep)
+
+    def getDisplayModes(self, obj):
         return ["Mesh"]
 
     def getDefaultDisplayMode(self) -> str:
-        return "Base"
+        return "Mesh"
 
     def setDisplayMode(self, mode):
         return mode
 
     def onDocumentRestored(self, obj):
-        print("viewprovider hydrostatic onDocumentRestored")
+        self.render_constraint(obj)
