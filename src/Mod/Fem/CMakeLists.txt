@@ -81,6 +81,8 @@ SET(FemExamples_SRCS
     femexamples/constraint_centrif.py
     femexamples/constraint_contact_shell_shell.py
     femexamples/constraint_contact_solid_solid.py
+    femexamples/constraint_jig321.py
+    femexamples/constraint_reaction.py
     femexamples/constraint_section_print.py
     femexamples/constraint_selfweight_cantilever.py
     femexamples/constraint_hydrostaticpressure.py
