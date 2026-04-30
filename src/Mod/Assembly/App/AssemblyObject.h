@@ -127,8 +127,8 @@ public:
     struct MbDInertialData
     {
         MbDInertialData()
-            : mass(1.0)
-            , inertia(1.0, 1.0, 1.0) {};
+            : mass(0.0)
+            , inertia(0.0, 0.0, 0.0) {};
         double mass;
         Base::Placement pcs;
         Base::Vector3d inertia;

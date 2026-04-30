@@ -29,8 +29,14 @@ from femobjects.constraint_hydrostaticpressure import (
     ConstraintHydrostaticPressure,
 )
 from femobjects.constraint_jig321 import ConstraintJig321
+from femobjects.constraint_virtualforces import ConstraintVirtualForces
 from femobjects.constraint_reaction import ConstraintReaction
-from femsolver.calculix import write_constraint_pressure, write_step_output
+from femsolver.calculix import (
+    write_constraint_jig321,
+    write_constraint_pressure,
+    write_constraint_virtualforces,
+    write_step_output,
+)
 from femmesh import meshsetsgetter
 from femtools import checksanalysis
 from femtools.membertools import AnalysisMember
@@ -108,6 +114,128 @@ class TestHydroJigCommits(unittest.TestCase):
         self.assertIn("*NODE PRINT, NSET=Jig321-2, TOTALS=ONLY", out)
 
     # ********************************************************************************************
+    def test_write_constraint_virtualforces_emits_static_dalembert_terms(self):
+        femobj = {"BodyNodes": [1, 2, 3, 4]}
+        vf_obj = SimpleNamespace(
+            Name="VirtualForces",
+            LinearAcceleration=Vector(0.0, 0.0, -9.81),
+            AngularVelocity=Vector(0.0, 0.0, 2.0),
+            AngularAcceleration=Vector(0.0, 0.0, 3.0),
+            RelativeVelocity=Vector(4.0, 5.0, 6.0),
+            LinearVelocity=Vector(0.0, 0.0, 0.0),
+            CenterOfRotation=Vector(1.0, 2.0, 3.0),
+        )
+        femmesh = SimpleNamespace(
+            Nodes={
+                1: (0.0, 0.0, 0.0),
+                2: (1.0, 0.0, 0.0),
+                3: (0.0, 1.0, 0.0),
+                4: (0.0, 0.0, 1.0),
+            }
+        )
+        ccxwriter = SimpleNamespace(
+            mesh_object=SimpleNamespace(FemMesh=femmesh),
+            ccx_eall="Eall",
+            ccx_nall="Nall",
+            analysis_type="static",
+        )
+
+        buf = StringIO()
+        write_constraint_virtualforces.write_meshdata_constraint(buf, femobj, vf_obj, ccxwriter)
+        write_constraint_virtualforces.write_constraint(buf, femobj, vf_obj, ccxwriter)
+        out = buf.getvalue()
+
+        self.assertIn("*NSET,NSET=VirtualForces-BODY", out)
+        self.assertIn("Eall,GRAV,9.81", out)
+        self.assertIn("Eall,CENTRIF,4", out)
+        self.assertIn("Eall,ROTA,3", out)
+        self.assertIn("*INITIAL CONDITIONS,TYPE=VELOCITY", out)
+        self.assertIn("VirtualForces-BODY,1,4", out)
+        self.assertIn("VirtualForces-BODY,2,5", out)
+        self.assertIn("VirtualForces-BODY,3,6", out)
+        self.assertIn("Eall,CORIO,4", out)
+
+    # ********************************************************************************************
+    def test_write_constraint_virtualforces_coriolis_velocity_falls_back_to_linear_velocity(self):
+        femobj = {}
+        vf_obj = SimpleNamespace(
+            Name="VirtualForces",
+            LinearAcceleration=Vector(0.0, 0.0, 0.0),
+            AngularVelocity=Vector(0.0, 0.0, 2.0),
+            AngularAcceleration=Vector(0.0, 0.0, 0.0),
+            RelativeVelocity=Vector(0.0, 0.0, 0.0),
+            LinearVelocity=Vector(7.0, 8.0, 9.0),
+            CenterOfRotation=Vector(0.0, 0.0, 0.0),
+        )
+        femmesh = SimpleNamespace(
+            Nodes={
+                1: (0.0, 0.0, 0.0),
+                2: (1.0, 0.0, 0.0),
+                3: (0.0, 1.0, 0.0),
+            }
+        )
+        ccxwriter = SimpleNamespace(
+            mesh_object=SimpleNamespace(FemMesh=femmesh),
+            ccx_eall="Eall",
+            ccx_nall="Nall",
+            analysis_type="static",
+        )
+
+        with patch.dict(
+            "os.environ",
+            {
+                "FREECAD_FEM_JIG321_CORIO_ALLOW_LINEAR_FALLBACK": "1",
+                "FREECAD_FEM_JIG321_CORIO_REQUIRE_RELVEL_DIFFERENT_FROM_LINEAR": "0",
+            },
+            clear=False,
+        ):
+            buf = StringIO()
+            write_constraint_virtualforces.write_constraint(buf, femobj, vf_obj, ccxwriter)
+            out = buf.getvalue()
+
+        self.assertIn("*INITIAL CONDITIONS,TYPE=VELOCITY", out)
+        self.assertIn("Nall,1,7", out)
+        self.assertIn("Nall,2,8", out)
+        self.assertIn("Nall,3,9", out)
+        self.assertIn("Eall,CORIO,4", out)
+
+    # ********************************************************************************************
+    def test_write_constraint_virtualforces_rota_and_corio_are_static_only(self):
+        femobj = {"BodyNodes": [1, 2, 3]}
+        vf_obj = SimpleNamespace(
+            Name="VirtualForces",
+            LinearAcceleration=Vector(0.0, 0.0, -9.81),
+            AngularVelocity=Vector(0.0, 0.0, 2.0),
+            AngularAcceleration=Vector(0.0, 0.0, 3.0),
+            RelativeVelocity=Vector(4.0, 5.0, 6.0),
+            LinearVelocity=Vector(0.0, 0.0, 0.0),
+            CenterOfRotation=Vector(1.0, 2.0, 3.0),
+        )
+        femmesh = SimpleNamespace(
+            Nodes={
+                1: (0.0, 0.0, 0.0),
+                2: (1.0, 0.0, 0.0),
+                3: (0.0, 1.0, 0.0),
+            }
+        )
+        ccxwriter = SimpleNamespace(
+            mesh_object=SimpleNamespace(FemMesh=femmesh),
+            ccx_eall="Eall",
+            ccx_nall="Nall",
+            analysis_type="thermomech",
+        )
+
+        buf = StringIO()
+        write_constraint_virtualforces.write_constraint(buf, femobj, vf_obj, ccxwriter)
+        out = buf.getvalue()
+
+        self.assertIn("Eall,GRAV,9.81", out)
+        self.assertIn("Eall,CENTRIF,4", out)
+        self.assertNotIn(",ROTA,", out)
+        self.assertNotIn(",CORIO,", out)
+        self.assertNotIn("*INITIAL CONDITIONS,TYPE=VELOCITY", out)
+
+    # ********************************************************************************************
     def test_membertools_collects_hydrostatic_with_pressure(self):
         doc = self.document
 
@@ -151,19 +279,19 @@ class TestHydroJigCommits(unittest.TestCase):
         self.assertEqual("Fem::ConstraintReaction", reaction_entry.Proxy.Type)
 
     # ********************************************************************************************
-    def test_jig321_center_of_rotation_is_recomputed(self):
+    def test_virtualforces_center_of_rotation_is_recomputed(self):
         doc = self.document
 
-        jig = ObjectsFem.makeConstraintJig321(doc)
-        jig.CenterOfMass = Vector(1.0, 2.0, 3.0)
-        jig.LinearVelocity = Vector(0.0, 0.0, 0.0)
-        jig.AngularVelocity = Vector(0.0, 1.0, 0.0)
+        vf = ObjectsFem.makeConstraintVirtualForces(doc)
+        vf.CenterOfMass = Vector(1.0, 2.0, 3.0)
+        vf.LinearVelocity = Vector(0.0, 0.0, 0.0)
+        vf.AngularVelocity = Vector(0.0, 1.0, 0.0)
 
         # execute is called during recompute and updates CenterOfRotation
         # from current kinematics.
         doc.recompute()
 
-        self.assertEqual(jig.CenterOfMass, jig.CenterOfRotation)
+        self.assertEqual(vf.CenterOfMass, vf.CenterOfRotation)
 
     # ********************************************************************************************
     def test_hydrostatic_clip_negative_interpolator(self):
@@ -447,26 +575,26 @@ class TestHydroJigCommits(unittest.TestCase):
         self.assertIn("7.0", writes)
 
     # ********************************************************************************************
-    def test_jig321_center_of_rotation_nontrivial_branch(self):
-        jig = ObjectsFem.makeConstraintJig321(self.document)
-        jig.CenterOfMass = Vector(1.0, 2.0, 3.0)
-        jig.LinearVelocity = Vector(4.0, 0.0, 0.0)
-        jig.AngularVelocity = Vector(0.0, 0.0, 2.0)
+    def test_virtualforces_center_of_rotation_nontrivial_branch(self):
+        vf = ObjectsFem.makeConstraintVirtualForces(self.document)
+        vf.CenterOfMass = Vector(1.0, 2.0, 3.0)
+        vf.LinearVelocity = Vector(4.0, 0.0, 0.0)
+        vf.AngularVelocity = Vector(0.0, 0.0, 2.0)
 
         self.document.recompute()
 
-        self.assertEqual(Vector(1.0, 4.0, 3.0), jig.CenterOfRotation)
+        self.assertEqual(Vector(1.0, 4.0, 3.0), vf.CenterOfRotation)
 
     # ********************************************************************************************
-    def test_jig321_onchanged_respects_restore_and_triggers(self):
-        proxy = ConstraintJig321.__new__(ConstraintJig321)
+    def test_virtualforces_onchanged_respects_restore_and_triggers(self):
+        proxy = ConstraintVirtualForces.__new__(ConstraintVirtualForces)
         fp = SimpleNamespace(recompute=Mock())
 
-        with patch("femobjects.constraint_jig321.App.isRestoring", return_value=True):
+        with patch("femobjects.constraint_virtualforces.App.isRestoring", return_value=True):
             proxy.onChanged(fp, "CenterOfMass")
         fp.recompute.assert_not_called()
 
-        with patch("femobjects.constraint_jig321.App.isRestoring", return_value=False):
+        with patch("femobjects.constraint_virtualforces.App.isRestoring", return_value=False):
             proxy.onChanged(fp, "CenterOfMass")
             proxy.onChanged(fp, "LinearAcceleration")
         fp.recompute.assert_called_once()

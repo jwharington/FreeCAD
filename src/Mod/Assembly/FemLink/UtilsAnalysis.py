@@ -188,7 +188,15 @@ def synthesize_load_cases(femlnk, scale_factors=None):
     def scale_value(key, value, factor):
         if not isinstance(key, tuple):
             return value
-        if key[1] in {"Force", "Torque", "LinearAcceleration"}:
+        if key[1] in {
+            "Force",
+            "Torque",
+            "LinearAcceleration",
+            "LinearVelocity",
+            "AngularVelocity",
+            "AngularAcceleration",
+            "RelativeVelocity",
+        }:
             # Keep baseline as-is for its own scale, scale all synthetic cases
             # relative to that baseline vector magnitude.
             if base_scale == 0:

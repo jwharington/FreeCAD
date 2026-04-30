@@ -23,6 +23,8 @@
 
 #include <boost/core/ignore_unused.hpp>
 #include <cmath>
+#include <cstdlib>
+#include <optional>
 #include <vector>
 #include <unordered_map>
 
@@ -34,6 +36,8 @@
 #include <App/FeaturePythonPyImp.h>
 #include <App/Link.h>
 #include <App/PropertyPythonObject.h>
+#include <App/PropertyLinks.h>
+#include <App/PropertyStandard.h>
 #include <Base/Console.h>
 #include <Base/Placement.h>
 #include <Base/Quantity.h>
@@ -114,6 +118,144 @@ template<typename T>
 void setMarkerJCompat(const std::shared_ptr<T>& item, const std::shared_ptr<MbD::ASMTMarker>& marker)
 {
     item->setMarkerJ(marker);
+}
+
+bool parseDensityTonPerMm3(const std::string& densityText, double& densityOut)
+{
+    try {
+        const Base::Quantity densityQuantity = Base::Quantity::parse(densityText);
+        const Base::Quantity densityUnit = Base::Quantity::parse("1 t/mm^3");
+        densityOut = densityQuantity.getValueAs(densityUnit);
+        return std::isfinite(densityOut) && densityOut > 0.0;
+    }
+    catch (...) {
+        return false;
+    }
+}
+
+bool materialReferenceMatches(
+    App::DocumentObject* targetPart,
+    App::DocumentObject* targetLinked,
+    App::DocumentObject* referenceObj
+)
+{
+    if (!referenceObj) {
+        return false;
+    }
+
+    if (referenceObj == targetPart || referenceObj == targetLinked) {
+        return true;
+    }
+
+    if (auto* referenceLink = dynamic_cast<App::Link*>(referenceObj)) {
+        App::DocumentObject* linked = referenceLink->getLinkedObject();
+        if (linked && (linked == targetPart || linked == targetLinked)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+std::optional<double> getEnvDouble(const char* name)
+{
+    if (!name || !*name) {
+        return std::nullopt;
+    }
+
+    const char* raw = std::getenv(name);
+    if (!raw || !*raw) {
+        return std::nullopt;
+    }
+
+    try {
+        size_t consumed = 0;
+        const std::string text(raw);
+        const double value = std::stod(text, &consumed);
+        if (consumed != text.size() || !std::isfinite(value)) {
+            return std::nullopt;
+        }
+        return value;
+    }
+    catch (...) {
+        return std::nullopt;
+    }
+}
+
+std::string getEnvString(const char* name)
+{
+    if (!name || !*name) {
+        return std::string();
+    }
+
+    const char* raw = std::getenv(name);
+    return (raw && *raw) ? std::string(raw) : std::string();
+}
+
+std::optional<double> getFemMaterialDensityTonPerMm3(
+    App::DocumentObject* targetPart,
+    App::DocumentObject* targetLinked
+)
+{
+    if (!targetPart) {
+        return std::nullopt;
+    }
+
+    App::Document* doc = targetPart->getDocument();
+    if (!doc) {
+        return std::nullopt;
+    }
+
+    std::optional<double> globalDensity;
+
+    for (App::DocumentObject* obj : doc->getObjects()) {
+        if (!obj) {
+            continue;
+        }
+
+        auto* materialProp = dynamic_cast<App::PropertyMap*>(obj->getPropertyByName("Material"));
+        if (!materialProp) {
+            continue;
+        }
+
+        const auto& materialValues = materialProp->getValues();
+        auto densityIt = materialValues.find("Density");
+        if (densityIt == materialValues.end()) {
+            continue;
+        }
+
+        double densityCandidate = 0.0;
+        if (!parseDensityTonPerMm3(densityIt->second, densityCandidate)) {
+            continue;
+        }
+
+        auto* referencesProp = dynamic_cast<App::PropertyLinkSubList*>(
+            obj->getPropertyByName("References")
+        );
+
+        if (!referencesProp) {
+            if (!globalDensity) {
+                globalDensity = densityCandidate;
+            }
+            continue;
+        }
+
+        const auto& references = referencesProp->getValues();
+        if (references.empty()) {
+            if (!globalDensity) {
+                globalDensity = densityCandidate;
+            }
+            continue;
+        }
+
+        for (App::DocumentObject* refObj : references) {
+            if (materialReferenceMatches(targetPart, targetLinked, refObj)) {
+                return densityCandidate;
+            }
+        }
+    }
+
+    return globalDensity;
 }
 
 }  // namespace
@@ -338,6 +480,13 @@ int AssemblyObject::generateSimulation(App::DocumentObject* sim)
             g = App::GetApplication()
                     .GetParameterGroupByPath("User parameter:BaseApp/Preferences/Mod/Assembly")
                     ->GetFloat("GravitationalAcceleration", g);
+        }
+
+        if (auto gOverride = getEnvDouble("FREECAD_ASSEMBLY_G_OVERRIDE")) {
+            g = *gOverride;
+        }
+        if (auto gScale = getEnvDouble("FREECAD_ASSEMBLY_G_SCALE")) {
+            g *= *gScale;
         }
 
         auto constantGravity = ASMTConstantGravity::With();
@@ -602,8 +751,23 @@ void AssemblyObject::jointInfoForFrame(const size_t index)
 
         const Base::Vector3d velocity = body_rot.multVec(m2f(mbdPart->getVelocity3D(index)));
         const Base::Vector3d angularVelocity = body_rot.multVec(m2f(mbdPart->getOmega3D(index)));
-        const Base::Vector3d acceleration = body_rot.multVec(m2f(mbdPart->getAcceleration3D(index)))
-            - body_rot.multVec(m2f(mbdAssembly->constantGravity->getg()));
+        const Base::Vector3d rawAcceleration = body_rot.multVec(m2f(mbdPart->getAcceleration3D(index)));
+        const Base::Vector3d gravityAcceleration = body_rot.multVec(
+            m2f(mbdAssembly->constantGravity->getg())
+        );
+
+        Base::Vector3d acceleration = rawAcceleration + gravityAcceleration;
+        const std::string accelMode = getEnvString("FREECAD_ASSEMBLY_ACCEL_EXPORT_MODE");
+        if (accelMode == "raw") {
+            acceleration = rawAcceleration;
+        }
+        else if (accelMode == "raw_minus_g") {
+            acceleration = rawAcceleration - gravityAcceleration;
+        }
+        else if (accelMode == "raw_plus_g") {
+            acceleration = rawAcceleration + gravityAcceleration;
+        }
+
         const Base::Vector3d angularAcceleration = body_rot.multVec(m2f(mbdPart->getAlpha3D(index)));
 
         // std::cout << "  Velocity:            " << velocity << "\n";
@@ -621,6 +785,7 @@ void AssemblyObject::jointInfoForFrame(const size_t index)
         setBodyProperty(part, angularVelocity, "AngularVelocity");
         setBodyProperty(part, acceleration, "LinearAcceleration");
         setBodyProperty(part, angularAcceleration, "AngularAcceleration");
+
 
         for (int acc = 0; acc < 2; ++acc) {
             for (auto& reaction_info : pair.second) {
@@ -2404,6 +2569,8 @@ AssemblyObject::MbDInertialData AssemblyObject::getMbDInertial(App::DocumentObje
     MbDInertialData data;
     double density = 1.0e-9;
     App::DocumentObject* materialPart = part;
+    bool hasShapeMaterialDensity = false;
+    double shapeMaterialDensity = density;
     // const Base::Placement orig_plc = getPlacementFromProp(part, "Placement");
 
     if (part->isDerivedFrom(App::Link::getClassTypeId())) {
@@ -2419,12 +2586,20 @@ AssemblyObject::MbDInertialData AssemblyObject::getMbDInertial(App::DocumentObje
         auto& mat = propMaterial->getValue();
         try {
             Base::Quantity densityQuantity = mat.getPhysicalQuantity("Density");
-            density = densityQuantity.getValue() / 1000.0;  // convert from kg/m^3 to t/mm^3
+            shapeMaterialDensity = densityQuantity.getValue() / 1000.0;  // kg/m^3 -> t/mm^3
+            hasShapeMaterialDensity = true;
             // units = densityQuantity.getUnit().getString()
         }
         catch (const std::exception& e) {
             // std::cerr << "Error accessing Density as Quantity: " << e.what() << std::endl;
         }
+    }
+
+    if (auto femDensity = getFemMaterialDensityTonPerMm3(part, materialPart)) {
+        density = *femDensity;
+    }
+    else if (hasShapeMaterialDensity) {
+        density = shapeMaterialDensity;
     }
     else if (dynamic_cast<PartApp::Feature*>(materialPart)) {
         std::cout << "  No material specified" << std::endl;
@@ -2600,9 +2775,26 @@ void AssemblyObject::updateMbdPart(
     auto com = data.pcs.getPosition();
     auto rPcmP = std::make_shared<FullColumn<double>>(ListD {com.x, com.y, com.z});
 
-    massMarker->setMass(data.mass);
+    constexpr double defaultNonGeomMass = 1.0e-12;
+    constexpr double defaultNonGeomInertiaFactor = 1.0;
+    const double nonGeomMass
+        = getEnvDouble("FREECAD_ASSEMBLY_NON_GEOM_MASS").value_or(defaultNonGeomMass);
+    const double nonGeomInertiaFactor = getEnvDouble("FREECAD_ASSEMBLY_NON_GEOM_INERTIA_FACTOR")
+                                            .value_or(defaultNonGeomInertiaFactor);
+
+    const auto fallbackPositive = [](double value, double fallback) {
+        return (std::isfinite(value) && value > 0.0) ? value : fallback;
+    };
+
+    const double mbdMass = fallbackPositive(data.mass, nonGeomMass);
+    const double fallbackInertia = std::abs(mbdMass * nonGeomInertiaFactor);
+    const double mbdIxx = fallbackPositive(data.inertia.x, fallbackInertia);
+    const double mbdIyy = fallbackPositive(data.inertia.y, fallbackInertia);
+    const double mbdIzz = fallbackPositive(data.inertia.z, fallbackInertia);
+
+    massMarker->setMass(mbdMass);
     massMarker->setDensity(1.0);
-    massMarker->setMomentOfInertias(data.inertia.x, data.inertia.y, data.inertia.z);
+    massMarker->setMomentOfInertias(mbdIxx, mbdIyy, mbdIzz);
     massMarker->setPosition3D(rPcmP);
     massMarker->setRotationMatrix(aAPcm);
     mbdPart->setPrincipalMassMarker(massMarker);

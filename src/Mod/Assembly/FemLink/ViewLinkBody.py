@@ -88,8 +88,8 @@ def make_symbol(p0, p1, mag, line_type: LineType, text_color_rgb, short=False):
 
     match line_type:
         case LineType.FORCE:
-            # Assembly dynamics stores force-like terms in kN-equivalent model units.
-            text.string.setValue(f"F: {mag * 1000.0:.2E} N")
+            # Assembly joint reactions are exposed in N.
+            text.string.setValue(f"F: {mag:.2E} N")
 
             cylinder = coin.SoCylinder()
             cylinder.radius.setValue(0.25)
@@ -110,8 +110,8 @@ def make_symbol(p0, p1, mag, line_type: LineType, text_color_rgb, short=False):
             arrow.addChild(trans)
 
         case LineType.TORQUE:
-            # Torque-like terms are already in N.m-equivalent model units.
-            text.string.setValue(f"T: {mag:.2E} N.m")
+            # Assembly/FEM model units are mm, N, s; convert N*mm -> N.m for display.
+            text.string.setValue(f"T: {mag / 1000.0:.2E} N.m")
             cylinder = coin.SoCylinder()
             cylinder.radius.setValue(0.25)
             cylinder.height.setValue(l1)

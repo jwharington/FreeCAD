@@ -62,6 +62,7 @@ from . import write_constraint_force as con_force
 from . import write_constraint_heatflux as con_heatflux
 from . import write_constraint_initialtemperature as con_itemp
 from . import write_constraint_jig321 as con_jig321
+from . import write_constraint_virtualforces as con_virtualforces
 from . import write_constraint_planerotation as con_planerotation
 from . import write_constraint_pressure as con_pressure
 from . import write_constraint_rigidbody as con_rigidbody
@@ -163,6 +164,7 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
         self.write_constraints_meshsets(inpfile, self.member.cons_rigidbody, con_rigidbody)
         self.write_constraints_meshsets(inpfile, self.member.cons_displacement, con_displacement)
         self.write_constraints_meshsets(inpfile, self.member.cons_jig321, con_jig321)
+        self.write_constraints_meshsets(inpfile, self.member.cons_virtualforces, con_virtualforces)
         self.write_constraints_meshsets(inpfile, self.member.cons_planerotation, con_planerotation)
         self.write_constraints_meshsets(inpfile, self.member.cons_transform, con_transform)
         self.write_constraints_meshsets(inpfile, self.member.cons_temperature, con_temperature)
@@ -205,6 +207,7 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
         self.write_constraints_propdata(inpfile, self.member.cons_selfweight, con_selfweight)
         self.write_constraints_propdata(inpfile, self.member.cons_centrif, con_centrif)
         self.write_constraints_propdata(inpfile, self.member.cons_jig321, con_jig321)
+        self.write_constraints_propdata(inpfile, self.member.cons_virtualforces, con_virtualforces)
         self.write_constraints_propdata(
             inpfile, self.member.cons_bodyheatsource, con_bodyheatsource
         )

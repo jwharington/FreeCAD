@@ -188,8 +188,8 @@ def setup(doc=None, solvertype="ccxtools"):
     # TODO use point of tube boolean fragment
     con_force.References = [(force_point, "Vertex1")]
     con_force.Force = "5000.0 N"
-    con_force.Direction = (load_line, ["Edge1"])
-    con_force.Reversed = True
+    manager.set_direction_compat(con_force, (load_line, ["Edge1"]))
+    manager.set_reversed_compat(con_force, True)
     analysis.addObject(con_force)
 
     # constraint contact

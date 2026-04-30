@@ -145,8 +145,8 @@ def setup(doc=None, solvertype="ccxtools"):
     con_force = ObjectsFem.makeConstraintForce(doc, "Force")
     con_force.References = [(geom_obj, "Edge2")]
     con_force.Force = "10000.0 N"  # 10 kN
-    con_force.Direction = (geom_obj, ["Edge2"])
-    con_force.Reversed = False
+    manager.set_direction_compat(con_force, (geom_obj, ["Edge2"]))
+    manager.set_reversed_compat(con_force, False)
     analysis.addObject(con_force)
 
     # constraint tie

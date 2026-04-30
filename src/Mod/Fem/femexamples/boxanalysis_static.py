@@ -111,8 +111,8 @@ def setup(doc=None, solvertype="ccxtools", test_mode=False):
     con_force = ObjectsFem.makeConstraintForce(doc, "FemConstraintForce")
     con_force.References = [(geom_obj, "Face6")]
     con_force.Force = "40000.0 N"
-    con_force.Direction = (force_direction, [])
-    con_force.Reversed = True
+    manager.set_direction_compat(con_force, (force_direction, []))
+    manager.set_reversed_compat(con_force, True)
     analysis.addObject(con_force)
 
     # constraint pressure

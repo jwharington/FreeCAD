@@ -296,16 +296,16 @@ def setup(doc=None, solvertype="ccxtools"):
     con_force1 = ObjectsFem.makeConstraintForce(doc, name="Force1")
     con_force1.References = [(geoforces_obj, "Vertex1"), (geoforces_obj, "Vertex14")]
     con_force1.Force = "5555.56 N"
-    con_force1.Direction = (geom_obj, ["Edge9"])
-    con_force1.Reversed = False
+    manager.set_direction_compat(con_force1, (geom_obj, ["Edge9"]))
+    manager.set_reversed_compat(con_force1, False)
     analysis.addObject(con_force1)
 
     # con_force2
     con_force2 = ObjectsFem.makeConstraintForce(doc, name="Force2")
     con_force2.References = [(geoforces_obj, "Vertex2"), (geoforces_obj, "Vertex8")]
     con_force2.Force = "5555.56 N"
-    con_force2.Direction = (geom_obj, ["Edge3"])
-    con_force2.Reversed = False
+    manager.set_direction_compat(con_force2, (geom_obj, ["Edge3"]))
+    manager.set_reversed_compat(con_force2, False)
     analysis.addObject(con_force2)
 
     # con_force3
@@ -318,8 +318,8 @@ def setup(doc=None, solvertype="ccxtools"):
         (geoforces_obj, "Vertex24"),
     ]
     con_force3.Force = "27777.78 N"
-    con_force3.Direction = (geom_obj, ["Edge9"])
-    con_force3.Reversed = False
+    manager.set_direction_compat(con_force3, (geom_obj, ["Edge9"]))
+    manager.set_reversed_compat(con_force3, False)
     analysis.addObject(con_force3)
 
     # con_force4
@@ -332,8 +332,8 @@ def setup(doc=None, solvertype="ccxtools"):
         (geoforces_obj, "Vertex13"),
     ]
     con_force4.Force = "27777.78 N"
-    con_force4.Direction = (geom_obj, ["Edge3"])
-    con_force4.Reversed = False
+    manager.set_direction_compat(con_force4, (geom_obj, ["Edge3"]))
+    manager.set_reversed_compat(con_force4, False)
     analysis.addObject(con_force4)
 
     # con_force5
@@ -347,8 +347,8 @@ def setup(doc=None, solvertype="ccxtools"):
         (geoforces_obj, "Vertex48"),
     ]
     con_force5.Force = "66666.67 N"
-    con_force5.Direction = (geom_obj, ["Edge9"])
-    con_force5.Reversed = False
+    manager.set_direction_compat(con_force5, (geom_obj, ["Edge9"]))
+    manager.set_reversed_compat(con_force5, False)
     analysis.addObject(con_force5)
 
     # con_force6
@@ -362,24 +362,24 @@ def setup(doc=None, solvertype="ccxtools"):
         (geoforces_obj, "Vertex36"),
     ]
     con_force6.Force = "66666.67 N"
-    con_force6.Direction = (geom_obj, ["Edge3"])
-    con_force6.Reversed = False
+    manager.set_direction_compat(con_force6, (geom_obj, ["Edge3"]))
+    manager.set_reversed_compat(con_force6, False)
     analysis.addObject(con_force6)
 
     # con_force7
     con_force7 = ObjectsFem.makeConstraintForce(doc, name="Force7")
     con_force7.References = [(geoforces_obj, "Vertex1"), (geoforces_obj, "Vertex2")]
     con_force7.Force = "5555.56 N"
-    con_force7.Direction = (geom_obj, ["Edge11"])
-    con_force7.Reversed = False
+    manager.set_direction_compat(con_force7, (geom_obj, ["Edge11"]))
+    manager.set_reversed_compat(con_force7, False)
     analysis.addObject(con_force7)
 
     # con_force8
     con_force8 = ObjectsFem.makeConstraintForce(doc, name="Force8")
     con_force8.References = [(geoforces_obj, "Vertex8"), (geoforces_obj, "Vertex14")]
     con_force8.Force = "5555.56 N"
-    con_force8.Direction = (geom_obj, ["Edge6"])
-    con_force8.Reversed = False
+    manager.set_direction_compat(con_force8, (geom_obj, ["Edge6"]))
+    manager.set_reversed_compat(con_force8, False)
     analysis.addObject(con_force8)
 
     # con_force9
@@ -392,8 +392,8 @@ def setup(doc=None, solvertype="ccxtools"):
         (geoforces_obj, "Vertex7"),
     ]
     con_force9.Force = "27777.78 N"
-    con_force9.Direction = (geom_obj, ["Edge11"])
-    con_force9.Reversed = False
+    manager.set_direction_compat(con_force9, (geom_obj, ["Edge11"]))
+    manager.set_reversed_compat(con_force9, False)
     analysis.addObject(con_force9)
 
     # con_force10
@@ -406,8 +406,8 @@ def setup(doc=None, solvertype="ccxtools"):
         (geoforces_obj, "Vertex19"),
     ]
     con_force10.Force = "27777.78 N"
-    con_force10.Direction = (geom_obj, ["Edge6"])
-    con_force10.Reversed = False
+    manager.set_direction_compat(con_force10, (geom_obj, ["Edge6"]))
+    manager.set_reversed_compat(con_force10, False)
     analysis.addObject(con_force10)
 
     # con_force11
@@ -421,8 +421,8 @@ def setup(doc=None, solvertype="ccxtools"):
         (geoforces_obj, "Vertex30"),
     ]
     con_force11.Force = "66666.67 N"
-    con_force11.Direction = (geom_obj, ["Edge11"])
-    con_force11.Reversed = False
+    manager.set_direction_compat(con_force11, (geom_obj, ["Edge11"]))
+    manager.set_reversed_compat(con_force11, False)
     analysis.addObject(con_force11)
 
     # con_force12
@@ -436,8 +436,8 @@ def setup(doc=None, solvertype="ccxtools"):
         (geoforces_obj, "Vertex42"),
     ]
     con_force12.Force = "66666.67 N"
-    con_force12.Direction = (geom_obj, ["Edge6"])
-    con_force12.Reversed = False
+    manager.set_direction_compat(con_force12, (geom_obj, ["Edge6"]))
+    manager.set_reversed_compat(con_force12, False)
     analysis.addObject(con_force12)
 
     # mesh

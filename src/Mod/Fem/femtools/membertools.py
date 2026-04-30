@@ -267,6 +267,7 @@ class AnalysisMember:
         # constraints
         self.cons_centrif = self.get_several_member("Fem::ConstraintCentrif")
         self.cons_jig321 = self.get_several_member("Fem::ConstraintJig321")
+        self.cons_virtualforces = self.get_several_member("Fem::ConstraintVirtualForces")
         self.cons_bodyheatsource = self.get_several_member("Fem::ConstraintBodyHeatSource")
         self.cons_contact = self.get_several_member("Fem::ConstraintContact")
         self.cons_displacement = self.get_several_member("Fem::ConstraintDisplacement")

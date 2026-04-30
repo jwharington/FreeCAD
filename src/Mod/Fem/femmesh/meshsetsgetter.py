@@ -243,6 +243,7 @@ class MeshSetsGetter:
         self.get_constraints_fixed_nodes()
         self.get_constraints_displacement_nodes()
         self.get_constraints_jig321_nodes()
+        self.get_constraints_virtualforces_nodes()
         self.get_constraints_rigidbody_nodes()
         self.get_constraints_planerotation_nodes()
 
@@ -347,12 +348,37 @@ class MeshSetsGetter:
                                 face,
                             )
                         )
-                nodes = sorted(nodes)
+                body_nodes = sorted(nodes)
             else:
-                nodes = meshtools.get_femnodes_by_femobj_with_references(self.femmesh, femobj)
+                body_nodes = meshtools.get_femnodes_by_femobj_with_references(self.femmesh, femobj)
+
+            femobj["BodyNodes"] = list(body_nodes)
             femobj["Nodes"] = femobj["Object"].Proxy.find_largest_triangle(
-                femobj["Object"], self.femmesh, nodes
+                femobj["Object"], self.femmesh, body_nodes
             )
+
+    def get_constraints_virtualforces_nodes(self):
+        if not self.member.cons_virtualforces:
+            return
+        for femobj in self.member.cons_virtualforces:
+            print_obj_info(femobj["Object"])
+            if meshtools.is_solid_femmesh(self.femmesh):
+                nodes = set()
+                ref_objects = {ref[0] for ref in femobj["Object"].References}
+                for robj in ref_objects:
+                    for i, _ in enumerate(robj.Shape.Faces, start=1):
+                        face = meshtools.sub_shape_at_global_placement(robj, f"Face{i}")
+                        nodes.update(
+                            meshtools.get_nodes_by_face_with_fallback(
+                                self.femmesh,
+                                face,
+                            )
+                        )
+                body_nodes = sorted(nodes)
+            else:
+                body_nodes = meshtools.get_femnodes_by_femobj_with_references(self.femmesh, femobj)
+
+            femobj["BodyNodes"] = list(body_nodes)
 
     def get_constraints_planerotation_nodes(self):
         if not self.member.cons_planerotation:

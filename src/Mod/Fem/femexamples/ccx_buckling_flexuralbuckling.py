@@ -125,7 +125,7 @@ def setup(doc=None, solvertype="ccxtools"):
     con_force = ObjectsFem.makeConstraintForce(doc, "Force")
     con_force.References = [(geom_obj, "Face6")]
     con_force.Force = "21 N"
-    con_force.Reversed = True
+    manager.set_reversed_compat(con_force, True)
     analysis.addObject(con_force)
 
     # mesh

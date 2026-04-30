@@ -152,8 +152,8 @@ def setup(doc=None, solvertype="ccxtools"):
     con_force = ObjectsFem.makeConstraintForce(doc, "Force")
     con_force.References = [(geom_obj, "Face1")]
     con_force.Force = "2500.0 N"  # 2.5 kN
-    con_force.Direction = (load_line, ["Edge1"])
-    con_force.Reversed = True
+    manager.set_direction_compat(con_force, (load_line, ["Edge1"]))
+    manager.set_reversed_compat(con_force, True)
     analysis.addObject(con_force)
 
     # constraint transform

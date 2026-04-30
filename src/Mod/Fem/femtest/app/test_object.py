@@ -272,6 +272,10 @@ class TestObjectType(unittest.TestCase):
         )
         self.assertEqual("Fem::ConstraintJig321", type_of_obj(ObjectsFem.makeConstraintJig321(doc)))
         self.assertEqual(
+            "Fem::ConstraintVirtualForces",
+            type_of_obj(ObjectsFem.makeConstraintVirtualForces(doc)),
+        )
+        self.assertEqual(
             "Fem::ConstraintTemperature", type_of_obj(ObjectsFem.makeConstraintTemperature(doc))
         )
         self.assertEqual("Fem::ConstraintTie", type_of_obj(ObjectsFem.makeConstraintTie(doc)))
@@ -472,10 +476,22 @@ class TestObjectType(unittest.TestCase):
             is_of_type(ObjectsFem.makeConstraintSelfWeight(doc), "Fem::ConstraintSelfWeight")
         )
         self.assertTrue(
+            is_of_type(
+                ObjectsFem.makeConstraintHydrostaticPressure(doc),
+                "Fem::ConstraintHydrostaticPressure",
+            )
+        )
+        self.assertTrue(
             is_of_type(ObjectsFem.makeConstraintReaction(doc), "Fem::ConstraintReaction")
         )
         self.assertTrue(is_of_type(ObjectsFem.makeConstraintCentrif(doc), "Fem::ConstraintCentrif"))
         self.assertTrue(is_of_type(ObjectsFem.makeConstraintJig321(doc), "Fem::ConstraintJig321"))
+        self.assertTrue(
+            is_of_type(
+                ObjectsFem.makeConstraintVirtualForces(doc),
+                "Fem::ConstraintVirtualForces",
+            )
+        )
         self.assertTrue(
             is_of_type(ObjectsFem.makeConstraintTemperature(doc), "Fem::ConstraintTemperature")
         )
@@ -804,6 +820,12 @@ class TestObjectType(unittest.TestCase):
         self.assertTrue(is_derived_from(constraint_jig321, "App::DocumentObject"))
         self.assertTrue(is_derived_from(constraint_jig321, "Fem::ConstraintPython"))
         self.assertTrue(is_derived_from(constraint_jig321, "Fem::ConstraintJig321"))
+
+        # ConstraintVirtualForces
+        constraint_virtualforces = ObjectsFem.makeConstraintVirtualForces(doc)
+        self.assertTrue(is_derived_from(constraint_virtualforces, "App::DocumentObject"))
+        self.assertTrue(is_derived_from(constraint_virtualforces, "Fem::ConstraintPython"))
+        self.assertTrue(is_derived_from(constraint_virtualforces, "Fem::ConstraintVirtualForces"))
 
         # ConstraintTemperature
         constraint_temperature = ObjectsFem.makeConstraintTemperature(doc)
