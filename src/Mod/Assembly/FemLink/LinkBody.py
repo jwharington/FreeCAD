@@ -32,6 +32,9 @@ def analysis_label(body_label):
 
 
 def get_reference_subobject(reference):
+    if not reference or len(reference) != 2:
+        return None
+
     obj, subs = reference
     sel_obj = None
     sel_subs = []
@@ -40,14 +43,32 @@ def get_reference_subobject(reference):
     for sub in subs:
         sel_obj = UtilsAssembly.getObject((obj, [sub]))
         if UtilsAssembly.isLink(sel_obj):
-            names = sub.split(".")
-            sel_obj = sel_obj.getLinkedObject()
-            names[0] = sel_obj.Name
-            names.pop(0)
-            sel_subs.append(".".join(names))
+            link_obj = sel_obj
+            sel_obj = link_obj.getLinkedObject()
+            # Assembly references may come either as fully-qualified path-like
+            # names (e.g. "Link.Face7") or plain sub-element names ("Face7").
+            # Keep plain names unchanged; only strip a leading object segment
+            # when one is explicitly present.
+            if "." in sub:
+                names = sub.split(".")
+                if len(names) > 1:
+                    sel_subs.append(".".join(names[1:]))
+                else:
+                    sel_subs.append(sub)
+            else:
+                sel_subs.append(sub)
         else:
             sel_subs.append(sub)
     return (sel_obj, list(set(sel_subs)))
+
+
+def has_valid_reference_subobject(reference):
+    if not reference or len(reference) != 2:
+        return False
+    obj, subs = reference
+    if obj is None or not subs:
+        return False
+    return any(isinstance(s, str) and s.strip() for s in subs)
 
 
 def clear_post_pipelines(analysis):
@@ -499,7 +520,9 @@ class LinkBody(FPBase):
             return getattr(joint, label + str(side), default)
 
         def on_new(obj):
-            obj.References = get_reference_subobject(attr_side("Reference", None))
+            reference = get_reference_subobject(attr_side("Reference", None))
+            if has_valid_reference_subobject(reference):
+                obj.References = reference
 
         id = f"Reaction_{body.Label}_{joint.Label}"
 
@@ -514,6 +537,10 @@ class LinkBody(FPBase):
             if (id, "Force") in self.state:
                 obj.Force = self.state[(id, "Force")]
                 obj.Torque = self.state[(id, "Torque")]
+
+            reference = get_reference_subobject(attr_side("Reference", None))
+            if has_valid_reference_subobject(reference):
+                obj.References = reference
             return
 
         # SAVE or EXECUTE: read live joint reactions.
@@ -531,6 +558,10 @@ class LinkBody(FPBase):
             obj.Force = force
             obj.Torque = torque
             obj.Origin.Base = origin
+
+            reference = get_reference_subobject(attr_side("Reference", None))
+            if has_valid_reference_subobject(reference):
+                obj.References = reference
 
         if mode is UpdateMode.SAVE:
             self.state[(id, "Force")] = force

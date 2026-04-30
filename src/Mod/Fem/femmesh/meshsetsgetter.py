@@ -503,81 +503,137 @@ class MeshSetsGetter:
             vec3 = vec1.cross(vec2)
             return (P1 + P2 + P3) / 3.0, 0.5 * vec3.Length, vec3.normalize()
 
-        # Cache per geometric reference pair across all pressure-like constraints
-        # (Pressure, HydrostaticPressure, Reaction). This avoids repeated expensive
-        # face lookups for different constraints targeting the same geometry.
-        ref_pair_cache = {}
+        # Keep a canonical per-face cache keyed exactly as PressureFaces entries
+        # (e.g. (elem_id, local_face_no)). This prevents divergence between
+        # PressureFaces and PressureFaceInfo/PressureNodeInfo for ambiguous
+        # geometric face-to-volume mappings.
+        face_nodes_cache = {}
+        face_info_cache = {}
+        ref_nodes_cache = {}
+
+        mask_by_node_count = {
+            4: self.face_masks["mask_tetra4"],
+            10: self.face_masks["mask_tetra10"],
+            8: self.face_masks["mask_hexa8"],
+            20: self.face_masks["mask_hexa20"],
+            6: self.face_masks["mask_penta6"],
+            15: self.face_masks["mask_penta15"],
+        }
+        face_no_to_bitmask = {
+            node_count: {face_no: bitmask for bitmask, face_no in masks.items()}
+            for node_count, masks in mask_by_node_count.items()
+        }
+
+        def face_key(face):
+            return tuple(face) if isinstance(face, (list, tuple)) else (face,)
+
+        def get_reference_nodes_set(feature):
+            if not isinstance(feature, (list, tuple)) or len(feature) != 2:
+                return None
+            ref_obj, subs = feature
+            if not subs:
+                return None
+            sub_ref = subs[0] if isinstance(subs, (list, tuple)) else subs
+            if not sub_ref:
+                return None
+
+            cache_key = (id(ref_obj), str(sub_ref))
+            if cache_key in ref_nodes_cache:
+                return ref_nodes_cache[cache_key]
+
+            try:
+                ref_face = meshtools.sub_shape_at_global_placement(ref_obj, sub_ref)
+                nodes = meshtools.get_nodes_by_face_with_fallback(self.femmesh, ref_face)
+                ref_nodes_cache[cache_key] = set(nodes) if nodes else None
+            except Exception:
+                ref_nodes_cache[cache_key] = None
+            return ref_nodes_cache[cache_key]
+
+        def get_face_nodes(feature, face, is_sub_el):
+            # pressure-like constraints on volumetric meshes usually provide
+            # [elem_id, local_face_no]. Keep this pairing authoritative.
+            if is_sub_el:
+                if not isinstance(face, (list, tuple)) or len(face) < 2:
+                    return []
+                elem_id = face[0]
+                face_no = face[1]
+            else:
+                elem_id = face[0] if isinstance(face, (list, tuple)) else face
+                face_no = None
+
+            elem_nodes = self.femelement_table.get(elem_id)
+            if not elem_nodes:
+                return []
+            elem_nodes = list(elem_nodes)
+
+            # Fast/accurate path: derive local face nodes from solver mask by
+            # local face number (CalculiX face ids), then normalize orientation
+            # via build_mesh_faces_of_volume_elements.
+            if face_no is not None:
+                bitmask = face_no_to_bitmask.get(len(elem_nodes), {}).get(face_no)
+                if bitmask is not None:
+                    local_face_nodes = [
+                        elem_nodes[idx] for idx in range(len(elem_nodes)) if bitmask & (1 << idx)
+                    ]
+                    if local_face_nodes:
+                        try:
+                            oriented = meshtools.build_mesh_faces_of_volume_elements(
+                                {elem_id: local_face_nodes},
+                                self.femelement_table,
+                            ).get(elem_id, local_face_nodes)
+                            if len(oriented) >= 3:
+                                return oriented
+                        except Exception:
+                            if len(local_face_nodes) >= 3:
+                                return local_face_nodes
+
+            # Geometric fallback for unexpected/missing face-no masks.
+            ref_nodes = get_reference_nodes_set(feature)
+            if ref_nodes:
+                ref_face_nodes = [node_id for node_id in elem_nodes if node_id in ref_nodes]
+                if len(ref_face_nodes) >= 3:
+                    return ref_face_nodes
+
+            # Last resort: for face-element meshes this is often already a face.
+            if len(elem_nodes) >= 3:
+                return elem_nodes
+            return []
 
         for femobj in self.member.cons_pressure:
             obj = femobj["Object"]
-            ref_pairs = meshtools.pair_obj_reference(obj.References)
             result = self._get_elements(obj)
-
             femobj["PressureFaces"] = result
 
             face_info = {}
             node_info = {}
 
-            for ref_pair in ref_pairs:
-                cache_key = (id(ref_pair[0]), ref_pair[1])
-                cached = ref_pair_cache.get(cache_key)
-                if cached is None:
-                    o, elem = ref_pair
-                    ref_face = meshtools.sub_shape_at_global_placement(o, elem)
+            for pressure_face in result:
+                if len(pressure_face) != 3:
+                    continue
+                feature, surface, is_sub_el = pressure_face
 
-                    # face_table:
-                    #    { meshfaceID : ( nodeID, ... , nodeID ) }
-                    face_table = {}
-                    ref_face_nodes = meshtools.get_nodes_by_face_with_fallback(
-                        self.femmesh, ref_face
-                    )
-                    ref_face_nodes_set = set(ref_face_nodes)
-                    ref_face_volume_elements = meshtools.get_volumes_by_face_with_fallback(
-                        self.femmesh,
-                        ref_face,
-                        self.femelement_table,
-                        ref_face_nodes,
-                    )
-                    for ve in ref_face_volume_elements:
-                        veID = ve[0] if isinstance(ve, (list, tuple)) else ve
-                        ve_ref_face_nodes = [
-                            nodeID
-                            for nodeID in self.femelement_table[veID]
-                            if nodeID in ref_face_nodes_set
-                        ]
-                        if ve_ref_face_nodes:
-                            face_table[veID] = ve_ref_face_nodes
+                for face in surface:
+                    key = face_key(face)
+                    if key in node_info:
+                        continue
 
-                    has_sub_faces = any(
-                        isinstance(ve, (list, tuple)) for ve in ref_face_volume_elements
-                    )
-                    mf = {}
-                    if has_sub_faces:
-                        mf = meshtools.build_mesh_faces_of_volume_elements(
-                            face_table, self.femelement_table
-                        )
+                    sorted_nodes = face_nodes_cache.get(key)
+                    if sorted_nodes is None:
+                        sorted_nodes = get_face_nodes(feature, face, is_sub_el)
+                        face_nodes_cache[key] = sorted_nodes
 
-                    cached_face_info = {}
-                    cached_node_info = {}
-                    for ve in ref_face_volume_elements:
-                        veID = ve[0] if isinstance(ve, (list, tuple)) else ve
-                        if isinstance(ve, (list, tuple)):
-                            sorted_nodes = mf[veID]
-                        else:
-                            sorted_nodes = self.femelement_table[veID]
+                    if not sorted_nodes or len(sorted_nodes) < 3:
+                        continue
+
+                    node_info[key] = sorted_nodes
+                    info = face_info_cache.get(key)
+                    if info is None:
                         P1 = self.femnodes_mesh[sorted_nodes[0]]
                         P2 = self.femnodes_mesh[sorted_nodes[1]]
                         P3 = self.femnodes_mesh[sorted_nodes[2]]
-                        ve_key = tuple(ve) if isinstance(ve, (list, tuple)) else (ve,)
-                        cached_face_info[ve_key] = get_triangle_info(P1, P2, P3)
-                        cached_node_info[ve_key] = sorted_nodes
-
-                    cached = (cached_face_info, cached_node_info)
-                    ref_pair_cache[cache_key] = cached
-
-                cached_face_info, cached_node_info = cached
-                face_info.update(cached_face_info)
-                node_info.update(cached_node_info)
+                        info = get_triangle_info(P1, P2, P3)
+                        face_info_cache[key] = info
+                    face_info[key] = info
 
             femobj["PressureFaceInfo"] = face_info
             femobj["PressureNodeInfo"] = node_info
@@ -1118,7 +1174,6 @@ class MeshSetsGetter:
         matgeoset["mat_obj_name"] = mat_obj.Name
         matgeoset["ccx_mat_name"] = mat_obj.Material["Name"]
         self.mat_geo_sets.append(matgeoset)
-        print(self.mat_geo_sets)
 
     def get_mat_geo_sets_multiple_mat_solid(self):
         for mat_data in self.member.mats_linear:
