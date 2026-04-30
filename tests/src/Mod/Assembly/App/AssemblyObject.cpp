@@ -91,12 +91,16 @@ TEST_F(AssemblyObjectTest, isPartGroundedReturnsFalseForUnattachedPart)  // NOLI
     EXPECT_FALSE(getObject()->isPartGrounded(box));
 }
 
-TEST_F(AssemblyObjectTest, assemblyLinkHasForcesProperty)  // NOLINT
+TEST_F(AssemblyObjectTest, assemblyLinkCreatesForceGroupAccessor)  // NOLINT
 {
-    // AssemblyLink gained a Forces property in the refactor
+    // AssemblyLink no longer exposes a raw "Forces" property.
+    // It provides force access through ForceGroup/getForces().
     auto* link = getDoc()->addObject<Assembly::AssemblyLink>();
     ASSERT_NE(link, nullptr);
-    EXPECT_NE(link->getPropertyByName("Forces"), nullptr);
+
+    auto* forceGroup = link->ensureForceGroup();
+    ASSERT_NE(forceGroup, nullptr);
+    EXPECT_TRUE(link->getForces().empty());
 }
 
 // Tests for commit: Assembly: add ForceGroup C++ infrastructure
