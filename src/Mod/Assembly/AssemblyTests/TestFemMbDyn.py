@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import statistics
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -240,7 +241,7 @@ class TestLinkBody(unittest.TestCase):
             self.skipTest(f"FemLink.LinkBody import unavailable: {exc}")
         return linkbody_module
 
-    def _jig_residual_magnitude_from_calculix_dat(self, dat_text, jig_prefix):
+    def _jig_resultant_force_vector_from_calculix_dat(self, dat_text, jig_prefix):
         pattern = re.compile(
             r"total force \(fx,fy,fz\) for set\s+([^\s]+)",
             re.IGNORECASE,
@@ -270,6 +271,10 @@ class TestLinkBody(unittest.TestCase):
                 continue
             resultant += App.Vector(float(parts[0]), float(parts[1]), float(parts[2]))
 
+        return resultant
+
+    def _jig_residual_magnitude_from_calculix_dat(self, dat_text, jig_prefix):
+        resultant = self._jig_resultant_force_vector_from_calculix_dat(dat_text, jig_prefix)
         residual = resultant.Length
         bias = float(os.environ.get("FREECAD_ASSEMBLY_RESIDUAL_BIAS_N", "0.0"))
         if bias:
@@ -288,9 +293,97 @@ class TestLinkBody(unittest.TestCase):
             total += value
         return total
 
-    def _maybe_plot_loadcase_series(self, case_name, times, series):
+    def _mean_scalar(self, values):
+        if not values:
+            return 0.0
+        return float(sum(float(v) for v in values)) / float(len(values))
+
+    def _median_scalar(self, values):
+        if not values:
+            return 0.0
+        return float(statistics.median(float(v) for v in values))
+
+    def _mean_vector_length(self, vectors):
+        if not vectors:
+            return 0.0
+        return float(sum(v.Length for v in vectors)) / float(len(vectors))
+
+    def _median_vector_length(self, vectors):
+        if not vectors:
+            return 0.0
+        return float(statistics.median(v.Length for v in vectors))
+
+    def _mean_vector_projection(self, vectors, axis):
+        if not vectors:
+            return 0.0
+        axis_len = axis.Length
+        if axis_len <= 0.0:
+            return 0.0
+        axis_n = axis / axis_len
+        return float(sum(v.dot(axis_n) for v in vectors)) / float(len(vectors))
+
+    def _run_fictitious_force_sweep(
+        self,
+        *,
+        example_module,
+        joint_name,
+        dynamic,
+        motion_type,
+        motion_formula,
+        case_prefix,
+        perturbation_kind,
+        perturbation_values,
+        operation="add",
+        perturbation_axis="x",
+        residual_limit=1.0e9,
+    ):
+        axis_vectors = {
+            "x": App.Vector(1, 0, 0),
+            "y": App.Vector(0, 1, 0),
+            "z": App.Vector(0, 0, 1),
+        }
+        axis = axis_vectors.get(str(perturbation_axis).lower(), App.Vector(1, 0, 0))
+
+        baseline = self._run_multistep_jig_residual_case(
+            example_module,
+            joint_name=joint_name,
+            dynamic=dynamic,
+            motion_type=motion_type,
+            motion_formula=motion_formula,
+            case_name=f"{case_prefix}_baseline",
+            residual_limit=residual_limit,
+            require_frame_motion=False,
+        )
+
+        runs = {}
+        for value in perturbation_values:
+            vec = App.Vector(axis.x * value, axis.y * value, axis.z * value)
+            runs[value] = self._run_multistep_jig_residual_case(
+                example_module,
+                joint_name=joint_name,
+                dynamic=dynamic,
+                motion_type=motion_type,
+                motion_formula=motion_formula,
+                case_name=f"{case_prefix}_{perturbation_kind}_{value}",
+                residual_limit=residual_limit,
+                perturbation={
+                    "kind": perturbation_kind,
+                    "vector": vec,
+                    "operation": operation,
+                },
+                require_frame_motion=False,
+            )
+
+        return baseline, runs
+
+    def _plotting_enabled(self):
         enabled = os.environ.get("FREECAD_ASSEMBLY_PLOT_LOADCASES", "").lower()
-        if enabled not in {"1", "true", "yes", "on"}:
+        fictitious = os.environ.get("FREECAD_ASSEMBLY_PLOT_FICTITIOUS", "").lower()
+        truthy = {"1", "true", "yes", "on"}
+        return enabled in truthy or fictitious in truthy
+
+    def _maybe_plot_loadcase_series(self, case_name, times, series):
+        if not self._plotting_enabled():
             return
 
         try:
@@ -347,16 +440,67 @@ class TestLinkBody(unittest.TestCase):
         ymin, ymax = _log_axis_limits(series["residual"], floor=residual_floor)
         axes[2][0].set_ylim(ymin, ymax)
 
-        # Hide the empty subplot at position [2][1]
-        axes[2][1].set_visible(False)
+        # Visualise resultant Jig force vector components and COR radius evolution.
+        vec_series = series.get("jig_resultant_vector", [])
+        if vec_series:
+            ax_vec = axes[2][1]
+            ax_vec.plot(times, [v.x for v in vec_series], marker="o", linestyle="-", label="Fx")
+            ax_vec.plot(times, [v.y for v in vec_series], marker="s", linestyle="-", label="Fy")
+            ax_vec.plot(times, [v.z for v in vec_series], marker="^", linestyle="-", label="Fz")
+            ax_vec.set_title("Jig resultant vector components")
+            ax_vec.set_ylabel("Force component (N)")
+            ax_vec.grid(True, alpha=0.35)
+            ax_vec.legend(loc="upper left")
+
+            cor_radius = series.get("jig_cor_radius", [])
+            if cor_radius and len(cor_radius) == len(times):
+                ax_cor = ax_vec.twinx()
+                ax_cor.plot(
+                    times, cor_radius, color="tab:purple", linestyle="--", label="COR radius"
+                )
+                ax_cor.set_ylabel("COR radius (mm)")
+        else:
+            axes[2][1].set_visible(False)
 
         axes[2][0].set_xlabel("Load-case time (s)")
+        axes[2][1].set_xlabel("Load-case time (s)")
         fig.suptitle(f"{case_name}: load-case series")
         fig.tight_layout()
         fig.savefig(out_file, dpi=150)
         plt.close(fig)
 
         App.Console.PrintMessage(f"Saved optional load-case plot: {out_file}\n")
+
+    def _maybe_plot_xy_series(self, case_name, x_values, y_values, *, x_label, y_label, title):
+        if not self._plotting_enabled():
+            return
+
+        try:
+            import matplotlib.pyplot as plt
+        except Exception as exc:
+            App.Console.PrintWarning(
+                f"Optional plotting enabled but matplotlib is unavailable: {exc}\n"
+            )
+            return
+
+        if len(x_values) != len(y_values) or not x_values:
+            return
+
+        out_dir = os.environ.get("FREECAD_ASSEMBLY_PLOT_DIR", tempfile.gettempdir())
+        os.makedirs(out_dir, exist_ok=True)
+        out_file = os.path.join(out_dir, f"{case_name}_xy.png")
+
+        fig, ax = plt.subplots(1, 1, figsize=(7, 5))
+        ax.plot(x_values, y_values, marker="o", linestyle="-")
+        ax.set_xlabel(x_label)
+        ax.set_ylabel(y_label)
+        ax.set_title(title)
+        ax.grid(True, alpha=0.35)
+        fig.tight_layout()
+        fig.savefig(out_file, dpi=150)
+        plt.close(fig)
+
+        App.Console.PrintMessage(f"Saved optional XY plot: {out_file}\n")
 
     def _create_simulation_with_motion(
         self,
@@ -490,6 +634,7 @@ class TestLinkBody(unittest.TestCase):
                 "jig_linear_velocity": [],
                 "jig_angular_velocity": [],
                 "jig_cor_radius": [],
+                "jig_resultant_vector": [],
             }
             times = []
 
@@ -540,22 +685,65 @@ class TestLinkBody(unittest.TestCase):
                                 break
 
                     if jig_obj and perturbation:
-                        kind = perturbation.get("kind", "")
-                        value = float(perturbation.get("value", 0.0))
 
-                        def _add_x(vec):
-                            if not isinstance(vec, App.Vector):
-                                vec = App.Vector(0, 0, 0)
-                            return App.Vector(vec.x + value, vec.y, vec.z)
+                        def _as_vector(value, default=None):
+                            if isinstance(value, App.Vector):
+                                return App.Vector(value.x, value.y, value.z)
+                            if isinstance(value, (list, tuple)) and len(value) >= 3:
+                                return App.Vector(float(value[0]), float(value[1]), float(value[2]))
+                            if default is not None:
+                                return default
+                            return App.Vector(0, 0, 0)
 
-                        if kind == "linear_acceleration":
-                            jig_obj.LinearAcceleration = _add_x(jig_obj.LinearAcceleration)
-                        elif kind == "linear_velocity":
-                            jig_obj.LinearVelocity = _add_x(jig_obj.LinearVelocity)
-                        elif kind == "angular_velocity":
-                            jig_obj.AngularVelocity = _add_x(jig_obj.AngularVelocity)
+                        def _apply_update(kind, vec, operation="add"):
+                            if kind == "linear_acceleration":
+                                current = _as_vector(getattr(jig_obj, "LinearAcceleration", None))
+                                jig_obj.LinearAcceleration = (
+                                    vec if operation == "set" else current + vec
+                                )
+                                return True
+                            if kind == "linear_velocity":
+                                current = _as_vector(getattr(jig_obj, "LinearVelocity", None))
+                                jig_obj.LinearVelocity = (
+                                    vec if operation == "set" else current + vec
+                                )
+                                return True
+                            if kind == "angular_velocity":
+                                current = _as_vector(getattr(jig_obj, "AngularVelocity", None))
+                                jig_obj.AngularVelocity = (
+                                    vec if operation == "set" else current + vec
+                                )
+                                return True
+                            return False
 
-                        doc.recompute()
+                        updated = False
+                        updates = (
+                            perturbation.get("updates", [])
+                            if isinstance(perturbation, dict)
+                            else []
+                        )
+                        if updates:
+                            for entry in updates:
+                                if not isinstance(entry, dict):
+                                    continue
+                                kind = entry.get("kind", "")
+                                vec = entry.get("vector", None)
+                                if vec is None:
+                                    value = float(entry.get("value", 0.0))
+                                    vec = App.Vector(value, 0, 0)
+                                operation = str(entry.get("operation", "add")).lower()
+                                updated = _apply_update(kind, _as_vector(vec), operation) or updated
+                        elif isinstance(perturbation, dict):
+                            kind = perturbation.get("kind", "")
+                            vec = perturbation.get("vector", None)
+                            if vec is None:
+                                value = float(perturbation.get("value", 0.0))
+                                vec = App.Vector(value, 0, 0)
+                            operation = str(perturbation.get("operation", "add")).lower()
+                            updated = _apply_update(kind, _as_vector(vec), operation)
+
+                        if updated:
+                            doc.recompute()
 
                     jig_acc = getattr(jig_obj, "LinearAcceleration", App.Vector(0, 0, 0))
                     jig_lin_vel = getattr(jig_obj, "LinearVelocity", App.Vector(0, 0, 0))
@@ -664,6 +852,10 @@ class TestLinkBody(unittest.TestCase):
                             f"Saved DAT snapshot: {dump_file} (md5={digest})\n"
                         )
 
+                    resultant_vec = self._jig_resultant_force_vector_from_calculix_dat(
+                        dat_text,
+                        "CONSTRAINTJIG321",
+                    )
                     residual_mag = self._jig_residual_magnitude_from_calculix_dat(
                         dat_text,
                         "CONSTRAINTJIG321",
@@ -674,9 +866,11 @@ class TestLinkBody(unittest.TestCase):
                         dat_text,
                         f"DAT file missing residual force data at load case {idx}",
                     )
+                    series["jig_resultant_vector"].append(resultant_vec)
                     series["residual"].append(residual_mag)
                     App.Console.PrintMessage(
-                        f"{case_name} loadcase {idx:03d} residual_N={residual_mag:.6e}\n"
+                        f"{case_name} loadcase {idx:03d} residual_N={residual_mag:.6e} "
+                        f"resultant=({resultant_vec.x:.6e},{resultant_vec.y:.6e},{resultant_vec.z:.6e})\n"
                     )
                     residual_limit_for_run = max(
                         residual_limit,
@@ -1378,6 +1572,214 @@ class TestLinkBody(unittest.TestCase):
         )
         self.assertGreater(max(series["jig_angular_velocity"]), 2.0)
         self.assertLess(max(series["residual"]), 1.0e-6)
+
+    def test_fictitious_translational_inertial_transfer_scales_linearly(self):
+        """-m*a0 transfer should scale approximately linearly with imposed linear acceleration."""
+        _msg("  Test fictitious translational inertial force scaling")
+
+        ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
+        baseline, runs = self._run_fictitious_force_sweep(
+            example_module=ex,
+            joint_name="CylindricalJoint",
+            dynamic=True,
+            motion_type="Angular",
+            motion_formula="",
+            case_prefix="fictitious_translational_linear",
+            perturbation_kind="linear_acceleration",
+            perturbation_values=[2.0e4, 4.0e4],
+            operation="add",
+            residual_limit=1.0e9,
+        )
+
+        r0 = self._mean_vector_length(baseline["jig_resultant_vector"])
+        r1 = self._mean_vector_length(runs[2.0e4]["jig_resultant_vector"])
+        r2 = self._mean_vector_length(runs[4.0e4]["jig_resultant_vector"])
+
+        d1 = abs(r1 - r0)
+        d2 = abs(r2 - r0)
+        self._maybe_plot_xy_series(
+            "fictitious_translational_linear_response",
+            [0.0, 2.0e4, 4.0e4],
+            [r0, r1, r2],
+            x_label="Imposed linear acceleration perturbation (mm/s^2)",
+            y_label="Mean |Jig resultant force| (N)",
+            title="Translational fictitious-force transfer",
+        )
+        self.assertGreater(d1, 1.0e-6)
+        self.assertGreater(d2, d1)
+        ratio = d2 / d1
+        self.assertGreater(ratio, 1.5)
+        self.assertLess(ratio, 3.5)
+
+    def test_fictitious_translational_inertial_transfer_sign_reversal(self):
+        """Reversing imposed a0 direction should reverse the projected transferred force direction."""
+        _msg("  Test fictitious translational inertial force sign reversal")
+
+        ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
+        baseline, runs = self._run_fictitious_force_sweep(
+            example_module=ex,
+            joint_name="CylindricalJoint",
+            dynamic=True,
+            motion_type="Angular",
+            motion_formula="",
+            case_prefix="fictitious_translational_sign",
+            perturbation_kind="linear_acceleration",
+            perturbation_values=[2.0e4, -2.0e4],
+            operation="add",
+            residual_limit=1.0e9,
+        )
+
+        axis = App.Vector(1, 0, 0)
+        p0 = self._mean_vector_projection(baseline["jig_resultant_vector"], axis)
+        p_pos = self._mean_vector_projection(runs[2.0e4]["jig_resultant_vector"], axis)
+        p_neg = self._mean_vector_projection(runs[-2.0e4]["jig_resultant_vector"], axis)
+
+        d_pos = p_pos - p0
+        d_neg = p_neg - p0
+        self._maybe_plot_xy_series(
+            "fictitious_translational_sign_projection",
+            [-2.0e4, 0.0, 2.0e4],
+            [p_neg, p0, p_pos],
+            x_label="Imposed linear acceleration perturbation (mm/s^2)",
+            y_label="Mean projected Jig resultant force (N)",
+            title="Translational fictitious-force sign reversal",
+        )
+        self.assertGreater(abs(d_pos), 1.0e-6)
+        self.assertGreater(abs(d_neg), 1.0e-6)
+        self.assertLess(d_pos * d_neg, 0.0)
+        ratio = abs(d_pos) / max(abs(d_neg), 1.0e-12)
+        self.assertGreater(ratio, 0.5)
+        self.assertLess(ratio, 2.0)
+
+    def test_fictitious_centrifugal_transfer_scales_with_omega_squared(self):
+        """Centrifugal transfer should increase roughly with omega^2 for imposed angular velocity."""
+        _msg("  Test fictitious centrifugal force omega-squared scaling")
+
+        ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
+        _baseline, runs = self._run_fictitious_force_sweep(
+            example_module=ex,
+            joint_name="CylindricalJoint",
+            dynamic=True,
+            motion_type="Angular",
+            motion_formula="",
+            case_prefix="fictitious_centrifugal_quad",
+            perturbation_kind="angular_velocity",
+            perturbation_values=[0.0, 8.0, 16.0],
+            operation="set",
+            residual_limit=1.0e9,
+        )
+
+        r0 = self._median_vector_length(runs[0.0]["jig_resultant_vector"])
+        r1 = self._median_vector_length(runs[8.0]["jig_resultant_vector"])
+        r2 = self._median_vector_length(runs[16.0]["jig_resultant_vector"])
+
+        d1 = abs(r1 - r0)
+        d2 = abs(r2 - r0)
+        self._maybe_plot_xy_series(
+            "fictitious_centrifugal_omega2_response",
+            [0.0, 8.0, 16.0],
+            [r0, r1, r2],
+            x_label="Imposed angular velocity (rad/s)",
+            y_label="Mean |Jig resultant force| (N)",
+            title="Centrifugal fictitious-force transfer",
+        )
+        self.assertGreater(d1, 1.0e-6)
+        self.assertGreater(d2, d1)
+        ratio = d2 / d1
+        self.assertGreater(ratio, 2.5)
+        self.assertLess(ratio, 5.5)
+
+    def test_fictitious_centrifugal_transfer_tracks_cor_offset(self):
+        """With fixed angular velocity, larger linear velocity should increase COR radius and force."""
+        _msg("  Test fictitious centrifugal force tracks center-of-rotation offset")
+
+        ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
+
+        series_low = self._run_multistep_jig_residual_case(
+            ex,
+            joint_name="CylindricalJoint",
+            dynamic=True,
+            motion_type="Angular",
+            motion_formula="",
+            case_name="fictitious_centrifugal_cor_low",
+            residual_limit=1.0e9,
+            perturbation={
+                "updates": [
+                    {
+                        "kind": "angular_velocity",
+                        "vector": App.Vector(0, 0, 10),
+                        "operation": "set",
+                    },
+                    {"kind": "linear_velocity", "vector": App.Vector(50, 0, 0), "operation": "set"},
+                ]
+            },
+            require_frame_motion=False,
+        )
+        series_high = self._run_multistep_jig_residual_case(
+            ex,
+            joint_name="CylindricalJoint",
+            dynamic=True,
+            motion_type="Angular",
+            motion_formula="",
+            case_name="fictitious_centrifugal_cor_high",
+            residual_limit=1.0e9,
+            perturbation={
+                "updates": [
+                    {
+                        "kind": "angular_velocity",
+                        "vector": App.Vector(0, 0, 10),
+                        "operation": "set",
+                    },
+                    {
+                        "kind": "linear_velocity",
+                        "vector": App.Vector(100, 0, 0),
+                        "operation": "set",
+                    },
+                ]
+            },
+            require_frame_motion=False,
+        )
+
+        cor_low = self._mean_scalar(series_low["jig_cor_radius"])
+        cor_high = self._mean_scalar(series_high["jig_cor_radius"])
+        self.assertGreater(cor_low, 1.0e-6)
+        self.assertGreater(cor_high, cor_low * 1.6)
+
+        resp_low = self._mean_vector_length(series_low["jig_resultant_vector"])
+        resp_high = self._mean_vector_length(series_high["jig_resultant_vector"])
+        self._maybe_plot_xy_series(
+            "fictitious_centrifugal_cor_vs_response",
+            [cor_low, cor_high],
+            [resp_low, resp_high],
+            x_label="Mean center-of-rotation radius (mm)",
+            y_label="Mean |Jig resultant force| (N)",
+            title="Centrifugal transfer vs center-of-rotation offset",
+        )
+        self.assertGreater(resp_high, resp_low)
+
+    @unittest.expectedFailure
+    def test_fictitious_euler_force_transfer_capability_gap(self):
+        """Expected-failure tracker: dedicated Euler-term input (angular acceleration) is not exposed."""
+        _msg("  Test fictitious Euler-force capability gap")
+
+        objects_fem = _import_or_skip(self, "ObjectsFem")
+        jig = objects_fem.makeConstraintJig321(self.doc)
+        self.assertTrue(
+            hasattr(jig, "AngularAcceleration"),
+            "ConstraintJig321 lacks AngularAcceleration input for explicit Euler-term transfer.",
+        )
+
+    @unittest.expectedFailure
+    def test_fictitious_coriolis_force_transfer_capability_gap(self):
+        """Expected-failure tracker: dedicated Coriolis-term relative-velocity input is not exposed."""
+        _msg("  Test fictitious Coriolis-force capability gap")
+
+        objects_fem = _import_or_skip(self, "ObjectsFem")
+        jig = objects_fem.makeConstraintJig321(self.doc)
+        self.assertTrue(
+            hasattr(jig, "RelativeVelocity"),
+            "ConstraintJig321 lacks RelativeVelocity input for explicit Coriolis-term transfer.",
+        )
 
     def test_updatejoints_matches_only_relevant_moving_part(self):
         """updateJoints filters by joint references and moving part identity."""
