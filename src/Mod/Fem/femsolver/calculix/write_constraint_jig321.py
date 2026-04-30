@@ -25,7 +25,6 @@ __title__ = "FreeCAD FEM calculix constraint jig321"
 __author__ = "John Wharington"
 __url__ = "https://www.freecad.org"
 
-
 from FreeCAD import Console, Vector
 
 
@@ -61,6 +60,10 @@ def jig_name(jig321_obj, idx):
     return f"{jig321_obj.Name}-{idx}"
 
 
+def _fvec(v):
+    return f"{v.x:.13G},{v.y:.13G},{v.z:.13G}"
+
+
 def write_meshdata_constraint(f, femobj, jig321_obj, ccxwriter):
     for idx, n in enumerate(femobj["Nodes"]):
         jname = jig_name(jig321_obj=jig321_obj, idx=idx)
@@ -69,8 +72,6 @@ def write_meshdata_constraint(f, femobj, jig321_obj, ccxwriter):
 
 
 def write_constraint(f, femobj, jig321_obj, ccxwriter):
-    # {.13G}
-
     if len(femobj["Nodes"]) < 3:
         Console.PrintError("ConstraintJig321: Need at least 3 nodes to define a triangle.\n")
         return
@@ -81,51 +82,11 @@ def write_constraint(f, femobj, jig321_obj, ccxwriter):
     X = support_pos[1] - support_pos[0]
     Y = support_pos[2] - support_pos[0]
 
-    def fvec(v):
-        return f"{v.x:.13G},{v.y:.13G},{v.z:.13G}"
-
-    for idx, n in enumerate(femobj["Nodes"]):
+    for idx, _n in enumerate(femobj["Nodes"]):
         jname = jig_name(jig321_obj=jig321_obj, idx=idx)
         f.write(f"*TRANSFORM,NSET={jname},TYPE=R\n")
-        f.write(f"{fvec(X)},{fvec(Y)}\n")
+        f.write(f"{_fvec(X)},{_fvec(Y)}\n")
         f.write("*BOUNDARY\n")
         istart = idx + 1
         iend = 3
         f.write(f"{jname},{istart},{iend},0.0\n")
-
-    accel = jig321_obj.LinearAcceleration
-    a_mag = accel.Length
-    if a_mag:
-        a_norm = -accel / a_mag
-        f.write("*DLOAD\n")
-        f.write(
-            "{},GRAV,{:.13G},{:.13G},{:.13G},{:.13G}\n".format(
-                ccxwriter.ccx_eall,
-                a_mag,
-                a_norm.x,
-                a_norm.y,
-                a_norm.z,
-            )
-        )
-        f.write("\n")
-
-    omega = jig321_obj.AngularVelocity
-    o_mag = omega.Length
-    if o_mag:
-        axis0 = jig321_obj.CenterOfRotation
-        axis1 = axis0 + omega / o_mag
-
-        f.write("*DLOAD\n")
-        f.write(
-            "{},CENTRIF,{:.13G},{:.13G},{:.13G},{:.13G},{:.13G},{:.13G},{:.13G}\n".format(
-                ccxwriter.ccx_eall,
-                o_mag**2,
-                axis0.x,
-                axis0.y,
-                axis0.z,
-                axis1.x,
-                axis1.y,
-                axis1.z,
-            )
-        )
-        f.write("\n")

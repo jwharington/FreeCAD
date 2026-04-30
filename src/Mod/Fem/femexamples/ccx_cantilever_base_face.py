@@ -29,6 +29,7 @@ import ObjectsFem
 from .manager import get_meshname
 from .manager import init_doc
 from .meshes import generate_mesh
+from . import manager
 
 
 def setup_cantilever_base_face(doc=None, solvertype="ccxtools"):
@@ -100,8 +101,8 @@ def setup_cantilever_base_face(doc=None, solvertype="ccxtools"):
     con_force = ObjectsFem.makeConstraintForce(doc, "Force")
     con_force.References = [(geom_obj, "Edge3")]
     con_force.Force = "9000000.0 N"
-    con_force.Direction = (geom_obj, ["Edge3"])
-    con_force.Reversed = True
+    manager.set_direction_compat(con_force, (geom_obj, ["Edge3"]))
+    manager.set_reversed_compat(con_force, True)
     analysis.addObject(con_force)
 
     # mesh

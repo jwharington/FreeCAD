@@ -29,7 +29,6 @@ __url__ = "https://www.freecad.org"
 #  \ingroup FEM
 #  \brief constraint jig 321 object
 
-import FreeCAD as App
 import numpy as np
 from FreeCAD import Console, Vector
 
@@ -43,87 +42,18 @@ class ConstraintJig321(base_fempythonobject.BaseFemPythonObject):
     The ConstraintJig321 object
     """
 
-    triggers = ["CenterOfMass", "LinearVelocity", "AngularVelocity", "References"]
-
     Type = "Fem::ConstraintJig321"
 
     def __init__(self, obj):
         super().__init__(obj)
 
         obj.addProperty(
-            type="App::PropertyVector",
-            name="LinearAcceleration",
-            group="dAlembertForces",
-            doc="Linear acceleration",
-        ).LinearAcceleration = Vector(0, 0, 0)
-
-        obj.addProperty(
-            type="App::PropertyVector",
-            name="AngularVelocity",
-            group="dAlembertForces",
-            doc="Angular velocity",
-        ).AngularVelocity = Vector(0, 0, 0)
-
-        obj.addProperty(
-            type="App::PropertyVector",
-            name="LinearVelocity",
-            group="dAlembertForces",
-            doc="Linear velocity",
-        ).LinearVelocity = Vector(0, 0, 0)
-
-        obj.addProperty(
-            type="App::PropertyVector",
-            name="CenterOfMass",
-            group="dAlembertForces",
-            doc="Center of mass",
-        ).CenterOfMass = Vector(0, 0, 0)
-
-        obj.addProperty(
-            type="App::PropertyVector",
-            name="CenterOfRotation",
-            group="dAlembertForces",
-            doc="Center of rotation",
-        ).CenterOfRotation = Vector(0, 0, 0)
-
-        obj.addProperty(
             type="App::PropertyVectorList",
             name="Supports",
-            group="dAlembertForces",
-            doc="Locations of supports for the constraint",
+            group="Geometry",
+            doc="Locations of supports for the 3-2-1 constraint",
         ).Supports = []
         obj.setPropertyStatus("Supports", "ReadOnly")
-
-    def execute(self, obj):
-        for t in self.triggers + ["CenterOfRotation"]:
-            if not hasattr(obj, t):
-                return
-
-        omega = obj.AngularVelocity
-        o_mag = omega.Length
-        com = obj.CenterOfMass
-        v = obj.LinearVelocity
-        v_mag = v.Length
-        if (o_mag > 0) and (v_mag > 0):
-            omega_n = omega / o_mag
-            v_perp = v - omega_n * (v.dot(omega_n))
-            r = omega_n.cross(v_perp) / o_mag
-            obj.CenterOfRotation = com + r
-            # Console.PrintMessage(f"r: {r}\n")
-            # Console.PrintMessage(f"com: {obj.CenterOfMass}\n")
-            # Console.PrintMessage(f"cor: {obj.CenterOfRotation}\n")
-            # Console.PrintMessage(f"v: {v}\n")
-            # Console.PrintMessage(f"v_inf: {omega.cross(r)}\n")
-            # Console.PrintMessage(f"v_perp: {v_perp}\n")
-        else:
-            obj.CenterOfRotation = com
-
-    def onChanged(self, fp, prop):
-        # during loading the onchanged may be triggered before full init.
-        if App.isRestoring():
-            return
-
-        if prop in self.triggers:
-            fp.recompute()
 
     def find_largest_triangle(self, fp, femmesh, node_idxs):
         from scipy.spatial import ConvexHull

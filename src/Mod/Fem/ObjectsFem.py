@@ -117,6 +117,16 @@ def makeConstraintJig321(doc, name="ConstraintJig321"):
     return obj
 
 
+def makeConstraintVirtualForces(doc, name="ConstraintVirtualForces"):
+    """makeConstraintVirtualForces(document, [name]):
+    creates a virtual forces object to define inertial quasi-static loading state"""
+    obj = doc.addObject("Fem::ConstraintPython", name)
+    from femobjects import constraint_virtualforces
+
+    constraint_virtualforces.ConstraintVirtualForces(obj)
+    return obj
+
+
 def makeConstraintCurrentDensity(doc, name="ConstraintCurrentDensity"):
     """makeConstraintCurrentDensity(document, [name]):
     makes a Fem CurrentDensity object"""

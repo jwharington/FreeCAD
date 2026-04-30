@@ -142,32 +142,32 @@ def setup(doc=None, solvertype="ccxtools"):
     con_force1 = ObjectsFem.makeConstraintForce(doc, name="Force1")
     con_force1.References = [(geom_obj, "Edge9")]
     con_force1.Force = "100000.00 N"
-    con_force1.Direction = (geom_obj, ["Edge9"])
-    con_force1.Reversed = True
+    manager.set_direction_compat(con_force1, (geom_obj, ["Edge9"]))
+    manager.set_reversed_compat(con_force1, True)
     analysis.addObject(con_force1)
 
     # con_force2
     con_force2 = ObjectsFem.makeConstraintForce(doc, name="Force2")
     con_force2.References = [(geom_obj, "Edge3")]
     con_force2.Force = "100000.00 N"
-    con_force2.Direction = (geom_obj, ["Edge3"])
-    con_force2.Reversed = True
+    manager.set_direction_compat(con_force2, (geom_obj, ["Edge3"]))
+    manager.set_reversed_compat(con_force2, True)
     analysis.addObject(con_force2)
 
     # con_force3
     con_force3 = ObjectsFem.makeConstraintForce(doc, name="Force3")
     con_force3.References = [(geom_obj, "Edge11")]
     con_force3.Force = "100000.00 N"
-    con_force3.Direction = (geom_obj, ["Edge11"])
-    con_force3.Reversed = True
+    manager.set_direction_compat(con_force3, (geom_obj, ["Edge11"]))
+    manager.set_reversed_compat(con_force3, True)
     analysis.addObject(con_force3)
 
     # con_force4
     con_force4 = ObjectsFem.makeConstraintForce(doc, name="Force4")
     con_force4.References = [(geom_obj, "Edge6")]
     con_force4.Force = "100000.00 N"
-    con_force4.Direction = (geom_obj, ["Edge6"])
-    con_force4.Reversed = True
+    manager.set_direction_compat(con_force4, (geom_obj, ["Edge6"]))
+    manager.set_reversed_compat(con_force4, True)
     analysis.addObject(con_force4)
 
     # mesh

@@ -107,11 +107,17 @@ def setup(doc=None, solvertype="ccxtools"):
     # 3-2-1 jig support
     con_jig321 = ObjectsFem.makeConstraintJig321(doc, "ConstraintJig321")
     con_jig321.References = [(geom_obj, "Face1")]
-    con_jig321.CenterOfMass = FreeCAD.Vector(2000, 500, 500)
-    con_jig321.LinearVelocity = FreeCAD.Vector(0, 0, 0)
-    con_jig321.AngularVelocity = FreeCAD.Vector(0, 0, 0)
-    con_jig321.LinearAcceleration = FreeCAD.Vector(0, 0, -9810)
     analysis.addObject(con_jig321)
+
+    con_virtualforces = ObjectsFem.makeConstraintVirtualForces(
+        doc, "ConstraintVirtualForces"
+    )
+    con_virtualforces.References = [(geom_obj, "Face1")]
+    con_virtualforces.CenterOfMass = FreeCAD.Vector(2000, 500, 500)
+    con_virtualforces.LinearVelocity = FreeCAD.Vector(0, 0, 0)
+    con_virtualforces.AngularVelocity = FreeCAD.Vector(0, 0, 0)
+    con_virtualforces.LinearAcceleration = FreeCAD.Vector(0, 0, -9810)
+    analysis.addObject(con_virtualforces)
 
     # mesh
     femmesh_obj = analysis.addObject(

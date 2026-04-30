@@ -348,13 +348,13 @@ class LinkBody(FPBase):
                 return True
         return False
 
-    def _cleanup_duplicate_jigs(self, analysis, target_obj, keep_obj):
+    def _cleanup_duplicate_constraints(self, analysis, target_obj, keep_obj, constraint_type):
         constraints = find_common_group_objects(analysis, "Fem::ConstraintPython")
         for obj in constraints:
             if obj == keep_obj:
                 continue
             proxy = getattr(obj, "Proxy", None)
-            if not proxy or getattr(proxy, "Type", "") != "Fem::ConstraintJig321":
+            if not proxy or getattr(proxy, "Type", "") != constraint_type:
                 continue
             if not self._constraint_references_object(obj, target_obj):
                 continue
@@ -431,21 +431,58 @@ class LinkBody(FPBase):
                 return False
             return self._constraint_references_object(obj, body_obj)
 
-        if mode is UpdateMode.LOAD:
+        def virtual_forces_matcher(obj):
+            proxy = getattr(obj, "Proxy", None)
+            if not proxy or getattr(proxy, "Type", "") != "Fem::ConstraintVirtualForces":
+                return False
+            return self._constraint_references_object(obj, body_obj)
 
+        def apply_relative_velocity_fallback(linear_velocity, relative_velocity):
+            if relative_velocity.Length > 0.0:
+                return relative_velocity
+            if linear_velocity.Length > 0.0:
+                return linear_velocity
+            return relative_velocity
+
+        def ensure_constraints():
             def on_new(obj):
                 obj.References = [body_obj]
 
-            obj = self.get_analysis_constraint(
+            jig_obj = self.get_analysis_constraint(
                 analysis,
                 f"Jig_{body.Label}",
                 ObjectsFem.makeConstraintJig321,
                 on_new=on_new,
                 matcher=jig_matcher,
             )
-            if not self._constraint_references_object(obj, body_obj):
-                obj.References = [body_obj]
-            self._cleanup_duplicate_jigs(analysis, body_obj, obj)
+            if not self._constraint_references_object(jig_obj, body_obj):
+                jig_obj.References = [body_obj]
+            self._cleanup_duplicate_constraints(
+                analysis,
+                body_obj,
+                jig_obj,
+                "Fem::ConstraintJig321",
+            )
+
+            vf_obj = self.get_analysis_constraint(
+                analysis,
+                f"VirtualForces_{body.Label}",
+                ObjectsFem.makeConstraintVirtualForces,
+                on_new=on_new,
+                matcher=virtual_forces_matcher,
+            )
+            if not self._constraint_references_object(vf_obj, body_obj):
+                vf_obj.References = [body_obj]
+            self._cleanup_duplicate_constraints(
+                analysis,
+                body_obj,
+                vf_obj,
+                "Fem::ConstraintVirtualForces",
+            )
+            return jig_obj, vf_obj
+
+        if mode is UpdateMode.LOAD:
+            jig_obj, vf_obj = ensure_constraints()
             # Restore constraint values from saved state; skip live body read.
             id = body.Label
             mass = self._get_body_mass_tons(body)
@@ -456,9 +493,22 @@ class LinkBody(FPBase):
                         "skipping linear acceleration restoration.\n"
                     )
                 else:
-                    obj.LinearAcceleration = self.state[(id, "LinearAcceleration")] / mass
-                obj.LinearVelocity = self.state[(id, "LinearVelocity")]
-                obj.AngularVelocity = self.state[(id, "AngularVelocity")]
+                    vf_obj.LinearAcceleration = self.state[(id, "LinearAcceleration")] / mass
+
+                linear_velocity = self.state.get((id, "LinearVelocity"), Vector(0, 0, 0))
+                angular_velocity = self.state.get((id, "AngularVelocity"), Vector(0, 0, 0))
+                angular_acceleration = self.state.get((id, "AngularAcceleration"), Vector(0, 0, 0))
+                relative_velocity = self.state.get((id, "RelativeVelocity"), linear_velocity)
+                relative_velocity = apply_relative_velocity_fallback(
+                    linear_velocity,
+                    relative_velocity,
+                )
+
+                vf_obj.LinearVelocity = linear_velocity
+                vf_obj.AngularVelocity = angular_velocity
+                vf_obj.AngularAcceleration = angular_acceleration
+                vf_obj.RelativeVelocity = relative_velocity
+
             return True
 
         # SAVE or EXECUTE: read live body kinematics.
@@ -476,30 +526,27 @@ class LinkBody(FPBase):
             linear_acceleration = self.force_total / mass
             linear_velocity = Vector(0, 0, 0)
             angular_velocity = Vector(0, 0, 0)
+            angular_acceleration = Vector(0, 0, 0)
+            relative_velocity = Vector(0, 0, 0)
         else:
             linear_acceleration = body.LinearAcceleration
             linear_velocity = body.LinearVelocity
             angular_velocity = body.AngularVelocity
+            angular_acceleration = getattr(body, "AngularAcceleration", Vector(0, 0, 0))
+            relative_velocity = getattr(body, "RelativeVelocity", linear_velocity)
+            relative_velocity = apply_relative_velocity_fallback(
+                linear_velocity,
+                relative_velocity,
+            )
 
         if mode is UpdateMode.EXECUTE or (mode is UpdateMode.SAVE and analysis is not None):
-
-            def on_new(obj):
-                obj.References = [body_obj]
-
-            obj = self.get_analysis_constraint(
-                analysis,
-                f"Jig_{body.Label}",
-                ObjectsFem.makeConstraintJig321,
-                on_new=on_new,
-                matcher=jig_matcher,
-            )
-            if not self._constraint_references_object(obj, body_obj):
-                obj.References = [body_obj]
-            self._cleanup_duplicate_jigs(analysis, body_obj, obj)
-            obj.CenterOfMass = center_of_mass
-            obj.LinearAcceleration = linear_acceleration
-            obj.LinearVelocity = linear_velocity
-            obj.AngularVelocity = angular_velocity
+            jig_obj, vf_obj = ensure_constraints()
+            vf_obj.CenterOfMass = center_of_mass
+            vf_obj.LinearAcceleration = linear_acceleration
+            vf_obj.LinearVelocity = linear_velocity
+            vf_obj.AngularVelocity = angular_velocity
+            vf_obj.AngularAcceleration = angular_acceleration
+            vf_obj.RelativeVelocity = relative_velocity
 
         self.force_total -= linear_acceleration * mass
 
@@ -508,6 +555,8 @@ class LinkBody(FPBase):
             self.state[(id, "LinearAcceleration")] = linear_acceleration * mass
             self.state[(id, "LinearVelocity")] = linear_velocity
             self.state[(id, "AngularVelocity")] = angular_velocity
+            self.state[(id, "AngularAcceleration")] = angular_acceleration
+            self.state[(id, "RelativeVelocity")] = relative_velocity
 
         self.line_info.append((center_of_mass, linear_acceleration, LineType.LINEAR_ACCELERATION))
         return True

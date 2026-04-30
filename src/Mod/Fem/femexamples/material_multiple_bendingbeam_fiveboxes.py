@@ -189,8 +189,8 @@ def setup(doc=None, solvertype="ccxtools"):
         (doc.Box5, "Face6"),
     ]
     con_force.Force = "10000.00 N"
-    con_force.Direction = (doc.Box1, ["Edge1"])
-    con_force.Reversed = True
+    manager.set_direction_compat(con_force, (doc.Box1, ["Edge1"]))
+    manager.set_reversed_compat(con_force, True)
     analysis.addObject(con_force)
 
     # mesh

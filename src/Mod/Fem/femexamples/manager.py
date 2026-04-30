@@ -24,6 +24,89 @@
 
 import FreeCAD
 
+_DIRECTION_COMPAT_WARNED = False
+_REVERSED_COMPAT_WARNED = False
+_PRIMITIVE_DIRECTION_WARNED = False
+_DIRECTION_FALLBACK_OBJECT_IDS = set()
+_DIRECTION_FALLBACK_REFS = {}
+
+
+def _is_primitive_direction_object(obj):
+    type_id = getattr(obj, "TypeId", "")
+    return type_id.startswith("Part::") and type_id != "Part::Feature"
+
+
+def _first_subname(direction_ref):
+    if not isinstance(direction_ref, (list, tuple)) or len(direction_ref) != 2:
+        return ""
+    _, sub = direction_ref
+    if isinstance(sub, str):
+        return sub
+    if isinstance(sub, (list, tuple)):
+        for name in sub:
+            if name:
+                return name
+    return ""
+
+
+def _direction_shape(direction_ref):
+    if not isinstance(direction_ref, (list, tuple)) or len(direction_ref) != 2:
+        return None
+    obj, _ = direction_ref
+    shape = getattr(obj, "Shape", None)
+    if shape is None:
+        return None
+
+    subname = _first_subname(direction_ref)
+    if subname:
+        try:
+            return shape.getElement(subname)
+        except Exception:
+            return None
+    return shape
+
+
+def _direction_vector_from_ref(direction_ref):
+    shape = _direction_shape(direction_ref)
+    if shape is None:
+        return None
+
+    stype = getattr(shape, "ShapeType", "")
+    if stype == "Edge":
+        if len(shape.Vertexes) < 2:
+            return None
+        vec = shape.Vertexes[-1].Point - shape.Vertexes[0].Point
+    elif stype == "Face":
+        try:
+            u0, u1, v0, v1 = shape.ParameterRange
+            vec = shape.normalAt((u0 + u1) * 0.5, (v0 + v1) * 0.5)
+        except Exception:
+            return None
+    else:
+        return None
+
+    if vec.Length == 0:
+        return None
+    return vec / vec.Length
+
+
+def _apply_direction_vector(constraint_obj, direction_ref, reversed_flag=None):
+    vec = _direction_vector_from_ref(direction_ref)
+    if vec is None:
+        return False
+
+    if reversed_flag is None:
+        reversed_flag = bool(getattr(constraint_obj, "Reversed", False))
+    if reversed_flag:
+        vec = -vec
+
+    try:
+        constraint_obj.DirectionVector = vec
+        return True
+    except Exception:
+        return False
+
+
 # ************************************************************************************************
 # setup and run examples by Python
 
@@ -48,6 +131,89 @@ doc = run("boxanalysis_static")
 doc = run("boxanalysis_frequency")
 
 """
+
+
+def set_direction_compat(constraint_obj, direction_ref):
+    """Set Direction while handling known setter regressions."""
+    global _DIRECTION_COMPAT_WARNED
+    global _PRIMITIVE_DIRECTION_WARNED
+
+    obj_id = id(constraint_obj)
+    _DIRECTION_FALLBACK_OBJECT_IDS.discard(obj_id)
+    _DIRECTION_FALLBACK_REFS.pop(obj_id, None)
+
+    obj = direction_ref[0] if isinstance(direction_ref, (list, tuple)) and direction_ref else None
+
+    # Primitive Part objects (Part::Line / Part::Plane) are known to throw or
+    # keep a wrong default DirectionVector. Use derived vector fallback.
+    if _is_primitive_direction_object(obj):
+        try:
+            constraint_obj.Direction = direction_ref
+        except Exception:
+            pass
+        _apply_direction_vector(constraint_obj, direction_ref)
+        _DIRECTION_FALLBACK_OBJECT_IDS.add(obj_id)
+        _DIRECTION_FALLBACK_REFS[obj_id] = direction_ref
+        if not _PRIMITIVE_DIRECTION_WARNED:
+            FreeCAD.Console.PrintWarning(
+                "Using compatibility path for primitive Direction object.\n"
+            )
+            _PRIMITIVE_DIRECTION_WARNED = True
+        return
+
+    try:
+        constraint_obj.Direction = direction_ref
+        return
+    except TypeError as exc:
+        msg = str(exc)
+        if "Type is not a line, plane or Part object" not in msg:
+            raise
+
+        if getattr(constraint_obj, "Direction", None) != direction_ref:
+            raise
+
+        if not _DIRECTION_COMPAT_WARNED:
+            FreeCAD.Console.PrintWarning(
+                "Using compatibility path for ConstraintForce.Direction setter.\n"
+            )
+            _DIRECTION_COMPAT_WARNED = True
+
+        _apply_direction_vector(constraint_obj, direction_ref)
+        _DIRECTION_FALLBACK_OBJECT_IDS.add(obj_id)
+        _DIRECTION_FALLBACK_REFS[obj_id] = direction_ref
+
+
+def set_reversed_compat(constraint_obj, reversed_flag):
+    """Set Reversed while tolerating Direction side-effect TypeError."""
+    global _REVERSED_COMPAT_WARNED
+
+    used_fallback = False
+    try:
+        constraint_obj.Reversed = reversed_flag
+    except TypeError as exc:
+        msg = str(exc)
+        if "Type is not a line, plane or Part object" not in msg:
+            raise
+
+        if getattr(constraint_obj, "Reversed", None) != reversed_flag:
+            raise
+
+        if not _REVERSED_COMPAT_WARNED:
+            FreeCAD.Console.PrintWarning(
+                "Using compatibility path for ConstraintForce.Reversed setter.\n"
+            )
+            _REVERSED_COMPAT_WARNED = True
+        used_fallback = True
+
+    obj_id = id(constraint_obj)
+    direction_ref = getattr(constraint_obj, "Direction", None)
+    if not (isinstance(direction_ref, (list, tuple)) and len(direction_ref) == 2):
+        direction_ref = _DIRECTION_FALLBACK_REFS.get(obj_id)
+
+    needs_direction_sync = used_fallback or (obj_id in _DIRECTION_FALLBACK_OBJECT_IDS)
+
+    if needs_direction_sync:
+        _apply_direction_vector(constraint_obj, direction_ref, reversed_flag)
 
 
 def run_all():

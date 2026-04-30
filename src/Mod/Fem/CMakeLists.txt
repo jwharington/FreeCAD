@@ -209,6 +209,7 @@ SET(FemObjects_SRCS
     femobjects/constraint_bodyheatsource.py
     femobjects/constraint_centrif.py
     femobjects/constraint_jig321.py
+    femobjects/constraint_virtualforces.py
     femobjects/constraint_currentdensity.py
     femobjects/constraint_electricchargedensity.py
     femobjects/constraint_electromagnetic.py
@@ -287,6 +288,7 @@ SET(FemSolverCalculix_SRCS
     femsolver/calculix/write_constraint_bodyheatsource.py
     femsolver/calculix/write_constraint_centrif.py
     femsolver/calculix/write_constraint_jig321.py
+    femsolver/calculix/write_constraint_virtualforces.py
     femsolver/calculix/write_constraint_contact.py
     femsolver/calculix/write_constraint_displacement.py
     femsolver/calculix/write_constraint_electricchargedensity.py

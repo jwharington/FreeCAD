@@ -82,8 +82,8 @@ def setup(doc=None, solvertype="ccxtools", test_mode=False):
         (geom_obj, "Vertex8"),
     ]
     con_force.Force = "9000000.0 N"
-    con_force.Direction = (doc.Box, ["Edge5"])
-    con_force.Reversed = True
+    manager.set_direction_compat(con_force, (doc.Box, ["Edge5"]))
+    manager.set_reversed_compat(con_force, True)
     analysis.addObject(con_force)
 
     doc.recompute()

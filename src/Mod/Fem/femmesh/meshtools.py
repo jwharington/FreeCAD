@@ -37,6 +37,8 @@ _FACE_FALLBACK_WARNED = {
     "faces": False,
     "volumes": False,
     "solids": False,
+    "edges": False,
+    "vertices": False,
 }
 
 
@@ -112,9 +114,9 @@ def get_femnodes_by_refshape(femmesh, ref):
             "Element name: {}\n".format(r.ShapeType, ref[0].Name, ref[0].Label, refelement)
         )
         if r.ShapeType == "Vertex":
-            nodes += femmesh.getNodesByVertex(r)
+            nodes += get_nodes_by_vertex_with_fallback(femmesh, r)
         elif r.ShapeType == "Edge":
-            nodes += femmesh.getNodesByEdge(r)
+            nodes += get_nodes_by_edge_with_fallback(femmesh, r)
         elif r.ShapeType == "Face":
             nodes += get_nodes_by_face_with_fallback(femmesh, r)
         elif r.ShapeType == "Solid":
@@ -572,7 +574,7 @@ def get_femelement_directions_theshape(femmesh, femelement_table, theshape):
     for e in theshape.Shape.Edges:
         the_edge = {}
         the_edge["direction"] = e.Vertexes[1].Point - e.Vertexes[0].Point
-        edge_femnodes = femmesh.getNodesByEdge(e)  # femnodes for the current edge
+        edge_femnodes = get_nodes_by_edge_with_fallback(femmesh, e)  # femnodes for the current edge
         # femelements for this edge
         the_edge["ids"] = get_femelements_by_femnodes_std(femelement_table, edge_femnodes)
         for rot in rotations_ids:
@@ -775,7 +777,7 @@ def get_force_obj_vertex_nodeload_table(femmesh, frc_obj):
                 "Object label: {}, "
                 "Element name: {}\n".format(ref_node.ShapeType, o.Name, o.Label, elem)
             )
-            node = femmesh.getNodesByVertex(ref_node)
+            node = get_nodes_by_vertex_with_fallback(femmesh, ref_node)
             elem_info_string = "node load on shape: " + o.Name + ":" + elem
             if len(node) == 1:
                 force_obj_node_load_table.append(
@@ -883,7 +885,7 @@ def get_force_obj_edge_nodeload_table(femmesh, femelement_table, femnodes_mesh, 
         FreeCAD.Console.PrintMessage(f"{bad_refedge}\n")
 
         FreeCAD.Console.PrintMessage("bad_refedge_nodes\n")
-        bad_refedge_nodes = femmesh.getNodesByEdge(bad_refedge)
+        bad_refedge_nodes = get_nodes_by_edge_with_fallback(femmesh, bad_refedge)
         FreeCAD.Console.PrintMessage(f"{len(bad_refedge_nodes)}\n")
         FreeCAD.Console.PrintMessage(f"{bad_refedge_nodes}\n")
         # import FreeCADGui
@@ -925,7 +927,7 @@ def get_force_obj_edge_nodeload_table(femmesh, femelement_table, femnodes_mesh, 
 # ************************************************************************************************
 def get_ref_edgenodes_table(femmesh, femelement_table, refedge):
     edge_table = {}  # { meshedgeID : ( nodeID, ... , nodeID ) }
-    refedge_nodes = femmesh.getNodesByEdge(refedge)
+    refedge_nodes = get_nodes_by_edge_with_fallback(femmesh, refedge)
     if is_solid_femmesh(femmesh):
         refedge_fem_volumeelements = []
         # if at least two nodes of a femvolumeelement are in
@@ -2230,6 +2232,24 @@ def sub_shape_at_global_placement(obj, sub_name):
     return obj.Shape.getElement(sub_name)
 
 
+def vertex_for_femmesh_query(vertex):
+    if getattr(vertex, "ShapeType", "") != "Vertex":
+        return vertex
+    try:
+        return vertex.transformed(FreeCAD.Matrix())
+    except Exception:
+        return vertex
+
+
+def edge_for_femmesh_query(edge):
+    if getattr(edge, "ShapeType", "") != "Edge":
+        return edge
+    try:
+        return edge.transformed(FreeCAD.Matrix())
+    except Exception:
+        return edge
+
+
 def face_for_femmesh_query(face):
     if getattr(face, "ShapeType", "") != "Face":
         return face
@@ -2241,6 +2261,66 @@ def face_for_femmesh_query(face):
         return face.transformed(FreeCAD.Matrix())
     except Exception:
         return face
+
+
+def get_nodes_by_vertex_geometric(femmesh, vertex, tol=1e-7):
+    node_ids = femmesh.Nodes
+    if hasattr(node_ids, "keys"):
+        node_ids = node_ids.keys()
+
+    ref_vertex = vertex_for_femmesh_query(vertex)
+    result = []
+    for node_id in node_ids:
+        node = femmesh.getNodeById(node_id)
+        point = node if hasattr(node, "x") else FreeCAD.Vector(node[0], node[1], node[2])
+        if (point - ref_vertex.Point).Length <= tol:
+            result.append(node_id)
+    return result
+
+
+def get_nodes_by_edge_geometric(femmesh, edge, tol=1e-7):
+    node_ids = femmesh.Nodes
+    if hasattr(node_ids, "keys"):
+        node_ids = node_ids.keys()
+
+    ref_edge = edge_for_femmesh_query(edge)
+    result = []
+    for node_id in node_ids:
+        node = femmesh.getNodeById(node_id)
+        point = node if hasattr(node, "x") else FreeCAD.Vector(node[0], node[1], node[2])
+        try:
+            dist = ref_edge.distToShape(Part.Vertex(point))[0]
+        except Exception:
+            continue
+        if dist <= tol:
+            result.append(node_id)
+    return result
+
+
+def get_nodes_by_vertex_with_fallback(femmesh, vertex, tol=1e-7):
+    vertex = vertex_for_femmesh_query(vertex)
+    try:
+        return femmesh.getNodesByVertex(vertex)
+    except TypeError:
+        if not _FACE_FALLBACK_WARNED["vertices"]:
+            FreeCAD.Console.PrintWarning(
+                "    FemMesh.getNodesByVertex rejected vertex type, using geometric fallback.\n"
+            )
+            _FACE_FALLBACK_WARNED["vertices"] = True
+        return get_nodes_by_vertex_geometric(femmesh, vertex, tol)
+
+
+def get_nodes_by_edge_with_fallback(femmesh, edge, tol=1e-7):
+    edge = edge_for_femmesh_query(edge)
+    try:
+        return femmesh.getNodesByEdge(edge)
+    except TypeError:
+        if not _FACE_FALLBACK_WARNED["edges"]:
+            FreeCAD.Console.PrintWarning(
+                "    FemMesh.getNodesByEdge rejected edge type, using geometric fallback.\n"
+            )
+            _FACE_FALLBACK_WARNED["edges"] = True
+        return get_nodes_by_edge_geometric(femmesh, edge, tol)
 
 
 def get_nodes_by_face_with_fallback(femmesh, face, tol=1e-7):
