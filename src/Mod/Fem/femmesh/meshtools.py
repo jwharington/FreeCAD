@@ -421,7 +421,9 @@ def get_femvolumeelements_by_femfacenodes(femelement_table, node_list):
             for nodeID in femelement_table[elementID]:
                 if nodeID in node_list:
                     nodecount = nodecount + 1
-            if nodecount == 4:
+            # Depending on lookup path, tetra10 face-node queries may return
+            # either corner nodes only (4) or full tri6 face nodes (6).
+            if nodecount == 4 or nodecount == 6:
                 e.append(elementID)
         elif el_nd_ct == 8:  # hexa8
             for nodeID in femelement_table[elementID]:
@@ -1143,19 +1145,29 @@ def get_ref_facenodes_table(femmesh, femelement_table, ref_face):
             ref_face_volume_elements = get_volumes_by_face_with_fallback(
                 femmesh, ref_face, femelement_table, ref_face_nodes
             )
-            if ref_face_volume_elements:  # mesh with tetras
-                FreeCAD.Console.PrintLog(
-                    "  Use of getccxVolumesByFace() has "
-                    "returned volume elements of the ref_face.\n"
-                )
-                for ve in ref_face_volume_elements:
-                    veID = ve[0]
-                    ve_ref_face_nodes = []
-                    for nodeID in femelement_table[veID]:
-                        if nodeID in ref_face_nodes:
-                            ve_ref_face_nodes.append(nodeID)
-                    # { volumeID : ( facenodeID, ... , facenodeID ) } only the ref_face nodes
-                    face_table[veID] = ve_ref_face_nodes
+            if ref_face_volume_elements:
+                first = ref_face_volume_elements[0]
+                if isinstance(first, (tuple, list)):  # mesh with tetras via getccxVolumesByFace
+                    FreeCAD.Console.PrintLog(
+                        "  Use of getccxVolumesByFace() has "
+                        "returned volume elements of the ref_face.\n"
+                    )
+                    for ve in ref_face_volume_elements:
+                        veID = ve[0]
+                        ve_ref_face_nodes = []
+                        for nodeID in femelement_table[veID]:
+                            if nodeID in ref_face_nodes:
+                                ve_ref_face_nodes.append(nodeID)
+                        # { volumeID : ( facenodeID, ... , facenodeID ) } only the ref_face nodes
+                        face_table[veID] = ve_ref_face_nodes
+                else:  # fallback path may already return plain volume IDs
+                    for veID in ref_face_volume_elements:
+                        ve_ref_face_nodes = []
+                        for nodeID in femelement_table[veID]:
+                            if nodeID in ref_face_nodes:
+                                ve_ref_face_nodes.append(nodeID)
+                        face_table[veID] = ve_ref_face_nodes
+                    face_table = build_mesh_faces_of_volume_elements(face_table, femelement_table)
             else:  # mesh with hexa or penta
                 FreeCAD.Console.PrintLog(
                     "  The use of getccxVolumesByFace() has NOT returned "
