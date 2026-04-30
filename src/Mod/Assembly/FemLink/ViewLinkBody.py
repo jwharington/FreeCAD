@@ -278,7 +278,13 @@ class VPLinkBody(VPBase):
                         continue
                 case LineType.LINEAR_ACCELERATION:
                     mass = self.Object.Proxy.getMass(self.Object)
-                    p1 -= v * self.Object.ViewObject.AccelerationScale * mass
+                    acc_vec = -(v * self.Object.ViewObject.AccelerationScale * mass)
+                    # Keep very small acceleration arrows readable.
+                    # (Force arrows already have larger cone heads; accel uses a small sphere.)
+                    min_visual_length = 2.0
+                    if v.Length > 0.0 and acc_vec.Length < min_visual_length:
+                        acc_vec *= min_visual_length / max(acc_vec.Length, 1.0e-16)
+                    p1 += acc_vec
                 case _:
                     pass
 
@@ -311,9 +317,20 @@ class VPLinkBody(VPBase):
         physical_scale: float = 100.0,
     ):
         vobj = self.ViewObject
-        f_max = max(force_max, linear_acceleration_max)
-        if f_max > 0:
-            vobj.ForceScale = physical_scale / f_max
-            vobj.AccelerationScale = physical_scale / f_max
+
+        # Scale force and acceleration independently so one channel cannot
+        # collapse the other to near-zero visual length.
+        if force_max > 0:
+            vobj.ForceScale = physical_scale / force_max
+        elif linear_acceleration_max > 0:
+            # Fallback keeps force vectors visible when force_max is unavailable.
+            vobj.ForceScale = physical_scale / linear_acceleration_max
+
+        if linear_acceleration_max > 0:
+            vobj.AccelerationScale = physical_scale / linear_acceleration_max
+        elif force_max > 0:
+            # Fallback keeps acceleration vectors visible when only forces exist.
+            vobj.AccelerationScale = physical_scale / force_max
+
         if torque_max > 0:
             vobj.TorqueScale = physical_scale / torque_max

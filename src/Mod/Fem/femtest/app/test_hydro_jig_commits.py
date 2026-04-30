@@ -30,7 +30,8 @@ from femobjects.constraint_hydrostaticpressure import (
 )
 from femobjects.constraint_jig321 import ConstraintJig321
 from femobjects.constraint_reaction import ConstraintReaction
-from femsolver.calculix import write_step_output
+from femsolver.calculix import write_constraint_pressure, write_step_output
+from femmesh import meshsetsgetter
 from femtools import checksanalysis
 from femtools.membertools import AnalysisMember
 from FreeCAD import Vector
@@ -230,6 +231,101 @@ class TestHydroJigCommits(unittest.TestCase):
         self.assertEqual(0.0, elem_info["pressure"][0])
         self.assertAlmostEqual(-proxy.scale * 2.0, elem_info["pressure"][1])
         self.assertAlmostEqual(proxy.scale * 5.0, elem_info["pressure"][2])
+
+    # ********************************************************************************************
+    def test_write_constraint_pressure_skips_malformed_pressurefaces_entry(self):
+        femobj = {
+            "PressureFaces": [(False,)],
+            "PressureFaceInfo": {},
+            "PressureNodeInfo": {},
+        }
+        prs_obj = SimpleNamespace(
+            EnableAmplitude=False,
+            Reversed=False,
+            Name="ConstraintReaction",
+            Proxy=SimpleNamespace(get_pressure_field=lambda _obj, _elem_info: True),
+        )
+        ccxwriter = SimpleNamespace(
+            mesh_object=SimpleNamespace(FemMesh=SimpleNamespace(Faces=())),
+        )
+
+        buf = StringIO()
+        write_constraint_pressure.write_meshdata_constraint(buf, femobj, prs_obj, ccxwriter)
+
+        self.assertIn("*DLOAD", buf.getvalue())
+
+    # ********************************************************************************************
+    def test_write_constraint_pressure_handles_missing_faceinfo_for_subface_list(self):
+        class _FakeFemMesh:
+            Faces = (1,)
+            Nodes = {
+                10: Vector(0, 0, 0),
+                11: Vector(1, 0, 0),
+                12: Vector(0, 1, 0),
+            }
+
+            def getElementNodes(self, _elem_id):
+                return (10, 11, 12)
+
+        femobj = {
+            "PressureFaces": [((None, ("Face1",)), [[1, 1]], True)],
+            "PressureFaceInfo": {},
+            "PressureNodeInfo": {},
+        }
+        prs_obj = SimpleNamespace(
+            EnableAmplitude=False,
+            Reversed=False,
+            Name="ConstraintReaction",
+            Proxy=SimpleNamespace(),
+            Pressure=SimpleNamespace(getValueAs=lambda _unit: SimpleNamespace(Value=1.0)),
+        )
+        ccxwriter = SimpleNamespace(
+            mesh_object=SimpleNamespace(FemMesh=_FakeFemMesh()),
+        )
+
+        buf = StringIO()
+        write_constraint_pressure.write_meshdata_constraint(buf, femobj, prs_obj, ccxwriter)
+
+        out = buf.getvalue()
+        self.assertIn("*DLOAD", out)
+        self.assertIn("1,P1,1", out)
+
+    # ********************************************************************************************
+    def test_meshsetsgetter_pressure_info_keys_cover_all_surface_entries(self):
+        getter = meshsetsgetter.MeshSetsGetter.__new__(meshsetsgetter.MeshSetsGetter)
+
+        getter.member = SimpleNamespace(cons_pressure=[])
+        getter.face_masks = {
+            "mask_tetra4": {0b0111: 1, 0b1011: 2, 0b1101: 3, 0b1110: 4},
+            "mask_tetra10": {},
+            "mask_hexa8": {},
+            "mask_hexa20": {},
+            "mask_penta6": {},
+            "mask_penta15": {},
+        }
+        getter.femelement_table = {42: (1, 2, 3, 4)}
+        getter.femnodes_mesh = {
+            1: Vector(0, 0, 0),
+            2: Vector(1, 0, 0),
+            3: Vector(0, 1, 0),
+            4: Vector(0, 0, 1),
+        }
+        getter.femmesh = SimpleNamespace()
+
+        constraint_obj = SimpleNamespace(Name="ConstraintReaction", References=[])
+        feature = (constraint_obj, ("Face7",))
+        femobj = {"Object": constraint_obj}
+        getter.member.cons_pressure = [femobj]
+        getter._get_elements = lambda _obj: [(feature, [[42, 1], [42, 2], [42, 3], [42, 4]], True)]
+
+        meshsetsgetter.MeshSetsGetter.get_constraints_pressure_faces(getter)
+
+        expected_keys = {(42, 1), (42, 2), (42, 3), (42, 4)}
+        self.assertEqual(expected_keys, set(femobj["PressureFaceInfo"].keys()))
+        self.assertEqual(expected_keys, set(femobj["PressureNodeInfo"].keys()))
+
+        # Ensure local face numbering maps to oriented local nodes (tetra4 face 2).
+        self.assertEqual([1, 4, 2], femobj["PressureNodeInfo"][(42, 2)])
 
     # ********************************************************************************************
     def test_reaction_get_contact_unknown_model_raises(self):

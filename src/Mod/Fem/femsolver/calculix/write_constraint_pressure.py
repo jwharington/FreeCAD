@@ -100,12 +100,6 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
                         face_table_entry_cache[cache_key] = table_val
                         return table_val
 
-        # Fallback for callers passing scalar face ids directly.
-        if face in table:
-            val = table[face]
-            face_table_entry_cache[cache_key] = val
-            return val
-
         raise KeyError(key)
 
     if has_pressure_field(prs_obj):
@@ -173,7 +167,17 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
         face_element_cache[face_k] = fe
         return fe
 
-    for feature, surface, is_sub_el in femobj["PressureFaces"]:
+    for pressure_face in femobj["PressureFaces"]:
+        if len(pressure_face) != 3:
+            Console.PrintWarning(
+                "Invalid PressureFaces entry for {}: {}. Skipping.\n".format(
+                    prs_obj.Name,
+                    pressure_face,
+                )
+            )
+            continue
+
+        feature, surface, is_sub_el = pressure_face
 
         def add_elem_info(face, elem, face_no, rev):
             nonlocal warned_faceinfo_fallback

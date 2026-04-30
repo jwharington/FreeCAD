@@ -24,7 +24,7 @@ def get_information():
         "meshtype": "face",
         "meshelement": "Tria6",
         "constraints": ["fixed", "reaction"],
-        "solvers": [],
+        "solvers": ["ccxtools"],
         "material": "solid",
         "equations": ["mechanical"],
     }
@@ -43,8 +43,7 @@ pressure constraint acting on the cylindrical face of a beam cutout.
 """
 
 
-def setup(doc=None, solvertype=None):
-    del solvertype
+def setup(doc=None, solvertype="ccxtools"):
 
     # init FreeCAD document
     if doc is None:
@@ -102,6 +101,23 @@ def setup(doc=None, solvertype=None):
 
     # analysis
     analysis = ObjectsFem.makeAnalysis(doc, "Analysis")
+
+    # solver
+    if solvertype == "ccxtools":
+        solver_obj = ObjectsFem.makeSolverCalculiXCcxTools(doc, "CalculiXCcxTools")
+        solver_obj.WorkingDir = ""
+        solver_obj.SplitInputWriter = False
+        solver_obj.AnalysisType = "static"
+        solver_obj.GeometricalNonlinearity = False
+        solver_obj.ThermoMechSteadyState = False
+        solver_obj.MatrixSolverType = "default"
+        solver_obj.IterationsControlParameterTimeUse = False
+        analysis.addObject(solver_obj)
+    else:
+        FreeCAD.Console.PrintWarning(
+            "Unknown or unsupported solver type: {}. "
+            "No solver object was created.\n".format(solvertype)
+        )
 
     # shell thickness + material for 2D face mesh setup
     thickness_obj = ObjectsFem.makeElementGeometry2D(

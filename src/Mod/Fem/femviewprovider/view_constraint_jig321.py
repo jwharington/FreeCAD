@@ -51,10 +51,11 @@ class VPConstraintJig321(view_base_femconstraint.VPBaseFemConstraint):
         self.updateSymbols()
 
     def _sync_symbols_visibility(self, is_visible):
-        if is_visible:
-            self.symbols_switch.whichChild.setValue(coin.SoSwitch.SO_SWITCH_ALL)
-        else:
-            self.symbols_switch.whichChild.setValue(coin.SoSwitch.SO_SWITCH_NONE)
+        # Some pivy/Coin builds do not expose SoSwitch symbolic constants.
+        # We only have one child in this switch, so use numeric indices:
+        #   0  -> show first child
+        #  -1  -> show none
+        self.symbols_switch.whichChild.setValue(0 if is_visible else -1)
 
     def updateSymbols(self):
         # Clear previous symbols
@@ -141,6 +142,25 @@ class VPConstraintJig321(view_base_femconstraint.VPBaseFemConstraint):
         add_arrow(v2, z_axis, (0, 0, 1))
         # Draw at p1: z
         add_arrow(v1, z_axis, (0, 0, 1))
+
+        # Add support point markers as a robust visibility fallback for GPUs/
+        # drivers where line-only overlays are hard to see.
+        def add_point_marker(origin, color):
+            sep = coin.SoSeparator()
+            mat = coin.SoBaseColor()
+            mat.rgb.setValue(color)
+            sep.addChild(mat)
+            tr = coin.SoTranslation()
+            tr.translation.setValue(float(origin[0]), float(origin[1]), float(origin[2]))
+            sep.addChild(tr)
+            sphere = coin.SoSphere()
+            sphere.radius = max(3.0, 0.06 * arr_len)
+            sep.addChild(sphere)
+            self.symbols_group.addChild(sep)
+
+        add_point_marker(v3, (1, 1, 0))
+        add_point_marker(v2, (1, 1, 0))
+        add_point_marker(v1, (1, 1, 0))
 
     def updateData(self, obj, prop):
         if prop in ("Supports"):

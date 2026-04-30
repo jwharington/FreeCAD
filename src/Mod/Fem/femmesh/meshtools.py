@@ -1567,6 +1567,17 @@ def get_elements(sets_getter, ref_pair, face_masks, edge_masks):
                     elem = get_elements_by_references(sets_getter, ref_pair)
                     is_sub_element = False
 
+    if not elem:
+        # Some generated constraints may carry an empty sub-reference ("").
+        # Keep output shape stable but avoid noisy warnings in that case.
+        if sub_ref not in ("", None):
+            FreeCAD.Console.PrintWarning(
+                "    No FEM elements found for reference {}.{} (geom_type='{}', model_dim={}).\n".format(
+                    ref_obj.Name, sub_ref, geom_type, model_dim
+                )
+            )
+        return ((ref_obj, (sub_ref,)), [], is_sub_element)
+
     return (*elem, is_sub_element)
 
 
