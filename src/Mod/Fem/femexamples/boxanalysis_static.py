@@ -99,20 +99,24 @@ def setup(doc=None, solvertype="ccxtools", test_mode=False):
     analysis.addObject(solver_obj)
 
     # constraint fixed
-    con_fixed = ObjectsFem.makeConstraintFixed(doc, "Fixed")
+    con_fixed = ObjectsFem.makeConstraintFixed(doc, "FemConstraintFixed")
     con_fixed.References = [(geom_obj, "Face1")]
     analysis.addObject(con_fixed)
 
     # constraint force
-    con_force = ObjectsFem.makeConstraintForce(doc, "Force")
+    # Direction reference must be a line/plane geo feature in current FEM API.
+    # Use an explicit App::Line along +Z to preserve the previous Edge5-based direction.
+    force_direction = doc.addObject("App::Line", "ForceDirection")
+
+    con_force = ObjectsFem.makeConstraintForce(doc, "FemConstraintForce")
     con_force.References = [(geom_obj, "Face6")]
     con_force.Force = "40000.0 N"
-    con_force.Direction = (geom_obj, ["Edge5"])
+    con_force.Direction = (force_direction, [])
     con_force.Reversed = True
     analysis.addObject(con_force)
 
     # constraint pressure
-    con_pressure = ObjectsFem.makeConstraintPressure(doc, name="Pressure")
+    con_pressure = ObjectsFem.makeConstraintPressure(doc, name="FemConstraintPressure")
     con_pressure.References = [(geom_obj, "Face2")]
     con_pressure.Pressure = "1000.0 MPa"
     con_pressure.Reversed = False
