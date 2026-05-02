@@ -529,12 +529,88 @@ class MeshSetsGetter:
             vec3 = vec1.cross(vec2)
             return (P1 + P2 + P3) / 3.0, 0.5 * vec3.Length, vec3.normalize()
 
+        def _tri6_gauss_data(positions):
+            """3-point Gauss integration data for a 6-node curved triangle (Tri6/TRIA6).
+
+            Node ordering must be [c1, c2, c3, m12, m23, m31] where c_i are corner
+            nodes and m_ij is the midside node between c_i and c_j.  This matches the
+            ordering produced by build_mesh_faces_of_volume_elements for Tet10 faces.
+
+            Uses the same 3-point Gauss rule as CalculiX for TRIA6 pressure loads.
+
+            Returns (centroid, area, normal, gauss_pts) where::
+
+                gauss_pts = [(x_gp, J_vec, weight), ...]
+
+            ``J_vec = (∂x/∂L1) × (∂x/∂L2)`` at each Gauss point (area-weighted
+            outward normal vector, same sign convention as the flat-triangle cross
+            product from get_triangle_info).  ``weight`` includes the 1/2
+            reference-triangle area factor so that::
+
+                Σ_g J_g * w_g  =  vector area of curved element
+                Σ_g |J_g| * w_g  =  scalar area of curved element
+
+            Force from element pressure p (with existing rev sign factor):
+                ``F = p * Σ_g J_g * w_g``
+            Torque about base (same cross-product order as existing L_i.cross(r_i)):
+                ``T = Σ_g (p * J_g * w_g).cross(x_g − base)``
+            """
+            # 3-point Gauss in area coordinates (L1, L2, L3=1-L1-L2).
+            # Weight 1/6 = (1/3) * (1/2) includes the reference-triangle area factor.
+            gp_coords = ((2 / 3, 1 / 6, 1 / 6), (1 / 6, 2 / 3, 1 / 6), (1 / 6, 1 / 6, 2 / 3))
+            w = 1.0 / 6.0
+
+            gauss_pts = []
+            for L1, L2, L3 in gp_coords:
+                N = [
+                    L1 * (2 * L1 - 1),
+                    L2 * (2 * L2 - 1),
+                    L3 * (2 * L3 - 1),
+                    4 * L1 * L2,
+                    4 * L2 * L3,
+                    4 * L3 * L1,
+                ]
+                dN_dL1 = [4 * L1 - 1, 0, 1 - 4 * L3, 4 * L2, -4 * L2, 4 * (L3 - L1)]
+                dN_dL2 = [0, 4 * L2 - 1, 1 - 4 * L3, 4 * L1, 4 * (L3 - L2), -4 * L1]
+
+                x_gp = FreeCAD.Vector(0, 0, 0)
+                dx_dL1 = FreeCAD.Vector(0, 0, 0)
+                dx_dL2 = FreeCAD.Vector(0, 0, 0)
+                for i in range(6):
+                    x_gp += N[i] * positions[i]
+                    dx_dL1 += dN_dL1[i] * positions[i]
+                    dx_dL2 += dN_dL2[i] * positions[i]
+
+                J_vec = dx_dL1.cross(dx_dL2)
+                gauss_pts.append((x_gp, J_vec, w))
+
+            # Derive (centroid, area, normal) for backward-compat callers.
+            va = FreeCAD.Vector(0, 0, 0)
+            wp = FreeCAD.Vector(0, 0, 0)
+            wt = 0.0
+            for x_gp, J_vec, wg in gauss_pts:
+                va += J_vec * wg
+                jm = J_vec.Length
+                wp += x_gp * (jm * wg)
+                wt += jm * wg
+            area = va.Length
+            if area > 0:
+                normal = va / area
+            else:
+                fallback = (positions[1] - positions[0]).cross(positions[2] - positions[0])
+                normal = (
+                    fallback / fallback.Length if fallback.Length > 0 else FreeCAD.Vector(0, 0, 1)
+                )
+            centroid = wp / wt if wt > 0 else (positions[0] + positions[1] + positions[2]) / 3.0
+            return centroid, area, normal, gauss_pts
+
         # Keep a canonical per-face cache keyed exactly as PressureFaces entries
         # (e.g. (elem_id, local_face_no)). This prevents divergence between
         # PressureFaces and PressureFaceInfo/PressureNodeInfo for ambiguous
         # geometric face-to-volume mappings.
         face_nodes_cache = {}
         face_info_cache = {}
+        gauss_data_cache = {}
         ref_nodes_cache = {}
 
         mask_by_node_count = {
@@ -592,9 +668,15 @@ class MeshSetsGetter:
                 return []
             elem_nodes = list(elem_nodes)
 
-            # Fast/accurate path: derive local face nodes from solver mask by
-            # local face number (CalculiX face ids), then normalize orientation
-            # via build_mesh_faces_of_volume_elements.
+            ref_nodes = get_reference_nodes_set(feature)
+
+            # Fast path: derive local face nodes from solver mask by local face
+            # number (CalculiX face ids), then normalize orientation via
+            # build_mesh_faces_of_volume_elements.
+            #
+            # Safety check: if we have geometric reference nodes and the mask-
+            # resolved nodes are not a subset of the reference nodes, reject this
+            # candidate and fall back to geometric matching.
             if face_no is not None:
                 bitmask = face_no_to_bitmask.get(len(elem_nodes), {}).get(face_no)
                 if bitmask is not None:
@@ -602,23 +684,36 @@ class MeshSetsGetter:
                         elem_nodes[idx] for idx in range(len(elem_nodes)) if bitmask & (1 << idx)
                     ]
                     if local_face_nodes:
-                        try:
-                            oriented = meshtools.build_mesh_faces_of_volume_elements(
-                                {elem_id: local_face_nodes},
-                                self.femelement_table,
-                            ).get(elem_id, local_face_nodes)
-                            if len(oriented) >= 3:
-                                return oriented
-                        except Exception:
-                            if len(local_face_nodes) >= 3:
-                                return local_face_nodes
+                        if ref_nodes and any(
+                            node_id not in ref_nodes for node_id in local_face_nodes
+                        ):
+                            local_face_nodes = []
+                        if local_face_nodes:
+                            try:
+                                oriented = meshtools.build_mesh_faces_of_volume_elements(
+                                    {elem_id: local_face_nodes},
+                                    self.femelement_table,
+                                ).get(elem_id, local_face_nodes)
+                                if len(oriented) >= 3:
+                                    return oriented
+                            except Exception:
+                                if len(local_face_nodes) >= 3:
+                                    return local_face_nodes
 
-            # Geometric fallback for unexpected/missing face-no masks.
-            ref_nodes = get_reference_nodes_set(feature)
+            # Geometric fallback for unexpected/missing face-no masks or for
+            # face-no mappings that do not match the selected reference face.
             if ref_nodes:
                 ref_face_nodes = [node_id for node_id in elem_nodes if node_id in ref_nodes]
                 if len(ref_face_nodes) >= 3:
-                    return ref_face_nodes
+                    try:
+                        oriented = meshtools.build_mesh_faces_of_volume_elements(
+                            {elem_id: ref_face_nodes},
+                            self.femelement_table,
+                        ).get(elem_id, ref_face_nodes)
+                        if len(oriented) >= 3:
+                            return oriented
+                    except Exception:
+                        return ref_face_nodes
 
             # Last resort: for face-element meshes this is often already a face.
             if len(elem_nodes) >= 3:
@@ -632,6 +727,7 @@ class MeshSetsGetter:
 
             face_info = {}
             node_info = {}
+            gauss_info = {}
 
             for pressure_face in result:
                 if len(pressure_face) != 3:
@@ -654,15 +750,26 @@ class MeshSetsGetter:
                     node_info[key] = sorted_nodes
                     info = face_info_cache.get(key)
                     if info is None:
-                        P1 = self.femnodes_mesh[sorted_nodes[0]]
-                        P2 = self.femnodes_mesh[sorted_nodes[1]]
-                        P3 = self.femnodes_mesh[sorted_nodes[2]]
-                        info = get_triangle_info(P1, P2, P3)
+                        node_positions = [self.femnodes_mesh[nid] for nid in sorted_nodes]
+                        if len(node_positions) == 6:
+                            # Curved Tri6 element: use quadratic Gauss integration to
+                            # match CalculiX's internal curved-surface pressure integration.
+                            centroid, area, normal, gauss_pts = _tri6_gauss_data(node_positions)
+                            info = (centroid, area, normal)
+                        else:
+                            # Flat triangle (Tri3) or unsupported element: flat approximation.
+                            info = get_triangle_info(
+                                node_positions[0], node_positions[1], node_positions[2]
+                            )
+                            gauss_pts = None
                         face_info_cache[key] = info
+                        gauss_data_cache[key] = gauss_pts
                     face_info[key] = info
+                    gauss_info[key] = gauss_data_cache.get(key)
 
             femobj["PressureFaceInfo"] = face_info
             femobj["PressureNodeInfo"] = node_info
+            femobj["PressureFaceGaussData"] = gauss_info
 
     def get_constraints_electrostatic_faces(self):
         for femobj in self.member.cons_electrostatic:

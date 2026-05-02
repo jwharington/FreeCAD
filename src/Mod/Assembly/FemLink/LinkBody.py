@@ -122,10 +122,13 @@ class LinkBody(FPBase):
 
     The workflow is treated as quasi-steady, following D'Alembert's principle:
     inertia effects are converted into statically equivalent actions for each
-    sampled state. Small residual forces and moments can remain because of
-    rounding and other numerical approximations. A 3-2-1 jig constraint is
-    therefore added to support the model, and its influence should normally be
-    negligible in the resulting stress field.
+    sampled state.
+
+    Physical consistency requirement:
+    when VirtualForces and Reaction loads are correctly balanced for a load case,
+    the Jig321 reaction must be zero (up to numerical noise). Non-zero Jig
+    reactions are therefore treated as a closure/sign/reference mismatch signal,
+    not as an expected operating condition.
     """
 
     def __init__(self, obj, body=None):
@@ -607,6 +610,8 @@ class LinkBody(FPBase):
             obj.Force = force
             obj.Torque = torque
             obj.Origin.Base = origin
+            if hasattr(body, "CenterOfMass") and hasattr(obj, "CenterOfMass"):
+                obj.CenterOfMass = body.CenterOfMass
 
             reference = get_reference_subobject(attr_side("Reference", None))
             if has_valid_reference_subobject(reference):
