@@ -162,15 +162,15 @@ from femexamples.assembly_linkbody_free_dynamics import setup
 setup()
 
 This example demonstrates the Assembly -> FEM LinkBody workflow for a free-
-dynamics pendulum arm rotating on a cylindrical bearing.
+dynamics pendulum arm rotating on a revolute bearing.
 
 Geometry
 --------
 	Housing  : Part::Cylinder, O25 mm bore, 50 mm wide  (fixed ground body)
 	Pendulum : Part::Cut(Box - Cylinder), 525 x 50 x 50 mm steel arm
 
-The two parts are connected by a Cylindrical joint (constrains five DOF,
-leaves axial rotation free) at the assembly origin. The LinkBody feature
+The two parts are connected by a Revolute joint (constrains five DOF,
+leaves one rotation free) at the assembly origin. The LinkBody feature
 links the pendulum's App::Link in the assembly to its dedicated FEM analysis.
 
 Snapshot conditions (45 deg swing, w = 1 rad/s about +Y)
@@ -198,7 +198,15 @@ load-case pipeline used by TaskAssemblyLinkBody:
 """
 
 
-def setup(doc=None, solvertype="ccxtools", exercise_loadcases=True):
+def setup(
+	doc=None,
+	solvertype="ccxtools",
+	exercise_loadcases=True,
+	assembly_rotation_deg_x=0.0,
+	assembly_shift_x=0.0,
+	assembly_shift_y=0.0,
+	assembly_shift_z=0.0,
+):
 
 	if doc is None:
 		doc = init_doc()
@@ -251,6 +259,12 @@ def setup(doc=None, solvertype="ccxtools", exercise_loadcases=True):
 	assembly = None
 	pendulum_link = None
 	cyl_joint = None
+	assembly_rot_x = FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), float(assembly_rotation_deg_x))
+	assembly_shift = FreeCAD.Vector(
+		float(assembly_shift_x),
+		float(assembly_shift_y),
+		float(assembly_shift_z),
+	)
 
 	try:
 		try:
@@ -264,16 +278,26 @@ def setup(doc=None, solvertype="ccxtools", exercise_loadcases=True):
 		housing_link = assembly.newObject("App::Link", "Housing")
 		housing_link.LinkedObject = housing_shape
 		# Rotation(X,-90) aligns cylinder axis (local Z) with world +Y (pendulum rotation axis).
+		# Optional assembly_rot_x pre-rotates the entire mechanism about global X.
 		housing_link.Placement = FreeCAD.Placement(
-			FreeCAD.Vector(-25, 0, 0),
-			FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), -90),
+			FreeCAD.Vector(-25, 0, 0) + assembly_shift,
+			assembly_rot_x.multiply(FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), -90)),
 		)
+		if abs(float(assembly_rotation_deg_x)) > 1.0e-12:
+			FreeCAD.Console.PrintMessage(
+				f"[LinkBody] Assembly pre-rotation about X: {float(assembly_rotation_deg_x):.3f} deg\n"
+			)
+		if assembly_shift.Length > 1.0e-12:
+			FreeCAD.Console.PrintMessage(
+				"[LinkBody] Assembly shift (mm): "
+				f"({assembly_shift.x:.3f},{assembly_shift.y:.3f},{assembly_shift.z:.3f})\n"
+			)
 
 		pendulum_link = assembly.newObject("App::Link", "Pendulum")
 		pendulum_link.LinkedObject = pendulum_shape
 		pendulum_link.Placement = FreeCAD.Placement(
-			FreeCAD.Vector(0, 0, 0),
-			FreeCAD.Rotation(FreeCAD.Vector(0, 1, 0), 45),
+			FreeCAD.Vector(0, 0, 0) + assembly_shift,
+			assembly_rot_x.multiply(FreeCAD.Rotation(FreeCAD.Vector(0, 1, 0), 45)),
 		)
 
 		joint_group = assembly.newObject("Assembly::JointGroup", "Joints")
@@ -290,9 +314,9 @@ def setup(doc=None, solvertype="ccxtools", exercise_loadcases=True):
 			if FreeCAD.GuiUp:
 				_VPGroundedJoint(ground_joint.ViewObject)
 
-			cyl_joint = joint_group.newObject("App::FeaturePython", "CylindricalJoint")
-			cyl_joint.Label = "CylindricalJoint"
-			_Joint(cyl_joint, 2)
+			cyl_joint = joint_group.newObject("App::FeaturePython", "RevoluteJoint")
+			cyl_joint.Label = "RevoluteJoint"
+			_Joint(cyl_joint, 1)
 			if FreeCAD.GuiUp:
 				_VPJoint(cyl_joint.ViewObject)
 			cyl_joint.Detach1 = True
