@@ -2098,8 +2098,8 @@ class TestLinkBody(unittest.TestCase):
             self.assertTrue(assemblies, "No assembly object found")
             assembly = assemblies[0]
 
-            joints = [o for o in doc.Objects if getattr(o, "Name", "") == "CylindricalJoint"]
-            self.assertTrue(joints, "CylindricalJoint missing")
+            joints = [o for o in doc.Objects if getattr(o, "Name", "") == "RevoluteJoint"]
+            self.assertTrue(joints, "RevoluteJoint missing")
 
             _, n_frames = ex.create_and_run_simulation(assembly, joints[0], motion_formula="")
             self.assertGreater(n_frames, 1, "Simulation should produce at least 2 frames")
@@ -2377,7 +2377,7 @@ class TestLinkBody(unittest.TestCase):
         # Use DEFAULT accel mode (g - a_raw): GRAV + Reaction = 0 always.
         series = self._run_multistep_jig_residual_case(
             ex,
-            joint_name="CylindricalJoint",
+            joint_name="RevoluteJoint",
             dynamic=True,
             motion_type="Angular",
             # Empty formula => no prescribed driver, free response under gravity.
@@ -2389,6 +2389,106 @@ class TestLinkBody(unittest.TestCase):
         # resulting Jig reaction resultant should be near equilibrium
         # (ideally zero, up to approximation/numerical noise).
         self.assertLess(max(series["residual"]), 1.0)
+
+    def test_calculix_jig_force_residual_analysis_dynamic_mode_rotated_x30(self):
+        """Analysis mode: rotate free pendulum rig by +30 deg about X and sweep dynamic cases."""
+        _msg("  Analysis test: dynamic free-pendulum rotated +30 deg about X")
+
+        ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
+        setup_kwargs = {"assembly_rotation_deg_x": 30.0}
+
+        # Analysis-only pass: keep strict checks on extracted series shape,
+        # but disable per-component near-zero assertions in helper.
+        series_free = self._run_multistep_jig_residual_case(
+            ex,
+            joint_name="RevoluteJoint",
+            dynamic=True,
+            motion_type="Angular",
+            motion_formula="",
+            case_name="dynamic_rot_x30_free",
+            residual_limit=1.0e9,
+            setup_kwargs=setup_kwargs,
+        )
+
+        series_driven = self._run_multistep_jig_residual_case(
+            ex,
+            joint_name="RevoluteJoint",
+            dynamic=True,
+            motion_type="Angular",
+            motion_formula="12*sin(6*time)",
+            case_name="dynamic_rot_x30_driven",
+            residual_limit=1.0e9,
+            setup_kwargs=setup_kwargs,
+        )
+
+        for label, series in (("free", series_free), ("driven", series_driven)):
+            residuals = [float(v) for v in series["residual"]]
+            self.assertGreater(len(residuals), 5)
+            App.Console.PrintMessage(
+                "dynamic_rot_x30 {} residual summary: min={:.6e} max={:.6e} "
+                "mean={:.6e} median={:.6e} N\n".format(
+                    label,
+                    min(residuals),
+                    max(residuals),
+                    statistics.mean(residuals),
+                    statistics.median(residuals),
+                )
+            )
+            # Analysis-only sanity: values must remain finite and non-pathological.
+            for residual in residuals:
+                self.assertLess(abs(residual), 1.0e12)
+
+    def test_calculix_jig_force_residual_analysis_dynamic_mode_shifted_xyz(self):
+        """Analysis mode: shift free-pendulum rig in X/Y/Z and sweep free dynamic cases."""
+        _msg("  Analysis test: dynamic free-pendulum shifted in X/Y/Z")
+
+        ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
+        shift_cases = [
+            ("x", {"assembly_shift_x": 200.0, "assembly_shift_y": 0.0, "assembly_shift_z": 0.0}),
+            ("y", {"assembly_shift_x": 0.0, "assembly_shift_y": -180.0, "assembly_shift_z": 0.0}),
+            ("z", {"assembly_shift_x": 0.0, "assembly_shift_y": 0.0, "assembly_shift_z": 150.0}),
+        ]
+
+        axis_code = {"x": 0.0, "y": 1.0, "z": 2.0}
+        median_residuals = []
+
+        for axis, setup_kwargs in shift_cases:
+            series = self._run_multistep_jig_residual_case(
+                ex,
+                joint_name="RevoluteJoint",
+                dynamic=True,
+                motion_type="Angular",
+                motion_formula="",
+                case_name=f"dynamic_shift_{axis}_free",
+                residual_limit=1.0e9,
+                setup_kwargs=setup_kwargs,
+            )
+
+            residuals = [float(v) for v in series["residual"]]
+            self.assertGreater(len(residuals), 5)
+            App.Console.PrintMessage(
+                "dynamic_shift_{} residual summary: min={:.6e} max={:.6e} "
+                "mean={:.6e} median={:.6e} N\n".format(
+                    axis,
+                    min(residuals),
+                    max(residuals),
+                    statistics.mean(residuals),
+                    statistics.median(residuals),
+                )
+            )
+            for residual in residuals:
+                self.assertLess(abs(residual), 1.0e12)
+
+            median_residuals.append((axis_code[axis], statistics.median(residuals)))
+
+        self._maybe_plot_xy_series(
+            "dynamic_shift_axis_median_residual",
+            [v[0] for v in median_residuals],
+            [v[1] for v in median_residuals],
+            x_label="Shift axis code (0=x, 1=y, 2=z)",
+            y_label="Median residual (N)",
+            title="Free-pendulum: residual sensitivity to global translation axis",
+        )
 
     def test_calculix_jig_force_residual_magnitude_kinematic_mode(self):
         """Kinematic mode residual stays small for each real load case."""
@@ -2593,7 +2693,7 @@ class TestLinkBody(unittest.TestCase):
         ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
         series = self._run_multistep_jig_residual_case(
             ex,
-            joint_name="CylindricalJoint",
+            joint_name="RevoluteJoint",
             dynamic=True,
             motion_type="Angular",
             motion_formula="",
@@ -2613,7 +2713,7 @@ class TestLinkBody(unittest.TestCase):
         ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
         series = self._run_multistep_jig_residual_case(
             ex,
-            joint_name="CylindricalJoint",
+            joint_name="RevoluteJoint",
             dynamic=True,
             motion_type="Angular",
             motion_formula="",
@@ -2632,7 +2732,7 @@ class TestLinkBody(unittest.TestCase):
         ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
         series = self._run_multistep_jig_residual_case(
             ex,
-            joint_name="CylindricalJoint",
+            joint_name="RevoluteJoint",
             dynamic=True,
             motion_type="Angular",
             motion_formula="",
@@ -2651,7 +2751,7 @@ class TestLinkBody(unittest.TestCase):
         ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
         baseline, runs = self._run_fictitious_force_sweep(
             example_module=ex,
-            joint_name="CylindricalJoint",
+            joint_name="RevoluteJoint",
             dynamic=True,
             motion_type="Angular",
             motion_formula="",
@@ -2690,7 +2790,7 @@ class TestLinkBody(unittest.TestCase):
         ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
         baseline, runs = self._run_fictitious_force_sweep(
             example_module=ex,
-            joint_name="CylindricalJoint",
+            joint_name="RevoluteJoint",
             dynamic=True,
             motion_type="Angular",
             motion_formula="",
@@ -2730,7 +2830,7 @@ class TestLinkBody(unittest.TestCase):
         ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
         _baseline, runs = self._run_fictitious_force_sweep(
             example_module=ex,
-            joint_name="CylindricalJoint",
+            joint_name="RevoluteJoint",
             dynamic=True,
             motion_type="Angular",
             motion_formula="",
@@ -2769,7 +2869,7 @@ class TestLinkBody(unittest.TestCase):
 
         series_low = self._run_multistep_jig_residual_case(
             ex,
-            joint_name="CylindricalJoint",
+            joint_name="RevoluteJoint",
             dynamic=True,
             motion_type="Angular",
             motion_formula="",
@@ -2789,7 +2889,7 @@ class TestLinkBody(unittest.TestCase):
         )
         series_high = self._run_multistep_jig_residual_case(
             ex,
-            joint_name="CylindricalJoint",
+            joint_name="RevoluteJoint",
             dynamic=True,
             motion_type="Angular",
             motion_formula="",
