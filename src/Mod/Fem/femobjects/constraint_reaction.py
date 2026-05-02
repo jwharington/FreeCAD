@@ -98,6 +98,13 @@ class ConstraintReaction(base_fempythonobject.BaseFemPythonObject):
             type="App::PropertyBool", name="Reversed", group="Distribution", doc="Flip direction."
         ).Reversed = False
 
+        obj.addProperty(
+            type="App::PropertyVector",
+            name="CenterOfMass",
+            group="AppliedLoad",
+            doc="Center of mass of the body (body-local frame). Used to compute zero-COM-moment torque target.",
+        ).CenterOfMass = Vector(0, 0, 0)
+
         # obj.setPropertyStatus("Scale", "LockDynamic")
 
     def execute(self, obj):
@@ -152,7 +159,12 @@ class ConstraintReaction(base_fempythonobject.BaseFemPythonObject):
         # reference point for joint equilibrium
         base = obj.Origin.Base
         force_target = obj.Force
-        torque_target = obj.Torque
+        # Torque target: negate obj.Torque so the pressure distribution
+        # applies the correct reaction moment at the joint face.
+        # The moment transported to CM = obj.Torque + (face-CM)×F,
+        # which equals I*alpha (the angular inertia) for dynamic cases.
+        # The residual angular inertia moment is carried by the Jig nodes.
+        torque_target = -obj.Torque
         elem_info["contact"] = {}
         elem_info["load"] = {}
         elem_info["prel"] = {}
@@ -164,6 +176,7 @@ class ConstraintReaction(base_fempythonobject.BaseFemPythonObject):
 
             F = -force_target
             T = -torque_target
+            gauss_list = elem_info.get("gauss_data", [])
             for i in range(len(elem_info["elem"])):
                 n_i = elem_info["normal"][i]
                 A_i = elem_info["area"][i]
@@ -181,16 +194,25 @@ class ConstraintReaction(base_fempythonobject.BaseFemPythonObject):
                 p_i = C_i * l_i.Length
                 elem_info["pressure"][i] = p_i * elem_info["rev"][i]
 
-                # load on face i:
-                # L_i = p_i A_i n_i
-                L_i = p_i * A_i * n_i
-
-                # accumulate force/torque
-                F += L_i
-                T += L_i.cross(r_i)
-
                 elem_info["contact"][i] = C_i
                 elem_info["load"][i] = l_i.Length
+
+                # Force and torque accumulation.  For curved Tri6 elements, use the
+                # 3-point Gauss integration data so that the Python computation matches
+                # CalculiX's internal curved-surface integration.  For flat Tri3 (or
+                # when gauss_data is unavailable) fall back to the flat-triangle formula.
+                gauss_data_i = gauss_list[i] if i < len(gauss_list) else None
+                if gauss_data_i is not None:
+                    for x_gp, J_vec, wg in gauss_data_i:
+                        dF = p_i * J_vec * wg
+                        F += dF
+                        T += dF.cross(x_gp - base)
+                else:
+                    # load on face i:
+                    # L_i = p_i A_i n_i
+                    L_i = p_i * A_i * n_i
+                    F += L_i
+                    T += L_i.cross(r_i)
 
             return np.array([F.x, F.y, F.z, T.x, T.y, T.z])
 
@@ -199,7 +221,62 @@ class ConstraintReaction(base_fempythonobject.BaseFemPythonObject):
         self.elem_info = elem_info  # save copy
         Console.PrintMessage(f"{pformat(res)}")
 
+        if res.success:
+            self._verify_pressure_field_closure(obj, elem_info, base)
+
         return res.success
+
+    def _verify_pressure_field_closure(self, obj, elem_info, base):
+        """Verify that the solved pressure field reproduces the target F and T.
+
+        Reconstructs the net force and torque (about ``base``) from the solved
+        pressure distribution and compares them to ``obj.Force`` / ``obj.Torque``.
+        Enabled unconditionally when the root solve succeeds; set
+        FREECAD_FEM_REACTION_VERIFY_VERBOSE=1 to emit a full Console message.
+        """
+        import os
+
+        F_net = Vector(0, 0, 0)
+        T_net = Vector(0, 0, 0)
+
+        n = len(elem_info["elem"])
+        gauss_list = elem_info.get("gauss_data", [])
+        for i in range(n):
+            p_i = elem_info["pressure"][i]
+            A_i = elem_info["area"][i]
+            n_i = elem_info["normal"][i]
+            r_i = elem_info["centroid"][i] - base
+            gauss_data_i = gauss_list[i] if i < len(gauss_list) else None
+            if gauss_data_i is not None:
+                for x_gp, J_vec, wg in gauss_data_i:
+                    dF = p_i * J_vec * wg
+                    F_net += dF
+                    T_net += dF.cross(x_gp - base)
+            else:
+                L_i = p_i * A_i * n_i
+                F_net += L_i
+                T_net += L_i.cross(r_i)
+
+        force_err = (F_net - obj.Force).Length
+        # CalculiX applies +torque_target from the pressure distribution (see comment in
+        # get_pressure_field).  torque_target = -obj.Torque, so the expected T_net is -obj.Torque.
+        torque_err = (T_net + obj.Torque).Length
+
+        if force_err > 1.0 or torque_err > 1.0:
+            Console.PrintWarning(
+                f"ConstraintReaction {obj.Name}: pressure field closure error "
+                f"F_err={force_err:.3g} N  T_err={torque_err:.3g} N·mm "
+                f"(target F={obj.Force}  T_target=-{obj.Torque})\n"
+            )
+
+        verbose = str(os.environ.get("FREECAD_FEM_REACTION_VERIFY_VERBOSE", "")).strip().lower()
+        if verbose in {"1", "true", "yes", "on"}:
+            Console.PrintMessage(
+                f"[reaction-verify] {obj.Name}:\n"
+                f"  origin_base  = {base}\n"
+                f"  target Force = {obj.Force}   reconstructed = {F_net}   err = {force_err:.4g}\n"
+                f"  target Torque= -{obj.Torque}  reconstructed = {T_net}   err = {torque_err:.4g}\n"
+            )
 
     def onChanged(self, fp, prop):
         if not hasattr(fp, "ModelType"):

@@ -86,6 +86,7 @@ SET(FemExamples_SRCS
     femexamples/assembly_linkbody_pendulum.py
     femexamples/assembly_linkbody_free_dynamics.py
     femexamples/assembly_linkbody_forced_dynamics.py
+    femexamples/assembly_linkbody_disc_slider_dynamics.py
     femexamples/constraint_section_print.py
     femexamples/constraint_selfweight_cantilever.py
     femexamples/constraint_hydrostaticpressure.py

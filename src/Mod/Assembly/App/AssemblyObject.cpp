@@ -751,12 +751,22 @@ void AssemblyObject::jointInfoForFrame(const size_t index)
 
         const Base::Vector3d velocity = body_rot.multVec(m2f(mbdPart->getVelocity3D(index)));
         const Base::Vector3d angularVelocity = body_rot.multVec(m2f(mbdPart->getOmega3D(index)));
-        const Base::Vector3d rawAcceleration = body_rot.multVec(m2f(mbdPart->getAcceleration3D(index)));
+        // Use CM acceleration (not origin acceleration) so that GRAV body load
+        // in CalculiX exactly cancels the joint reactions from D'Alembert balance.
+        // getAcceleration3D returns acceleration at the part origin (reference point P),
+        // while getCMAcceleration3D returns qXddot, the true CM acceleration used
+        // by OndSel when computing joint reactions via Newton's law.
+        const Base::Vector3d rawAcceleration = body_rot.multVec(
+            m2f(mbdPart->getCMAcceleration3D(index))
+        );
         const Base::Vector3d gravityAcceleration = body_rot.multVec(
             m2f(mbdAssembly->constantGravity->getg())
         );
 
-        Base::Vector3d acceleration = rawAcceleration + gravityAcceleration;
+        // LA = g - a_abs (body-local frame) so that the CalculiX GRAV body load
+        // -m*LA = m*(a_abs - g) exactly cancels the joint reaction R = m*(a_abs - g)
+        // applied as pressure (net force -R).  See D'Alembert quasi-static balance.
+        Base::Vector3d acceleration = gravityAcceleration - rawAcceleration;
         const std::string accelMode = getEnvString("FREECAD_ASSEMBLY_ACCEL_EXPORT_MODE");
         if (accelMode == "raw") {
             acceleration = rawAcceleration;
