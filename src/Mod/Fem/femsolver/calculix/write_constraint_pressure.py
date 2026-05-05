@@ -27,7 +27,7 @@ __url__ = "https://www.freecad.org"
 
 import os
 
-from FreeCAD import Console
+from FreeCAD import Console, Vector
 
 
 def get_analysis_types():
@@ -64,20 +64,14 @@ def has_pressure_field(prs_obj):
 def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
     # floats read from ccx should use {:.13G}, see comment in writer module
 
-    use_cload = _env_bool("FREECAD_FEM_REACTION_USE_CLOAD", False) and has_pressure_field(prs_obj)
-    if use_cload:
-        if prs_obj.EnableAmplitude:
-            f.write(f"*CLOAD, AMPLITUDE={prs_obj.Name}\n")
-        else:
-            f.write("*CLOAD\n")
-    else:
+    is_reaction = has_pressure_field(prs_obj)
+    use_coupling = is_reaction
+    if not use_coupling:
         if prs_obj.EnableAmplitude:
             f.write(f"*DLOAD, AMPLITUDE={prs_obj.Name}\n")
         else:
             f.write("*DLOAD\n")
     rev = -1 if prs_obj.Reversed else 1
-
-    swap_tetra34 = _env_bool("FREECAD_FEM_REACTION_TETRA34_SWAP", False)
 
     def tetra4_face_nodes(local_nodes, face_no):
         face_no = str(face_no)
@@ -86,17 +80,9 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
         if face_no == "2":
             return (local_nodes[0], local_nodes[3], local_nodes[1])
         if face_no == "3":
-            return (
-                (local_nodes[1], local_nodes[3], local_nodes[2])
-                if swap_tetra34
-                else (local_nodes[0], local_nodes[2], local_nodes[3])
-            )
+            return (local_nodes[0], local_nodes[2], local_nodes[3])
         if face_no == "4":
-            return (
-                (local_nodes[0], local_nodes[2], local_nodes[3])
-                if swap_tetra34
-                else (local_nodes[1], local_nodes[3], local_nodes[2])
-            )
+            return (local_nodes[1], local_nodes[3], local_nodes[2])
         return None
 
     def tetra4_face_no_from_local_set(local_set):
@@ -106,15 +92,7 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
             frozenset((1, 3, 4)): 3,
             frozenset((2, 3, 4)): 4,
         }
-        if not swap_tetra34:
-            return mapping_default.get(local_set)
-        mapping_swap = {
-            frozenset((1, 2, 3)): 1,
-            frozenset((1, 2, 4)): 2,
-            frozenset((1, 3, 4)): 4,
-            frozenset((2, 3, 4)): 3,
-        }
-        return mapping_swap.get(local_set)
+        return mapping_default.get(local_set)
 
     def get_pressure_field(elem_info):
         prs_obj.Proxy.get_pressure_field(prs_obj, elem_info)
@@ -157,7 +135,7 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
 
         raise KeyError(key)
 
-    if has_pressure_field(prs_obj):
+    if is_reaction:
         get_pressure = get_pressure_field
     else:
         get_pressure = get_pressure_uniform
@@ -304,9 +282,10 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
             else:
                 add_elem_info(face, face, "", -rev)
 
-    get_pressure(elem_info)
+    if not use_coupling:
+        get_pressure(elem_info)
 
-    if has_pressure_field(prs_obj):
+    if is_reaction:
         missing_boundary_faces = sum(1 for fe in elem_info["felem"] if fe is None)
         if missing_boundary_faces:
             Console.PrintWarning(
@@ -344,47 +323,215 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
                     face_no_corrections,
                 )
             )
-        if swap_tetra34:
-            Console.PrintMessage(
-                "ConstraintReaction {}: tetra4 P3/P4 mapping swap is enabled via "
-                "FREECAD_FEM_REACTION_TETRA34_SWAP.\n".format(prs_obj.Name)
-            )
-
     skip_reaction = _env_bool("FREECAD_FEM_SKIP_CONSTRAINT_REACTION", False)
     if skip_reaction and has_pressure_field(prs_obj):
         f.write(f"** FREECAD_FEM_SKIP_CONSTRAINT_REACTION: {prs_obj.Name} pressure suppressed\n")
         return
 
-    if use_cload:
-        # Diagnostic mode: convert solved reaction pressure field to equivalent
-        # nodal *CLOAD entries. This bypasses CalculiX face-load integration.
-        node_forces = {}
+    if use_coupling:
+        # Experimental alternative to face-pressure DLOAD delivery:
+        # build a DCOUP3D + *DISTRIBUTING COUPLING from the selected
+        # reaction-face nodes, then apply the reaction resultant at the
+        # reference node as *CLOAD (forces + moments).
+        base = prs_obj.Origin.Base
+        force_cpl = -prs_obj.Force
+        moment_cpl = -prs_obj.Torque
+        ref_base = Vector(base.x, base.y, base.z)
+
+        # Decompose wrench: shift line-of-action to absorb moment component
+        # perpendicular to force, then transfer only the free (parallel)
+        # moment as a nodal couple. This reduces cancellation artefacts.
+        force_sq = force_cpl.dot(force_cpl)
+        if force_sq > 1e-18 and moment_cpl.Length > 1e-14:
+            m_parallel = force_cpl * (moment_cpl.dot(force_cpl) / force_sq)
+            m_perp = moment_cpl - m_parallel
+            free_moment_limit = float(
+                os.environ.get("FREECAD_FEM_REACTION_COUPLING_SHIFT_FREE_M_LIMIT", "50.0")
+            )
+            if m_perp.Length > 1e-14 and m_parallel.Length <= free_moment_limit:
+                shift_scale = float(
+                    os.environ.get("FREECAD_FEM_REACTION_COUPLING_SHIFT_SCALE", "1.0")
+                )
+                if shift_scale < 0.0:
+                    shift_scale = 0.0
+                if shift_scale > 1.0:
+                    shift_scale = 1.0
+                shift = (m_perp.cross(force_cpl) / force_sq) * shift_scale
+                ref_base = ref_base + shift
+                moment_cpl = m_parallel + m_perp * (1.0 - shift_scale)
+                if shift.Length > 1e-9:
+                    Console.PrintMessage(
+                        "ConstraintReaction {}: shifted coupling ref point by "
+                        "{:.3g} mm to absorb perpendicular moment component.\n".format(
+                            prs_obj.Name,
+                            shift.Length,
+                        )
+                    )
+        node_weights = {}
+
         for i in range(len(elem_info["elem"])):
-            pressure = elem_info["pressure"][i]
-            if pressure == 0.0:
-                continue
             area = elem_info["area"][i]
-            normal = elem_info["normal"][i]
             face_nodes = elem_info["face_nodes"][i]
             if not face_nodes:
                 continue
-            dF = -pressure * area * normal
-            per_node = dF / float(len(face_nodes))
+            nodal_share = area / float(len(face_nodes))
             for nid in face_nodes:
-                if nid in node_forces:
-                    node_forces[nid] = node_forces[nid] + per_node
-                else:
-                    node_forces[nid] = per_node
+                node_weights[nid] = node_weights.get(nid, 0.0) + nodal_share
 
-        for nid in sorted(node_forces):
-            force = node_forces[nid]
-            if force.x != 0.0:
-                f.write(f"{nid},1,{force.x:.13G}\n")
-            if force.y != 0.0:
-                f.write(f"{nid},2,{force.y:.13G}\n")
-            if force.z != 0.0:
-                f.write(f"{nid},3,{force.z:.13G}\n")
-        return
+        total_weight = sum(node_weights.values())
+        if total_weight <= 0.0:
+            Console.PrintWarning(
+                "ConstraintReaction {}: distributing-coupling mode requested but "
+                "no valid face-node weights were built; reaction is skipped.\n".format(prs_obj.Name)
+            )
+            return
+        else:
+            try:
+                obj_idx = ccxwriter.analysis.Group.index(prs_obj)
+            except Exception:
+                obj_idx = 0
+
+            max_node_id = 0
+            try:
+                if femmesh.Nodes:
+                    max_node_id = max(femmesh.Nodes.keys())
+            except Exception:
+                max_node_id = getattr(femmesh, "NodeCount", 0)
+
+            max_elem_id = 0
+            for collection_name in ("Volumes", "Faces", "Edges"):
+                for eid in getattr(femmesh, collection_name, []):
+                    if eid > max_elem_id:
+                        max_elem_id = eid
+
+            ref_node_id = max_node_id + 1000 + 2 * obj_idx + 1
+            dco_elem_id = max_elem_id + 1000 + obj_idx + 1
+
+            coupling_base = f"RDCPL_{prs_obj.Name}"
+            if len(coupling_base) > 60:
+                coupling_base = coupling_base[:60]
+            elset_name = f"{coupling_base}_EL"
+
+            f.write(
+                f"** ConstraintReaction {prs_obj.Name}: " "using *DISTRIBUTING COUPLING delivery\n"
+            )
+            f.write("*NODE\n")
+            f.write(
+                "{},{:.13G},{:.13G},{:.13G}\n".format(
+                    ref_node_id,
+                    ref_base.x,
+                    ref_base.y,
+                    ref_base.z,
+                )
+            )
+            f.write(f"*ELEMENT,TYPE=DCOUP3D,ELSET={elset_name}\n")
+            f.write(f"{dco_elem_id},{ref_node_id}\n")
+            f.write(f"*DISTRIBUTING COUPLING, ELSET={elset_name}\n")
+            for nid in sorted(node_weights):
+                f.write(f"{nid},{(node_weights[nid] / total_weight):.13G}\n")
+            # Keep coupling translational for now; rotational coupling DOFs
+            # are intentionally omitted to avoid spurious support-couple modes.
+
+            if prs_obj.EnableAmplitude:
+                f.write(f"*CLOAD, AMPLITUDE={prs_obj.Name}\n")
+            else:
+                f.write("*CLOAD\n")
+            if abs(force_cpl.x) > 1e-14:
+                f.write(f"{ref_node_id},1,{force_cpl.x:.13G}\n")
+            if abs(force_cpl.y) > 1e-14:
+                f.write(f"{ref_node_id},2,{force_cpl.y:.13G}\n")
+            if abs(force_cpl.z) > 1e-14:
+                f.write(f"{ref_node_id},3,{force_cpl.z:.13G}\n")
+
+            # DCOUP3D-coupled solid nodes do not reliably realize rotational
+            # CLOAD entries (DOF 4-6). Transfer moment using an equivalent
+            # zero-net-force nodal couple on the coupled face nodes instead.
+            couple_forces = {}
+            moment_error = 0.0
+            realized_moment = Vector(0, 0, 0)
+            if moment_cpl.Length > 1e-14:
+                weighted_nodes = []
+                centroid = Vector(0, 0, 0)
+                for nid, area_w in node_weights.items():
+                    w = area_w / total_weight
+                    r = femmesh.Nodes[nid] - ref_base
+                    weighted_nodes.append((nid, w, r))
+                    centroid += r * w
+
+                def moment_from_mu(mu):
+                    moment = Vector(0, 0, 0)
+                    for _nid, _w, _r in weighted_nodes:
+                        f_vec = mu.cross(_r - centroid) * _w
+                        moment += _r.cross(f_vec)
+                    return moment
+
+                col_x = moment_from_mu(Vector(1, 0, 0))
+                col_y = moment_from_mu(Vector(0, 1, 0))
+                col_z = moment_from_mu(Vector(0, 0, 1))
+
+                a11, a12, a13 = col_x.x, col_y.x, col_z.x
+                a21, a22, a23 = col_x.y, col_y.y, col_z.y
+                a31, a32, a33 = col_x.z, col_y.z, col_z.z
+
+                det = (
+                    a11 * (a22 * a33 - a23 * a32)
+                    - a12 * (a21 * a33 - a23 * a31)
+                    + a13 * (a21 * a32 - a22 * a31)
+                )
+
+                if abs(det) > 1e-18:
+                    inv11 = (a22 * a33 - a23 * a32) / det
+                    inv12 = (a13 * a32 - a12 * a33) / det
+                    inv13 = (a12 * a23 - a13 * a22) / det
+                    inv21 = (a23 * a31 - a21 * a33) / det
+                    inv22 = (a11 * a33 - a13 * a31) / det
+                    inv23 = (a13 * a21 - a11 * a23) / det
+                    inv31 = (a21 * a32 - a22 * a31) / det
+                    inv32 = (a12 * a31 - a11 * a32) / det
+                    inv33 = (a11 * a22 - a12 * a21) / det
+
+                    mu = Vector(
+                        inv11 * moment_cpl.x + inv12 * moment_cpl.y + inv13 * moment_cpl.z,
+                        inv21 * moment_cpl.x + inv22 * moment_cpl.y + inv23 * moment_cpl.z,
+                        inv31 * moment_cpl.x + inv32 * moment_cpl.y + inv33 * moment_cpl.z,
+                    )
+
+                    for nid, w, r in weighted_nodes:
+                        f_vec = mu.cross(r - centroid) * w
+                        if f_vec.Length > 1e-18:
+                            couple_forces[nid] = f_vec
+
+                    for nid in sorted(couple_forces):
+                        f_vec = couple_forces[nid]
+                        if abs(f_vec.x) > 1e-14:
+                            f.write(f"{nid},1,{f_vec.x:.13G}\n")
+                        if abs(f_vec.y) > 1e-14:
+                            f.write(f"{nid},2,{f_vec.y:.13G}\n")
+                        if abs(f_vec.z) > 1e-14:
+                            f.write(f"{nid},3,{f_vec.z:.13G}\n")
+
+                    realized_moment = moment_from_mu(mu)
+                    moment_error = (realized_moment - moment_cpl).Length
+                else:
+                    Console.PrintWarning(
+                        "ConstraintReaction {}: coupling moment system is singular "
+                        "(det={:.3g}); moment transfer skipped.\n".format(
+                            prs_obj.Name,
+                            det,
+                        )
+                    )
+
+            Console.PrintMessage(
+                "ConstraintReaction {}: wrote distributing coupling with {} nodes; "
+                "|F|={:.3g} N, |M|={:.3g} Nmm, |M_err|={:.3g} Nmm.\n".format(
+                    prs_obj.Name,
+                    len(node_weights),
+                    force_cpl.Length,
+                    moment_cpl.Length,
+                    moment_error,
+                )
+            )
+            return
 
     boundary_only = _env_bool("FREECAD_FEM_REACTION_BOUNDARY_ONLY", False)
     tetra4_face_signature_count = {}
@@ -459,3 +606,87 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
                 skipped_interior_tetra4,
             )
         )
+
+    # --- Supplementary shear CLOAD for axial torque undeliverable via pressure ---
+    # Pressure forces are normal to the surface.  On a cylindrical contact face the
+    # normals are radial, so every pressure force passes through the cylinder axis and
+    # produces zero torque about it.  Any joint torque about the revolute (cylinder)
+    # axis must therefore be delivered separately as circumferential (shear) CLOADs.
+    #
+    # Algorithm:
+    #   1. Retrieve the torque residual stored by get_pressure_field.
+    #   2. Infer the cylinder axis as the direction of the residual torque vector
+    #      (pressure correctly delivers off-axis torques; only the axial component
+    #      remains as a residual).
+    #   3. At each face node k (position r_k from joint origin), the circumferential
+    #      direction is  t_k = axis × r_k_perp / R_k,  and the required shear force is
+    #        F_k = (area_k / total_area) * |T_res| * (axis × r_k_perp) / R_k²
+    #      which contributes  R_k * F_k_mag = (area_k / total_area) * |T_res|  to the
+    #      axial torque, summing to |T_res| in total.
+    #   4. Subtract the mean shear force to ensure zero net force (the pressure field
+    #      already satisfies force equilibrium).
+    if has_pressure_field(prs_obj):
+        T_residual_vec = elem_info.get("torque_residual")
+        if T_residual_vec is not None:
+            from FreeCAD import Vector as _FVec
+
+            _T_res_mag = T_residual_vec.Length
+            _shear_threshold = float(os.environ.get("FREECAD_FEM_REACTION_SHEAR_THRESHOLD", "0.1"))
+            if _T_res_mag > _shear_threshold:
+                _axis = T_residual_vec / _T_res_mag
+                _base = prs_obj.Origin.Base
+
+                # Accumulate area weight per node from all faces that reference it
+                _node_areas = {}
+                for _fi, _face_nodes in enumerate(elem_info["face_nodes"]):
+                    if not _face_nodes:
+                        continue
+                    _a_per = elem_info["area"][_fi] / len(_face_nodes)
+                    for _nid in _face_nodes:
+                        _node_areas[_nid] = _node_areas.get(_nid, 0.0) + _a_per
+                _total_area = sum(_node_areas.values()) or 1.0
+
+                # Compute circumferential shear forces
+                # F_k = T_res_mag * area_k / total_area * (axis × r_k_perp) / R_k²
+                _node_shear = {}
+                for _nid, _area_k in _node_areas.items():
+                    _pos = femmesh.Nodes[_nid]
+                    _r_k = _pos - _base
+                    _r_k_perp = _r_k - _axis * _r_k.dot(_axis)
+                    _R_k = _r_k_perp.Length
+                    if _R_k < 1e-6:
+                        continue  # node on the cylinder axis — no circumferential dir
+                    # axis.cross(r_k_perp) has magnitude R_k; divide by R_k² → / R_k
+                    _f_vec = _axis.cross(_r_k_perp) * (
+                        _area_k * _T_res_mag / (_total_area * _R_k * _R_k)
+                    )
+                    _node_shear[_nid] = _f_vec
+
+                if _node_shear:
+                    # Zero the net force: pressure already balances forces, shear must not disturb it
+                    _F_shear_net = _FVec(0, 0, 0)
+                    for _fv in _node_shear.values():
+                        _F_shear_net += _fv
+                    _n_shear = len(_node_shear)
+                    _correction = _F_shear_net / _n_shear
+
+                    f.write(
+                        f"\n** ConstraintReaction {prs_obj.Name}: shear CLOAD"
+                        f" supplement for axial torque |T_res|={_T_res_mag:.4g} N*mm\n"
+                    )
+                    if prs_obj.EnableAmplitude:
+                        f.write(f"*CLOAD, AMPLITUDE={prs_obj.Name}\n")
+                    else:
+                        f.write("*CLOAD\n")
+                    for _nid in sorted(_node_shear):
+                        _fv = _node_shear[_nid] - _correction
+                        if abs(_fv.x) > 1e-14:
+                            f.write(f"{_nid},1,{_fv.x:.13G}\n")
+                        if abs(_fv.y) > 1e-14:
+                            f.write(f"{_nid},2,{_fv.y:.13G}\n")
+                        if abs(_fv.z) > 1e-14:
+                            f.write(f"{_nid},3,{_fv.z:.13G}\n")
+                    Console.PrintMessage(
+                        f"ConstraintReaction {prs_obj.Name}: wrote shear CLOAD"
+                        f" supplement |T_res|={_T_res_mag:.3g} N·mm on {_n_shear} nodes\n"
+                    )
