@@ -1534,6 +1534,59 @@ class TestLinkBody(unittest.TestCase):
         self.assertEqual(vf_obj.AngularAcceleration, App.Vector(0, 0, 0.75))
         self.assertEqual(vf_obj.RelativeVelocity, App.Vector(0.1, 0.0, 0.0))
 
+    def test_compute_inertial_correction_factor_uses_volume_ratio(self):
+        """Auto factor uses exact-body to mesh-volume ratio when both are available."""
+        _msg("  Test inertial correction auto-factor volume ratio")
+        mod = self._import_linkbody()
+        proxy = mod.LinkBody.__new__(mod.LinkBody)
+
+        class Quantity:
+            def __init__(self, value):
+                self.value = value
+
+            def getValueAs(self, _unit):
+                return type("Q", (), {"Value": self.value})()
+
+        body_obj = type("BodyObj", (), {"Shape": type("Shape", (), {"Volume": 1000.0})()})()
+        mesh_obj = type(
+            "MeshObj",
+            (),
+            {
+                "Shape": body_obj,
+                "FemMesh": type("FemMesh", (), {"Volume": Quantity(500.0)})(),
+            },
+        )()
+        analysis = type("Analysis", (), {"Group": [mesh_obj]})()
+        fp = type("FP", (), {"InertialCorrectionFactor": 1.0})()
+
+        factor = proxy._compute_inertial_correction_factor(fp, analysis, body_obj)
+        self.assertAlmostEqual(2.0, factor)
+
+    def test_compute_inertial_correction_factor_falls_back_when_volume_missing(self):
+        """Auto factor falls back to configured value when mesh/body volume is invalid."""
+        _msg("  Test inertial correction auto-factor fallback")
+        mod = self._import_linkbody()
+        proxy = mod.LinkBody.__new__(mod.LinkBody)
+
+        body_obj = type("BodyObj", (), {"Shape": type("Shape", (), {"Volume": 1000.0})()})()
+        mesh_obj = type(
+            "MeshObj",
+            (),
+            {
+                "Shape": body_obj,
+                "FemMesh": type("FemMesh", (), {"Volume": 0.0})(),
+            },
+        )()
+        analysis = type("Analysis", (), {"Group": [mesh_obj]})()
+
+        fp = type("FP", (), {"InertialCorrectionFactor": 1.25})()
+        factor = proxy._compute_inertial_correction_factor(fp, analysis, body_obj)
+        self.assertAlmostEqual(1.25, factor)
+
+        fp_bad = type("FP", (), {"InertialCorrectionFactor": "not-a-number"})()
+        factor_bad = proxy._compute_inertial_correction_factor(fp_bad, analysis, body_obj)
+        self.assertAlmostEqual(1.0, factor_bad)
+
     def test_get_reference_subobject_returns_none_for_empty_subs(self):
         """get_reference_subobject returns None for empty sub-elements."""
         _msg("  Test get_reference_subobject empty subs")

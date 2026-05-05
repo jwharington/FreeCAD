@@ -1,3 +1,4 @@
+import math
 from enum import Enum, auto
 
 import Fem
@@ -129,6 +130,16 @@ class LinkBody(FPBase):
     the Jig321 reaction must be zero (up to numerical noise). Non-zero Jig
     reactions are therefore treated as a closure/sign/reference mismatch signal,
     not as an expected operating condition.
+
+        Short-term mesh/discretisation correction note:
+        CalculiX body-load integration uses mesh mass/inertia, while MbD states are
+        resolved from exact body properties. To reduce this mismatch, a single
+        correction factor may be exported to CalculiX through VirtualForces.
+        Current simplification assumes:
+            - no center-of-gravity shift between exact and mesh body representations
+            - I_exact / I_mesh == m_exact / m_mesh
+        Under this assumption, one scalar factor scales both translational and
+        rotational inertial terms on the CalculiX writer side.
     """
 
     def __init__(self, obj, body=None):
@@ -147,6 +158,14 @@ class LinkBody(FPBase):
             "Simplified equilibrium calculation",
             locked=True,
         ).SimpleEquilibrium = False
+
+        obj.addProperty(
+            "App::PropertyFloat",
+            "InertialCorrectionFactor",
+            "Simplified equilibrium calculation",
+            "Single-factor mesh-vs-exact inertial correction passed to CalculiX",
+            locked=True,
+        ).InertialCorrectionFactor = 1.0
 
         if obj.Body:
             if obj.Body.getLinkedObject():
@@ -390,6 +409,115 @@ class LinkBody(FPBase):
 
         return mass / 1000.0
 
+    def _sanitize_positive_factor(self, value):
+        try:
+            factor = float(value)
+        except (TypeError, ValueError):
+            return 1.0
+        if not math.isfinite(factor) or factor <= 0.0:
+            return 1.0
+        return factor
+
+    def _as_volume_mm3(self, value):
+        if value is None:
+            return None
+
+        if hasattr(value, "getValueAs"):
+            try:
+                q = value.getValueAs("mm^3")
+                if hasattr(q, "Value"):
+                    value = q.Value
+                else:
+                    value = q
+            except Exception:
+                if hasattr(value, "Value"):
+                    value = value.Value
+        elif hasattr(value, "Value"):
+            value = value.Value
+
+        try:
+            volume = float(value)
+        except (TypeError, ValueError):
+            return None
+
+        if not math.isfinite(volume) or volume <= 0.0:
+            return None
+        return volume
+
+    def _get_body_volume_mm3(self, body_obj):
+        shape = getattr(body_obj, "Shape", None)
+        if shape is None:
+            return None
+        return self._as_volume_mm3(getattr(shape, "Volume", None))
+
+    def _iter_analysis_mesh_objects(self, analysis):
+        if analysis is None:
+            return []
+
+        mesh_objs = []
+        seen = set()
+
+        for type_id in ("Fem::FemMeshObject", "Fem::FemMeshObjectPython"):
+            try:
+                candidates = find_common_group_objects(analysis, type_id)
+            except Exception:
+                candidates = []
+            for obj in candidates:
+                if obj in seen:
+                    continue
+                mesh_objs.append(obj)
+                seen.add(obj)
+
+        for obj in getattr(analysis, "Group", []):
+            if obj in seen:
+                continue
+            if hasattr(obj, "FemMesh"):
+                mesh_objs.append(obj)
+                seen.add(obj)
+
+        return mesh_objs
+
+    def _get_mesh_volume_mm3(self, analysis, body_obj):
+        mesh_objs = self._iter_analysis_mesh_objects(analysis)
+        if not mesh_objs:
+            return None
+
+        body_mesh_objs = [m for m in mesh_objs if getattr(m, "Shape", None) == body_obj]
+        if not body_mesh_objs:
+            body_mesh_objs = mesh_objs
+
+        for mesh_obj in body_mesh_objs:
+            fem_mesh = getattr(mesh_obj, "FemMesh", None)
+            if fem_mesh is None:
+                continue
+
+            mesh_volume = self._as_volume_mm3(getattr(fem_mesh, "Volume", None))
+            if mesh_volume is None and hasattr(fem_mesh, "getVolume"):
+                try:
+                    mesh_volume = self._as_volume_mm3(fem_mesh.getVolume())
+                except Exception:
+                    mesh_volume = None
+
+            if mesh_volume is not None:
+                return mesh_volume
+
+        return None
+
+    def _compute_inertial_correction_factor(self, fp, analysis, body_obj):
+        # One-scalar correction caveat: this assumes no CoG shift and uses
+        # volume ratio as a proxy for both mass and inertia ratio.
+        fallback_factor = self._sanitize_positive_factor(
+            getattr(fp, "InertialCorrectionFactor", 1.0)
+        )
+
+        body_volume = self._get_body_volume_mm3(body_obj)
+        mesh_volume = self._get_mesh_volume_mm3(analysis, body_obj)
+        if body_volume is None or mesh_volume is None:
+            return fallback_factor
+
+        ratio = body_volume / mesh_volume
+        return self._sanitize_positive_factor(ratio)
+
     def updateFEMLinks(self, fp, mode: UpdateMode):
         # upon changes to assembly items, update linked FEM items
         analysis = None
@@ -482,6 +610,17 @@ class LinkBody(FPBase):
                 vf_obj,
                 "Fem::ConstraintVirtualForces",
             )
+
+            correction_factor = self._compute_inertial_correction_factor(
+                fp,
+                analysis,
+                body_obj,
+            )
+            try:
+                fp.InertialCorrectionFactor = correction_factor
+            except Exception:
+                pass
+            vf_obj.InertialCorrectionFactor = correction_factor
             return jig_obj, vf_obj
 
         if mode is UpdateMode.LOAD:
