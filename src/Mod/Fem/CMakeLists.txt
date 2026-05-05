@@ -302,6 +302,8 @@ SET(FemSolverCalculix_SRCS
     femsolver/calculix/write_constraint_finaltemperature.py
     femsolver/calculix/write_constraint_planerotation.py
     femsolver/calculix/write_constraint_pressure.py
+    femsolver/calculix/write_constraint_pressure_nonreaction.py
+    femsolver/calculix/write_constraint_pressure_reaction.py
     femsolver/calculix/write_constraint_rigidbody.py
     femsolver/calculix/write_constraint_rigidbody_step.py
     femsolver/calculix/write_constraint_sectionprint.py
