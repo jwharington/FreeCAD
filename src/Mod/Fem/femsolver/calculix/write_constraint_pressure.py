@@ -28,9 +28,16 @@ __url__ = "https://www.freecad.org"
 import importlib
 import os
 
+from .write_constraint_pressure_nonreaction import (
+    write_pressure_entries_with_nonboundary_diagnostic,
+)
+from .write_constraint_pressure_reaction import (
+    emit_reaction_diagnostics,
+    write_reaction_distributing_coupling,
+)
+
 _freecad = importlib.import_module("FreeCAD")
 Console = _freecad.Console
-Vector = _freecad.Vector
 
 REACTION_COUPLING_SHIFT_FREE_M_LIMIT = float(
     os.environ.get("FREECAD_FEM_REACTION_COUPLING_SHIFT_FREE_M_LIMIT", "50.0")
@@ -296,278 +303,25 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
         get_pressure(elem_info)
 
     if is_reaction:
-        missing_boundary_faces = sum(1 for fe in elem_info["felem"] if fe is None)
-        if missing_boundary_faces:
-            Console.PrintWarning(
-                "ConstraintReaction {}: {} / {} pressure faces did not map to boundary "
-                "mesh faces (possible local-face numbering mismatch).\n".format(
-                    prs_obj.Name,
-                    missing_boundary_faces,
-                    len(elem_info["felem"]),
-                )
-            )
+        emit_reaction_diagnostics(elem_info, prs_obj, face_no_corrections, Console)
+        write_reaction_distributing_coupling(
+            f,
+            prs_obj,
+            ccxwriter,
+            femmesh,
+            elem_info,
+            REACTION_COUPLING_SHIFT_FREE_M_LIMIT,
+            REACTION_COUPLING_SHIFT_SCALE,
+            Console,
+        )
+        return
 
-        # If the same face-node triplet appears multiple times in one constraint,
-        # pressure is being applied to duplicated/internal faces (non-boundary selection).
-        face_signature_count = {}
-        for face_nodes in elem_info["face_nodes"]:
-            if len(face_nodes) < 3:
-                continue
-            sig = frozenset(face_nodes)
-            face_signature_count[sig] = face_signature_count.get(sig, 0) + 1
-        duplicate_faces = sum(1 for c in face_signature_count.values() if c > 1)
-        if duplicate_faces:
-            Console.PrintWarning(
-                "ConstraintReaction {}: detected {} duplicated face-node signatures "
-                "in pressure target set (possible internal-face selection).\n".format(
-                    prs_obj.Name,
-                    duplicate_faces,
-                )
-            )
-
-        if face_no_corrections:
-            Console.PrintMessage(
-                "ConstraintReaction {}: corrected {} tetra4 local-face ids from "
-                "PressureNodeInfo.\n".format(
-                    prs_obj.Name,
-                    face_no_corrections,
-                )
-            )
-    if use_coupling:
-        # Experimental alternative to face-pressure DLOAD delivery:
-        # build a DCOUP3D + *DISTRIBUTING COUPLING from the selected
-        # reaction-face nodes, then apply the reaction resultant at the
-        # reference node as *CLOAD (forces + moments).
-        base = prs_obj.Origin.Base
-        force_cpl = -prs_obj.Force
-        moment_cpl = -prs_obj.Torque
-        ref_base = Vector(base.x, base.y, base.z)
-
-        # Decompose wrench: shift line-of-action to absorb moment component
-        # perpendicular to force, then transfer only the free (parallel)
-        # moment as a nodal couple. This reduces cancellation artefacts.
-        force_sq = force_cpl.dot(force_cpl)
-        if force_sq > 1e-18 and moment_cpl.Length > 1e-14:
-            m_parallel = force_cpl * (moment_cpl.dot(force_cpl) / force_sq)
-            m_perp = moment_cpl - m_parallel
-            free_moment_limit = REACTION_COUPLING_SHIFT_FREE_M_LIMIT
-            if m_perp.Length > 1e-14 and m_parallel.Length <= free_moment_limit:
-                shift_scale = REACTION_COUPLING_SHIFT_SCALE
-                if shift_scale < 0.0:
-                    shift_scale = 0.0
-                if shift_scale > 1.0:
-                    shift_scale = 1.0
-                shift = (m_perp.cross(force_cpl) / force_sq) * shift_scale
-                ref_base = ref_base + shift
-                moment_cpl = m_parallel + m_perp * (1.0 - shift_scale)
-                if shift.Length > 1e-9:
-                    Console.PrintMessage(
-                        "ConstraintReaction {}: shifted coupling ref point by "
-                        "{:.3g} mm to absorb perpendicular moment component.\n".format(
-                            prs_obj.Name,
-                            shift.Length,
-                        )
-                    )
-        node_weights = {}
-
-        for i in range(len(elem_info["elem"])):
-            area = elem_info["area"][i]
-            face_nodes = elem_info["face_nodes"][i]
-            if not face_nodes:
-                continue
-            nodal_share = area / float(len(face_nodes))
-            for nid in face_nodes:
-                node_weights[nid] = node_weights.get(nid, 0.0) + nodal_share
-
-        total_weight = sum(node_weights.values())
-        if total_weight <= 0.0:
-            Console.PrintWarning(
-                "ConstraintReaction {}: distributing-coupling mode requested but "
-                "no valid face-node weights were built; reaction is skipped.\n".format(prs_obj.Name)
-            )
-            return
-        else:
-            try:
-                obj_idx = ccxwriter.analysis.Group.index(prs_obj)
-            except Exception:
-                obj_idx = 0
-
-            max_node_id = 0
-            try:
-                if femmesh.Nodes:
-                    max_node_id = max(femmesh.Nodes.keys())
-            except Exception:
-                max_node_id = getattr(femmesh, "NodeCount", 0)
-
-            max_elem_id = 0
-            for collection_name in ("Volumes", "Faces", "Edges"):
-                for eid in getattr(femmesh, collection_name, []):
-                    if eid > max_elem_id:
-                        max_elem_id = eid
-
-            ref_node_id = max_node_id + 1000 + 2 * obj_idx + 1
-            dco_elem_id = max_elem_id + 1000 + obj_idx + 1
-
-            coupling_base = f"RDCPL_{prs_obj.Name}"
-            if len(coupling_base) > 60:
-                coupling_base = coupling_base[:60]
-            elset_name = f"{coupling_base}_EL"
-
-            f.write(
-                f"** ConstraintReaction {prs_obj.Name}: " "using *DISTRIBUTING COUPLING delivery\n"
-            )
-            f.write("*NODE\n")
-            f.write(
-                "{},{:.13G},{:.13G},{:.13G}\n".format(
-                    ref_node_id,
-                    ref_base.x,
-                    ref_base.y,
-                    ref_base.z,
-                )
-            )
-            f.write(f"*ELEMENT,TYPE=DCOUP3D,ELSET={elset_name}\n")
-            f.write(f"{dco_elem_id},{ref_node_id}\n")
-            f.write(f"*DISTRIBUTING COUPLING, ELSET={elset_name}\n")
-            for nid in sorted(node_weights):
-                f.write(f"{nid},{(node_weights[nid] / total_weight):.13G}\n")
-            # Keep coupling translational for now; rotational coupling DOFs
-            # are intentionally omitted to avoid spurious support-couple modes.
-
-            if prs_obj.EnableAmplitude:
-                f.write(f"*CLOAD, AMPLITUDE={prs_obj.Name}\n")
-            else:
-                f.write("*CLOAD\n")
-            if abs(force_cpl.x) > 1e-14:
-                f.write(f"{ref_node_id},1,{force_cpl.x:.13G}\n")
-            if abs(force_cpl.y) > 1e-14:
-                f.write(f"{ref_node_id},2,{force_cpl.y:.13G}\n")
-            if abs(force_cpl.z) > 1e-14:
-                f.write(f"{ref_node_id},3,{force_cpl.z:.13G}\n")
-
-            # DCOUP3D-coupled solid nodes do not reliably realize rotational
-            # CLOAD entries (DOF 4-6). Transfer moment using an equivalent
-            # zero-net-force nodal couple on the coupled face nodes instead.
-            couple_forces = {}
-            moment_error = 0.0
-            realized_moment = Vector(0, 0, 0)
-            if moment_cpl.Length > 1e-14:
-                weighted_nodes = []
-                centroid = Vector(0, 0, 0)
-                for nid, area_w in node_weights.items():
-                    w = area_w / total_weight
-                    r = femmesh.Nodes[nid] - ref_base
-                    weighted_nodes.append((nid, w, r))
-                    centroid += r * w
-
-                def moment_from_mu(mu):
-                    moment = Vector(0, 0, 0)
-                    for _nid, _w, _r in weighted_nodes:
-                        f_vec = mu.cross(_r - centroid) * _w
-                        moment += _r.cross(f_vec)
-                    return moment
-
-                col_x = moment_from_mu(Vector(1, 0, 0))
-                col_y = moment_from_mu(Vector(0, 1, 0))
-                col_z = moment_from_mu(Vector(0, 0, 1))
-
-                a11, a12, a13 = col_x.x, col_y.x, col_z.x
-                a21, a22, a23 = col_x.y, col_y.y, col_z.y
-                a31, a32, a33 = col_x.z, col_y.z, col_z.z
-
-                det = (
-                    a11 * (a22 * a33 - a23 * a32)
-                    - a12 * (a21 * a33 - a23 * a31)
-                    + a13 * (a21 * a32 - a22 * a31)
-                )
-
-                if abs(det) > 1e-18:
-                    inv11 = (a22 * a33 - a23 * a32) / det
-                    inv12 = (a13 * a32 - a12 * a33) / det
-                    inv13 = (a12 * a23 - a13 * a22) / det
-                    inv21 = (a23 * a31 - a21 * a33) / det
-                    inv22 = (a11 * a33 - a13 * a31) / det
-                    inv23 = (a13 * a21 - a11 * a23) / det
-                    inv31 = (a21 * a32 - a22 * a31) / det
-                    inv32 = (a12 * a31 - a11 * a32) / det
-                    inv33 = (a11 * a22 - a12 * a21) / det
-
-                    mu = Vector(
-                        inv11 * moment_cpl.x + inv12 * moment_cpl.y + inv13 * moment_cpl.z,
-                        inv21 * moment_cpl.x + inv22 * moment_cpl.y + inv23 * moment_cpl.z,
-                        inv31 * moment_cpl.x + inv32 * moment_cpl.y + inv33 * moment_cpl.z,
-                    )
-
-                    for nid, w, r in weighted_nodes:
-                        f_vec = mu.cross(r - centroid) * w
-                        if f_vec.Length > 1e-18:
-                            couple_forces[nid] = f_vec
-
-                    for nid in sorted(couple_forces):
-                        f_vec = couple_forces[nid]
-                        if abs(f_vec.x) > 1e-14:
-                            f.write(f"{nid},1,{f_vec.x:.13G}\n")
-                        if abs(f_vec.y) > 1e-14:
-                            f.write(f"{nid},2,{f_vec.y:.13G}\n")
-                        if abs(f_vec.z) > 1e-14:
-                            f.write(f"{nid},3,{f_vec.z:.13G}\n")
-
-                    realized_moment = moment_from_mu(mu)
-                    moment_error = (realized_moment - moment_cpl).Length
-                else:
-                    Console.PrintWarning(
-                        "ConstraintReaction {}: coupling moment system is singular "
-                        "(det={:.3g}); moment transfer skipped.\n".format(
-                            prs_obj.Name,
-                            det,
-                        )
-                    )
-
-            Console.PrintMessage(
-                "ConstraintReaction {}: wrote distributing coupling with {} nodes; "
-                "|F|={:.3g} N, |M|={:.3g} Nmm, |M_err|={:.3g} Nmm.\n".format(
-                    prs_obj.Name,
-                    len(node_weights),
-                    force_cpl.Length,
-                    moment_cpl.Length,
-                    moment_error,
-                )
-            )
-            return
-
-    def write_pressure_entries_with_nonboundary_diagnostic():
-        emitted_nonboundary_tetra4 = 0
-
-        for i in range(len(elem_info["elem"])):
-            pressure = elem_info["pressure"][i]
-            if pressure != 0.0:
-                elem_id = elem_info["elem"][i]
-                face_no = elem_info["fno"][i]
-
-                # Diagnostic sanity check (tetra4 only): verify emitted (elem, Pn)
-                # corresponds to a boundary mesh face. A mismatch indicates that the
-                # local face index being written targets an internal face.
-                try:
-                    local_nodes = list(femmesh.getElementNodes(elem_id))
-                except Exception:
-                    local_nodes = []
-                emitted_sig = None
-                if len(local_nodes) == 4:
-                    emitted_nodes = tetra4_face_nodes(local_nodes, face_no)
-                    if emitted_nodes is not None:
-                        emitted_sig = frozenset(emitted_nodes)
-                        if emitted_sig not in mesh_face_by_nodes:
-                            emitted_nonboundary_tetra4 += 1
-
-                # f.write("** {0.Name}.{1[0]}\n".format(*feat))
-                f.write(f"{elem_id},P{face_no},{pressure:.13G}\n")
-
-        if emitted_nonboundary_tetra4:
-            Console.PrintWarning(
-                "ConstraintReaction {}: {} emitted tetra4 pressure entries target "
-                "non-boundary faces (internal-face load mismatch).\n".format(
-                    prs_obj.Name,
-                    emitted_nonboundary_tetra4,
-                )
-            )
-
-    write_pressure_entries_with_nonboundary_diagnostic()
+    write_pressure_entries_with_nonboundary_diagnostic(
+        f,
+        prs_obj,
+        elem_info,
+        femmesh,
+        mesh_face_by_nodes,
+        tetra4_face_nodes,
+        Console,
+    )
