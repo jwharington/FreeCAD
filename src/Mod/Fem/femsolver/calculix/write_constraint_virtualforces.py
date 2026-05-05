@@ -16,6 +16,22 @@ import os
 
 from FreeCAD import Console, Vector
 
+# Virtual-forces decomposition is configured by code constants.
+#
+# VF_DECOMPOSE_ACCEL modes:
+#   "auto" (default): enable explicit rotational decomposition only when
+#   rotational pseudo-acceleration is both significant and numerically safe.
+#   True: always decompose (legacy expert/debug mode).
+#   False: never decompose (aggregate COM-acceleration representation).
+VF_DECOMPOSE_ACCEL = "auto"
+VF_DECOMPOSE_OMEGA_EPS = 1.0e-9
+VF_DECOMPOSE_ALPHA_EPS = 1.0e-9
+VF_DECOMPOSE_COR_RADIUS_MIN = 1.0e-6
+VF_DECOMPOSE_COR_RADIUS_MAX = 1.0e6
+VF_DECOMPOSE_AUTO_ROT_ACCEL_MIN = 5.0e3
+VF_DECOMPOSE_AUTO_ROT_ACCEL_RATIO_MIN = 0.1
+VF_DEBUG_CLOSURE = False
+
 
 def get_analysis_types():
     return ["buckling", "static", "thermomech"]
@@ -99,13 +115,6 @@ def _vec_is_finite(v):
     return all(math.isfinite(c) for c in (float(v.x), float(v.y), float(v.z)))
 
 
-def _safe_env_float(name, default):
-    try:
-        return float(os.environ.get(name, str(default)))
-    except Exception:
-        return float(default)
-
-
 def _should_emit_corio(vf_obj, omega, relative_velocity, linear_velocity):
     if not _env_bool("FREECAD_FEM_JIG321_ENABLE_CORIO", True):
         return False, "disabled-by-env"
@@ -144,6 +153,51 @@ def _should_emit_corio(vf_obj, omega, relative_velocity, linear_velocity):
     return True, "guarded"
 
 
+def _resolve_decompose_mode(
+    accel,
+    omega,
+    angular_acceleration,
+    rel_com,
+    is_static,
+    decompose_cor_ok,
+):
+    mode = VF_DECOMPOSE_ACCEL
+    if isinstance(mode, bool):
+        return mode
+
+    mode_str = str(mode).strip().lower()
+    if mode_str in {"1", "true", "yes", "on", "force", "always"}:
+        return True
+    if mode_str in {"0", "false", "no", "off", "never"}:
+        return False
+
+    # Auto mode: keep aggregate COM representation unless rotational split is
+    # both significant and numerically trustworthy.
+    if not decompose_cor_ok:
+        return False
+
+    o_mag = omega.Length
+    a_mag = angular_acceleration.Length
+    if o_mag <= VF_DECOMPOSE_OMEGA_EPS and (not is_static or a_mag <= VF_DECOMPOSE_ALPHA_EPS):
+        return False
+
+    rot_equiv = Vector(0, 0, 0)
+    if o_mag > VF_DECOMPOSE_OMEGA_EPS:
+        rot_equiv = rot_equiv + omega.cross(omega.cross(rel_com))
+    if is_static and a_mag > VF_DECOMPOSE_ALPHA_EPS:
+        rot_equiv = rot_equiv + angular_acceleration.cross(rel_com)
+
+    rot_mag = rot_equiv.Length
+    if rot_mag <= 0.0:
+        return False
+
+    raw_mag = max(accel.Length, 1.0)
+    return (
+        rot_mag >= VF_DECOMPOSE_AUTO_ROT_ACCEL_MIN
+        and (rot_mag / raw_mag) >= VF_DECOMPOSE_AUTO_ROT_ACCEL_RATIO_MIN
+    )
+
+
 def write_meshdata_constraint(f, femobj, vf_obj, ccxwriter):
     body_nodes = sorted(set(femobj.get("BodyNodes", [])))
     if body_nodes:
@@ -157,27 +211,36 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
         f.write(f"** FREECAD_FEM_SKIP_CONSTRAINT_VIRTUAL_FORCES: {vf_obj.Name} loads suppressed\n")
         return
 
-    decompose = _env_bool("FREECAD_FEM_VF_DECOMPOSE_ACCEL", False)
+    is_static = str(getattr(ccxwriter, "analysis_type", "")).lower() == "static"
 
     center_of_mass = getattr(vf_obj, "CenterOfMass", Vector(0, 0, 0))
     center_of_rotation = getattr(vf_obj, "CenterOfRotation", Vector(0, 0, 0))
     rel_com = center_of_mass - center_of_rotation
     rel_com_len = rel_com.Length
 
-    decompose_omega_eps = _safe_env_float("FREECAD_FEM_VF_DECOMPOSE_OMEGA_EPS", 1.0e-9)
-    decompose_alpha_eps = _safe_env_float("FREECAD_FEM_VF_DECOMPOSE_ALPHA_EPS", 1.0e-9)
-    decompose_cor_radius_max = _safe_env_float(
-        "FREECAD_FEM_VF_DECOMPOSE_COR_RADIUS_MAX",
-        1.0e6,
-    )
+    decompose_omega_eps = VF_DECOMPOSE_OMEGA_EPS
+    decompose_alpha_eps = VF_DECOMPOSE_ALPHA_EPS
+    decompose_cor_radius_min = VF_DECOMPOSE_COR_RADIUS_MIN
+    decompose_cor_radius_max = VF_DECOMPOSE_COR_RADIUS_MAX
     decompose_cor_ok = (
-        _vec_is_finite(center_of_rotation) and rel_com_len <= decompose_cor_radius_max
+        _vec_is_finite(center_of_rotation)
+        and decompose_cor_radius_min <= rel_com_len <= decompose_cor_radius_max
     )
 
     accel = getattr(vf_obj, "LinearAcceleration", Vector(0, 0, 0))
     grav_accel = Vector(accel.x, accel.y, accel.z)
 
     omega = getattr(vf_obj, "AngularVelocity", Vector(0, 0, 0))
+    angular_acceleration = getattr(vf_obj, "AngularAcceleration", Vector(0, 0, 0))
+    decompose = _resolve_decompose_mode(
+        accel,
+        omega,
+        angular_acceleration,
+        rel_com,
+        is_static,
+        decompose_cor_ok,
+    )
+
     o_mag = omega.Length
     if decompose and decompose_cor_ok and o_mag > decompose_omega_eps:
         # Only emit CENTRIF in decompose mode: in non-decompose mode the full
@@ -196,9 +259,6 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
             # Keep GRAV orthogonal to explicit centrifugal term.
             grav_accel = grav_accel - omega.cross(omega.cross(rel_com))
 
-    is_static = str(getattr(ccxwriter, "analysis_type", "")).lower() == "static"
-
-    angular_acceleration = getattr(vf_obj, "AngularAcceleration", Vector(0, 0, 0))
     if (
         decompose
         and is_static
@@ -267,7 +327,7 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
         )
         f.write("\n")
 
-    if _env_bool("FREECAD_FEM_VF_DEBUG_CLOSURE", False):
+    if VF_DEBUG_CLOSURE:
         _debug_log_closure_vectors(
             vf_obj,
             center_of_mass,
@@ -330,9 +390,9 @@ def _debug_log_closure_vectors(
 ):
     """Log effective virtual-forces equivalent vectors in world frame.
 
-    Enabled by FREECAD_FEM_VF_DEBUG_CLOSURE=1.  Produces one Console message
-    per write_constraint call with all scalar inputs, derived equivalent force
-    direction, and decomposition state for closure diagnostics.
+    Controlled by VF_DEBUG_CLOSURE module constant. Produces one Console
+    message per write_constraint call with all scalar inputs, derived
+    equivalent force direction, and decomposition state for closure diagnostics.
     """
     o_mag = omega.Length
     rel_com = center_of_mass - center_of_rotation
