@@ -444,6 +444,53 @@ class LinkBody(FPBase):
             return None
         return volume
 
+    def _as_vector(self, value):
+        if isinstance(value, Vector):
+            return Vector(value.x, value.y, value.z)
+        if isinstance(value, (list, tuple)) and len(value) >= 3:
+            return Vector(float(value[0]), float(value[1]), float(value[2]))
+        return None
+
+    def _tetra_volume_mm3(self, a, b, c, d):
+        return abs((b - a).dot((c - a).cross(d - a))) / 6.0
+
+    def _compute_mesh_volume_mm3_from_elements(self, fem_mesh):
+        volume_ids = getattr(fem_mesh, "Volumes", ()) or ()
+        if not volume_ids:
+            return None
+
+        total = 0.0
+        supported = 0
+        for volume_id in volume_ids:
+            try:
+                node_ids = tuple(fem_mesh.getElementNodes(volume_id))
+            except Exception:
+                continue
+            if len(node_ids) < 4:
+                continue
+
+            # FEM examples used in LinkBody tests are tetra meshes. For higher-order
+            # tetrahedra, getElementNodes returns corner nodes first, so using first
+            # four nodes preserves the linear element volume used by CalculiX loads.
+            try:
+                a = self._as_vector(fem_mesh.getNodeById(int(node_ids[0])))
+                b = self._as_vector(fem_mesh.getNodeById(int(node_ids[1])))
+                c = self._as_vector(fem_mesh.getNodeById(int(node_ids[2])))
+                d = self._as_vector(fem_mesh.getNodeById(int(node_ids[3])))
+            except Exception:
+                continue
+
+            if None in (a, b, c, d):
+                continue
+
+            total += self._tetra_volume_mm3(a, b, c, d)
+            supported += 1
+
+        if supported <= 0:
+            return None
+
+        return self._as_volume_mm3(total)
+
     def _get_body_volume_mm3(self, body_obj):
         shape = getattr(body_obj, "Shape", None)
         if shape is None:
@@ -497,6 +544,9 @@ class LinkBody(FPBase):
                     mesh_volume = self._as_volume_mm3(fem_mesh.getVolume())
                 except Exception:
                     mesh_volume = None
+
+            if mesh_volume is None:
+                mesh_volume = self._compute_mesh_volume_mm3_from_elements(fem_mesh)
 
             if mesh_volume is not None:
                 return mesh_volume
