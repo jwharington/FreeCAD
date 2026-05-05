@@ -90,6 +90,16 @@ class ConstraintVirtualForces(base_fempythonobject.BaseFemPythonObject):
             doc="Center of rotation",
         ).CenterOfRotation = Vector(0, 0, 0)
 
+        obj.addProperty(
+            type="App::PropertyFloat",
+            name="InertialCorrectionFactor",
+            group="dAlembertForces",
+            doc=(
+                "Scales exported d'Alembert inertial loads on CalculiX side. "
+                "Use 1.0 for no correction."
+            ),
+        ).InertialCorrectionFactor = 1.0
+
     def execute(self, obj):
         for t in self.triggers + ["CenterOfRotation"]:
             if not hasattr(obj, t):

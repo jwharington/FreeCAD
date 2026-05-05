@@ -115,6 +115,26 @@ def _vec_is_finite(v):
     return all(math.isfinite(c) for c in (float(v.x), float(v.y), float(v.z)))
 
 
+def _get_inertial_correction_factor(vf_obj):
+    factor = getattr(vf_obj, "InertialCorrectionFactor", 1.0)
+    try:
+        factor = float(factor)
+    except (TypeError, ValueError):
+        Console.PrintWarning(
+            "ConstraintVirtualForces: invalid InertialCorrectionFactor; falling back to 1.0.\n"
+        )
+        return 1.0
+
+    if not math.isfinite(factor) or factor <= 0.0:
+        Console.PrintWarning(
+            "ConstraintVirtualForces: non-positive or non-finite InertialCorrectionFactor; "
+            "falling back to 1.0.\n"
+        )
+        return 1.0
+
+    return factor
+
+
 def _should_emit_corio(vf_obj, omega, relative_velocity, linear_velocity):
     if not _env_bool("FREECAD_FEM_JIG321_ENABLE_CORIO", True):
         return False, "disabled-by-env"
@@ -212,6 +232,12 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
         return
 
     is_static = str(getattr(ccxwriter, "analysis_type", "")).lower() == "static"
+    # Short-term mesh/discretisation correction model:
+    # - no CoG shift between exact and mesh representations
+    # - I_exact / I_mesh == m_exact / m_mesh
+    # Under these assumptions, one scalar factor can scale all inertial
+    # equivalents emitted to CalculiX (GRAV/CENTRIF/ROTA/CORIO).
+    inertial_correction_factor = _get_inertial_correction_factor(vf_obj)
 
     center_of_mass = getattr(vf_obj, "CenterOfMass", Vector(0, 0, 0))
     center_of_rotation = getattr(vf_obj, "CenterOfRotation", Vector(0, 0, 0))
@@ -229,9 +255,11 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
 
     accel = getattr(vf_obj, "LinearAcceleration", Vector(0, 0, 0))
     grav_accel = Vector(accel.x, accel.y, accel.z)
+    grav_accel = grav_accel * inertial_correction_factor
 
     omega = getattr(vf_obj, "AngularVelocity", Vector(0, 0, 0))
     angular_acceleration = getattr(vf_obj, "AngularAcceleration", Vector(0, 0, 0))
+    angular_acceleration = angular_acceleration * inertial_correction_factor
     decompose = _resolve_decompose_mode(
         accel,
         omega,
@@ -251,13 +279,15 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
             f,
             ccxwriter.ccx_eall,
             "CENTRIF",
-            o_mag**2,
+            inertial_correction_factor * (o_mag**2),
             center_of_rotation,
             omega,
         )
         if wrote_centrif:
             # Keep GRAV orthogonal to explicit centrifugal term.
-            grav_accel = grav_accel - omega.cross(omega.cross(rel_com))
+            grav_accel = grav_accel - (
+                inertial_correction_factor * omega.cross(omega.cross(rel_com))
+            )
 
     if (
         decompose
@@ -310,7 +340,9 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
         emit_corio, reason = _should_emit_corio(vf_obj, omega, relative_velocity, linear_velocity)
         if emit_corio:
             # Keep GRAV orthogonal to explicit Coriolis term.
-            grav_accel = grav_accel - (2.0 * omega.cross(relative_velocity))
+            grav_accel = grav_accel - (
+                inertial_correction_factor * (2.0 * omega.cross(relative_velocity))
+            )
 
     a_mag = grav_accel.Length
     if a_mag > 0.0:
@@ -370,7 +402,7 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
         f,
         ccxwriter.ccx_eall,
         "CORIO",
-        o_mag**2,
+        inertial_correction_factor * (o_mag**2),
         center_of_rotation,
         omega,
     )

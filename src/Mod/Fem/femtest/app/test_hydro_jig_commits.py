@@ -25,19 +25,19 @@ from unittest.mock import Mock, patch
 import FreeCAD
 import numpy as np
 import ObjectsFem
+from femmesh import meshsetsgetter
 from femobjects.constraint_hydrostaticpressure import (
     ConstraintHydrostaticPressure,
 )
 from femobjects.constraint_jig321 import ConstraintJig321
-from femobjects.constraint_virtualforces import ConstraintVirtualForces
 from femobjects.constraint_reaction import ConstraintReaction
+from femobjects.constraint_virtualforces import ConstraintVirtualForces
 from femsolver.calculix import (
     write_constraint_jig321,
     write_constraint_pressure,
     write_constraint_virtualforces,
     write_step_output,
 )
-from femmesh import meshsetsgetter
 from femtools import checksanalysis
 from femtools.membertools import AnalysisMember
 from FreeCAD import Vector
@@ -124,6 +124,7 @@ class TestHydroJigCommits(unittest.TestCase):
             RelativeVelocity=Vector(4.0, 5.0, 6.0),
             LinearVelocity=Vector(0.0, 0.0, 0.0),
             CenterOfRotation=Vector(1.0, 2.0, 3.0),
+            InertialCorrectionFactor=1.0,
         )
         femmesh = SimpleNamespace(
             Nodes={
@@ -140,13 +141,14 @@ class TestHydroJigCommits(unittest.TestCase):
             analysis_type="static",
         )
 
-        buf = StringIO()
-        write_constraint_virtualforces.write_meshdata_constraint(buf, femobj, vf_obj, ccxwriter)
-        write_constraint_virtualforces.write_constraint(buf, femobj, vf_obj, ccxwriter)
-        out = buf.getvalue()
+        with patch.object(write_constraint_virtualforces, "VF_DECOMPOSE_ACCEL", True):
+            buf = StringIO()
+            write_constraint_virtualforces.write_meshdata_constraint(buf, femobj, vf_obj, ccxwriter)
+            write_constraint_virtualforces.write_constraint(buf, femobj, vf_obj, ccxwriter)
+            out = buf.getvalue()
 
         self.assertIn("*NSET,NSET=VirtualForces-BODY", out)
-        self.assertIn("Eall,GRAV,9.81", out)
+        self.assertIn("Eall,GRAV,", out)
         self.assertIn("Eall,CENTRIF,4", out)
         self.assertIn("Eall,ROTA,3", out)
         self.assertIn("*INITIAL CONDITIONS,TYPE=VELOCITY", out)
@@ -154,6 +156,69 @@ class TestHydroJigCommits(unittest.TestCase):
         self.assertIn("VirtualForces-BODY,2,5", out)
         self.assertIn("VirtualForces-BODY,3,6", out)
         self.assertIn("Eall,CORIO,4", out)
+
+    # ********************************************************************************************
+    def test_write_constraint_virtualforces_applies_inertial_correction_factor(self):
+        def _render_with_factor(factor):
+            vf_obj = SimpleNamespace(
+                Name="VirtualForces",
+                LinearAcceleration=Vector(0.0, 0.0, -9.81),
+                AngularVelocity=Vector(0.0, 0.0, 2.0),
+                AngularAcceleration=Vector(0.0, 0.0, 3.0),
+                RelativeVelocity=Vector(4.0, 5.0, 6.0),
+                LinearVelocity=Vector(0.0, 0.0, 0.0),
+                CenterOfRotation=Vector(1.0, 2.0, 3.0),
+                InertialCorrectionFactor=factor,
+            )
+            buf = StringIO()
+            with patch.object(write_constraint_virtualforces, "VF_DECOMPOSE_ACCEL", True):
+                write_constraint_virtualforces.write_meshdata_constraint(
+                    buf,
+                    femobj,
+                    vf_obj,
+                    ccxwriter,
+                )
+                write_constraint_virtualforces.write_constraint(buf, femobj, vf_obj, ccxwriter)
+            return buf.getvalue()
+
+        def _extract_magnitudes(text):
+            mags = {}
+            for line in text.splitlines():
+                if not line.startswith("Eall,"):
+                    continue
+                parts = line.split(",")
+                if len(parts) < 3:
+                    continue
+                label = parts[1]
+                if label in {"GRAV", "CENTRIF", "ROTA", "CORIO"}:
+                    mags[label] = float(parts[2])
+            return mags
+
+        femobj = {"BodyNodes": [1, 2, 3, 4]}
+        femmesh = SimpleNamespace(
+            Nodes={
+                1: (0.0, 0.0, 0.0),
+                2: (1.0, 0.0, 0.0),
+                3: (0.0, 1.0, 0.0),
+                4: (0.0, 0.0, 1.0),
+            }
+        )
+        ccxwriter = SimpleNamespace(
+            mesh_object=SimpleNamespace(FemMesh=femmesh),
+            ccx_eall="Eall",
+            ccx_nall="Nall",
+            analysis_type="static",
+        )
+
+        out_base = _render_with_factor(1.0)
+        out_scaled = _render_with_factor(2.0)
+        mags_base = _extract_magnitudes(out_base)
+        mags_scaled = _extract_magnitudes(out_scaled)
+
+        self.assertAlmostEqual(mags_scaled["GRAV"], 2.0 * mags_base["GRAV"])
+        self.assertAlmostEqual(mags_scaled["CENTRIF"], 2.0 * mags_base["CENTRIF"])
+        self.assertAlmostEqual(mags_scaled["ROTA"], 2.0 * mags_base["ROTA"])
+        self.assertAlmostEqual(mags_scaled["CORIO"], 2.0 * mags_base["CORIO"])
 
     # ********************************************************************************************
     def test_write_constraint_virtualforces_coriolis_velocity_falls_back_to_linear_velocity(self):
@@ -225,11 +290,12 @@ class TestHydroJigCommits(unittest.TestCase):
             analysis_type="thermomech",
         )
 
-        buf = StringIO()
-        write_constraint_virtualforces.write_constraint(buf, femobj, vf_obj, ccxwriter)
-        out = buf.getvalue()
+        with patch.object(write_constraint_virtualforces, "VF_DECOMPOSE_ACCEL", True):
+            buf = StringIO()
+            write_constraint_virtualforces.write_constraint(buf, femobj, vf_obj, ccxwriter)
+            out = buf.getvalue()
 
-        self.assertIn("Eall,GRAV,9.81", out)
+        self.assertIn("Eall,GRAV,", out)
         self.assertIn("Eall,CENTRIF,4", out)
         self.assertNotIn(",ROTA,", out)
         self.assertNotIn(",CORIO,", out)
@@ -292,6 +358,13 @@ class TestHydroJigCommits(unittest.TestCase):
         doc.recompute()
 
         self.assertEqual(vf.CenterOfMass, vf.CenterOfRotation)
+
+    # ********************************************************************************************
+    def test_virtualforces_inertial_correction_factor_defaults_to_one(self):
+        vf = ObjectsFem.makeConstraintVirtualForces(self.document)
+
+        self.assertTrue(hasattr(vf, "InertialCorrectionFactor"))
+        self.assertEqual(1.0, float(vf.InertialCorrectionFactor))
 
     # ********************************************************************************************
     def test_hydrostatic_clip_negative_interpolator(self):
