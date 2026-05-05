@@ -25,9 +25,19 @@ __title__ = "FreeCAD FEM calculix constraint pressure"
 __author__ = "Bernd Hahnebach"
 __url__ = "https://www.freecad.org"
 
+import importlib
 import os
 
-from FreeCAD import Console, Vector
+_freecad = importlib.import_module("FreeCAD")
+Console = _freecad.Console
+Vector = _freecad.Vector
+
+REACTION_COUPLING_SHIFT_FREE_M_LIMIT = float(
+    os.environ.get("FREECAD_FEM_REACTION_COUPLING_SHIFT_FREE_M_LIMIT", "50.0")
+)
+REACTION_COUPLING_SHIFT_SCALE = float(
+    os.environ.get("FREECAD_FEM_REACTION_COUPLING_SHIFT_SCALE", "1.0")
+)
 
 
 def get_analysis_types():
@@ -323,11 +333,6 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
                     face_no_corrections,
                 )
             )
-    skip_reaction = _env_bool("FREECAD_FEM_SKIP_CONSTRAINT_REACTION", False)
-    if skip_reaction and has_pressure_field(prs_obj):
-        f.write(f"** FREECAD_FEM_SKIP_CONSTRAINT_REACTION: {prs_obj.Name} pressure suppressed\n")
-        return
-
     if use_coupling:
         # Experimental alternative to face-pressure DLOAD delivery:
         # build a DCOUP3D + *DISTRIBUTING COUPLING from the selected
@@ -345,13 +350,9 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
         if force_sq > 1e-18 and moment_cpl.Length > 1e-14:
             m_parallel = force_cpl * (moment_cpl.dot(force_cpl) / force_sq)
             m_perp = moment_cpl - m_parallel
-            free_moment_limit = float(
-                os.environ.get("FREECAD_FEM_REACTION_COUPLING_SHIFT_FREE_M_LIMIT", "50.0")
-            )
+            free_moment_limit = REACTION_COUPLING_SHIFT_FREE_M_LIMIT
             if m_perp.Length > 1e-14 and m_parallel.Length <= free_moment_limit:
-                shift_scale = float(
-                    os.environ.get("FREECAD_FEM_REACTION_COUPLING_SHIFT_SCALE", "1.0")
-                )
+                shift_scale = REACTION_COUPLING_SHIFT_SCALE
                 if shift_scale < 0.0:
                     shift_scale = 0.0
                 if shift_scale > 1.0:
@@ -533,37 +534,40 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
             )
             return
 
-    emitted_nonboundary_tetra4 = 0
+    def write_pressure_entries_with_nonboundary_diagnostic():
+        emitted_nonboundary_tetra4 = 0
 
-    for i in range(len(elem_info["elem"])):
-        pressure = elem_info["pressure"][i]
-        if pressure != 0.0:
-            elem_id = elem_info["elem"][i]
-            face_no = elem_info["fno"][i]
+        for i in range(len(elem_info["elem"])):
+            pressure = elem_info["pressure"][i]
+            if pressure != 0.0:
+                elem_id = elem_info["elem"][i]
+                face_no = elem_info["fno"][i]
 
-            # Diagnostic sanity check (tetra4 only): verify emitted (elem, Pn)
-            # corresponds to a boundary mesh face. A mismatch indicates that the
-            # local face index being written targets an internal face.
-            try:
-                local_nodes = list(femmesh.getElementNodes(elem_id))
-            except Exception:
-                local_nodes = []
-            emitted_sig = None
-            if len(local_nodes) == 4:
-                emitted_nodes = tetra4_face_nodes(local_nodes, face_no)
-                if emitted_nodes is not None:
-                    emitted_sig = frozenset(emitted_nodes)
-                    if emitted_sig not in mesh_face_by_nodes:
-                        emitted_nonboundary_tetra4 += 1
+                # Diagnostic sanity check (tetra4 only): verify emitted (elem, Pn)
+                # corresponds to a boundary mesh face. A mismatch indicates that the
+                # local face index being written targets an internal face.
+                try:
+                    local_nodes = list(femmesh.getElementNodes(elem_id))
+                except Exception:
+                    local_nodes = []
+                emitted_sig = None
+                if len(local_nodes) == 4:
+                    emitted_nodes = tetra4_face_nodes(local_nodes, face_no)
+                    if emitted_nodes is not None:
+                        emitted_sig = frozenset(emitted_nodes)
+                        if emitted_sig not in mesh_face_by_nodes:
+                            emitted_nonboundary_tetra4 += 1
 
-            # f.write("** {0.Name}.{1[0]}\n".format(*feat))
-            f.write(f"{elem_id},P{face_no},{pressure:.13G}\n")
+                # f.write("** {0.Name}.{1[0]}\n".format(*feat))
+                f.write(f"{elem_id},P{face_no},{pressure:.13G}\n")
 
-    if emitted_nonboundary_tetra4:
-        Console.PrintWarning(
-            "ConstraintReaction {}: {} emitted tetra4 pressure entries target "
-            "non-boundary faces (internal-face load mismatch).\n".format(
-                prs_obj.Name,
-                emitted_nonboundary_tetra4,
+        if emitted_nonboundary_tetra4:
+            Console.PrintWarning(
+                "ConstraintReaction {}: {} emitted tetra4 pressure entries target "
+                "non-boundary faces (internal-face load mismatch).\n".format(
+                    prs_obj.Name,
+                    emitted_nonboundary_tetra4,
+                )
             )
-        )
+
+    write_pressure_entries_with_nonboundary_diagnostic()
