@@ -1587,6 +1587,37 @@ class TestLinkBody(unittest.TestCase):
         factor_bad = proxy._compute_inertial_correction_factor(fp_bad, analysis, body_obj)
         self.assertAlmostEqual(1.0, factor_bad)
 
+    def test_compute_inertial_correction_factor_uses_element_volume_when_mesh_volume_zero(self):
+        """Auto factor integrates element volume if FemMesh.Volume is zero/unset."""
+        _msg("  Test inertial correction element-volume fallback")
+        mod = self._import_linkbody()
+        proxy = mod.LinkBody.__new__(mod.LinkBody)
+
+        body_obj = type("BodyObj", (), {"Shape": type("Shape", (), {"Volume": 2.0})()})()
+
+        class FemMeshStub:
+            Volume = 0.0
+            Volumes = (101,)
+
+            def getElementNodes(self, _volume_id):
+                return (1, 2, 3, 4)
+
+            def getNodeById(self, node_id):
+                node_map = {
+                    1: (0.0, 0.0, 0.0),
+                    2: (1.0, 0.0, 0.0),
+                    3: (0.0, 1.0, 0.0),
+                    4: (0.0, 0.0, 1.0),
+                }
+                return node_map[node_id]
+
+        mesh_obj = type("MeshObj", (), {"Shape": body_obj, "FemMesh": FemMeshStub()})()
+        analysis = type("Analysis", (), {"Group": [mesh_obj]})()
+        fp = type("FP", (), {"InertialCorrectionFactor": 1.0})()
+
+        factor = proxy._compute_inertial_correction_factor(fp, analysis, body_obj)
+        self.assertAlmostEqual(12.0, factor)
+
     def test_get_reference_subobject_returns_none_for_empty_subs(self):
         """get_reference_subobject returns None for empty sub-elements."""
         _msg("  Test get_reference_subobject empty subs")
