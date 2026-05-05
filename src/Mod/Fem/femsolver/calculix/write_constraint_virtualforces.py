@@ -99,6 +99,13 @@ def _vec_is_finite(v):
     return all(math.isfinite(c) for c in (float(v.x), float(v.y), float(v.z)))
 
 
+def _safe_env_float(name, default):
+    try:
+        return float(os.environ.get(name, str(default)))
+    except Exception:
+        return float(default)
+
+
 def _should_emit_corio(vf_obj, omega, relative_velocity, linear_velocity):
     if not _env_bool("FREECAD_FEM_JIG321_ENABLE_CORIO", True):
         return False, "disabled-by-env"
@@ -155,13 +162,24 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
     center_of_mass = getattr(vf_obj, "CenterOfMass", Vector(0, 0, 0))
     center_of_rotation = getattr(vf_obj, "CenterOfRotation", Vector(0, 0, 0))
     rel_com = center_of_mass - center_of_rotation
+    rel_com_len = rel_com.Length
+
+    decompose_omega_eps = _safe_env_float("FREECAD_FEM_VF_DECOMPOSE_OMEGA_EPS", 1.0e-9)
+    decompose_alpha_eps = _safe_env_float("FREECAD_FEM_VF_DECOMPOSE_ALPHA_EPS", 1.0e-9)
+    decompose_cor_radius_max = _safe_env_float(
+        "FREECAD_FEM_VF_DECOMPOSE_COR_RADIUS_MAX",
+        1.0e6,
+    )
+    decompose_cor_ok = (
+        _vec_is_finite(center_of_rotation) and rel_com_len <= decompose_cor_radius_max
+    )
 
     accel = getattr(vf_obj, "LinearAcceleration", Vector(0, 0, 0))
     grav_accel = Vector(accel.x, accel.y, accel.z)
 
     omega = getattr(vf_obj, "AngularVelocity", Vector(0, 0, 0))
     o_mag = omega.Length
-    if decompose and o_mag > 0.0:
+    if decompose and decompose_cor_ok and o_mag > decompose_omega_eps:
         # Only emit CENTRIF in decompose mode: in non-decompose mode the full
         # absolute body acceleration (including centrifugal) is already encoded
         # in LinearAcceleration and captured by the GRAV load below.  Emitting
@@ -181,7 +199,12 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
     is_static = str(getattr(ccxwriter, "analysis_type", "")).lower() == "static"
 
     angular_acceleration = getattr(vf_obj, "AngularAcceleration", Vector(0, 0, 0))
-    if decompose and is_static and angular_acceleration.Length > 0.0:
+    if (
+        decompose
+        and is_static
+        and decompose_cor_ok
+        and angular_acceleration.Length > decompose_alpha_eps
+    ):
         # Only emit ROTA in decompose mode: same reason as CENTRIF above.
         wrote_rota = _write_axis_dload(
             f,
