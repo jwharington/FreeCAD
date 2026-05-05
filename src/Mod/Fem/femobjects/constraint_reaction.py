@@ -29,13 +29,9 @@ __url__ = "https://www.freecad.org"
 #  \ingroup FEM
 #  \brief constraint self weight object
 
-from pprint import pformat
-
 import FreeCAD
-import numpy as np
 from femtools.distributions import ReactionContactType
 from FreeCAD import Console, Vector
-from scipy.optimize import root
 
 from . import base_fempythonobject
 
@@ -155,76 +151,16 @@ class ConstraintReaction(base_fempythonobject.BaseFemPythonObject):
             raise NotImplementedError(f"Contact type {obj.ModelType} not implemented")
 
     def get_pressure_field(self, obj, elem_info):
+        # Solver-based pressure optimization has been removed for ConstraintReaction.
+        # The reaction resultant is delivered directly by the writer.
+        elem_info["reaction_force"] = obj.Force
+        elem_info["reaction_torque"] = -obj.Torque
 
-        # reference point for joint equilibrium
-        base = obj.Origin.Base
-        force_target = obj.Force
-        # Torque target: negate obj.Torque so the pressure distribution
-        # applies the correct reaction moment at the joint face.
-        # The moment transported to CM = obj.Torque + (face-CM)×F,
-        # which equals I*alpha (the angular inertia) for dynamic cases.
-        # The residual angular inertia moment is carried by the Jig nodes.
-        torque_target = -obj.Torque
-        elem_info["contact"] = {}
-        elem_info["load"] = {}
-        elem_info["prel"] = {}
+        for i in range(len(elem_info.get("pressure", []))):
+            elem_info["pressure"][i] = 0.0
 
-        def calc_net_forces(x):
-            k_f = Vector(x[0], x[1], x[2])
-            k_t = Vector(x[3], x[4], x[5])
-            # where k_f, k_t are parameters
-
-            F = -force_target
-            T = -torque_target
-            gauss_list = elem_info.get("gauss_data", [])
-            for i in range(len(elem_info["elem"])):
-                n_i = elem_info["normal"][i]
-                A_i = elem_info["area"][i]
-                r_i = elem_info["centroid"][i] - base
-                elem_info["prel"][i] = r_i
-                # distribution function:
-                l_i = k_f + k_t.cross(r_i)
-
-                # contact function:
-                # - uniform (0), cosine (1), parabolic (2), gencoz
-                C_i = self.get_contact(obj, n_i, l_i)
-
-                # pressure on face i:
-                # p_i = C_i |l_i|
-                p_i = C_i * l_i.Length
-                elem_info["pressure"][i] = p_i * elem_info["rev"][i]
-
-                elem_info["contact"][i] = C_i
-                elem_info["load"][i] = l_i.Length
-
-                # Force and torque accumulation.  For curved Tri6 elements, use the
-                # 3-point Gauss integration data so that the Python computation matches
-                # CalculiX's internal curved-surface integration.  For flat Tri3 (or
-                # when gauss_data is unavailable) fall back to the flat-triangle formula.
-                gauss_data_i = gauss_list[i] if i < len(gauss_list) else None
-                if gauss_data_i is not None:
-                    for x_gp, J_vec, wg in gauss_data_i:
-                        dF = p_i * J_vec * wg
-                        F += dF
-                        T += dF.cross(x_gp - base)
-                else:
-                    # load on face i:
-                    # L_i = p_i A_i n_i
-                    L_i = p_i * A_i * n_i
-                    F += L_i
-                    T += L_i.cross(r_i)
-
-            return np.array([F.x, F.y, F.z, T.x, T.y, T.z])
-
-        x0 = np.zeros(6)
-        res = root(calc_net_forces, x0, method="hybr")
-        self.elem_info = elem_info  # save copy
-        Console.PrintMessage(f"{pformat(res)}")
-
-        if res.success:
-            self._verify_pressure_field_closure(obj, elem_info, base)
-
-        return res.success
+        self.elem_info = elem_info
+        return True
 
     def _verify_pressure_field_closure(self, obj, elem_info, base):
         """Verify that the solved pressure field reproduces the target F and T.
