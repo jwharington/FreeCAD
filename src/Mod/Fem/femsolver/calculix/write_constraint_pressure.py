@@ -533,32 +533,7 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
             )
             return
 
-    boundary_only = _env_bool("FREECAD_FEM_REACTION_BOUNDARY_ONLY", False)
-    tetra4_face_signature_count = {}
-    if boundary_only:
-        # Build tetra4 face-signature multiplicities over the full tetra mesh.
-        # A signature appearing more than once is an interior/shared face.
-        for vol_id in femmesh.Volumes:
-            try:
-                vol_nodes = list(femmesh.getElementNodes(vol_id))
-            except Exception:
-                continue
-            if len(vol_nodes) != 4:
-                continue
-            tetra_faces = (
-                tetra4_face_nodes(vol_nodes, 1),
-                tetra4_face_nodes(vol_nodes, 2),
-                tetra4_face_nodes(vol_nodes, 3),
-                tetra4_face_nodes(vol_nodes, 4),
-            )
-            for tri in tetra_faces:
-                if tri is None:
-                    continue
-                sig = frozenset(tri)
-                tetra4_face_signature_count[sig] = tetra4_face_signature_count.get(sig, 0) + 1
-
     emitted_nonboundary_tetra4 = 0
-    skipped_interior_tetra4 = 0
 
     for i in range(len(elem_info["elem"])):
         pressure = elem_info["pressure"][i]
@@ -581,12 +556,6 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
                     if emitted_sig not in mesh_face_by_nodes:
                         emitted_nonboundary_tetra4 += 1
 
-            if boundary_only and len(local_nodes) == 4 and emitted_sig is not None:
-                # Keep only external tetra faces (signature multiplicity == 1).
-                if tetra4_face_signature_count.get(emitted_sig, 0) != 1:
-                    skipped_interior_tetra4 += 1
-                    continue
-
             # f.write("** {0.Name}.{1[0]}\n".format(*feat))
             f.write(f"{elem_id},P{face_no},{pressure:.13G}\n")
 
@@ -598,95 +567,3 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
                 emitted_nonboundary_tetra4,
             )
         )
-    if skipped_interior_tetra4:
-        Console.PrintMessage(
-            "ConstraintReaction {}: skipped {} interior tetra4 faces due to "
-            "FREECAD_FEM_REACTION_BOUNDARY_ONLY.\n".format(
-                prs_obj.Name,
-                skipped_interior_tetra4,
-            )
-        )
-
-    # --- Supplementary shear CLOAD for axial torque undeliverable via pressure ---
-    # Pressure forces are normal to the surface.  On a cylindrical contact face the
-    # normals are radial, so every pressure force passes through the cylinder axis and
-    # produces zero torque about it.  Any joint torque about the revolute (cylinder)
-    # axis must therefore be delivered separately as circumferential (shear) CLOADs.
-    #
-    # Algorithm:
-    #   1. Retrieve the torque residual stored by get_pressure_field.
-    #   2. Infer the cylinder axis as the direction of the residual torque vector
-    #      (pressure correctly delivers off-axis torques; only the axial component
-    #      remains as a residual).
-    #   3. At each face node k (position r_k from joint origin), the circumferential
-    #      direction is  t_k = axis × r_k_perp / R_k,  and the required shear force is
-    #        F_k = (area_k / total_area) * |T_res| * (axis × r_k_perp) / R_k²
-    #      which contributes  R_k * F_k_mag = (area_k / total_area) * |T_res|  to the
-    #      axial torque, summing to |T_res| in total.
-    #   4. Subtract the mean shear force to ensure zero net force (the pressure field
-    #      already satisfies force equilibrium).
-    if has_pressure_field(prs_obj):
-        T_residual_vec = elem_info.get("torque_residual")
-        if T_residual_vec is not None:
-            from FreeCAD import Vector as _FVec
-
-            _T_res_mag = T_residual_vec.Length
-            _shear_threshold = float(os.environ.get("FREECAD_FEM_REACTION_SHEAR_THRESHOLD", "0.1"))
-            if _T_res_mag > _shear_threshold:
-                _axis = T_residual_vec / _T_res_mag
-                _base = prs_obj.Origin.Base
-
-                # Accumulate area weight per node from all faces that reference it
-                _node_areas = {}
-                for _fi, _face_nodes in enumerate(elem_info["face_nodes"]):
-                    if not _face_nodes:
-                        continue
-                    _a_per = elem_info["area"][_fi] / len(_face_nodes)
-                    for _nid in _face_nodes:
-                        _node_areas[_nid] = _node_areas.get(_nid, 0.0) + _a_per
-                _total_area = sum(_node_areas.values()) or 1.0
-
-                # Compute circumferential shear forces
-                # F_k = T_res_mag * area_k / total_area * (axis × r_k_perp) / R_k²
-                _node_shear = {}
-                for _nid, _area_k in _node_areas.items():
-                    _pos = femmesh.Nodes[_nid]
-                    _r_k = _pos - _base
-                    _r_k_perp = _r_k - _axis * _r_k.dot(_axis)
-                    _R_k = _r_k_perp.Length
-                    if _R_k < 1e-6:
-                        continue  # node on the cylinder axis — no circumferential dir
-                    # axis.cross(r_k_perp) has magnitude R_k; divide by R_k² → / R_k
-                    _f_vec = _axis.cross(_r_k_perp) * (
-                        _area_k * _T_res_mag / (_total_area * _R_k * _R_k)
-                    )
-                    _node_shear[_nid] = _f_vec
-
-                if _node_shear:
-                    # Zero the net force: pressure already balances forces, shear must not disturb it
-                    _F_shear_net = _FVec(0, 0, 0)
-                    for _fv in _node_shear.values():
-                        _F_shear_net += _fv
-                    _n_shear = len(_node_shear)
-                    _correction = _F_shear_net / _n_shear
-
-                    f.write(
-                        f"\n** ConstraintReaction {prs_obj.Name}: shear CLOAD"
-                        f" supplement for axial torque |T_res|={_T_res_mag:.4g} N*mm\n"
-                    )
-                    if prs_obj.EnableAmplitude:
-                        f.write(f"*CLOAD, AMPLITUDE={prs_obj.Name}\n")
-                    else:
-                        f.write("*CLOAD\n")
-                    for _nid in sorted(_node_shear):
-                        _fv = _node_shear[_nid] - _correction
-                        if abs(_fv.x) > 1e-14:
-                            f.write(f"{_nid},1,{_fv.x:.13G}\n")
-                        if abs(_fv.y) > 1e-14:
-                            f.write(f"{_nid},2,{_fv.y:.13G}\n")
-                        if abs(_fv.z) > 1e-14:
-                            f.write(f"{_nid},3,{_fv.z:.13G}\n")
-                    Console.PrintMessage(
-                        f"ConstraintReaction {prs_obj.Name}: wrote shear CLOAD"
-                        f" supplement |T_res|={_T_res_mag:.3g} N·mm on {_n_shear} nodes\n"
-                    )
