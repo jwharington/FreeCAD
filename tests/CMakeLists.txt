@@ -145,3 +145,32 @@ foreach (exe ${TestExecutables})
         gtest_discover_tests(${exe})
     endif()
 endforeach()
+
+if(BUILD_ASSEMBLY)
+    set(AssemblyFemMbDynPythonTests
+        AssemblyTests.TestFemMbDyn.TestLinkBody.test_calculix_jig_force_residual_magnitude_dynamic_mode
+        AssemblyTests.TestFemMbDyn.TestLinkBody.test_calculix_jig_force_residual_magnitude_kinematic_mode
+        AssemblyTests.TestFemMbDyn.TestLinkBody.test_disc_slider_jig_residual_near_zero_for_isolated_drives
+    )
+
+    foreach(pytest ${AssemblyFemMbDynPythonTests})
+        string(REPLACE "." "_" pytest_name ${pytest})
+        add_test(
+            NAME ${pytest_name}
+            COMMAND $<TARGET_FILE:FreeCADMainCmd> -t ${pytest}
+        )
+        set_tests_properties(
+            ${pytest_name}
+            PROPERTIES
+                LABELS "Assembly;Python"
+                TIMEOUT 1800
+        )
+        if(WIN32)
+            set_tests_properties(
+                ${pytest_name}
+                PROPERTIES
+                    ENVIRONMENT_MODIFICATION "${_test_env_mod}"
+            )
+        endif()
+    endforeach()
+endif(BUILD_ASSEMBLY)
