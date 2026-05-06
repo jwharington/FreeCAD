@@ -2727,7 +2727,7 @@ AssemblyObject::MbDInertialData AssemblyObject::getMbDInertial(App::DocumentObje
             const unsigned long solidCount = shape.countSubElements("Solid");
             for (unsigned long i = 1; i <= solidCount; ++i) {
                 const std::string solidName = "Solid" + std::to_string(i);
-                const Part::TopoShape solidShape = shape.getSubTopoShape(solidName.c_str(), true);
+                const ::Part::TopoShape solidShape = shape.getSubTopoShape(solidName.c_str(), true);
                 if (solidShape.isNull()) {
                     continue;
                 }
