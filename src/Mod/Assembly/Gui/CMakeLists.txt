@@ -10,7 +10,19 @@ set(AssemblyGui_LIBS
     FreeCADGui
 )
 
-PYSIDE_WRAP_RC(Assembly_QRC_SRCS Resources/Assembly.qrc)
+# Track .ui panel files explicitly so Assembly_rc.py is regenerated when any panel changes.
+# PYSIDE_WRAP_RC only tracks the .qrc manifest (not the files it references), so we inline
+# the equivalent custom command here with an explicit DEPENDS on the panel .ui files.
+file(GLOB Assembly_Panel_UIs "${CMAKE_CURRENT_SOURCE_DIR}/Resources/panels/*.ui")
+set(_assembly_rc_py "${CMAKE_CURRENT_BINARY_DIR}/Assembly_rc.py")
+set(_assembly_qrc  "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Assembly.qrc")
+add_custom_command(OUTPUT "${_assembly_rc_py}"
+    COMMAND "${PYSIDE_RCC_EXECUTABLE}" ${RCCOPTIONS} "${_assembly_qrc}" ${PY_ATTRIBUTE} -o "${_assembly_rc_py}"
+    MAIN_DEPENDENCY "${_assembly_qrc}"
+    DEPENDS ${Assembly_Panel_UIs}
+    COMMENT "Generating Assembly_rc.py"
+)
+list(APPEND Assembly_QRC_SRCS "${_assembly_rc_py}")
 
 set (Assembly_TR_QRC ${CMAKE_CURRENT_BINARY_DIR}/Resources/Assembly_translation.qrc)
 qt_find_and_add_translation(QM_SRCS "Resources/translations/*_*.ts"
