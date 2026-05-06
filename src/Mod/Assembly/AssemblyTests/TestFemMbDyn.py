@@ -228,6 +228,8 @@ class TestForceObject(unittest.TestCase):
 
 class TestLinkBody(unittest.TestCase):
 
+    REACTION_CONTACT_TYPES = ("Uniform", "Cosine", "Parabolic", "Gencoz")
+
     def setUp(self):
         self.doc = _make_doc(self.__class__.__name__)
 
@@ -742,6 +744,17 @@ class TestLinkBody(unittest.TestCase):
         assembly.generateSimulation(simulation)
         return assembly.numberOfFrames()
 
+    def _apply_reaction_contact_type(self, analysis, reaction_contact_type):
+        if not reaction_contact_type:
+            return
+
+        for analysis_obj in getattr(analysis, "Group", []):
+            proxy = getattr(analysis_obj, "Proxy", None)
+            if getattr(proxy, "Type", "") != "Fem::ConstraintReaction":
+                continue
+            if hasattr(analysis_obj, "ModelType"):
+                analysis_obj.ModelType = reaction_contact_type
+
     def _run_multistep_jig_residual_case(
         self,
         example_module,
@@ -755,6 +768,7 @@ class TestLinkBody(unittest.TestCase):
         perturbation=None,
         require_frame_motion=True,
         setup_kwargs=None,
+        reaction_contact_type=None,
     ):
         utils_assembly = _import_or_skip(self, "UtilsAssembly")
         linkbody_module = self._import_linkbody()
@@ -845,6 +859,7 @@ class TestLinkBody(unittest.TestCase):
                 for idx, frame_idx in enumerate(range(1, n_frames)):
                     assembly.updateForFrame(frame_idx)
                     femlnk.Proxy.updateFEMLinks(femlnk, mode=linkbody_module.UpdateMode.SAVE)
+                    self._apply_reaction_contact_type(analysis, reaction_contact_type)
                     femlnk.Proxy.mesh_placement = femlnk.Proxy.getBodyPlacement(body_link)
 
                     state_map = getattr(femlnk.Proxy, "state", {})
@@ -2458,21 +2473,27 @@ class TestLinkBody(unittest.TestCase):
         _msg("  Test CalculiX jig residual magnitude in dynamic mode")
 
         ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
-        # Use DEFAULT accel mode (g - a_raw): GRAV + Reaction = 0 always.
-        series = self._run_multistep_jig_residual_case(
-            ex,
-            joint_name="RevoluteJoint",
-            dynamic=True,
-            motion_type="Angular",
-            # Empty formula => no prescribed driver, free response under gravity.
-            motion_formula="",
-            case_name="dynamic",
-            residual_limit=2.0,
-        )
-        # Quality target: with LinkBody loads resolved from MbDyn state,
-        # resulting Jig reaction resultant should be near equilibrium
-        # (ideally zero, up to approximation/numerical noise).
-        self.assertLess(max(series["residual"]), 2.0)
+        for contact_type in self.REACTION_CONTACT_TYPES:
+            # Use DEFAULT accel mode (g - a_raw): GRAV + Reaction = 0 always.
+            series = self._run_multistep_jig_residual_case(
+                ex,
+                joint_name="RevoluteJoint",
+                dynamic=True,
+                motion_type="Angular",
+                # Empty formula => no prescribed driver, free response under gravity.
+                motion_formula="",
+                case_name=f"dynamic_{contact_type.lower()}",
+                residual_limit=2.0,
+                reaction_contact_type=contact_type,
+            )
+            # Quality target: with LinkBody loads resolved from MbDyn state,
+            # resulting Jig reaction resultant should be near equilibrium
+            # (ideally zero, up to approximation/numerical noise).
+            self.assertLess(
+                max(series["residual"]),
+                2.0,
+                f"Dynamic free-pendulum residual too high for contact type {contact_type}",
+            )
 
     def test_calculix_jig_force_residual_analysis_dynamic_mode_rotated_x30(self):
         """Analysis mode: rotate free pendulum rig by +30 deg about X and sweep dynamic cases."""
@@ -2579,17 +2600,23 @@ class TestLinkBody(unittest.TestCase):
         _msg("  Test CalculiX jig residual magnitude in kinematic mode")
 
         ex = _import_or_skip(self, "femexamples.assembly_linkbody_forced_dynamics")
-        series = self._run_multistep_jig_residual_case(
-            ex,
-            joint_name="SliderToRodPrismatic",
-            dynamic=False,
-            motion_type="Linear",
-            # Time-varying actuator driver to exercise non-constant kinematic load cases.
-            motion_formula="40*sin(8*time)",
-            case_name="kinematic",
-            residual_limit=1.0,
-        )
-        self.assertLess(max(series["residual"]), 1.0)
+        for contact_type in self.REACTION_CONTACT_TYPES:
+            series = self._run_multistep_jig_residual_case(
+                ex,
+                joint_name="SliderToRodPrismatic",
+                dynamic=False,
+                motion_type="Linear",
+                # Time-varying actuator driver to exercise non-constant kinematic load cases.
+                motion_formula="40*sin(8*time)",
+                case_name=f"kinematic_{contact_type.lower()}",
+                residual_limit=1.0,
+                reaction_contact_type=contact_type,
+            )
+            self.assertLess(
+                max(series["residual"]),
+                1.0,
+                f"Forced-pendulum residual too high for contact type {contact_type}",
+            )
 
     def test_calculix_jig_force_residual_magnitude_kinematic_static_forcing_mode(self):
         """Constant kinematic forcing should remain static while preserving near-equilibrium residual."""
