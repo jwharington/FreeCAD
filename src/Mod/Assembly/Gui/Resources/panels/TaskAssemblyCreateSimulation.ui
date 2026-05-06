@@ -441,6 +441,16 @@
         </item>
        </layout>
       </item>
+      <item row="3" column="0">
+       <widget class="QCheckBox" name="checkRecomputeFemLinks">
+        <property name="toolTip">
+         <string>When enabled, frame changes also recompute LinkBody FEM links. Disable for faster playback on large models.</string>
+        </property>
+        <property name="text">
+         <string>Recompute FEM links while scrubbing</string>
+        </property>
+       </widget>
+      </item>
      </layout>
     </widget>
    </item>
