@@ -1,3 +1,5 @@
+import os
+
 import FreeCAD
 import numpy as np
 from FreeCAD import Console
@@ -23,7 +25,28 @@ except ImportError:
     vw = None
 
 
-def _refresh_gui():
+def _gui_refresh_stride() -> int:
+    """Return GUI refresh stride from environment.
+
+    FREECAD_FEMLINK_GUI_REFRESH_EVERY controls how often Qt events are pumped
+    in long FEM-link loops. Values:
+    - <= 0: disable GUI refreshes
+    - 1: refresh every iteration (legacy behavior)
+    - N>1: refresh every Nth iteration
+    """
+    raw = os.environ.get("FREECAD_FEMLINK_GUI_REFRESH_EVERY", "1")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 1
+
+
+def _refresh_gui(step_index=None):
+    stride = _gui_refresh_stride()
+    if stride <= 0:
+        return
+    if step_index is not None and stride > 1 and (step_index % stride) != 0:
+        return
     if FreeCAD.GuiUp and FreeCADGui is not None:
         FreeCADGui.updateGui()
         QtCore.QCoreApplication.processEvents()
@@ -120,7 +143,7 @@ def out_forces(femlnk, states, dry_run=False):
         femlnk.Proxy.state_set(femlnk, row)
         femlnk.Proxy.updateFEMLinks(femlnk, mode=UpdateMode.LOAD)
         _update_view_object(femlnk)
-        _refresh_gui()
+        _refresh_gui(idx)
         if not dry_run:
             femlnk.Proxy.runAnalysis(femlnk, index=idx)
             femlnk.Document.recompute()
@@ -159,7 +182,7 @@ def assembly_collect_states(assembly, femlnk, index=None):
         assembly.updateForFrame(idx)
         femlnk.Proxy.updateFEMLinks(femlnk, mode=UpdateMode.SAVE)
         _update_view_object(femlnk)
-        _refresh_gui()
+        _refresh_gui(idx)
 
     return finish()
 

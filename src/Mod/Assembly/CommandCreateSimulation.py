@@ -792,6 +792,8 @@ class TaskAssemblyCreateSimulation(QtCore.QObject):
         super().__init__()
         Gui.Selection.clearSelection()
 
+        self.assembly_prefs = App.ParamGet("User parameter:BaseApp/Preferences/Mod/Assembly")
+
         self.assembly = UtilsAssembly.activeAssembly()
 
         self.initialPlcs = UtilsAssembly.saveAssemblyPartsPlacements(self.assembly)
@@ -825,6 +827,7 @@ class TaskAssemblyCreateSimulation(QtCore.QObject):
         self.form.GlobalErrorToleranceSpinBox.valueChanged.connect(
             self.onGlobalErrorToleranceChanged
         )
+        self.form.checkRecomputeFemLinks.toggled.connect(self.onRecomputeFemLinksToggled)
         self.form.RunKinematicsButton.clicked.connect(self.runKinematics)
         self.form.frameSlider.valueChanged.connect(self.onFrameChanged)
         self.form.FramesPerSecondSpinBox.valueChanged.connect(self.onFramesPerSecondChanged)
@@ -869,6 +872,12 @@ class TaskAssemblyCreateSimulation(QtCore.QObject):
             "rawValue", self.simFeaturePy.fGlobalErrorTolerance
         )
         self.form.FramesPerSecondSpinBox.setValue(self.simFeaturePy.jFramesPerSecond)
+        self.form.checkRecomputeFemLinks.setChecked(
+            self.assembly_prefs.GetBool("RecomputeFemLinksOnFrameChange", True)
+        )
+
+    def onRecomputeFemLinksToggled(self, checked):
+        self.assembly_prefs.SetBool("RecomputeFemLinksOnFrameChange", checked)
 
     def setSpinboxPrecision(self, spinbox, precision, unit=App.Units.TimeSpan):
         q = App.Units.Quantity()
@@ -950,6 +959,10 @@ class TaskAssemblyCreateSimulation(QtCore.QObject):
         self.recomputeFemLinks()
 
     def recomputeFemLinks(self):
+        assembly_prefs = App.ParamGet("User parameter:BaseApp/Preferences/Mod/Assembly")
+        if not assembly_prefs.GetBool("RecomputeFemLinksOnFrameChange", True):
+            return
+
         objs = self.assembly.getObjectsOfType("App::FeaturePython")
         objs += self.assembly.getObjectsOfType("Part::FeaturePython")
         for obj in objs:
