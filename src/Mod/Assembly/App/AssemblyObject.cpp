@@ -22,6 +22,7 @@
  ***************************************************************************/
 
 #include <boost/core/ignore_unused.hpp>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <optional>
@@ -192,21 +193,52 @@ std::string getEnvString(const char* name)
     return (raw && *raw) ? std::string(raw) : std::string();
 }
 
-std::optional<double> getFemMaterialDensityTonPerMm3(
+struct FemMaterialDensityInfo
+{
+    std::optional<double> globalDensity;
+    std::optional<double> objectDensity;
+    std::unordered_map<std::string, double> solidDensities;
+};
+
+std::optional<std::string> normalizeSolidElementName(const std::string& subName)
+{
+    if (subName.empty()) {
+        return std::nullopt;
+    }
+
+    std::string token = subName;
+    const auto pathSep = token.find_last_of('.');
+    if (pathSep != std::string::npos) {
+        token = token.substr(pathSep + 1);
+    }
+
+    if (token.size() <= 5 || token.rfind("Solid", 0) != 0) {
+        return std::nullopt;
+    }
+
+    for (size_t i = 5; i < token.size(); ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(token[i]))) {
+            return std::nullopt;
+        }
+    }
+
+    return token;
+}
+
+FemMaterialDensityInfo collectFemMaterialDensityInfoTonPerMm3(
     App::DocumentObject* targetPart,
     App::DocumentObject* targetLinked
 )
 {
+    FemMaterialDensityInfo info;
     if (!targetPart) {
-        return std::nullopt;
+        return info;
     }
 
     App::Document* doc = targetPart->getDocument();
     if (!doc) {
-        return std::nullopt;
+        return info;
     }
-
-    std::optional<double> globalDensity;
 
     for (App::DocumentObject* obj : doc->getObjects()) {
         if (!obj) {
@@ -234,28 +266,73 @@ std::optional<double> getFemMaterialDensityTonPerMm3(
         );
 
         if (!referencesProp) {
-            if (!globalDensity) {
-                globalDensity = densityCandidate;
+            if (!info.globalDensity) {
+                info.globalDensity = densityCandidate;
             }
             continue;
         }
 
         const auto& references = referencesProp->getValues();
         if (references.empty()) {
-            if (!globalDensity) {
-                globalDensity = densityCandidate;
+            if (!info.globalDensity) {
+                info.globalDensity = densityCandidate;
             }
             continue;
         }
 
-        for (App::DocumentObject* refObj : references) {
-            if (materialReferenceMatches(targetPart, targetLinked, refObj)) {
-                return densityCandidate;
+        bool matchedObject = false;
+        bool matchedSolid = false;
+
+        for (const auto& subset : referencesProp->getSubListValues()) {
+            App::DocumentObject* refObj = subset.first;
+            if (!materialReferenceMatches(targetPart, targetLinked, refObj)) {
+                continue;
+            }
+
+            matchedObject = true;
+
+            if (subset.second.empty()) {
+                if (!info.objectDensity) {
+                    info.objectDensity = densityCandidate;
+                }
+                continue;
+            }
+
+            for (const std::string& subName : subset.second) {
+                if (subName.empty()) {
+                    if (!info.objectDensity) {
+                        info.objectDensity = densityCandidate;
+                    }
+                    continue;
+                }
+
+                if (auto solidName = normalizeSolidElementName(subName)) {
+                    if (info.solidDensities.find(*solidName) == info.solidDensities.end()) {
+                        info.solidDensities[*solidName] = densityCandidate;
+                    }
+                    matchedSolid = true;
+                }
+            }
+        }
+
+        if (matchedObject && !matchedSolid && !info.objectDensity) {
+            // Backward-compatible fallback for non-solid references.
+            info.objectDensity = densityCandidate;
+        }
+
+        if (!matchedObject) {
+            for (App::DocumentObject* refObj : references) {
+                if (materialReferenceMatches(targetPart, targetLinked, refObj)) {
+                    if (!info.objectDensity) {
+                        info.objectDensity = densityCandidate;
+                    }
+                    break;
+                }
             }
         }
     }
 
-    return globalDensity;
+    return info;
 }
 
 }  // namespace
@@ -2605,8 +2682,14 @@ AssemblyObject::MbDInertialData AssemblyObject::getMbDInertial(App::DocumentObje
         }
     }
 
-    if (auto femDensity = getFemMaterialDensityTonPerMm3(part, materialPart)) {
-        density = *femDensity;
+    const FemMaterialDensityInfo femMaterialDensity
+        = collectFemMaterialDensityInfoTonPerMm3(part, materialPart);
+
+    if (femMaterialDensity.objectDensity) {
+        density = *femMaterialDensity.objectDensity;
+    }
+    else if (femMaterialDensity.globalDensity) {
+        density = *femMaterialDensity.globalDensity;
     }
     else if (hasShapeMaterialDensity) {
         density = shapeMaterialDensity;
@@ -2637,13 +2720,41 @@ AssemblyObject::MbDInertialData AssemblyObject::getMbDInertial(App::DocumentObje
     const auto& shape = base->Shape.getShape();
     const Base::Placement plc = getPlacementFromProp(part, "Placement").inverse();
     try {
-        const GProp_GProps gpr = Attacher::AttachEngine::getInertialPropsOfShape({&shape});
+        GProp_GProps massProps;
+        bool hasWeightedProps = false;
+
+        if (!femMaterialDensity.solidDensities.empty()) {
+            const unsigned long solidCount = shape.countSubElements("Solid");
+            for (unsigned long i = 1; i <= solidCount; ++i) {
+                const std::string solidName = "Solid" + std::to_string(i);
+                const Part::TopoShape solidShape = shape.getSubTopoShape(solidName.c_str(), true);
+                if (solidShape.isNull()) {
+                    continue;
+                }
+
+                const auto it = femMaterialDensity.solidDensities.find(solidName);
+                const double solidDensity = (it != femMaterialDensity.solidDensities.end())
+                    ? it->second
+                    : density;
+
+                const GProp_GProps solidProps = Attacher::AttachEngine::getInertialPropsOfShape(
+                    {&solidShape}
+                );
+                massProps.Add(solidProps, solidDensity);
+                hasWeightedProps = true;
+            }
+        }
+
+        if (!hasWeightedProps) {
+            const GProp_GProps gpr = Attacher::AttachEngine::getInertialPropsOfShape({&shape});
+            massProps.Add(gpr, density);
+        }
 
         //////////
-        const gp_Pnt centerOfMass = gpr.CentreOfMass();
+        const gp_Pnt centerOfMass = massProps.CentreOfMass();
         const Base::Vector3d com = plc.toMatrix()
             * Base::Vector3d(centerOfMass.X(), centerOfMass.Y(), centerOfMass.Z());
-        const GProp_PrincipalProps pr = gpr.PrincipalProperties();
+        const GProp_PrincipalProps pr = massProps.PrincipalProperties();
         const gp_Vec ax1 = pr.FirstAxisOfInertia();
         const gp_Vec ax2 = pr.SecondAxisOfInertia();
         const gp_Vec ax3 = pr.ThirdAxisOfInertia();
@@ -2656,8 +2767,8 @@ AssemblyObject::MbDInertialData AssemblyObject::getMbDInertial(App::DocumentObje
 
         double ixx, iyy, izz;
         pr.Moments(ixx, iyy, izz);
-        data.inertia = Base::Vector3d(ixx * density, iyy * density, izz * density);
-        data.mass = gpr.Mass() * density;
+        data.inertia = Base::Vector3d(ixx, iyy, izz);
+        data.mass = massProps.Mass();
 
         if (false) {
             if (pr.HasSymmetryPoint()) {
