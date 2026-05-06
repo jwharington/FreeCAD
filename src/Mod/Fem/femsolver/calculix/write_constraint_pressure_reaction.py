@@ -31,6 +31,57 @@ _freecad = importlib.import_module("FreeCAD")
 Vector = _freecad.Vector
 
 
+def _build_area_node_weights(elem_info):
+    node_weights = {}
+    for i in range(len(elem_info["elem"])):
+        area = elem_info["area"][i]
+        face_nodes = elem_info["face_nodes"][i]
+        if not face_nodes:
+            continue
+        nodal_share = area / float(len(face_nodes))
+        for nid in face_nodes:
+            node_weights[nid] = node_weights.get(nid, 0.0) + nodal_share
+    return node_weights
+
+
+def _build_contact_weighted_node_weights(prs_obj, elem_info):
+    """Build node weights from face area scaled by the selected contact model."""
+    node_weights = {}
+    contact_getter = getattr(getattr(prs_obj, "Proxy", None), "get_contact", None)
+    if not callable(contact_getter):
+        return node_weights
+
+    load_vec = getattr(prs_obj, "Force", Vector(0, 0, 0))
+    if load_vec.Length <= 1.0e-18:
+        return node_weights
+
+    for i in range(len(elem_info["elem"])):
+        area = elem_info["area"][i]
+        face_nodes = elem_info["face_nodes"][i]
+        if not face_nodes:
+            continue
+
+        normal = elem_info["normal"][i]
+        try:
+            contact_raw = contact_getter(prs_obj, normal, load_vec)
+        except Exception:
+            continue
+
+        if not isinstance(contact_raw, (int, float)):
+            continue
+
+        contact = float(contact_raw)
+
+        if contact <= 0.0:
+            continue
+
+        nodal_share = (area * contact) / float(len(face_nodes))
+        for nid in face_nodes:
+            node_weights[nid] = node_weights.get(nid, 0.0) + nodal_share
+
+    return node_weights
+
+
 def emit_reaction_diagnostics(elem_info, prs_obj, face_no_corrections, Console):
     missing_boundary_faces = sum(1 for fe in elem_info["felem"] if fe is None)
     if missing_boundary_faces:
@@ -115,15 +166,17 @@ def write_reaction_distributing_coupling(
                     )
                 )
 
-    node_weights = {}
-    for i in range(len(elem_info["elem"])):
-        area = elem_info["area"][i]
-        face_nodes = elem_info["face_nodes"][i]
-        if not face_nodes:
-            continue
-        nodal_share = area / float(len(face_nodes))
-        for nid in face_nodes:
-            node_weights[nid] = node_weights.get(nid, 0.0) + nodal_share
+    node_weights = _build_contact_weighted_node_weights(prs_obj, elem_info)
+    if not node_weights:
+        node_weights = _build_area_node_weights(elem_info)
+    else:
+        total_contact_weight = sum(node_weights.values())
+        if total_contact_weight <= 0.0:
+            Console.PrintWarning(
+                "ConstraintReaction {}: contact weighting collapsed to zero; "
+                "falling back to area-based node weighting.\n".format(prs_obj.Name)
+            )
+            node_weights = _build_area_node_weights(elem_info)
 
     total_weight = sum(node_weights.values())
     if total_weight <= 0.0:
