@@ -537,6 +537,53 @@ class TestHydroJigCommits(unittest.TestCase):
             proxy.get_contact(obj, Vector(0, 0, 1), Vector(0, 0, -1))
 
     # ********************************************************************************************
+    def test_reaction_display_pressure_uses_nodal_weighting(self):
+        con_reaction = ObjectsFem.makeConstraintReaction(self.document)
+        con_reaction.ModelType = "Cosine"
+        con_reaction.Force = Vector(0, 0, -1)
+        con_reaction.Torque = Vector(0, 0, 0)
+        proxy = con_reaction.Proxy
+
+        elem_info = {
+            "elem": [0, 1],
+            "normal": [Vector(0, 0, 1), Vector(0, 0, 1)],
+            "area": [2.0, 1.0],
+            "face_nodes": [[1, 2, 3], [1, 3, 4]],
+            "pressure": [0.0, 0.0],
+        }
+
+        ok = proxy.get_pressure_field(con_reaction, elem_info)
+
+        self.assertTrue(ok)
+        self.assertAlmostEqual(8.0 / 9.0, elem_info["pressure"][0])
+        self.assertAlmostEqual(7.0 / 9.0, elem_info["pressure"][1])
+        self.assertIs(proxy.elem_info, elem_info)
+
+    # ********************************************************************************************
+    def test_reaction_display_pressure_falls_back_to_area_weighting(self):
+        con_reaction = ObjectsFem.makeConstraintReaction(self.document)
+        con_reaction.ModelType = "Cosine"
+        # Positive normal-load projection means separation => zero contact.
+        con_reaction.Force = Vector(0, 0, 1)
+        con_reaction.Torque = Vector(0, 0, 0)
+        proxy = con_reaction.Proxy
+
+        elem_info = {
+            "elem": [0, 1],
+            "normal": [Vector(0, 0, 1), Vector(0, 0, 1)],
+            "area": [2.0, 1.0],
+            "face_nodes": [[1, 2, 3], [1, 3, 4]],
+            "pressure": [0.0, 0.0],
+        }
+
+        ok = proxy.get_pressure_field(con_reaction, elem_info)
+
+        self.assertTrue(ok)
+        self.assertAlmostEqual(8.0 / 9.0, elem_info["pressure"][0])
+        self.assertAlmostEqual(7.0 / 9.0, elem_info["pressure"][1])
+        self.assertIs(proxy.elem_info, elem_info)
+
+    # ********************************************************************************************
     def test_reaction_get_pressure_field_populates_tables(self):
         con_reaction = ObjectsFem.makeConstraintReaction(self.document)
         con_reaction.ModelType = "Cosine"

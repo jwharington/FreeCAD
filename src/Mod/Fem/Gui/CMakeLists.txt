@@ -476,6 +476,9 @@ SET(FemGuiPythonUI_SRCS
     Resources/ui/PostLineplotFieldAppEdit.ui
     Resources/ui/PostLineplotIndexAppEdit.ui
     Resources/ui/PostTableFieldViewEdit.ui
+)
+
+SET(FemGuiPythonColormap_SRCS
     Resources/colormaps/roma.py
 )
 
@@ -484,8 +487,10 @@ ADD_CUSTOM_TARGET(FemPythonUi ALL
 )
 
 fc_copy_sources(FemPythonUi "${CMAKE_BINARY_DIR}/Mod/Fem" ${FemGuiPythonUI_SRCS})
+fc_copy_sources(FemPythonUi "${CMAKE_BINARY_DIR}/Mod/Fem" ${FemGuiPythonColormap_SRCS})
 
 INSTALL(FILES ${FemGuiPythonUI_SRCS} DESTINATION Mod/Fem/Resources/ui)
+INSTALL(FILES ${FemGuiPythonColormap_SRCS} DESTINATION Mod/Fem/Resources/colormaps)
 
 SET_BIN_DIR(FemGui FemGui /Mod/Fem)
 SET_PYTHON_PREFIX_SUFFIX(FemGui)
