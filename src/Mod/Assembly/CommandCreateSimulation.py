@@ -830,6 +830,7 @@ class TaskAssemblyCreateSimulation(QtCore.QObject):
         self.form.checkRecomputeFemLinks.toggled.connect(self.onRecomputeFemLinksToggled)
         self.form.RunKinematicsButton.clicked.connect(self.runKinematics)
         self.form.frameSlider.valueChanged.connect(self.onFrameChanged)
+        self.form.frameSlider.sliderReleased.connect(self.onFrameSliderReleased)
         self.form.FramesPerSecondSpinBox.valueChanged.connect(self.onFramesPerSecondChanged)
         self.form.PlayBackwardButton.clicked.connect(self.animationTimerStartBackward)
         self.form.PlayForwardButton.clicked.connect(self.animationTimerStartForward)
@@ -958,9 +959,13 @@ class TaskAssemblyCreateSimulation(QtCore.QObject):
         self.form.FrameTimeLabel.setText(f"{time:.2f} s")
         self.recomputeFemLinks()
 
-    def recomputeFemLinks(self):
+    def onFrameSliderReleased(self):
+        # When continuous recompute is disabled, do a single recompute at end of scrub.
+        self.recomputeFemLinks(force=True)
+
+    def recomputeFemLinks(self, force=False):
         assembly_prefs = App.ParamGet("User parameter:BaseApp/Preferences/Mod/Assembly")
-        if not assembly_prefs.GetBool("RecomputeFemLinksOnFrameChange", True):
+        if not force and not assembly_prefs.GetBool("RecomputeFemLinksOnFrameChange", True):
             return
 
         objs = self.assembly.getObjectsOfType("App::FeaturePython")
@@ -1035,6 +1040,8 @@ class TaskAssemblyCreateSimulation(QtCore.QObject):
 
     def stopAnimation(self):
         self.animationTimer.stop()
+        # In paused/stopped mode, ensure one recompute even if continuous mode is disabled.
+        self.recomputeFemLinks(force=True)
 
     def addMotionClicked(self):
         dialog = MotionEditDialog(self.assembly)
