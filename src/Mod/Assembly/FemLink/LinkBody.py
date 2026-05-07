@@ -195,6 +195,52 @@ class LinkBody(FPBase):
                 except Exception:
                     pass
 
+    def refreshViewData(self, fp):
+        """Refresh line_info for VP rendering without modifying FEM constraints.
+
+        Used by simulation frame playback when continuous FEM recompute is off.
+        """
+        if not hasattr(fp, "Body") or not fp.Body:
+            return
+        if not fp.Body.getLinkedObject():
+            return
+        if self._get_body_mass_tons(fp.Body) is None:
+            return
+
+        assembly = fp.getParentGroup()
+        if assembly is None:
+            return
+
+        saved_state = getattr(self, "state", None)
+        saved_force_total = getattr(self, "force_total", None)
+        try:
+            # SAVE mode with analysis=None computes force/torque/accel visual
+            # vectors from live assembly kinematics without touching FEM objects.
+            self.state = {}
+            self.line_info = []
+            self.force_total = Vector(0, 0, 0)
+            body = fp.Body
+            self.updateJoints(fp, None, assembly, body, mode=UpdateMode.SAVE)
+            self.updateJig(fp, None, body, mode=UpdateMode.SAVE)
+        finally:
+            if saved_state is not None:
+                self.state = saved_state
+            elif hasattr(self, "state"):
+                del self.state
+
+            if saved_force_total is not None:
+                self.force_total = saved_force_total
+            elif hasattr(self, "force_total"):
+                del self.force_total
+
+        if FreeCAD.GuiUp and hasattr(fp, "ViewObject") and fp.ViewObject:
+            vp_proxy = getattr(fp.ViewObject, "Proxy", None)
+            if vp_proxy and hasattr(vp_proxy, "updateData"):
+                try:
+                    vp_proxy.updateData(fp, "line_info")
+                except Exception:
+                    pass
+
     def createAnalysis(self, fp):
         Console.PrintMessage(f"Creating FEM analysis for body {fp.Body.Label}\n")
         doc = fp.Document

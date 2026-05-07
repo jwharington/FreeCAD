@@ -150,14 +150,103 @@ class ConstraintReaction(base_fempythonobject.BaseFemPythonObject):
         else:
             raise NotImplementedError(f"Contact type {obj.ModelType} not implemented")
 
+    def _build_display_node_weights(self, obj, elem_info):
+        node_weights = {}
+        force = getattr(obj, "Force", Vector(0, 0, 0))
+
+        face_nodes_all = elem_info.get("face_nodes", [])
+        areas = elem_info.get("area", [])
+        normals = elem_info.get("normal", [])
+        nfaces = min(len(face_nodes_all), len(areas), len(normals))
+
+        if nfaces <= 0:
+            return node_weights
+
+        use_contact = force.Length > 1.0e-18
+        for i in range(nfaces):
+            face_nodes = face_nodes_all[i]
+            if not face_nodes:
+                continue
+
+            area = float(areas[i])
+            if area <= 0.0:
+                continue
+
+            contact = 1.0
+            if use_contact:
+                try:
+                    contact = float(self.get_contact(obj, normals[i], force))
+                except Exception:
+                    contact = 0.0
+
+            if contact <= 0.0:
+                continue
+
+            nodal_share = (area * contact) / float(len(face_nodes))
+            for nid in face_nodes:
+                node_weights[nid] = node_weights.get(nid, 0.0) + nodal_share
+
+        if not node_weights:
+            # Contact-weighting may collapse to zero (e.g. opposing normals);
+            # keep a meaningful preview by falling back to pure area weighting.
+            for i in range(nfaces):
+                face_nodes = face_nodes_all[i]
+                if not face_nodes:
+                    continue
+
+                area = float(areas[i])
+                if area <= 0.0:
+                    continue
+
+                nodal_share = area / float(len(face_nodes))
+                for nid in face_nodes:
+                    node_weights[nid] = node_weights.get(nid, 0.0) + nodal_share
+
+        return node_weights
+
+    def _set_display_face_values_from_node_weights(self, elem_info, node_weights):
+        face_nodes_all = elem_info.get("face_nodes", [])
+        pressures = elem_info.get("pressure", [])
+
+        nfaces = min(len(pressures), len(face_nodes_all))
+        for i in range(nfaces):
+            face_nodes = face_nodes_all[i]
+            if not face_nodes:
+                pressures[i] = 0.0
+                continue
+
+            face_sum = 0.0
+            for nid in face_nodes:
+                face_sum += node_weights.get(nid, 0.0)
+
+            pressures[i] = face_sum / float(len(face_nodes))
+
     def get_pressure_field(self, obj, elem_info):
         # Solver-based pressure optimization has been removed for ConstraintReaction.
         # The reaction resultant is delivered directly by the writer.
+        # Keep elem_info["pressure"] populated with display-only values so
+        # view providers can visualize reaction distribution meaningfully.
         elem_info["reaction_force"] = obj.Force
         elem_info["reaction_torque"] = -obj.Torque
 
-        for i in range(len(elem_info.get("pressure", []))):
-            elem_info["pressure"][i] = 0.0
+        node_weights = self._build_display_node_weights(obj, elem_info)
+        if node_weights and elem_info.get("face_nodes"):
+            self._set_display_face_values_from_node_weights(elem_info, node_weights)
+        else:
+            # If face-node information is unavailable (e.g. lightweight preview
+            # elem_info), fall back to per-face contact projection values.
+            pressure = elem_info.get("pressure", [])
+            normal = elem_info.get("normal", [])
+            nfaces = min(len(pressure), len(normal))
+            force = getattr(obj, "Force", Vector(0, 0, 0))
+            for i in range(nfaces):
+                if force.Length <= 1.0e-18:
+                    pressure[i] = 0.0
+                    continue
+                try:
+                    pressure[i] = float(self.get_contact(obj, normal[i], force))
+                except Exception:
+                    pressure[i] = 0.0
 
         self.elem_info = elem_info
         return True

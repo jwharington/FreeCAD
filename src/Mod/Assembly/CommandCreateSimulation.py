@@ -957,7 +957,22 @@ class TaskAssemblyCreateSimulation(QtCore.QObject):
         self.form.FrameLabel.setText(translate("Assembly", "Frame" + " " + str(val)))
         time = float(val * self.simFeaturePy.cTimeStepOutput)
         self.form.FrameTimeLabel.setText(f"{time:.2f} s")
+        self.refreshLinkBodyViewData()
         self.recomputeFemLinks()
+
+    def refreshLinkBodyViewData(self):
+        assembly_prefs = App.ParamGet("User parameter:BaseApp/Preferences/Mod/Assembly")
+        if assembly_prefs.GetBool("RecomputeFemLinksOnFrameChange", True):
+            return
+
+        objs = self.assembly.getObjectsOfType("App::FeaturePython")
+        objs += self.assembly.getObjectsOfType("Part::FeaturePython")
+        for obj in objs:
+            if isinstance(obj.Proxy, LinkBody):
+                try:
+                    obj.Proxy.refreshViewData(obj)
+                except Exception:
+                    pass
 
     def onFrameSliderReleased(self):
         # When continuous recompute is disabled, do a single recompute at end of scrub.

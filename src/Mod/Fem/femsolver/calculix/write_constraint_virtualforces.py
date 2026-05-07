@@ -377,15 +377,7 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
         return
 
     if not emit_corio:
-        if reason not in {
-            "disabled-by-env",
-            "omega-below-eps",
-            "relative-velocity-below-eps",
-            "relative-velocity-equals-linear",
-        }:
-            Console.PrintWarning(
-                "ConstraintVirtualForces: skipping CORIO export (" + reason + ").\n"
-            )
+        Console.PrintLog("ConstraintVirtualForces: skipping CORIO export (" + reason + ").\n")
         return
 
     if femobj.get("BodyNodes"):
