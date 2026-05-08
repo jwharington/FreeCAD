@@ -11,11 +11,46 @@
 # *                                                                         *
 # ***************************************************************************
 
-import FreeCAD
+import AssemblyApp  # noqa: F401  # type: ignore[import-not-found]
+import FreeCAD  # type: ignore[import-not-found]
 import ObjectsFem
+import UtilsAssembly  # noqa: F401  # type: ignore[import-not-found]
+from CommandCreateSimulation import (  # type: ignore[import-not-found]
+    Motion as _MotionClass,
+)
+from CommandCreateSimulation import (
+    Simulation as _SimClass,
+)
+from CommandCreateSimulation import (
+    ViewProviderMotion,
+    ViewProviderSimulation,
+)
+from FemLink import (
+    UtilsAnalysis as _UtilsAnalysis,  # type: ignore[import-not-found]
+)
+from FemLink.LinkBody import LinkBody  # type: ignore[import-not-found]
+from FemLink.ViewLinkBody import VPLinkBody  # type: ignore[import-not-found]
+from femmesh.gmshtools import GmshTools
+from JointObject import (  # type: ignore[import-not-found]
+    GroundedJoint as _GroundedJoint,
+)
+from JointObject import (
+    Joint as _Joint,
+)
+from JointObject import (
+    ViewProviderGroundedJoint as _VPGroundedJoint,
+)
+from JointObject import (
+    ViewProviderJoint as _VPJoint,
+)
 
 from . import manager
 from .manager import get_meshname, init_doc
+
+if FreeCAD.GuiUp:
+    import FreeCADGui as FreeCADGuiMod  # type: ignore[import-not-found]
+else:
+    FreeCADGuiMod = None
 
 
 def _find_cylindrical_face_name(shape_obj, target_radius=None, prefer_max_x=False):
@@ -59,45 +94,12 @@ def create_and_run_simulation(
 ):
     """Create and run an Assembly kinematic simulation.  Works headless and in GUI."""
     try:
-        import UtilsAssembly
-
         sim_group = UtilsAssembly.getSimulationGroup(assembly)
         simulation = sim_group.newObject("App::FeaturePython", "Simulation")
 
-        # Set proxy so doubleClicked works after document reload.
-        # CommandCreateSimulation.Simulation adds GroupExtension + properties + Proxy;
-        # it imports pivy so falls back to a minimal proxy when running headless.
-        try:
-            from CommandCreateSimulation import Simulation as _SimClass
-            from CommandCreateSimulation import ViewProviderSimulation
-            _SimClass(simulation)  # sets Proxy, adds extension and properties
-            if FreeCAD.GuiUp:
-                ViewProviderSimulation(simulation.ViewObject)
-        except (ImportError, NameError):
-            simulation.addExtension("App::GroupExtensionPython")
-
-            class _MinimalSimProxy:
-                def getAssembly(self, feaPy):
-                    for obj in feaPy.InList:
-                        if obj.isDerivedFrom("Assembly::AssemblyObject"):
-                            return obj
-                    return None
-                def dumps(self): return None
-                def loads(self, state): return None
-                def execute(self, feaPy): pass
-                def onChanged(self, feaPy, prop): pass
-
-            simulation.Proxy = _MinimalSimProxy()
-            for prop, ptype in [
-                ("aTimeStart", "App::PropertyFloat"),
-                ("bTimeEnd", "App::PropertyFloat"),
-                ("cTimeStepOutput", "App::PropertyFloat"),
-                ("fGlobalErrorTolerance", "App::PropertyFloat"),
-                ("jFramesPerSecond", "App::PropertyInteger"),
-                ("Dynamic", "App::PropertyBool"),
-            ]:
-                if not hasattr(simulation, prop):
-                    simulation.addProperty(ptype, prop, "Simulation")
+        _SimClass(simulation)  # sets Proxy, adds extension and properties
+        if FreeCAD.GuiUp:
+            ViewProviderSimulation(simulation.ViewObject)
 
         # Re-set desired values (CommandCreateSimulation.Simulation sets its own defaults)
         simulation.aTimeStart = 0.0
@@ -109,27 +111,9 @@ def create_and_run_simulation(
 
         if driver_joint is not None:
             motion = assembly.newObject("App::FeaturePython", "Motion")
-            try:
-                from CommandCreateSimulation import Motion as _MotionClass
-                from CommandCreateSimulation import ViewProviderMotion
-                _MotionClass(motion, motionType="Linear")  # sets Proxy + creates properties
-                if FreeCAD.GuiUp:
-                    ViewProviderMotion(motion.ViewObject)
-            except (ImportError, NameError):
-                class _MinimalMotionProxy:
-                    def dumps(self): return None
-                    def loads(self, state): return None
-                    def execute(self, feaPy): pass
-                    def onChanged(self, feaPy, prop): pass
-                motion.Proxy = _MinimalMotionProxy()
-                for prop, ptype in [
-                    ("Joint", "App::PropertyXLinkSub"),
-                    ("Formula", "App::PropertyString"),
-                    ("MotionType", "App::PropertyEnumeration"),
-                ]:
-                    if not hasattr(motion, prop):
-                        motion.addProperty(ptype, prop, "Motion")
-                motion.MotionType = ["Angular", "Linear"]
+            _MotionClass(motion, motionType="Linear")  # sets Proxy + creates properties
+            if FreeCAD.GuiUp:
+                ViewProviderMotion(motion.ViewObject)
             motion.MotionType = "Linear"
             try:
                 motion.Joint = (driver_joint, [])
@@ -199,7 +183,6 @@ def setup(
     exercise_loadcases=True,
     connect_joints=True,
 ):
-
     if doc is None:
         doc = init_doc()
 
@@ -218,7 +201,6 @@ def setup(
     pendulum_base.Length = 525
     pendulum_base.Width = 50
     pendulum_base.Height = 50
-    # Extend 25 mm upstream of the housing centerline.
     pendulum_base.Placement = FreeCAD.Placement(
         FreeCAD.Vector(-25, 0, 0),
         FreeCAD.Rotation(),
@@ -261,7 +243,6 @@ def setup(
     anchor_shape.Length = 60
     anchor_shape.Width = 70
     anchor_shape.Height = 70
-    # Keep source solids near origin; place them in assembly via App::Link placements.
     anchor_shape.Placement = FreeCAD.Placement(
         FreeCAD.Vector(0, 0, 0),
         FreeCAD.Rotation(),
@@ -308,207 +289,157 @@ def setup(
         slider_shape.ViewObject.Visibility = False
         rod_shape.ViewObject.Visibility = False
 
-    assembly = None
-    pendulum_link = None
-    anchor_link = None
-    slider_link = None
-    rod_link = None
-    cyl_joint = None
-    slider_joint = None
-    slider_rod_joint = None
-    rod_pendulum_joint = None
+    assembly = doc.addObject("Assembly::AssemblyObject", "ForcedPendulumAssembly")
+    assembly.Label = "ForcedPendulumAssembly"
 
-    try:
-        try:
-            import AssemblyApp  # noqa: F401
-        except Exception:
-            pass
+    housing_link = assembly.newObject("App::Link", "Housing")
+    housing_link.LinkedObject = housing_shape
+    housing_link.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(0, 0, 25),
+        FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), -90),
+    )
 
-        assembly = doc.addObject("Assembly::AssemblyObject", "ForcedPendulumAssembly")
-        assembly.Label = "ForcedPendulumAssembly"
+    pendulum_link = assembly.newObject("App::Link", "Pendulum")
+    pendulum_link.LinkedObject = pendulum_shape
+    pendulum_link.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(0, 0, 0),
+        FreeCAD.Rotation(),
+    )
 
-        housing_link = assembly.newObject("App::Link", "Housing")
-        housing_link.LinkedObject = housing_shape
-        # Rotation(X,-90) aligns cylinder axis (local Z) with world +Y (pendulum rotation axis).
-        # Place housing so its pivot center (local point 0,0,25) matches the pendulum
-        # bore center (local point 0,25,25) in the initial layout.
-        housing_link.Placement = FreeCAD.Placement(
+    anchor_center_z = -500.0
+    slider_center_z = -445.0
+    rod_base_z = -425.0
+
+    anchor_link = assembly.newObject("App::Link", "Anchor")
+    anchor_link.LinkedObject = anchor_shape
+    anchor_link.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(
+            free_end_x - 0.5 * float(anchor_shape.Length),
+            free_end_y - 0.5 * float(anchor_shape.Width),
+            anchor_center_z - 0.5 * float(anchor_shape.Height),
+        ),
+        FreeCAD.Rotation(),
+    )
+
+    slider_link = assembly.newObject("App::Link", "ActuatorSlider")
+    slider_link.LinkedObject = slider_shape
+    slider_link.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(
+            free_end_x - 0.5 * float(slider_shape.Length),
+            free_end_y - 0.5 * float(slider_shape.Width),
+            slider_center_z - 0.5 * float(slider_shape.Height),
+        ),
+        FreeCAD.Rotation(),
+    )
+
+    rod_link = assembly.newObject("App::Link", "ActuatorRod")
+    rod_link.LinkedObject = rod_shape
+    rod_link.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(
+            free_end_x - 0.5 * float(rod_shape.Length),
+            free_end_y - 0.5 * float(rod_shape.Width),
+            rod_base_z,
+        ),
+        FreeCAD.Rotation(),
+    )
+
+    if connect_joints:
+        joint_group = assembly.newObject("Assembly::JointGroup", "Joints")
+
+        ground_joint = joint_group.newObject("App::FeaturePython", "GroundedJoint")
+        ground_joint.Label = "GroundedJoint"
+        _GroundedJoint(ground_joint, housing_link)
+        if FreeCAD.GuiUp:
+            _VPGroundedJoint(ground_joint.ViewObject)
+
+        anchor_ground_joint = joint_group.newObject("App::FeaturePython", "AnchorGroundedJoint")
+        anchor_ground_joint.Label = "AnchorGroundedJoint"
+        _GroundedJoint(anchor_ground_joint, anchor_link)
+        if FreeCAD.GuiUp:
+            _VPGroundedJoint(anchor_ground_joint.ViewObject)
+
+        cyl_joint = joint_group.newObject("App::FeaturePython", "PendulumRevolute")
+        cyl_joint.Label = "PendulumRevolute"
+        _Joint(cyl_joint, 1)
+        if FreeCAD.GuiUp:
+            _VPJoint(cyl_joint.ViewObject)
+        cyl_joint.Detach1 = True
+        cyl_joint.Detach2 = True
+        cyl_joint.Placement1 = FreeCAD.Placement(
             FreeCAD.Vector(0, 0, 25),
+            FreeCAD.Rotation(),
+        )
+        cyl_joint.Placement2 = FreeCAD.Placement(
+            FreeCAD.Vector(0, 25, 25),
             FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), -90),
         )
 
-        pendulum_link = assembly.newObject("App::Link", "Pendulum")
-        pendulum_link.LinkedObject = pendulum_shape
-        pendulum_link.Placement = FreeCAD.Placement(
-            FreeCAD.Vector(0, 0, 0),
+        slider_joint = joint_group.newObject("App::FeaturePython", "AnchorToSliderRevolute")
+        slider_joint.Label = "AnchorToSliderRevolute"
+        _Joint(slider_joint, 1)
+        if FreeCAD.GuiUp:
+            _VPJoint(slider_joint.ViewObject)
+        slider_joint.Detach1 = True
+        slider_joint.Detach2 = True
+        slider_joint.Placement1 = FreeCAD.Placement(
+            FreeCAD.Vector(30, 35, 70),
+            FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), -90),
+        )
+        slider_joint.Placement2 = FreeCAD.Placement(
+            FreeCAD.Vector(40, 20, 0),
+            FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), -90),
+        )
+
+        slider_rod_joint = joint_group.newObject("App::FeaturePython", "SliderToRodPrismatic")
+        slider_rod_joint.Label = "SliderToRodPrismatic"
+        _Joint(slider_rod_joint, 3)
+        if FreeCAD.GuiUp:
+            _VPJoint(slider_rod_joint.ViewObject)
+        slider_rod_joint.Detach1 = True
+        slider_rod_joint.Detach2 = True
+        slider_rod_joint.Placement1 = FreeCAD.Placement(
+            FreeCAD.Vector(40, 20, 40),
+            FreeCAD.Rotation(),
+        )
+        slider_rod_joint.Placement2 = FreeCAD.Placement(
+            FreeCAD.Vector(10, 10, 0),
             FreeCAD.Rotation(),
         )
 
-        anchor_center_z = -500.0
-        slider_center_z = -445.0
-        rod_base_z = -425.0
-
-        anchor_link = assembly.newObject("App::Link", "Anchor")
-        anchor_link.LinkedObject = anchor_shape
-        anchor_link.Placement = FreeCAD.Placement(
-            FreeCAD.Vector(
-                free_end_x - 0.5 * float(anchor_shape.Length),
-                free_end_y - 0.5 * float(anchor_shape.Width),
-                anchor_center_z - 0.5 * float(anchor_shape.Height),
-            ),
+        rod_pendulum_joint = joint_group.newObject("App::FeaturePython", "RodToPendulumSpherical")
+        rod_pendulum_joint.Label = "RodToPendulumSpherical"
+        _Joint(rod_pendulum_joint, 4)
+        if FreeCAD.GuiUp:
+            _VPJoint(rod_pendulum_joint.ViewObject)
+        rod_pendulum_joint.Detach1 = True
+        rod_pendulum_joint.Detach2 = True
+        rod_pendulum_joint.Placement1 = FreeCAD.Placement(
+            FreeCAD.Vector(10, 10, 450),
+            FreeCAD.Rotation(),
+        )
+        rod_pendulum_joint.Placement2 = FreeCAD.Placement(
+            FreeCAD.Vector(free_end_x, free_end_y, free_end_z),
             FreeCAD.Rotation(),
         )
 
-        slider_link = assembly.newObject("App::Link", "ActuatorSlider")
-        slider_link.LinkedObject = slider_shape
-        slider_link.Placement = FreeCAD.Placement(
-            FreeCAD.Vector(
-                free_end_x - 0.5 * float(slider_shape.Length),
-                free_end_y - 0.5 * float(slider_shape.Width),
-                slider_center_z - 0.5 * float(slider_shape.Height),
-            ),
-            FreeCAD.Rotation(),
-        )
-
-        rod_link = assembly.newObject("App::Link", "ActuatorRod")
-        rod_link.LinkedObject = rod_shape
-        rod_link.Placement = FreeCAD.Placement(
-            FreeCAD.Vector(
-                free_end_x - 0.5 * float(rod_shape.Length),
-                free_end_y - 0.5 * float(rod_shape.Width),
-                rod_base_z,
-            ),
-            FreeCAD.Rotation(),
-        )
-
-        if connect_joints:
-            joint_group = assembly.newObject("Assembly::JointGroup", "Joints")
-
-            try:
-                from JointObject import GroundedJoint as _GroundedJoint
-                from JointObject import Joint as _Joint
-                from JointObject import (
-                    ViewProviderGroundedJoint as _VPGroundedJoint,
-                )
-                from JointObject import ViewProviderJoint as _VPJoint
-
-                ground_joint = joint_group.newObject("App::FeaturePython", "GroundedJoint")
-                ground_joint.Label = "GroundedJoint"
-                _GroundedJoint(ground_joint, housing_link)
-                if FreeCAD.GuiUp:
-                    _VPGroundedJoint(ground_joint.ViewObject)
-
-                anchor_ground_joint = joint_group.newObject("App::FeaturePython", "AnchorGroundedJoint")
-                anchor_ground_joint.Label = "AnchorGroundedJoint"
-                _GroundedJoint(anchor_ground_joint, anchor_link)
-                if FreeCAD.GuiUp:
-                    _VPGroundedJoint(anchor_ground_joint.ViewObject)
-
-                cyl_joint = joint_group.newObject("App::FeaturePython", "PendulumRevolute")
-                cyl_joint.Label = "PendulumRevolute"
-                _Joint(cyl_joint, 1)
-                if FreeCAD.GuiUp:
-                    _VPJoint(cyl_joint.ViewObject)
-                cyl_joint.Detach1 = True
-                cyl_joint.Detach2 = True
-                cyl_joint.Placement1 = FreeCAD.Placement(
-                    FreeCAD.Vector(0, 0, 25),
-                    FreeCAD.Rotation(),
-                )
-                cyl_joint.Placement2 = FreeCAD.Placement(
-                    FreeCAD.Vector(0, 25, 25),
-                    FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), -90),
-                )
-
-                slider_joint = joint_group.newObject("App::FeaturePython", "AnchorToSliderRevolute")
-                slider_joint.Label = "AnchorToSliderRevolute"
-                _Joint(slider_joint, 1)
-                if FreeCAD.GuiUp:
-                    _VPJoint(slider_joint.ViewObject)
-                slider_joint.Detach1 = True
-                slider_joint.Detach2 = True
-                # Use connector-local coordinates (face centers) for robust initial alignment.
-                slider_joint.Placement1 = FreeCAD.Placement(
-                    FreeCAD.Vector(30, 35, 70),  # Anchor Face6 center (local)
-                    # Revolute axis: align local Z to world +Y.
-                    FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), -90),
-                )
-                slider_joint.Placement2 = FreeCAD.Placement(
-                    FreeCAD.Vector(40, 20, 0),  # Slider Face5 center (local)
-                    # Keep both connectors on the same revolute axis direction.
-                    FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), -90),
-                )
-
-                slider_rod_joint = joint_group.newObject("App::FeaturePython", "SliderToRodPrismatic")
-                slider_rod_joint.Label = "SliderToRodPrismatic"
-                _Joint(slider_rod_joint, 3)
-                if FreeCAD.GuiUp:
-                    _VPJoint(slider_rod_joint.ViewObject)
-                slider_rod_joint.Detach1 = True
-                slider_rod_joint.Detach2 = True
-                slider_rod_joint.Placement1 = FreeCAD.Placement(
-                    FreeCAD.Vector(40, 20, 40),  # Slider Face6 center (local)
-                    FreeCAD.Rotation(),
-                )
-                slider_rod_joint.Placement2 = FreeCAD.Placement(
-                    FreeCAD.Vector(10, 10, 0),  # Rod Face5 center (local)
-                    FreeCAD.Rotation(),
-                )
-
-                rod_pendulum_joint = joint_group.newObject("App::FeaturePython", "RodToPendulumSpherical")
-                rod_pendulum_joint.Label = "RodToPendulumSpherical"
-                _Joint(rod_pendulum_joint, 4)
-                if FreeCAD.GuiUp:
-                    _VPJoint(rod_pendulum_joint.ViewObject)
-                rod_pendulum_joint.Detach1 = True
-                rod_pendulum_joint.Detach2 = True
-                rod_pendulum_joint.Placement1 = FreeCAD.Placement(
-                    FreeCAD.Vector(10, 10, 450),  # Rod Face6 center (local)
-                    FreeCAD.Rotation(),
-                )
-                rod_pendulum_joint.Placement2 = FreeCAD.Placement(
-                    FreeCAD.Vector(free_end_x, free_end_y, free_end_z),
-                    FreeCAD.Rotation(),
-                )
-            except Exception:
-                pass
-
-    except Exception:
-        assembly = None
-        pendulum_link = None
-
-    if assembly is not None and cyl_joint is not None and connect_joints:
         cyl_joint.Proxy.setJointConnectors(
             cyl_joint,
-            [
-                [housing_link, ["Face1"]],
-                [pendulum_link, [reaction_face_name]],
-            ],
+            [[housing_link, ["Face1"]], [pendulum_link, [reaction_face_name]]],
         )
-
-        if slider_joint is not None:
-            slider_joint.Proxy.setJointConnectors(
-                slider_joint,
-                [
-                    [anchor_link, ["Face6"]],
-                    [slider_link, ["Face5"]],
-                ],
-            )
-            slider_rod_joint.Proxy.setJointConnectors(
-                slider_rod_joint,
-                [
-                    [slider_link, ["Face6"]],
-                    [rod_link, ["Face5"]],
-                ],
-            )
-            rod_pendulum_joint.Proxy.setJointConnectors(
-                rod_pendulum_joint,
-                [
-                    [rod_link, ["Face6"]],
-                    [pendulum_link, [free_end_face_name]],
-                ],
-            )
-    elif assembly is not None and not connect_joints:
+        slider_joint.Proxy.setJointConnectors(
+            slider_joint,
+            [[anchor_link, ["Face6"]], [slider_link, ["Face5"]]],
+        )
+        slider_rod_joint.Proxy.setJointConnectors(
+            slider_rod_joint,
+            [[slider_link, ["Face6"]], [rod_link, ["Face5"]]],
+        )
+        rod_pendulum_joint.Proxy.setJointConnectors(
+            rod_pendulum_joint,
+            [[rod_link, ["Face6"]], [pendulum_link, [free_end_face_name]]],
+        )
+    else:
+        slider_rod_joint = None
         FreeCAD.Console.PrintMessage(
             "[Layout] connect_joints=False: leaving parts unconnected in assembly for placement inspection.\n"
         )
@@ -536,87 +467,64 @@ def setup(
     material_obj.Material = mat
     analysis.addObject(material_obj)
 
-    # NOTE:
-    # FEM constraints are generated by the LinkBody load-case pipeline.
-    # Do not add explicit Jig321/Reaction constraints here; doing so diverges
-    # from TaskAssemblyLinkBody behavior and can duplicate or conflict with
-    # generated constraints.
-
     femmesh_obj = analysis.addObject(
         ObjectsFem.makeMeshGmsh(doc, get_meshname())
     )[0]
     femmesh_obj.Shape = pendulum_shape
     femmesh_obj.SecondOrderLinear = False
     femmesh_obj.ElementDimension = "3D"
-    # Keep the default mesh coarse for stable/fast CI runs and to avoid Gmsh stalls.
     femmesh_obj.CharacteristicLengthMax = "100 mm"
-
-    from femmesh.gmshtools import GmshTools
 
     gmsh_mesh = GmshTools(femmesh_obj)
     gmsh_mesh.create_mesh()
 
-    if pendulum_link is not None:
-        try:
-            from FemLink import UtilsAnalysis as _UtilsAnalysis
-            from FemLink.LinkBody import LinkBody
+    linkbody_fp = doc.addObject("App::FeaturePython", "LinkBody_Pendulum")
+    linkbody_fp.Label = "LinkBody_Pendulum"
+    LinkBody(linkbody_fp, pendulum_link)
+    if FreeCAD.GuiUp:
+        VPLinkBody(linkbody_fp.ViewObject)
+    assembly.addObject(linkbody_fp)
 
-            linkbody_fp = doc.addObject("App::FeaturePython", "LinkBody_Pendulum")
-            linkbody_fp.Label = "LinkBody_Pendulum"
-            LinkBody(linkbody_fp, pendulum_link)
-            if FreeCAD.GuiUp:
-                from FemLink.ViewLinkBody import VPLinkBody
-
-                VPLinkBody(linkbody_fp.ViewObject)
-            if assembly is not None:
-                assembly.addObject(linkbody_fp)
-
-            if exercise_loadcases and assembly is not None and connect_joints:
-                driver_joint = slider_rod_joint if slider_rod_joint is not None else slider_joint
-                _, n_frames = create_and_run_simulation(assembly, driver_joint)
-                summary = _UtilsAnalysis.exercise_load_case_pipeline(
-                    assembly,
-                    linkbody_fp,
-                    dry_run=False,
-                )
-                FreeCAD.Console.PrintMessage(
-                    f"Assembly kinematic simulation frames: {n_frames}\n"
-                )
-                FreeCAD.Console.PrintMessage(
-                    "LinkBody load-case exercise: "
-                    f"states={summary['num_states']}, "
-                    f"full_hull={summary['full_hull_size']}, "
-                    f"reduced_hull={summary['reduced_hull_size']}\n"
-                )
-            elif not connect_joints:
-                FreeCAD.Console.PrintWarning(
-                    "connect_joints=False: skipping load-case simulation/pipeline; "
-                    "assembly remains in pre-connection layout mode.\n"
-                )
-            else:
-                FreeCAD.Console.PrintWarning(
-                    "exercise_loadcases=False: no LinkBody-generated Jig321/Reaction constraints "
-                    "were added to the FEM analysis.\n"
-                )
-        except Exception as exc:
-            FreeCAD.Console.PrintWarning(
-                f"FemLink.LinkBody unavailable; LinkBody object not created: {exc}\n"
-            )
+    if exercise_loadcases and connect_joints:
+        _, n_frames = create_and_run_simulation(assembly, slider_rod_joint)
+        summary = _UtilsAnalysis.exercise_load_case_pipeline(
+            assembly,
+            linkbody_fp,
+            dry_run=False,
+        )
+        FreeCAD.Console.PrintMessage(
+            f"Assembly kinematic simulation frames: {n_frames}\n"
+        )
+        FreeCAD.Console.PrintMessage(
+            "LinkBody load-case exercise: "
+            f"states={summary['num_states']}, "
+            f"full_hull={summary['full_hull_size']}, "
+            f"reduced_hull={summary['reduced_hull_size']}\n"
+        )
+    elif not connect_joints:
+        FreeCAD.Console.PrintWarning(
+            "connect_joints=False: skipping load-case simulation/pipeline; "
+            "assembly remains in pre-connection layout mode.\n"
+        )
+    else:
+        FreeCAD.Console.PrintWarning(
+            "exercise_loadcases=False: no LinkBody-generated Jig321/Reaction constraints "
+            "were added to the FEM analysis.\n"
+        )
 
     doc.recompute()
 
-    if FreeCAD.GuiUp and assembly is not None and connect_joints:
+    if FreeCAD.GuiUp and connect_joints:
         try:
-            import FreeCADGui
-
-            FreeCADGui.ActiveDocument.setEdit(assembly)
+            assert FreeCADGuiMod is not None
+            if FreeCADGuiMod.ActiveDocument is not None:
+                FreeCADGuiMod.ActiveDocument.setEdit(assembly)
         except Exception:
             pass
 
     if FreeCAD.GuiUp:
         femmesh_obj.ViewObject.Visibility = True
         view = femmesh_obj.ViewObject.Document.activeView()
-        # Use Y-axis aligned view during layout inspection.
         view.viewFront()
         view.fitAll()
 
