@@ -15,16 +15,6 @@ import AssemblyApp  # noqa: F401  # type: ignore[import-not-found]
 import FreeCAD  # type: ignore[import-not-found]
 import ObjectsFem
 import UtilsAssembly  # noqa: F401  # type: ignore[import-not-found]
-from CommandCreateSimulation import (  # type: ignore[import-not-found]
-    Motion as _MotionClass,
-)
-from CommandCreateSimulation import (
-    Simulation as _SimClass,
-)
-from CommandCreateSimulation import (
-    ViewProviderMotion,
-    ViewProviderSimulation,
-)
 from FemLink import (
     UtilsAnalysis as _UtilsAnalysis,  # type: ignore[import-not-found]
 )
@@ -43,6 +33,10 @@ from JointObject import (
 from JointObject import (
     ViewProviderJoint as _VPJoint,
 )
+from MotionObject import Motion as _MotionClass
+from MotionObject import ViewProviderMotion
+from SimulationObject import Simulation as _SimClass
+from ViewProviderSimulation import ViewProviderSimulation
 
 from . import manager
 from .manager import get_meshname, init_doc
