@@ -272,7 +272,19 @@ ViewProviderMultiFuse::~ViewProviderMultiFuse() = default;
 
 std::vector<App::DocumentObject*> ViewProviderMultiFuse::claimChildren() const
 {
-    return getObject<Part::MultiFuse>()->Shapes.getValues();
+    auto* fuseObj = getObject<Part::MultiFuse>();
+    if (!fuseObj || !fuseObj->isAttachedToDocument() || fuseObj->isRemoving()) {
+        return {};
+    }
+
+    std::vector<App::DocumentObject*> children;
+    for (auto* shapeObj : fuseObj->Shapes.getValues()) {
+        if (shapeObj && shapeObj->isAttachedToDocument() && !shapeObj->isRemoving()) {
+            children.push_back(shapeObj);
+        }
+    }
+
+    return children;
 }
 
 QIcon ViewProviderMultiFuse::getIcon() const
@@ -287,6 +299,10 @@ void ViewProviderMultiFuse::updateData(const App::Property* prop)
         const std::vector<Part::ShapeHistory>& hist
             = static_cast<const Part::PropertyShapeHistory*>(prop)->getValues();
         Part::MultiFuse* objBool = getObject<Part::MultiFuse>();
+        if (!objBool || !objBool->isAttachedToDocument() || objBool->isRemoving()) {
+            return;
+        }
+
         std::vector<App::DocumentObject*> sources = objBool->Shapes.getValues();
         if (hist.size() != sources.size()) {
             return;
@@ -302,6 +318,10 @@ void ViewProviderMultiFuse::updateData(const App::Property* prop)
         int index = 0;
         for (std::vector<App::DocumentObject*>::iterator it = sources.begin(); it != sources.end();
              ++it, ++index) {
+            if (!*it) {
+                continue;
+            }
+
             Part::Feature* objBase = dynamic_cast<Part::Feature*>(Part::Feature::getShapeOwner(*it));
             if (!objBase) {
                 continue;
@@ -350,6 +370,10 @@ bool ViewProviderMultiFuse::onDelete(const std::vector<std::string>& subNames)
 {
     // get the input shapes
     Part::MultiFuse* pBool = getObject<Part::MultiFuse>();
+    if (!pBool || !pBool->isAttachedToDocument() || pBool->isRemoving()) {
+        return true;
+    }
+
     std::vector<App::DocumentObject*> pShapes = pBool->Shapes.getValues();
 
     QString inputDescription = QObject::tr("%1 input objects").arg(pShapes.size());
@@ -416,7 +440,19 @@ ViewProviderMultiCommon::~ViewProviderMultiCommon() = default;
 
 std::vector<App::DocumentObject*> ViewProviderMultiCommon::claimChildren() const
 {
-    return getObject<Part::MultiCommon>()->Shapes.getValues();
+    auto* commonObj = getObject<Part::MultiCommon>();
+    if (!commonObj || !commonObj->isAttachedToDocument() || commonObj->isRemoving()) {
+        return {};
+    }
+
+    std::vector<App::DocumentObject*> children;
+    for (auto* shapeObj : commonObj->Shapes.getValues()) {
+        if (shapeObj && shapeObj->isAttachedToDocument() && !shapeObj->isRemoving()) {
+            children.push_back(shapeObj);
+        }
+    }
+
+    return children;
 }
 
 QIcon ViewProviderMultiCommon::getIcon() const
@@ -431,6 +467,10 @@ void ViewProviderMultiCommon::updateData(const App::Property* prop)
         const std::vector<Part::ShapeHistory>& hist
             = static_cast<const Part::PropertyShapeHistory*>(prop)->getValues();
         Part::MultiCommon* objBool = getObject<Part::MultiCommon>();
+        if (!objBool || !objBool->isAttachedToDocument() || objBool->isRemoving()) {
+            return;
+        }
+
         std::vector<App::DocumentObject*> sources = objBool->Shapes.getValues();
         if (hist.size() != sources.size()) {
             return;
@@ -446,6 +486,10 @@ void ViewProviderMultiCommon::updateData(const App::Property* prop)
         int index = 0;
         for (std::vector<App::DocumentObject*>::iterator it = sources.begin(); it != sources.end();
              ++it, ++index) {
+            if (!*it) {
+                continue;
+            }
+
             Part::Feature* objBase = dynamic_cast<Part::Feature*>(Part::Feature::getShapeOwner(*it));
             if (!objBase) {
                 continue;
@@ -494,6 +538,10 @@ bool ViewProviderMultiCommon::onDelete(const std::vector<std::string>& subNames)
 {
     // get the input shapes
     Part::MultiCommon* pBool = getObject<Part::MultiCommon>();
+    if (!pBool || !pBool->isAttachedToDocument() || pBool->isRemoving()) {
+        return true;
+    }
+
     std::vector<App::DocumentObject*> pShapes = pBool->Shapes.getValues();
 
     QString inputDescription = QObject::tr("%1 input objects").arg(pShapes.size());
