@@ -31,9 +31,10 @@ def _gui_refresh_stride() -> int:
     FREECAD_FEMLINK_GUI_REFRESH_EVERY controls how often Qt events are pumped
     in long FEM-link loops. Values:
     - <= 0: disable GUI refreshes
-    - 1: refresh every iteration (legacy behavior)
+    - 1: refresh every iteration
     - N>1: refresh every Nth iteration
     """
+    # Default to responsive behavior; set <=0 via env to disable if needed.
     raw = os.environ.get("FREECAD_FEMLINK_GUI_REFRESH_EVERY", "1")
     try:
         return int(raw)
@@ -48,7 +49,8 @@ def _refresh_gui(step_index=None):
     if step_index is not None and stride > 1 and (step_index % stride) != 0:
         return
     if FreeCAD.GuiUp and FreeCADGui is not None:
-        FreeCADGui.updateGui()
+        # Avoid full command/tree refresh here; it can re-enter selection/action
+        # updates while transient FEM-linked objects are changing.
         QtCore.QCoreApplication.processEvents()
 
 

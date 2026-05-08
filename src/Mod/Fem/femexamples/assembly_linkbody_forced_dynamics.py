@@ -387,7 +387,9 @@ def setup(
             try:
                 from JointObject import GroundedJoint as _GroundedJoint
                 from JointObject import Joint as _Joint
-                from JointObject import ViewProviderGroundedJoint as _VPGroundedJoint
+                from JointObject import (
+                    ViewProviderGroundedJoint as _VPGroundedJoint,
+                )
                 from JointObject import ViewProviderJoint as _VPJoint
 
                 ground_joint = joint_group.newObject("App::FeaturePython", "GroundedJoint")
