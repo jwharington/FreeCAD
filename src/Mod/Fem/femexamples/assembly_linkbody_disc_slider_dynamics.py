@@ -11,11 +11,44 @@
 # *                                                                         *
 # ***************************************************************************
 
+import AssemblyApp  # noqa: F401
 import FreeCAD
 import ObjectsFem
+import UtilsAssembly  # noqa: F401
+from CommandCreateSimulation import (
+    Motion as _MotionClass,
+)
+from CommandCreateSimulation import (
+    Simulation as _SimClass,
+)
+from CommandCreateSimulation import (
+    ViewProviderMotion,
+    ViewProviderSimulation,
+)
+from FemLink import UtilsAnalysis as _UtilsAnalysis
+from FemLink.LinkBody import LinkBody
+from FemLink.ViewLinkBody import VPLinkBody
+from femmesh.gmshtools import GmshTools
+from JointObject import (
+    GroundedJoint as _GroundedJoint,
+)
+from JointObject import (
+    Joint as _Joint,
+)
+from JointObject import (
+    ViewProviderGroundedJoint as _VPGroundedJoint,
+)
+from JointObject import (
+    ViewProviderJoint as _VPJoint,
+)
 
 from . import manager
 from .manager import get_meshname, init_doc
+
+if FreeCAD.GuiUp:
+    import FreeCADGui as FreeCADGuiMod
+else:
+    FreeCADGuiMod = None
 
 
 def _find_cylindrical_face_name(shape_obj, target_radius=None):
@@ -51,51 +84,12 @@ def create_and_run_simulation(
 ):
     """Create and run a dynamic assembly simulation with optional joint motions."""
     try:
-        import UtilsAssembly
-
         sim_group = UtilsAssembly.getSimulationGroup(assembly)
         simulation = sim_group.newObject("App::FeaturePython", "Simulation")
 
-        try:
-            from CommandCreateSimulation import Simulation as _SimClass
-            from CommandCreateSimulation import ViewProviderSimulation
-
-            _SimClass(simulation)
-            if FreeCAD.GuiUp:
-                ViewProviderSimulation(simulation.ViewObject)
-        except (ImportError, NameError):
-            simulation.addExtension("App::GroupExtensionPython")
-
-            class _MinimalSimProxy:
-                def getAssembly(self, feaPy):
-                    for obj in feaPy.InList:
-                        if obj.isDerivedFrom("Assembly::AssemblyObject"):
-                            return obj
-                    return None
-
-                def dumps(self):
-                    return None
-
-                def loads(self, state):
-                    return None
-
-                def execute(self, feaPy):
-                    pass
-
-                def onChanged(self, feaPy, prop):
-                    pass
-
-            simulation.Proxy = _MinimalSimProxy()
-            for prop, ptype in [
-                ("aTimeStart", "App::PropertyFloat"),
-                ("bTimeEnd", "App::PropertyFloat"),
-                ("cTimeStepOutput", "App::PropertyFloat"),
-                ("fGlobalErrorTolerance", "App::PropertyFloat"),
-                ("jFramesPerSecond", "App::PropertyInteger"),
-                ("Dynamic", "App::PropertyBool"),
-            ]:
-                if not hasattr(simulation, prop):
-                    simulation.addProperty(ptype, prop, "Simulation")
+        _SimClass(simulation)
+        if FreeCAD.GuiUp:
+            ViewProviderSimulation(simulation.ViewObject)
 
         simulation.aTimeStart = 0.0
         simulation.bTimeEnd = time_end
@@ -109,36 +103,9 @@ def create_and_run_simulation(
                 return False
 
             motion = assembly.newObject("App::FeaturePython", motion_name)
-            try:
-                from CommandCreateSimulation import Motion as _MotionClass
-                from CommandCreateSimulation import ViewProviderMotion
-
-                _MotionClass(motion, motionType=motion_type)
-                if FreeCAD.GuiUp:
-                    ViewProviderMotion(motion.ViewObject)
-            except (ImportError, NameError):
-                class _MinimalMotionProxy:
-                    def dumps(self):
-                        return None
-
-                    def loads(self, state):
-                        return None
-
-                    def execute(self, feaPy):
-                        pass
-
-                    def onChanged(self, feaPy, prop):
-                        pass
-
-                motion.Proxy = _MinimalMotionProxy()
-                for prop, ptype in [
-                    ("Joint", "App::PropertyXLinkSub"),
-                    ("Formula", "App::PropertyString"),
-                    ("MotionType", "App::PropertyEnumeration"),
-                ]:
-                    if not hasattr(motion, prop):
-                        motion.addProperty(ptype, prop, "Motion")
-                motion.MotionType = ["Angular", "Linear"]
+            _MotionClass(motion, motionType=motion_type)
+            if FreeCAD.GuiUp:
+                ViewProviderMotion(motion.ViewObject)
 
             motion.MotionType = motion_type
             try:
@@ -277,131 +244,107 @@ def setup(
         slider_shape.ViewObject.Visibility = False
         disc_shape.ViewObject.Visibility = False
 
-    assembly = None
-    rail_link = None
-    slider_link = None
-    disc_link = None
+    assembly = doc.addObject("Assembly::AssemblyObject", "DiscSliderAssembly")
+    assembly.Label = "DiscSliderAssembly"
+
+    rail_link = assembly.newObject("App::Link", "Rail")
+    rail_link.LinkedObject = rail_shape
+    rail_link.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(0, 0, 0),
+        FreeCAD.Rotation(),
+    )
+
+    rail_slider_marker_local = FreeCAD.Vector(
+        0.5 * float(rail_shape.Length),
+        0.5 * float(rail_shape.Width),
+        float(rail_shape.Height),
+    )
+
+    slider_joint_marker_local = FreeCAD.Vector(
+        0.5 * float(slider_shape.Length),
+        0.5 * float(slider_shape.Width),
+        0.0,
+    )
+
+    slider_initial_pos = rail_slider_marker_local - slider_joint_marker_local
+
+    slider_link = assembly.newObject("App::Link", "SliderBox")
+    slider_link.LinkedObject = slider_shape
+    slider_link.Placement = FreeCAD.Placement(
+        slider_initial_pos,
+        FreeCAD.Rotation(),
+    )
+
+    slider_disc_marker_local = FreeCAD.Vector(
+        float(slider_shape.Length),
+        0.5 * float(slider_shape.Width),
+        0.5 * float(slider_shape.Height),
+    )
+
+    disc_center_local = FreeCAD.Vector(0.0, 0.0, 0.5 * float(disc_shape.Height))
+    disc_joint_marker_local = disc_center_local + FreeCAD.Vector(
+        float(disc_joint_offset_x),
+        float(disc_joint_offset_y),
+        float(disc_joint_offset_z),
+    )
+
+    slider_world_pos = slider_link.Placement.Base + slider_disc_marker_local
+    disc_initial_pos = slider_world_pos - disc_joint_marker_local
+
+    disc_link = assembly.newObject("App::Link", "Disc")
+    disc_link.LinkedObject = disc_shape
+    disc_link.Placement = FreeCAD.Placement(
+        disc_initial_pos,
+        FreeCAD.Rotation(),
+    )
+
     slider_joint = None
     revolute_joint = None
 
-    try:
-        try:
-            import AssemblyApp  # noqa: F401
-        except Exception:
-            pass
+    if connect_joints:
+        joint_group = assembly.newObject("Assembly::JointGroup", "Joints")
 
-        assembly = doc.addObject("Assembly::AssemblyObject", "DiscSliderAssembly")
-        assembly.Label = "DiscSliderAssembly"
+        ground_joint = joint_group.newObject("App::FeaturePython", "GroundedRail")
+        ground_joint.Label = "GroundedRail"
+        _GroundedJoint(ground_joint, rail_link)
+        if FreeCAD.GuiUp:
+            _VPGroundedJoint(ground_joint.ViewObject)
 
-        rail_link = assembly.newObject("App::Link", "Rail")
-        rail_link.LinkedObject = rail_shape
-        rail_link.Placement = FreeCAD.Placement(
-            FreeCAD.Vector(0, 0, 0),
+        slider_joint = joint_group.newObject("App::FeaturePython", "RailToSliderPrismatic")
+        slider_joint.Label = "RailToSliderPrismatic"
+        _Joint(slider_joint, 3)  # prismatic
+        if FreeCAD.GuiUp:
+            _VPJoint(slider_joint.ViewObject)
+        slider_joint.Detach1 = True
+        slider_joint.Detach2 = True
+        # Align joint local Z with world +X translation axis.
+        axis_rot = FreeCAD.Rotation(FreeCAD.Vector(0, 1, 0), -90)
+        slider_joint.Placement1 = FreeCAD.Placement(
+            rail_slider_marker_local,
+            axis_rot,
+        )
+        slider_joint.Placement2 = FreeCAD.Placement(
+            slider_joint_marker_local,
+            axis_rot,
+        )
+
+        revolute_joint = joint_group.newObject("App::FeaturePython", "SliderToDiscRevolute")
+        revolute_joint.Label = "SliderToDiscRevolute"
+        _Joint(revolute_joint, 1)  # revolute
+        if FreeCAD.GuiUp:
+            _VPJoint(revolute_joint.ViewObject)
+        revolute_joint.Detach1 = True
+        revolute_joint.Detach2 = True
+        revolute_joint.Placement1 = FreeCAD.Placement(
+            slider_disc_marker_local,
+            FreeCAD.Rotation(),
+        )
+        revolute_joint.Placement2 = FreeCAD.Placement(
+            disc_joint_marker_local,
             FreeCAD.Rotation(),
         )
 
-        rail_slider_marker_local = FreeCAD.Vector(
-            0.5 * float(rail_shape.Length),
-            0.5 * float(rail_shape.Width),
-            float(rail_shape.Height),
-        )
-
-        slider_joint_marker_local = FreeCAD.Vector(
-            0.5 * float(slider_shape.Length),
-            0.5 * float(slider_shape.Width),
-            0.0,
-        )
-
-        slider_initial_pos = rail_slider_marker_local - slider_joint_marker_local
-
-        slider_link = assembly.newObject("App::Link", "SliderBox")
-        slider_link.LinkedObject = slider_shape
-        slider_link.Placement = FreeCAD.Placement(
-            slider_initial_pos,
-            FreeCAD.Rotation(),
-        )
-
-        slider_disc_marker_local = FreeCAD.Vector(
-            float(slider_shape.Length),
-            0.5 * float(slider_shape.Width),
-            0.5 * float(slider_shape.Height),
-        )
-
-        disc_center_local = FreeCAD.Vector(0.0, 0.0, 0.5 * float(disc_shape.Height))
-        disc_joint_marker_local = disc_center_local + FreeCAD.Vector(
-            float(disc_joint_offset_x),
-            float(disc_joint_offset_y),
-            float(disc_joint_offset_z),
-        )
-
-        slider_world_pos = slider_link.Placement.Base + slider_disc_marker_local
-        disc_initial_pos = slider_world_pos - disc_joint_marker_local
-
-        disc_link = assembly.newObject("App::Link", "Disc")
-        disc_link.LinkedObject = disc_shape
-        disc_link.Placement = FreeCAD.Placement(
-            disc_initial_pos,
-            FreeCAD.Rotation(),
-        )
-
-        if connect_joints:
-            joint_group = assembly.newObject("Assembly::JointGroup", "Joints")
-
-            try:
-                from JointObject import GroundedJoint as _GroundedJoint
-                from JointObject import Joint as _Joint
-                from JointObject import (
-                    ViewProviderGroundedJoint as _VPGroundedJoint,
-                )
-                from JointObject import ViewProviderJoint as _VPJoint
-
-                ground_joint = joint_group.newObject("App::FeaturePython", "GroundedRail")
-                ground_joint.Label = "GroundedRail"
-                _GroundedJoint(ground_joint, rail_link)
-                if FreeCAD.GuiUp:
-                    _VPGroundedJoint(ground_joint.ViewObject)
-
-                slider_joint = joint_group.newObject("App::FeaturePython", "RailToSliderPrismatic")
-                slider_joint.Label = "RailToSliderPrismatic"
-                _Joint(slider_joint, 3)  # prismatic
-                if FreeCAD.GuiUp:
-                    _VPJoint(slider_joint.ViewObject)
-                slider_joint.Detach1 = True
-                slider_joint.Detach2 = True
-                # Align joint local Z with world +X translation axis.
-                axis_rot = FreeCAD.Rotation(FreeCAD.Vector(0, 1, 0), -90)
-                slider_joint.Placement1 = FreeCAD.Placement(
-                    rail_slider_marker_local,
-                    axis_rot,
-                )
-                slider_joint.Placement2 = FreeCAD.Placement(
-                    slider_joint_marker_local,
-                    axis_rot,
-                )
-
-                revolute_joint = joint_group.newObject("App::FeaturePython", "SliderToDiscRevolute")
-                revolute_joint.Label = "SliderToDiscRevolute"
-                _Joint(revolute_joint, 1)  # revolute
-                if FreeCAD.GuiUp:
-                    _VPJoint(revolute_joint.ViewObject)
-                revolute_joint.Detach1 = True
-                revolute_joint.Detach2 = True
-                revolute_joint.Placement1 = FreeCAD.Placement(
-                    slider_disc_marker_local,
-                    FreeCAD.Rotation(),
-                )
-                revolute_joint.Placement2 = FreeCAD.Placement(
-                    disc_joint_marker_local,
-                    FreeCAD.Rotation(),
-                )
-            except Exception:
-                pass
-
-    except Exception:
-        assembly = None
-        disc_link = None
-
-    if assembly is not None and connect_joints and slider_joint is not None and revolute_joint is not None:
+    if connect_joints:
         slider_joint.Proxy.setJointConnectors(
             slider_joint,
             [
@@ -416,7 +359,7 @@ def setup(
                 [disc_link, [disc_face_name]],
             ],
         )
-    elif assembly is not None and not connect_joints:
+    else:
         FreeCAD.Console.PrintWarning(
             "connect_joints=False: parts left unconnected for layout inspection.\n"
         )
@@ -452,71 +395,55 @@ def setup(
     femmesh_obj.ElementDimension = "3D"
     femmesh_obj.CharacteristicLengthMax = "20 mm"
 
-    from femmesh.gmshtools import GmshTools
-
     gmsh_mesh = GmshTools(femmesh_obj)
     gmsh_mesh.create_mesh()
 
-    if disc_link is not None:
-        try:
-            from FemLink import UtilsAnalysis as _UtilsAnalysis
-            from FemLink.LinkBody import LinkBody
+    linkbody_fp = doc.addObject("App::FeaturePython", "LinkBody_Disc")
+    linkbody_fp.Label = "LinkBody_Disc"
+    LinkBody(linkbody_fp, disc_link)
+    if FreeCAD.GuiUp:
+        VPLinkBody(linkbody_fp.ViewObject)
+    assembly.addObject(linkbody_fp)
 
-            linkbody_fp = doc.addObject("App::FeaturePython", "LinkBody_Disc")
-            linkbody_fp.Label = "LinkBody_Disc"
-            LinkBody(linkbody_fp, disc_link)
-            if FreeCAD.GuiUp:
-                from FemLink.ViewLinkBody import VPLinkBody
-
-                VPLinkBody(linkbody_fp.ViewObject)
-            if assembly is not None:
-                assembly.addObject(linkbody_fp)
-
-            if exercise_loadcases and assembly is not None and connect_joints:
-                _, n_frames = create_and_run_simulation(
-                    assembly,
-                    slider_joint=slider_joint,
-                    revolute_joint=revolute_joint,
-                    slider_formula=slider_motion_formula,
-                    revolute_formula=revolute_motion_formula,
-                    time_end=time_end,
-                    time_step=time_step,
-                )
-                summary = _UtilsAnalysis.exercise_load_case_pipeline(
-                    assembly,
-                    linkbody_fp,
-                    dry_run=False,
-                )
-                FreeCAD.Console.PrintMessage(
-                    f"Disc-slider dynamic simulation frames: {n_frames}\n"
-                )
-                FreeCAD.Console.PrintMessage(
-                    "LinkBody load-case exercise: "
-                    f"states={summary['num_states']}, "
-                    f"full_hull={summary['full_hull_size']}, "
-                    f"reduced_hull={summary['reduced_hull_size']}\n"
-                )
-            elif not connect_joints:
-                FreeCAD.Console.PrintWarning(
-                    "connect_joints=False: skipping load-case simulation/pipeline.\n"
-                )
-            else:
-                FreeCAD.Console.PrintWarning(
-                    "exercise_loadcases=False: no LinkBody-generated Jig321/Reaction constraints "
-                    "were added to the FEM analysis.\n"
-                )
-        except Exception as exc:
-            FreeCAD.Console.PrintWarning(
-                f"FemLink.LinkBody unavailable; LinkBody object not created: {exc}\n"
-            )
+    if exercise_loadcases and connect_joints:
+        _, n_frames = create_and_run_simulation(
+            assembly,
+            slider_joint=slider_joint,
+            revolute_joint=revolute_joint,
+            slider_formula=slider_motion_formula,
+            revolute_formula=revolute_motion_formula,
+            time_end=time_end,
+            time_step=time_step,
+        )
+        summary = _UtilsAnalysis.exercise_load_case_pipeline(
+            assembly,
+            linkbody_fp,
+            dry_run=False,
+        )
+        FreeCAD.Console.PrintMessage(
+            f"Disc-slider dynamic simulation frames: {n_frames}\n"
+        )
+        FreeCAD.Console.PrintMessage(
+            "LinkBody load-case exercise: "
+            f"states={summary['num_states']}, "
+            f"full_hull={summary['full_hull_size']}, "
+            f"reduced_hull={summary['reduced_hull_size']}\n"
+        )
+    elif not connect_joints:
+        FreeCAD.Console.PrintWarning(
+            "connect_joints=False: skipping load-case simulation/pipeline.\n"
+        )
+    else:
+        FreeCAD.Console.PrintWarning(
+            "exercise_loadcases=False: no LinkBody-generated Jig321/Reaction constraints "
+            "were added to the FEM analysis.\n"
+        )
 
     doc.recompute()
 
-    if FreeCAD.GuiUp and assembly is not None and connect_joints:
+    if FreeCAD.GuiUp and connect_joints:
         try:
-            import FreeCADGui
-
-            FreeCADGui.ActiveDocument.setEdit(assembly)
+            FreeCADGuiMod.ActiveDocument.setEdit(assembly)
         except Exception:
             pass
 
