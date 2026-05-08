@@ -213,8 +213,19 @@ public:
 
     bool updateChildren(bool checkVisibility)
     {
-        auto newChildren = viewObject->claimChildren();
         auto obj = viewObject->getObject();
+        if (!obj) {
+            bool hadChildren = !children.empty() || !childSet.empty();
+            children.clear();
+            childSet.clear();
+            return hadChildren;
+        }
+
+        std::vector<App::DocumentObject*> newChildren;
+        if (obj->isAttachedToDocument() && !obj->isRemoving()) {
+            newChildren = viewObject->claimChildren();
+        }
+
         std::set<App::DocumentObject*> newSet;
         bool updated = false;
         for (auto child : newChildren) {
