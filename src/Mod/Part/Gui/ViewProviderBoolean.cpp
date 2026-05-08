@@ -108,9 +108,22 @@ ViewProviderBoolean::~ViewProviderBoolean() = default;
 
 std::vector<App::DocumentObject*> ViewProviderBoolean::claimChildren() const
 {
+    auto* boolObj = getObject<Part::Boolean>();
+    if (!boolObj || !boolObj->isAttachedToDocument() || boolObj->isRemoving()) {
+        return {};
+    }
+
     std::vector<App::DocumentObject*> temp;
-    temp.push_back(getObject<Part::Boolean>()->Base.getValue());
-    temp.push_back(getObject<Part::Boolean>()->Tool.getValue());
+
+    App::DocumentObject* baseObj = boolObj->Base.getValue();
+    if (baseObj && baseObj->isAttachedToDocument() && !baseObj->isRemoving()) {
+        temp.push_back(baseObj);
+    }
+
+    App::DocumentObject* toolObj = boolObj->Tool.getValue();
+    if (toolObj && toolObj->isAttachedToDocument() && !toolObj->isRemoving()) {
+        temp.push_back(toolObj);
+    }
 
     return temp;
 }
