@@ -19,6 +19,9 @@ set(Assembly_Scripts
     CommandCreateForce.py
     CommandCreateView.py
     CommandCreateSimulation.py
+    MotionObject.py
+    SimulationObject.py
+    ViewProviderSimulation.py
     CommandExportASMT.py
     TaskAssemblyItemIJ.py
     TestAssemblyWorkbench.py
