@@ -150,6 +150,7 @@ if(BUILD_ASSEMBLY)
     set(AssemblyFemMbDynPythonTests
         AssemblyTests.TestFemMbDyn.TestLinkBody.test_calculix_jig_force_residual_magnitude_dynamic_mode
         AssemblyTests.TestFemMbDyn.TestLinkBody.test_calculix_jig_force_residual_magnitude_kinematic_mode
+        AssemblyTests.TestFemMbDyn.TestLinkBody.test_assembly_mass_uses_mixed_fem_density_for_compound_pendulum
         AssemblyTests.TestFemMbDyn.TestLinkBody.test_disc_slider_jig_residual_near_zero_for_isolated_drives
     )
 

@@ -2257,6 +2257,112 @@ class TestLinkBody(unittest.TestCase):
             if doc and getattr(doc, "Name", ""):
                 App.closeDocument(doc.Name)
 
+    def test_assembly_mass_uses_mixed_fem_density_for_compound_pendulum(self):
+        """Compound LinkBody pendulum mass should follow per-solid FEM material references."""
+        _msg("  Test Assembly mass uses mixed FEM density for compound pendulum")
+
+        ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics_compound_materials")
+        doc = ex.setup(exercise_loadcases=False)
+        try:
+            assemblies = [
+                o for o in doc.Objects if getattr(o, "TypeId", "") == "Assembly::AssemblyObject"
+            ]
+            self.assertTrue(assemblies, "No assembly object found")
+            assembly = assemblies[0]
+
+            joints = [o for o in doc.Objects if getattr(o, "Name", "") == "RevoluteJoint"]
+            self.assertTrue(joints, "RevoluteJoint missing")
+
+            _, n_frames = ex.create_and_run_simulation(assembly, joints[0], motion_formula="")
+            self.assertGreater(n_frames, 1, "Simulation should produce at least 2 frames")
+            assembly.updateForFrame(0)
+
+            pendulum_links = [o for o in doc.Objects if getattr(o, "Name", "") == "Pendulum"]
+            self.assertTrue(pendulum_links, "Pendulum link missing")
+            pendulum = pendulum_links[0]
+
+            shape_obj = pendulum.getLinkedObject()
+            self.assertTrue(hasattr(shape_obj, "Shape"), "Pendulum linked shape missing")
+
+            solids = list(getattr(shape_obj.Shape, "Solids", []))
+            self.assertGreaterEqual(len(solids), 2, "Compound pendulum should expose >=2 solids")
+
+            material_objs = [
+                o for o in doc.Objects if getattr(o, "TypeId", "") == "App::MaterialObjectPython"
+            ]
+            self.assertTrue(material_objs, "No FEM material object found")
+
+            density_by_solid = {}
+            for mat_obj in material_objs:
+                material_map = getattr(mat_obj, "Material", {}) or {}
+                if not isinstance(material_map, dict):
+                    continue
+
+                density_text = material_map.get("Density", "")
+                if not density_text:
+                    continue
+
+                try:
+                    density_q = App.Units.Quantity(str(density_text))
+                    density_t_mm3 = float(density_q.getValueAs("t/mm^3").Value)
+                except Exception:
+                    continue
+
+                if density_t_mm3 <= 0.0:
+                    continue
+
+                references = getattr(mat_obj, "References", []) or []
+                for ref in references:
+                    if not isinstance(ref, (list, tuple)) or len(ref) != 2:
+                        continue
+
+                    ref_obj, ref_sub = ref
+                    if getattr(ref_obj, "Name", "") != getattr(shape_obj, "Name", ""):
+                        continue
+
+                    if isinstance(ref_sub, (list, tuple)):
+                        subnames = [str(v) for v in ref_sub]
+                    else:
+                        subnames = [str(ref_sub)]
+
+                    for subname in subnames:
+                        match = re.fullmatch(r"Solid(\d+)", subname)
+                        if not match:
+                            continue
+                        density_by_solid[int(match.group(1))] = density_t_mm3
+
+            self.assertGreaterEqual(
+                len(density_by_solid),
+                2,
+                "Expected at least two SolidN material mappings for compound pendulum",
+            )
+            self.assertGreater(
+                max(density_by_solid.values()),
+                min(density_by_solid.values()),
+                "Compound pendulum should use at least two distinct material densities",
+            )
+
+            expected_mass_kg = 0.0
+            for idx, solid in enumerate(solids, start=1):
+                self.assertIn(
+                    idx,
+                    density_by_solid,
+                    f"No FEM material density mapped to Solid{idx}",
+                )
+                expected_mass_kg += float(solid.Volume) * density_by_solid[idx] * 1000.0
+
+            mass_kg = float(getattr(pendulum, "Mass", 0.0) or 0.0)
+            self.assertGreater(mass_kg, 0.0, "Assembly mass was not exported")
+            self.assertAlmostEqual(
+                mass_kg,
+                expected_mass_kg,
+                delta=max(expected_mass_kg * 0.05, 1.0e-6),
+                msg="Assembly pendulum mass should follow per-solid FEM densities",
+            )
+        finally:
+            if doc and getattr(doc, "Name", ""):
+                App.closeDocument(doc.Name)
+
     def test_assembly_inertia_export_matches_shape_principal_props(self):
         """ASMT-exported mass/inertia should match shape principal properties and density units."""
         _msg("  Test assembly inertia export matches shape principal props")

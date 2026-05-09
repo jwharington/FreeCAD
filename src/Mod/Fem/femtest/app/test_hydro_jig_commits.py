@@ -829,3 +829,70 @@ class TestHydroJigCommits(unittest.TestCase):
             any(math.sqrt(fx * fx + fy * fy + fz * fz) > 1.0e-6 for _, fx, fy, fz in jig_forces),
             "All parsed CONSTRAINTJIG force totals are zero.",
         )
+
+    # ********************************************************************************************
+    def test_compound_pendulum_setup_creates_multimaterial_linkbody(self):
+        """Compound LinkBody example should build two solid regions with distinct materials."""
+        try:
+            import AssemblyApp  # noqa: F401
+            from femexamples.assembly_linkbody_free_dynamics_compound_materials import (
+                setup,
+            )
+            from FemLink import LinkBody as _LinkBody  # noqa: F401
+        except Exception as exc:
+            self.skipTest(f"Compound pendulum prerequisites unavailable: {exc}")
+
+        setup(doc=self.document, solvertype="ccxtools", exercise_loadcases=False)
+
+        pendulum_links = [
+            obj
+            for obj in self.document.Objects
+            if getattr(obj, "TypeId", "") == "App::Link" and getattr(obj, "Name", "") == "Pendulum"
+        ]
+        self.assertTrue(pendulum_links, "No Pendulum App::Link found in compound example")
+
+        shape_obj = pendulum_links[0].getLinkedObject()
+        solids = list(getattr(shape_obj.Shape, "Solids", []))
+        self.assertGreaterEqual(len(solids), 2, "Compound pendulum should expose at least 2 solids")
+
+        # Ensure the compound example actually produced multiple material regions.
+        material_objs = [
+            obj
+            for obj in self.document.Objects
+            if getattr(obj, "TypeId", "") == "App::MaterialObjectPython"
+        ]
+        self.assertGreaterEqual(len(material_objs), 2, "Expected at least two FEM material objects")
+
+        solid_refs = set()
+        for mat_obj in material_objs:
+            for ref in getattr(mat_obj, "References", []) or []:
+                if not isinstance(ref, (list, tuple)) or len(ref) != 2:
+                    continue
+                ref_sub = ref[1]
+                if isinstance(ref_sub, (list, tuple)):
+                    for sub in ref_sub:
+                        if isinstance(sub, str) and sub.startswith("Solid"):
+                            solid_refs.add(sub)
+                elif isinstance(ref_sub, str) and ref_sub.startswith("Solid"):
+                    solid_refs.add(ref_sub)
+
+        self.assertGreaterEqual(
+            len(solid_refs),
+            2,
+            "Expected references to at least two SolidN regions for compound pendulum",
+        )
+
+        densities = []
+        for mat_obj in material_objs:
+            material_map = getattr(mat_obj, "Material", {}) or {}
+            if not isinstance(material_map, dict):
+                continue
+            density = str(material_map.get("Density", "")).strip()
+            if density:
+                densities.append(density)
+
+        self.assertGreaterEqual(
+            len(set(densities)),
+            2,
+            "Expected at least two distinct material densities for compound pendulum",
+        )
