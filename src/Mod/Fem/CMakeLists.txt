@@ -85,6 +85,7 @@ SET(FemExamples_SRCS
     femexamples/constraint_reaction.py
     femexamples/assembly_linkbody_pendulum.py
     femexamples/assembly_linkbody_free_dynamics.py
+    femexamples/assembly_linkbody_free_dynamics_compound_materials.py
     femexamples/assembly_linkbody_forced_dynamics.py
     femexamples/assembly_linkbody_disc_slider_dynamics.py
     femexamples/constraint_section_print.py
