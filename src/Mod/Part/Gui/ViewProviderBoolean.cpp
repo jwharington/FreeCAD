@@ -113,19 +113,14 @@ std::vector<App::DocumentObject*> ViewProviderBoolean::claimChildren() const
         return {};
     }
 
-    std::vector<App::DocumentObject*> temp;
-
-    App::DocumentObject* baseObj = boolObj->Base.getValue();
-    if (baseObj && baseObj->isAttachedToDocument() && !baseObj->isRemoving()) {
-        temp.push_back(baseObj);
+    std::vector<App::DocumentObject*> children;
+    for (auto* obj : boolObj->getOutList()) {
+        if (obj && obj->isAttachedToDocument() && !obj->isRemoving()) {
+            children.push_back(obj);
+        }
     }
 
-    App::DocumentObject* toolObj = boolObj->Tool.getValue();
-    if (toolObj && toolObj->isAttachedToDocument() && !toolObj->isRemoving()) {
-        temp.push_back(toolObj);
-    }
-
-    return temp;
+    return children;
 }
 
 QIcon ViewProviderBoolean::getIcon() const
