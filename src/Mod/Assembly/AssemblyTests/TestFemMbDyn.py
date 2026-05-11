@@ -3232,6 +3232,16 @@ class TestLinkBody(unittest.TestCase):
                 "InertialCorrectionFactor": 1.25,
             },
         )()
+        reaction_obj = type(
+            "ReactionObj",
+            (),
+            {
+                "Name": "Reaction_Body_Joint",
+                "Proxy": type("RProxy", (), {"Type": "Fem::ConstraintReaction"})(),
+                "Force": App.Vector(10, 20, 30),
+                "Torque": App.Vector(1, 2, 3),
+            },
+        )()
         vf_constraint = {
             "Object": vf_obj,
         }
@@ -3256,7 +3266,7 @@ class TestLinkBody(unittest.TestCase):
             if type_id == "Fem::FemSolverObjectPython":
                 return [solver]
             if type_id == "Fem::ConstraintPython":
-                return [vf_obj]
+                return [vf_obj, reaction_obj]
             if type_id == "Fem::FemResultObjectPython":
                 result_call_count[0] += 1
                 if result_call_count[0] == 1:
@@ -3287,6 +3297,10 @@ class TestLinkBody(unittest.TestCase):
         snapshots = kwargs.get("vf_snapshots")
         self.assertEqual(len(states), len(snapshots))
         self.assertEqual(1.25, snapshots[0][vf_obj.Name]["InertialCorrectionFactor"])
+        reaction_snapshots = kwargs.get("reaction_snapshots")
+        self.assertEqual(len(states), len(reaction_snapshots))
+        self.assertEqual(App.Vector(10, 20, 30), reaction_snapshots[0][reaction_obj.Name]["Force"])
+        self.assertEqual(App.Vector(1, 2, 3), reaction_snapshots[0][reaction_obj.Name]["Torque"])
 
         self.assertIn(0, out)
         self.assertIn(1, out)

@@ -77,6 +77,7 @@ def run_fem_solver(
     blocking=False,
     step_count=1,
     vf_snapshots=None,
+    reaction_snapshots=None,
 ):
     """Execute *solver* of the solver framework.
 
@@ -125,6 +126,8 @@ def run_fem_solver(
             tool.step_count = step_count
         if hasattr(tool, "vf_snapshots"):
             tool.vf_snapshots = vf_snapshots
+        if hasattr(tool, "reaction_snapshots"):
+            tool.reaction_snapshots = reaction_snapshots
         # Redirect process error to report view
         print_error = lambda: App.Console.PrintError(
             tool.process.readAllStandardError().data().decode("utf-8")
