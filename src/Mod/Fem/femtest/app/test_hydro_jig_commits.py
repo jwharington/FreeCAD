@@ -35,8 +35,12 @@ from femobjects.constraint_virtualforces import ConstraintVirtualForces
 from femsolver.calculix import (
     write_constraint_jig321,
     write_constraint_pressure,
+    write_constraint_pressure_reaction,
     write_constraint_virtualforces,
     write_step_output,
+)
+from femsolver.calculix import (
+    writer as calculix_writer,
 )
 from femtools import checksanalysis
 from femtools.membertools import AnalysisMember
@@ -112,6 +116,71 @@ class TestHydroJigCommits(unittest.TestCase):
         self.assertIn("*NODE PRINT, NSET=Jig321-0, TOTALS=ONLY", out)
         self.assertIn("*NODE PRINT, NSET=Jig321-1, TOTALS=ONLY", out)
         self.assertIn("*NODE PRINT, NSET=Jig321-2, TOTALS=ONLY", out)
+
+    # ********************************************************************************************
+    def test_writer_step_context_uses_index_aligned_batch_step_state(self):
+        writer = calculix_writer.FemInputWriterCcx.__new__(calculix_writer.FemInputWriterCcx)
+        writer.batch_step_states = [
+            SimpleNamespace(index=0),
+            SimpleNamespace(index=1),
+            SimpleNamespace(index=2),
+        ]
+
+        writer._set_current_step_context(1)
+
+        self.assertEqual(1, writer._current_step_index)
+        self.assertIsNotNone(writer._current_batch_step_state)
+        self.assertEqual(1, writer._current_batch_step_state.index)
+
+    # ********************************************************************************************
+    def test_writer_step_context_rejects_misaligned_batch_step_state(self):
+        writer = calculix_writer.FemInputWriterCcx.__new__(calculix_writer.FemInputWriterCcx)
+        writer.batch_step_states = [
+            SimpleNamespace(index=0),
+            SimpleNamespace(index=5),
+        ]
+
+        writer._set_current_step_context(1)
+
+        self.assertEqual(1, writer._current_step_index)
+        self.assertIsNone(writer._current_batch_step_state)
+
+    # ********************************************************************************************
+    def test_apply_virtualforces_snapshot_prefers_batch_step_state_snapshot(self):
+        writer = calculix_writer.FemInputWriterCcx.__new__(calculix_writer.FemInputWriterCcx)
+        vf_obj = SimpleNamespace(
+            Name="VirtualForces",
+            CenterOfMass=Vector(0.0, 0.0, 0.0),
+        )
+        writer.member = SimpleNamespace(cons_virtualforces=[{"Object": vf_obj}])
+        writer.batch_step_states = [
+            SimpleNamespace(
+                index=0,
+                vf_snapshot={"VirtualForces": {"CenterOfMass": Vector(1.0, 2.0, 3.0)}},
+                reaction_snapshot={},
+            )
+        ]
+        writer.vf_snapshots = [{"VirtualForces": {"CenterOfMass": Vector(9.0, 9.0, 9.0)}}]
+
+        writer._apply_virtualforces_snapshot(0)
+
+        self.assertEqual(Vector(1.0, 2.0, 3.0), vf_obj.CenterOfMass)
+
+    # ********************************************************************************************
+    def test_apply_reaction_snapshot_falls_back_to_legacy_arrays(self):
+        writer = calculix_writer.FemInputWriterCcx.__new__(calculix_writer.FemInputWriterCcx)
+        reaction_obj = SimpleNamespace(
+            Name="ConstraintReaction",
+            Proxy=SimpleNamespace(Type="Fem::ConstraintReaction"),
+            Force=Vector(0.0, 0.0, 0.0),
+        )
+        writer.member = SimpleNamespace(cons_pressure=[{"Object": reaction_obj}])
+        writer.batch_step_states = []
+        writer.reaction_snapshots = [{"ConstraintReaction": {"Force": Vector(4.0, 5.0, 6.0)}}]
+
+        writer._apply_reaction_snapshot(0)
+
+        self.assertEqual(Vector(4.0, 5.0, 6.0), reaction_obj.Force)
 
     # ********************************************************************************************
     def test_write_constraint_virtualforces_emits_static_dalembert_terms(self):
@@ -582,6 +651,160 @@ class TestHydroJigCommits(unittest.TestCase):
         self.assertAlmostEqual(8.0 / 9.0, elem_info["pressure"][0])
         self.assertAlmostEqual(7.0 / 9.0, elem_info["pressure"][1])
         self.assertIs(proxy.elem_info, elem_info)
+
+    # ********************************************************************************************
+    def test_reaction_moment_transfer_helper_maps_wrench_between_points(self):
+        force = Vector(2.0, -3.0, 5.0)
+        moment_origin = Vector(7.0, 11.0, 13.0)
+        origin = Vector(10.0, 20.0, 30.0)
+        reference = Vector(-4.0, 6.0, 8.0)
+
+        got = write_constraint_pressure_reaction._moment_at_reference(
+            force,
+            moment_origin,
+            origin,
+            reference,
+        )
+        expected = moment_origin + (origin - reference).cross(force)
+
+        self.assertAlmostEqual(expected.x, got.x)
+        self.assertAlmostEqual(expected.y, got.y)
+        self.assertAlmostEqual(expected.z, got.z)
+
+    # ********************************************************************************************
+    def test_reaction_distributing_coupling_uses_cached_reference_moment_transfer(self):
+        prs_obj = SimpleNamespace(
+            Name="ConstraintReaction",
+            Origin=SimpleNamespace(Base=Vector(0.0, 10.0, 0.0)),
+            Force=Vector(10.0, 0.0, 0.0),
+            Torque=Vector(0.0, 0.0, 0.0),
+            EnableAmplitude=False,
+            Proxy=SimpleNamespace(),
+        )
+        elem_info = {
+            "elem": [1],
+            "area": [1.0],
+            "face_nodes": [[1, 2, 3]],
+            "normal": [Vector(0.0, 0.0, 1.0)],
+        }
+        femmesh = SimpleNamespace(
+            Nodes={
+                1: Vector(1.0, 0.0, 0.0),
+                2: Vector(0.0, 1.0, 0.0),
+                3: Vector(0.0, 0.0, 1.0),
+            },
+            Volumes=[1],
+            Faces=[1],
+            Edges=[],
+        )
+        ccxwriter = SimpleNamespace(
+            member=SimpleNamespace(cons_jig321=[]),
+            analysis=SimpleNamespace(Group=[prs_obj]),
+            _reaction_coupling_cache={
+                "ConstraintReaction": {
+                    "ref_node_id": 999,
+                    "elset_name": "RDCPL_TEST_EL",
+                    "ref_base": Vector(0.0, 0.0, 0.0),
+                }
+            },
+        )
+
+        messages = []
+        console = SimpleNamespace(
+            PrintMessage=lambda msg: messages.append(msg),
+            PrintWarning=lambda _msg: None,
+        )
+
+        buf = StringIO()
+        write_constraint_pressure_reaction.write_reaction_distributing_coupling(
+            buf,
+            prs_obj,
+            ccxwriter,
+            femmesh,
+            elem_info,
+            reaction_coupling_shift_free_m_limit=1.0,
+            reaction_coupling_shift_scale=1.0,
+            Console=console,
+            op_new=False,
+        )
+
+        out = buf.getvalue()
+        self.assertIn("*CLOAD", out)
+        # Cached reference node carries force (999), face nodes carry moment-equivalent couple.
+        self.assertRegex(out, r"\n999,1,")
+        self.assertRegex(out, r"\n[123],")
+
+        merged_messages = "".join(messages)
+        self.assertIn(
+            "ConstraintReaction ConstraintReaction: wrote distributing coupling",
+            merged_messages,
+        )
+        match = re.search(r"\|M\|=([0-9eE+\-.]+)", merged_messages)
+        self.assertIsNotNone(match)
+        self.assertGreater(float(match.group(1)), 1.0e-6)
+
+    # ********************************************************************************************
+    def test_reaction_distributing_coupling_batch_uses_nodal_cloads(self):
+        prs_obj = SimpleNamespace(
+            Name="ConstraintReaction",
+            Origin=SimpleNamespace(Base=Vector(0.0, 0.0, 0.0)),
+            Force=Vector(10.0, 0.0, 0.0),
+            Torque=Vector(0.0, 0.0, 0.0),
+            EnableAmplitude=False,
+            Proxy=SimpleNamespace(),
+        )
+        elem_info = {
+            "elem": [1],
+            "area": [1.0],
+            "face_nodes": [[1, 2, 3]],
+            "normal": [Vector(0.0, 0.0, 1.0)],
+        }
+        femmesh = SimpleNamespace(
+            Nodes={
+                1: Vector(1.0, 0.0, 0.0),
+                2: Vector(0.0, 1.0, 0.0),
+                3: Vector(0.0, 0.0, 1.0),
+            },
+            Volumes=[1],
+            Faces=[1],
+            Edges=[],
+        )
+        ccxwriter = SimpleNamespace(
+            member=SimpleNamespace(cons_jig321=[]),
+            analysis=SimpleNamespace(Group=[prs_obj]),
+            _reaction_coupling_cache={},
+            _current_step_index=0,
+        )
+
+        console = SimpleNamespace(
+            PrintMessage=lambda _msg: None,
+            PrintWarning=lambda _msg: None,
+        )
+
+        out_step0 = StringIO()
+        write_constraint_pressure_reaction.write_reaction_distributing_coupling(
+            out_step0,
+            prs_obj,
+            ccxwriter,
+            femmesh,
+            elem_info,
+            reaction_coupling_shift_free_m_limit=1.0,
+            reaction_coupling_shift_scale=1.0,
+            Console=console,
+            op_new=False,
+        )
+
+        out0 = out_step0.getvalue()
+        self.assertIn("*CLOAD", out0)
+        self.assertNotIn("*NODE", out0)
+        self.assertNotIn("*ELEMENT,TYPE=DCOUP3D", out0)
+        self.assertNotIn("*DISTRIBUTING COUPLING", out0)
+        self.assertTrue(
+            any(
+                line.startswith("1,") or line.startswith("2,") or line.startswith("3,")
+                for line in out0.splitlines()
+            )
+        )
 
     # ********************************************************************************************
     def test_reaction_get_pressure_field_populates_tables(self):

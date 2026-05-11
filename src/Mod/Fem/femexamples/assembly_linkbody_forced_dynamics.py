@@ -175,6 +175,8 @@ def setup(
     doc=None,
     solvertype="ccxtools",
     exercise_loadcases=True,
+    loadcase_analysis_mode="both",
+    batch_mode=True,
     connect_joints=True,
 ):
     if doc is None:
@@ -485,12 +487,15 @@ def setup(
             assembly,
             linkbody_fp,
             dry_run=False,
+            batch_mode=batch_mode,
+            analysis_mode=loadcase_analysis_mode,
         )
         FreeCAD.Console.PrintMessage(
             f"Assembly kinematic simulation frames: {n_frames}\n"
         )
         FreeCAD.Console.PrintMessage(
             "LinkBody load-case exercise: "
+            f"mode={loadcase_analysis_mode}, "
             f"states={summary['num_states']}, "
             f"full_hull={summary['full_hull_size']}, "
             f"reduced_hull={summary['reduced_hull_size']}\n"

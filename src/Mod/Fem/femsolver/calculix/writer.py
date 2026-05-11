@@ -128,12 +128,60 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
         self.gravity = int(Units.Quantity(constants.gravity()).getValueAs("mm/s^2"))  # 9820 mm/s2
         self.units_information = units_information
 
-    def _apply_virtualforces_snapshot(self, step_index):
+    def _resolve_batch_step_state(self, step_index):
+        """Return batch step metadata for the current step when index-aligned."""
+        step_states = getattr(self, "batch_step_states", None)
+        if not step_states or step_index >= len(step_states):
+            return None
+
+        step_state = step_states[step_index]
+        if step_state is None:
+            return None
+
+        resolved_index = getattr(step_state, "index", step_index)
+        if resolved_index != step_index:
+            if not getattr(self, "_batch_step_state_mismatch_warned", False):
+                FreeCAD.Console.PrintWarning(
+                    "FemInputWriterCcx: batch_step_states index mismatch at step "
+                    f"{step_index} (got {resolved_index}); using loop step index.\n"
+                )
+                self._batch_step_state_mismatch_warned = True
+            return None
+
+        return step_state
+
+    def _set_current_step_context(self, step_index):
+        self._current_step_index = step_index
+        self._current_batch_step_state = self._resolve_batch_step_state(step_index)
+
+    def _get_virtualforces_step_snapshot(self, step_index):
+        step_state = self._resolve_batch_step_state(step_index)
+        if step_state is not None:
+            snapshot = getattr(step_state, "vf_snapshot", None)
+            if snapshot is not None:
+                return snapshot
+
         snapshots = getattr(self, "vf_snapshots", None)
         if not snapshots or step_index >= len(snapshots):
-            return
+            return None
+        return snapshots[step_index]
 
-        step_snapshot = snapshots[step_index]
+    def _get_reaction_step_snapshot(self, step_index):
+        step_state = self._resolve_batch_step_state(step_index)
+        if step_state is not None:
+            snapshot = getattr(step_state, "reaction_snapshot", None)
+            if snapshot is not None:
+                return snapshot
+
+        snapshots = getattr(self, "reaction_snapshots", None)
+        if not snapshots or step_index >= len(snapshots):
+            return None
+        return snapshots[step_index]
+
+    def _apply_virtualforces_snapshot(self, step_index):
+        step_snapshot = self._get_virtualforces_step_snapshot(step_index)
+        if not step_snapshot:
+            return
         for femobj in self.member.cons_virtualforces:
             vf_obj = femobj["Object"]
             values = step_snapshot.get(vf_obj.Name)
@@ -143,11 +191,9 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
                 setattr(vf_obj, key, value)
 
     def _apply_reaction_snapshot(self, step_index):
-        snapshots = getattr(self, "reaction_snapshots", None)
-        if not snapshots or step_index >= len(snapshots):
+        step_snapshot = self._get_reaction_step_snapshot(step_index)
+        if not step_snapshot:
             return
-
-        step_snapshot = snapshots[step_index]
         for femobj in self.member.cons_pressure:
             reaction_obj = femobj["Object"]
             proxy = getattr(reaction_obj, "Proxy", None)
@@ -194,6 +240,41 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
         if write_after:
             inpfile.write(write_after)
 
+    def _write_reaction_step_constraints(self, inpfile, step_index, step_count):
+        femobjs = self.member.cons_pressure
+        if not femobjs:
+            return
+
+        analysis_types = con_pressure.get_analysis_types()
+        if analysis_types != "all" and self.analysis_type not in analysis_types:
+            return
+
+        write_before = con_pressure.get_before_write_meshdata_constraint()
+        write_after = con_pressure.get_after_write_meshdata_constraint()
+
+        inpfile.write("\n{}\n".format(59 * "*"))
+        inpfile.write(f"** {con_pressure.get_sets_name().replace('_', ' ')}\n")
+        if write_before:
+            inpfile.write(write_before)
+
+        # Multi-step batch runs need CLOAD reset once per step to avoid
+        # reaction load carry-over across subsequent *STEP blocks.
+        op_new_pending = step_count > 1
+        for femobj in femobjs:
+            reaction_obj = femobj["Object"]
+            inpfile.write(f"** {reaction_obj.Label}\n")
+            con_pressure.write_meshdata_constraint(
+                inpfile,
+                femobj,
+                reaction_obj,
+                self,
+                op_new=op_new_pending,
+            )
+            op_new_pending = False
+
+        if write_after:
+            inpfile.write(write_after)
+
     def _write_step_dependent_constraints(self, inpfile, step_index, step_count):
         self.write_constraints_propdata(inpfile, self.member.cons_fixed, con_fixed)
         self.write_constraints_propdata(
@@ -210,7 +291,7 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
             inpfile, self.member.cons_bodyheatsource, con_bodyheatsource
         )
         self.write_constraints_meshsets(inpfile, self.member.cons_force, con_force)
-        self.write_constraints_meshsets(inpfile, self.member.cons_pressure, con_pressure)
+        self._write_reaction_step_constraints(inpfile, step_index, step_count)
         self.write_constraints_propdata(inpfile, self.member.cons_temperature, con_temperature)
         self.write_constraints_propdata(inpfile, self.member.cons_finaltemperature, con_ftemp)
         self.write_constraints_meshsets(inpfile, self.member.cons_heatflux, con_heatflux)
@@ -290,12 +371,13 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
             step_count = 1
 
         for step_index in range(step_count):
-            self._current_step_index = step_index
+            self._set_current_step_context(step_index)
             write_step_equation.write_step_equation(inpfile, self)
             self._write_step_dependent_constraints(inpfile, step_index, step_count)
             write_step_output.write_step_output(inpfile, self)
             write_step_equation.write_step_end(inpfile, self)
         self._current_step_index = None
+        self._current_batch_step_state = None
 
         # footer
         write_footer.write_footer(inpfile, self)

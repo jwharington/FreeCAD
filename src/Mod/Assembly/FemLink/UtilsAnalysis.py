@@ -183,7 +183,14 @@ def run_stored_analysis(femlnk, reduced=False, dry_run=False, batch_mode=None):
         return None, None
     if batch_mode is None:
         batch_mode = _batch_mode_enabled()
+
     states = np.array(list(femlnk.Proxy.states_vector(femlnk)))
+    if batch_mode and len(states) > 0:
+        # Some FEM-link constraints (including Jig321) are created lazily during
+        # LOAD updates, so prime the first state before deciding batch eligibility.
+        femlnk.Proxy.state_set(femlnk, states[0])
+        femlnk.Proxy.updateFEMLinks(femlnk, mode=UpdateMode.LOAD)
+
     states_reduced, hull, dim_reduced = svd_qhull_reduce(
         states,
         n_bodies=femlnk.Proxy.num_bodies(femlnk),
@@ -272,7 +279,12 @@ def synthesize_load_cases(femlnk, scale_factors=None):
 
 
 def exercise_load_case_pipeline(
-    assembly, femlnk, dry_run=True, scale_factors=None, batch_mode=None
+    assembly,
+    femlnk,
+    dry_run=True,
+    scale_factors=None,
+    batch_mode=None,
+    analysis_mode="both",
 ):
     """Exercise the same load-case handling path used by TaskAssemblyLinkBody.
 
@@ -280,7 +292,7 @@ def exercise_load_case_pipeline(
     1. Clear existing states
     2. Try collecting states from assembly simulation frames
     3. If none were collected, synthesize states from baseline loads
-    4. Run both full and reduced stored-analysis paths
+    4. Run selected stored-analysis path(s): full, reduced, or both
     """
     femlnk.Proxy.clear(femlnk)
 
@@ -301,12 +313,21 @@ def exercise_load_case_pipeline(
     if batch_mode is None:
         batch_mode = _batch_mode_enabled()
 
-    hull_full, _ = run_stored_analysis(
-        femlnk, reduced=False, dry_run=dry_run, batch_mode=batch_mode
-    )
-    hull_reduced, _ = run_stored_analysis(
-        femlnk, reduced=True, dry_run=dry_run, batch_mode=batch_mode
-    )
+    mode = str(analysis_mode).strip().lower()
+    if mode not in {"full", "reduced", "both"}:
+        Console.PrintWarning(f"Unknown analysis_mode '{analysis_mode}', defaulting to 'both'.\n")
+        mode = "both"
+
+    hull_full = None
+    hull_reduced = None
+    if mode in {"full", "both"}:
+        hull_full, _ = run_stored_analysis(
+            femlnk, reduced=False, dry_run=dry_run, batch_mode=batch_mode
+        )
+    if mode in {"reduced", "both"}:
+        hull_reduced, _ = run_stored_analysis(
+            femlnk, reduced=True, dry_run=dry_run, batch_mode=batch_mode
+        )
 
     return {
         "num_states": num_states,

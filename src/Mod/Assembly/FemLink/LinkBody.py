@@ -1,4 +1,5 @@
 import math
+from dataclasses import dataclass
 from enum import Enum, auto
 
 import Fem
@@ -26,6 +27,14 @@ class LineType(Enum):
     FORCE = auto()
     TORQUE = auto()
     LINEAR_ACCELERATION = auto()
+
+
+@dataclass(frozen=True)
+class BatchStepState:
+    index: int
+    state: object
+    vf_snapshot: dict
+    reaction_snapshot: dict
 
 
 def analysis_label(body_label):
@@ -378,63 +387,10 @@ class LinkBody(FPBase):
 
         results_old = get_results()
 
-        vf_snapshots = []
-        reaction_snapshots = []
-        for state in states:
-            self.state_set(fp, state)
-            self.updateFEMLinks(fp, mode=UpdateMode.LOAD)
-
-            step_snapshot = {}
-            reaction_step_snapshot = {}
-            for obj in find_common_group_objects(analysis, "Fem::ConstraintPython"):
-                proxy = getattr(obj, "Proxy", None)
-                if not proxy:
-                    continue
-                proxy_type = getattr(proxy, "Type", "")
-
-                if proxy_type == "Fem::ConstraintVirtualForces":
-                    step_snapshot[obj.Name] = {
-                        "CenterOfMass": Vector(
-                            obj.CenterOfMass.x,
-                            obj.CenterOfMass.y,
-                            obj.CenterOfMass.z,
-                        ),
-                        "LinearAcceleration": Vector(
-                            obj.LinearAcceleration.x,
-                            obj.LinearAcceleration.y,
-                            obj.LinearAcceleration.z,
-                        ),
-                        "LinearVelocity": Vector(
-                            obj.LinearVelocity.x,
-                            obj.LinearVelocity.y,
-                            obj.LinearVelocity.z,
-                        ),
-                        "AngularVelocity": Vector(
-                            obj.AngularVelocity.x,
-                            obj.AngularVelocity.y,
-                            obj.AngularVelocity.z,
-                        ),
-                        "AngularAcceleration": Vector(
-                            obj.AngularAcceleration.x,
-                            obj.AngularAcceleration.y,
-                            obj.AngularAcceleration.z,
-                        ),
-                        "RelativeVelocity": Vector(
-                            obj.RelativeVelocity.x,
-                            obj.RelativeVelocity.y,
-                            obj.RelativeVelocity.z,
-                        ),
-                        "InertialCorrectionFactor": float(
-                            getattr(obj, "InertialCorrectionFactor", 1.0)
-                        ),
-                    }
-                elif proxy_type == "Fem::ConstraintReaction":
-                    reaction_step_snapshot[obj.Name] = {
-                        "Force": Vector(obj.Force.x, obj.Force.y, obj.Force.z),
-                        "Torque": Vector(obj.Torque.x, obj.Torque.y, obj.Torque.z),
-                    }
-            vf_snapshots.append(step_snapshot)
-            reaction_snapshots.append(reaction_step_snapshot)
+        step_states = self._collect_batch_step_states(fp, states, analysis)
+        self.batch_step_states = step_states
+        vf_snapshots = [step.vf_snapshot for step in step_states]
+        reaction_snapshots = [step.reaction_snapshot for step in step_states]
 
         if dry_run:
             return self.batch_result_map
@@ -455,6 +411,7 @@ class LinkBody(FPBase):
                 step_count=len(states),
                 vf_snapshots=vf_snapshots,
                 reaction_snapshots=reaction_snapshots,
+                batch_step_states=step_states,
             )
         finally:
             if solve_on_recompute:
@@ -490,6 +447,80 @@ class LinkBody(FPBase):
 
         clear_post_pipelines(analysis)
         return self.batch_result_map
+
+    def _snapshot_constraint_state(self, analysis):
+        vf_snapshot = {}
+        reaction_snapshot = {}
+        for obj in find_common_group_objects(analysis, "Fem::ConstraintPython"):
+            proxy = getattr(obj, "Proxy", None)
+            if not proxy:
+                continue
+            proxy_type = getattr(proxy, "Type", "")
+
+            if proxy_type == "Fem::ConstraintVirtualForces":
+                vf_snapshot[obj.Name] = {
+                    "CenterOfMass": Vector(
+                        obj.CenterOfMass.x,
+                        obj.CenterOfMass.y,
+                        obj.CenterOfMass.z,
+                    ),
+                    "CenterOfRotation": Vector(
+                        obj.CenterOfRotation.x,
+                        obj.CenterOfRotation.y,
+                        obj.CenterOfRotation.z,
+                    ),
+                    "LinearAcceleration": Vector(
+                        obj.LinearAcceleration.x,
+                        obj.LinearAcceleration.y,
+                        obj.LinearAcceleration.z,
+                    ),
+                    "LinearVelocity": Vector(
+                        obj.LinearVelocity.x,
+                        obj.LinearVelocity.y,
+                        obj.LinearVelocity.z,
+                    ),
+                    "AngularVelocity": Vector(
+                        obj.AngularVelocity.x,
+                        obj.AngularVelocity.y,
+                        obj.AngularVelocity.z,
+                    ),
+                    "AngularAcceleration": Vector(
+                        obj.AngularAcceleration.x,
+                        obj.AngularAcceleration.y,
+                        obj.AngularAcceleration.z,
+                    ),
+                    "RelativeVelocity": Vector(
+                        obj.RelativeVelocity.x,
+                        obj.RelativeVelocity.y,
+                        obj.RelativeVelocity.z,
+                    ),
+                    "InertialCorrectionFactor": float(
+                        getattr(obj, "InertialCorrectionFactor", 1.0)
+                    ),
+                }
+            elif proxy_type == "Fem::ConstraintReaction":
+                reaction_snapshot[obj.Name] = {
+                    "Force": Vector(obj.Force.x, obj.Force.y, obj.Force.z),
+                    "Torque": Vector(obj.Torque.x, obj.Torque.y, obj.Torque.z),
+                    "Origin": FreeCAD.Placement(obj.Origin),
+                }
+        return vf_snapshot, reaction_snapshot
+
+    def _collect_batch_step_states(self, fp, states, analysis):
+        step_states = []
+        for index, state in enumerate(states):
+            self.state_set(fp, state)
+            self.updateFEMLinks(fp, mode=UpdateMode.LOAD)
+            vf_snapshot, reaction_snapshot = self._snapshot_constraint_state(analysis)
+            step_states.append(
+                BatchStepState(
+                    index=index,
+                    state=state,
+                    vf_snapshot=vf_snapshot,
+                    reaction_snapshot=reaction_snapshot,
+                )
+            )
+        return step_states
 
     def findAnalysis(self, fp):
         label = analysis_label(fp.Body.getLinkedObject().Label)
@@ -871,6 +902,13 @@ class LinkBody(FPBase):
             # Restore constraint values from saved state; skip live body read.
             id = body.Label
             mass = self._get_body_mass_tons(body)
+            if (id, "CenterOfMass") in self.state:
+                center_of_mass = self.state[(id, "CenterOfMass")]
+                vf_obj.CenterOfMass = Vector(
+                    center_of_mass.x,
+                    center_of_mass.y,
+                    center_of_mass.z,
+                )
             if (id, "LinearAcceleration") in self.state:
                 if mass is None:
                     Console.PrintWarning(
@@ -893,6 +931,13 @@ class LinkBody(FPBase):
                 vf_obj.AngularVelocity = angular_velocity
                 vf_obj.AngularAcceleration = angular_acceleration
                 vf_obj.RelativeVelocity = relative_velocity
+
+                # Recompute CenterOfRotation from restored COM/velocity state
+                # so per-step virtual-force snapshots are self-consistent.
+                try:
+                    vf_obj.Proxy.execute(vf_obj)
+                except Exception:
+                    pass
 
             return True
 
@@ -937,6 +982,11 @@ class LinkBody(FPBase):
 
         if mode is UpdateMode.SAVE:
             id = body.Label
+            self.state[(id, "CenterOfMass")] = Vector(
+                center_of_mass.x,
+                center_of_mass.y,
+                center_of_mass.z,
+            )
             self.state[(id, "LinearAcceleration")] = linear_acceleration * mass
             self.state[(id, "LinearVelocity")] = linear_velocity
             self.state[(id, "AngularVelocity")] = angular_velocity
@@ -971,6 +1021,12 @@ class LinkBody(FPBase):
             if (id, "Force") in self.state:
                 obj.Force = self.state[(id, "Force")]
                 obj.Torque = self.state[(id, "Torque")]
+            if (id, "Origin") in self.state:
+                origin = self.state[(id, "Origin")]
+                obj.Origin.Base = Vector(origin.x, origin.y, origin.z)
+            if (id, "CenterOfMass") in self.state and hasattr(obj, "CenterOfMass"):
+                com = self.state[(id, "CenterOfMass")]
+                obj.CenterOfMass = Vector(com.x, com.y, com.z)
 
             reference = get_reference_subobject(attr_side("Reference", None))
             if has_valid_reference_subobject(reference):
@@ -1002,6 +1058,13 @@ class LinkBody(FPBase):
         if mode is UpdateMode.SAVE:
             self.state[(id, "Force")] = force
             self.state[(id, "Torque")] = torque
+            self.state[(id, "Origin")] = Vector(origin.x, origin.y, origin.z)
+            if hasattr(body, "CenterOfMass"):
+                self.state[(id, "CenterOfMass")] = Vector(
+                    body.CenterOfMass.x,
+                    body.CenterOfMass.y,
+                    body.CenterOfMass.z,
+                )
 
         self.force_total += force
         self.line_info.append((origin, force, LineType.FORCE))

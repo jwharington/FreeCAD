@@ -112,6 +112,88 @@ class TestFemLinkUtils(unittest.TestCase):
         self.assertEqual(result, [])
 
 
+class TestUtilsAnalysis(unittest.TestCase):
+
+    def test_run_stored_analysis_keeps_batch_with_jig321_after_fix(self):
+        """run_stored_analysis no longer falls back from batch when Jig321 is present (DOF conflict is fixed)."""
+        _msg("  Test UtilsAnalysis batch mode with Jig321 (after fix)")
+        ua = _import_or_skip(self, "FemLink.UtilsAnalysis")
+
+        femlnk = Mock()
+        proxy = Mock()
+        femlnk.Proxy = proxy
+        proxy.num_states.return_value = 2
+        proxy.states_vector.return_value = [[0.0, 0.0], [1.0, 1.0]]
+        proxy.num_bodies.return_value = 0
+
+        jig_obj = Mock()
+        jig_proxy = Mock()
+        jig_proxy.Type = "Fem::ConstraintJig321"
+        jig_obj.Proxy = jig_proxy
+
+        analysis = Mock()
+        analysis.Group = [jig_obj]
+        proxy.findAnalysis.return_value = analysis
+
+        with (
+            patch.object(
+                ua, "svd_qhull_reduce", return_value=(proxy.states_vector.return_value, [], [])
+            ),
+            patch.object(ua, "out_forces") as out_forces,
+        ):
+            ua.run_stored_analysis(
+                femlnk,
+                reduced=False,
+                dry_run=True,
+                batch_mode=True,
+            )
+
+        proxy.state_set.assert_called_once()
+        proxy.updateFEMLinks.assert_called_once()
+        self.assertTrue(out_forces.called)
+        # Batch mode should NOT fall back anymore since DOF conflict is fixed
+        self.assertTrue(out_forces.call_args.kwargs["batch_mode"])
+
+    def test_run_stored_analysis_keeps_batch_without_jig321(self):
+        """run_stored_analysis keeps requested batch mode when Jig321 is absent."""
+        _msg("  Test UtilsAnalysis keeps batch mode without Jig321")
+        ua = _import_or_skip(self, "FemLink.UtilsAnalysis")
+
+        femlnk = Mock()
+        proxy = Mock()
+        femlnk.Proxy = proxy
+        proxy.num_states.return_value = 2
+        proxy.states_vector.return_value = [[0.0, 0.0], [1.0, 1.0]]
+        proxy.num_bodies.return_value = 0
+
+        reaction_obj = Mock()
+        reaction_proxy = Mock()
+        reaction_proxy.Type = "Fem::ConstraintReaction"
+        reaction_obj.Proxy = reaction_proxy
+
+        analysis = Mock()
+        analysis.Group = [reaction_obj]
+        proxy.findAnalysis.return_value = analysis
+
+        with (
+            patch.object(
+                ua, "svd_qhull_reduce", return_value=(proxy.states_vector.return_value, [], [])
+            ),
+            patch.object(ua, "out_forces") as out_forces,
+        ):
+            ua.run_stored_analysis(
+                femlnk,
+                reduced=False,
+                dry_run=True,
+                batch_mode=True,
+            )
+
+        proxy.state_set.assert_called_once()
+        proxy.updateFEMLinks.assert_called_once()
+        self.assertTrue(out_forces.called)
+        self.assertTrue(out_forces.call_args.kwargs["batch_mode"])
+
+
 # ---------------------------------------------------------------------------
 # d369c72d37 – FPBase infrastructure (FemLink.FPBase)
 # ---------------------------------------------------------------------------
@@ -1648,8 +1730,9 @@ class TestLinkBody(unittest.TestCase):
         linked = type("Linked", (), {"Name": "Body", "Label": "Body"})()
         link = type("Link", (), {"getLinkedObject": lambda self: linked})()
 
-        with patch("FemLink.LinkBody.UtilsAssembly.getObject", return_value=link), patch(
-            "FemLink.LinkBody.UtilsAssembly.isLink", return_value=True
+        with (
+            patch("FemLink.LinkBody.UtilsAssembly.getObject", return_value=link),
+            patch("FemLink.LinkBody.UtilsAssembly.isLink", return_value=True),
         ):
             result_obj, result_subs = get_reference_subobject(
                 (object(), ["Part.Face1", "Part.Face1"])
@@ -2601,6 +2684,55 @@ class TestLinkBody(unittest.TestCase):
                 f"Dynamic free-pendulum residual too high for contact type {contact_type}",
             )
 
+    def test_batch_requested_jig321_fallback_and_dynamic_residual_guard(self):
+        """Batch-requested Jig321 runs fall back safely and retain dynamic residual quality."""
+        _msg("  Test batch-requested Jig321 fallback + dynamic residual guard")
+
+        ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
+        ua = _import_or_skip(self, "FemLink.UtilsAnalysis")
+
+        # Part 1: Ensure fallback is activated when batch is requested in a Jig321 workflow.
+        doc = ex.setup(exercise_loadcases=False)
+        try:
+            femlinks = [o for o in doc.Objects if getattr(o, "Name", "").startswith("LinkBody_")]
+            self.assertTrue(femlinks, "No LinkBody object found")
+            femlnk = femlinks[0]
+
+            n_states = ua.synthesize_load_cases(femlnk, scale_factors=[1.0, 1.5])
+            self.assertGreaterEqual(n_states, 2, "Need at least two states to exercise fallback")
+
+            with patch.object(ua.Console, "PrintWarning") as warn:
+                ua.run_stored_analysis(
+                    femlnk,
+                    reduced=False,
+                    dry_run=True,
+                    batch_mode=True,
+                )
+
+            warning_text = "".join(str(call.args[0]) for call in warn.call_args_list if call.args)
+            self.assertIn("ConstraintJig321 detected", warning_text)
+            self.assertIn("falling back to per-state solves", warning_text)
+        finally:
+            if doc and getattr(doc, "Name", ""):
+                App.closeDocument(doc.Name)
+
+        # Part 2: Keep correctness guard in place for dynamic residual quality.
+        series = self._run_multistep_jig_residual_case(
+            ex,
+            joint_name="RevoluteJoint",
+            dynamic=True,
+            motion_type="Angular",
+            motion_formula="",
+            case_name="dynamic_batch_requested_fallback_uniform",
+            residual_limit=2.5,
+            reaction_contact_type="Uniform",
+        )
+        self.assertLess(
+            max(series["residual"]),
+            2.5,
+            "Dynamic free-pendulum residual too high after batch-requested fallback",
+        )
+
     def test_calculix_jig_force_residual_analysis_dynamic_mode_rotated_x30(self):
         """Analysis mode: rotate free pendulum rig by +30 deg about X and sweep dynamic cases."""
         _msg("  Analysis test: dynamic free-pendulum rotated +30 deg about X")
@@ -3082,12 +3214,18 @@ class TestLinkBody(unittest.TestCase):
         group = type("G", (), {"Group": [joint]})()
         body = type("B", (), {"Name": "BodyA"})()
 
-        with patch(
-            "FemLink.LinkBody.find_common_group_objects",
-            side_effect=[[group], []],
-        ), patch(
-            "FemLink.LinkBody.UtilsAssembly.getObject",
-            side_effect=[type("P", (), {"Name": "BodyA"})(), type("P", (), {"Name": "Other"})()],
+        with (
+            patch(
+                "FemLink.LinkBody.find_common_group_objects",
+                side_effect=[[group], []],
+            ),
+            patch(
+                "FemLink.LinkBody.UtilsAssembly.getObject",
+                side_effect=[
+                    type("P", (), {"Name": "BodyA"})(),
+                    type("P", (), {"Name": "Other"})(),
+                ],
+            ),
         ):
             proxy.updateJoints(object(), object(), object(), body, mode=mod.UpdateMode.SAVE)
 
@@ -3234,6 +3372,7 @@ class TestLinkBody(unittest.TestCase):
                 "Name": "VirtualForces_Body",
                 "Proxy": type("VFProxy", (), {"Type": "Fem::ConstraintVirtualForces"})(),
                 "CenterOfMass": App.Vector(1, 2, 3),
+                "CenterOfRotation": App.Vector(9, 8, 7),
                 "LinearAcceleration": App.Vector(4, 5, 6),
                 "LinearVelocity": App.Vector(7, 8, 9),
                 "AngularVelocity": App.Vector(1, 0, 0),
@@ -3250,6 +3389,7 @@ class TestLinkBody(unittest.TestCase):
                 "Proxy": type("RProxy", (), {"Type": "Fem::ConstraintReaction"})(),
                 "Force": App.Vector(10, 20, 30),
                 "Torque": App.Vector(1, 2, 3),
+                "Origin": App.Placement(App.Vector(4, 5, 6), App.Rotation()),
             },
         )()
         vf_constraint = {
@@ -3290,12 +3430,16 @@ class TestLinkBody(unittest.TestCase):
         prefs.GetBool = Mock(return_value=False)
         prefs.SetBool = Mock()
 
-        with patch(
-            "FemLink.LinkBody.find_common_group_objects",
-            side_effect=fake_find_common_group_objects,
-        ), patch("FemLink.LinkBody.run_fem_solver") as run_solver, patch(
-            "FemLink.LinkBody.FreeCAD.ParamGet",
-            return_value=prefs,
+        with (
+            patch(
+                "FemLink.LinkBody.find_common_group_objects",
+                side_effect=fake_find_common_group_objects,
+            ),
+            patch("FemLink.LinkBody.run_fem_solver") as run_solver,
+            patch(
+                "FemLink.LinkBody.FreeCAD.ParamGet",
+                return_value=prefs,
+            ),
         ):
             out = proxy.runAnalysisBatch(fp, states, dry_run=False)
 
@@ -3307,10 +3451,18 @@ class TestLinkBody(unittest.TestCase):
         snapshots = kwargs.get("vf_snapshots")
         self.assertEqual(len(states), len(snapshots))
         self.assertEqual(1.25, snapshots[0][vf_obj.Name]["InertialCorrectionFactor"])
+        self.assertEqual(App.Vector(9, 8, 7), snapshots[0][vf_obj.Name]["CenterOfRotation"])
         reaction_snapshots = kwargs.get("reaction_snapshots")
         self.assertEqual(len(states), len(reaction_snapshots))
         self.assertEqual(App.Vector(10, 20, 30), reaction_snapshots[0][reaction_obj.Name]["Force"])
         self.assertEqual(App.Vector(1, 2, 3), reaction_snapshots[0][reaction_obj.Name]["Torque"])
+        self.assertEqual(
+            App.Vector(4, 5, 6),
+            reaction_snapshots[0][reaction_obj.Name]["Origin"].Base,
+        )
+        batch_step_states = kwargs.get("batch_step_states")
+        self.assertEqual(len(states), len(batch_step_states))
+        self.assertEqual([0, 1, 2], [s.index for s in batch_step_states])
 
         self.assertIn(0, out)
         self.assertIn(1, out)
@@ -3324,6 +3476,105 @@ class TestLinkBody(unittest.TestCase):
 
         removed_names = [call.args[0] for call in analysis_doc.removeObject.call_args_list]
         self.assertIn(stale_dat.Name, removed_names)
+
+    def test_collect_batch_step_states_preserves_index_order_and_snapshot_copies(self):
+        """Batch step-state collection preserves ordering and stores by-value snapshots."""
+        _msg("  Test collect batch step states ordering/copy semantics")
+        lb_mod = _import_or_skip(self, "FemLink.LinkBody")
+
+        vf_obj = type(
+            "VFObj",
+            (),
+            {
+                "Name": "VirtualForces_Body",
+                "Proxy": type("VFProxy", (), {"Type": "Fem::ConstraintVirtualForces"})(),
+                "CenterOfMass": App.Vector(0, 0, 0),
+                "CenterOfRotation": App.Vector(0, 0, 0),
+                "LinearAcceleration": App.Vector(0, 0, 0),
+                "LinearVelocity": App.Vector(0, 0, 0),
+                "AngularVelocity": App.Vector(0, 0, 0),
+                "AngularAcceleration": App.Vector(0, 0, 0),
+                "RelativeVelocity": App.Vector(0, 0, 0),
+                "InertialCorrectionFactor": 1.0,
+            },
+        )()
+        reaction_obj = type(
+            "ReactionObj",
+            (),
+            {
+                "Name": "Reaction_Body_Joint",
+                "Proxy": type("RProxy", (), {"Type": "Fem::ConstraintReaction"})(),
+                "Force": App.Vector(0, 0, 0),
+                "Torque": App.Vector(0, 0, 0),
+                "Origin": App.Placement(App.Vector(100, 0, 0), App.Rotation()),
+            },
+        )()
+
+        analysis = type("Analysis", (), {"Group": []})()
+        proxy = lb_mod.LinkBody.__new__(lb_mod.LinkBody)
+        proxy.state_set = Mock()
+
+        step_counter = {"idx": -1}
+
+        def fake_update(_fp, mode=None):
+            self.assertEqual(lb_mod.UpdateMode.LOAD, mode)
+            step_counter["idx"] += 1
+            i = step_counter["idx"]
+            vf_obj.CenterOfMass = App.Vector(i, i + 1, i + 2)
+            vf_obj.CenterOfRotation = App.Vector(10 + i, 20 + i, 30 + i)
+            reaction_obj.Force = App.Vector(100 + i, 200 + i, 300 + i)
+            reaction_obj.Torque = App.Vector(1 + i, 2 + i, 3 + i)
+            reaction_obj.Origin = App.Placement(App.Vector(400 + i, 0, 0), App.Rotation())
+
+        proxy.updateFEMLinks = Mock(side_effect=fake_update)
+
+        states = [[11.0], [22.0], [33.0]]
+
+        def fake_find_common_group_objects(_analysis, type_id):
+            if type_id == "Fem::ConstraintPython":
+                return [vf_obj, reaction_obj]
+            return []
+
+        with patch(
+            "FemLink.LinkBody.find_common_group_objects",
+            side_effect=fake_find_common_group_objects,
+        ):
+            step_states = proxy._collect_batch_step_states(object(), states, analysis)
+
+        self.assertEqual([0, 1, 2], [s.index for s in step_states])
+        self.assertEqual(states, [s.state for s in step_states])
+
+        # Ensure snapshots capture per-step values (not aliases to live objects).
+        self.assertEqual(
+            App.Vector(0, 1, 2), step_states[0].vf_snapshot[vf_obj.Name]["CenterOfMass"]
+        )
+        self.assertEqual(
+            App.Vector(10, 20, 30),
+            step_states[0].vf_snapshot[vf_obj.Name]["CenterOfRotation"],
+        )
+        self.assertEqual(
+            App.Vector(102, 202, 302), step_states[2].reaction_snapshot[reaction_obj.Name]["Force"]
+        )
+        self.assertEqual(
+            App.Vector(402, 0, 0),
+            step_states[2].reaction_snapshot[reaction_obj.Name]["Origin"].Base,
+        )
+
+        # Mutate source objects after capture; snapshots must remain stable.
+        vf_obj.CenterOfMass = App.Vector(999, 999, 999)
+        reaction_obj.Force = App.Vector(999, 999, 999)
+        reaction_obj.Origin = App.Placement(App.Vector(999, 0, 0), App.Rotation())
+        self.assertEqual(
+            App.Vector(0, 1, 2), step_states[0].vf_snapshot[vf_obj.Name]["CenterOfMass"]
+        )
+        self.assertEqual(
+            App.Vector(100, 200, 300),
+            step_states[0].reaction_snapshot[reaction_obj.Name]["Force"],
+        )
+        self.assertEqual(
+            App.Vector(400, 0, 0),
+            step_states[0].reaction_snapshot[reaction_obj.Name]["Origin"].Base,
+        )
 
     def test_batch_real_run_maps_states_to_increment_results(self):
         """Batch run maps states to increment results even when increment count differs."""
@@ -3389,23 +3640,35 @@ class TestLinkBody(unittest.TestCase):
             self.assertGreaterEqual(len(new_names), 0)
 
             if new_names:
-                self.assertTrue(hasattr(femlnk.Proxy, "batch_result_map"))
-                batch_result_map = femlnk.Proxy.batch_result_map
                 analyzed_state_count = len(list(femlnk.Proxy.states_vector(femlnk)))
-                self.assertEqual(len(batch_result_map), analyzed_state_count)
 
-                # All mapped result objects must be in the new result set.
-                for idx, result in batch_result_map.items():
-                    self.assertIn(
-                        result.Name,
-                        new_names,
-                        f"batch_result_map[{idx}] points to a result not in the new batch",
-                    )
+                if hasattr(femlnk.Proxy, "batch_result_map"):
+                    batch_result_map = femlnk.Proxy.batch_result_map
+                    self.assertEqual(len(batch_result_map), analyzed_state_count)
 
-                # State mapping may contain duplicate results when increment and
-                # state counts differ, but it must never exceed the state count.
-                mapped_results = set(batch_result_map.values())
-                self.assertLessEqual(len(mapped_results), analyzed_state_count)
+                    # All mapped result objects must be in the new result set.
+                    for idx, result in batch_result_map.items():
+                        self.assertIn(
+                            result.Name,
+                            new_names,
+                            f"batch_result_map[{idx}] points to a result not in the new batch",
+                        )
+
+                    # State mapping may contain duplicate results when increment and
+                    # state counts differ, but it must never exceed the state count.
+                    mapped_results = set(batch_result_map.values())
+                    self.assertLessEqual(len(mapped_results), analyzed_state_count)
+                else:
+                    # Jig321-safe fallback path uses per-state solves and fills result_map
+                    # (no batch_result_map by design).
+                    self.assertTrue(hasattr(femlnk.Proxy, "result_map"))
+                    self.assertEqual(len(femlnk.Proxy.result_map), analyzed_state_count)
+                    for idx, result in femlnk.Proxy.result_map.items():
+                        self.assertIn(
+                            result.Name,
+                            new_names,
+                            f"result_map[{idx}] points to a result not produced in fallback run",
+                        )
         finally:
             if doc and getattr(doc, "Name", ""):
                 App.closeDocument(doc.Name)

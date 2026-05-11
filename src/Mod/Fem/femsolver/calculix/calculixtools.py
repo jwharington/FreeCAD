@@ -56,6 +56,7 @@ class CalculiXTools(ObjectTools):
         self.step_count = 1
         self.vf_snapshots = None
         self.reaction_snapshots = None
+        self.batch_step_states = None
 
     def prepare(self):
 
@@ -101,6 +102,7 @@ class CalculiXTools(ObjectTools):
         )
         w.vf_snapshots = self.vf_snapshots
         w.reaction_snapshots = self.reaction_snapshots
+        w.batch_step_states = self.batch_step_states
         self.model_file = w.write_solver_input(step_count=self.step_count)
         # report to user if task succeeded
         self.input_deck = os.path.splitext(os.path.basename(self.model_file))[0]
