@@ -140,6 +140,9 @@ class FemToolsCcx(QtCore.QRunnable, QtCore.QObject):
             self.ccx_binary = ""
             self.base_name = ""
             self.results_present = False
+            self.step_count = 1
+            self.vf_snapshots = None
+            self.reaction_snapshots = None
             if test_mode:
                 self.test_mode = True
                 self.ccx_binary_present = True
@@ -398,7 +401,9 @@ class FemToolsCcx(QtCore.QRunnable, QtCore.QObject):
                 self.working_dir,
                 meshdatagetter.mat_geo_sets,
             )
-            self.inp_file_name = inp_writer.write_solver_input()
+            inp_writer.vf_snapshots = self.vf_snapshots
+            inp_writer.reaction_snapshots = self.reaction_snapshots
+            self.inp_file_name = inp_writer.write_solver_input(step_count=self.step_count)
         except Exception:
             FreeCAD.Console.PrintError(
                 f"Unexpected error when writing CalculiX input file: {sys.exc_info()[1]}\n"

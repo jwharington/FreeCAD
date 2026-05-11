@@ -151,6 +151,9 @@ def run_fem_solver(
 
         App.Console.PrintMessage("Run of CalxuliX ccx tools solver started.\n")
         fea = ccx(solver)
+        fea.step_count = step_count
+        fea.vf_snapshots = vf_snapshots
+        fea.reaction_snapshots = reaction_snapshots
         fea.reset_mesh_purge_results_checked()
         if working_dir is None:
             fea.run()  # standard, no working dir is given in solver
