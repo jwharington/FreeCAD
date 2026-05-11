@@ -314,7 +314,7 @@ class LinkBody(FPBase):
 
         def get_results():
             result_series = find_common_group_objects(analysis, "Fem::FemResultObjectPython")
-            return {r.Label: r for r in result_series}
+            return {r.Name: r for r in result_series}
 
         results_old = get_results()
 
@@ -373,7 +373,7 @@ class LinkBody(FPBase):
 
         def get_results():
             result_series = find_common_group_objects(analysis, "Fem::FemResultObjectPython")
-            return {r.Label: r for r in result_series}
+            return {r.Name: r for r in result_series}
 
         results_old = get_results()
 
@@ -462,6 +462,10 @@ class LinkBody(FPBase):
         results_new = [v for k, v in get_results().items() if k not in results_old]
         if results_new:
             batch_result = results_new[-1]
+            # Batch solves can import one result object per FRD increment.
+            # Keep one canonical result object to avoid result proliferation.
+            for stale_result in results_new[:-1]:
+                analysis.Document.removeObject(stale_result.Name)
             batch_result.Mesh.Placement = self.mesh_placement
             if not hasattr(self, "result_map"):
                 self.result_map = {}
