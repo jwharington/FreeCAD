@@ -54,6 +54,7 @@ class CalculiXTools(ObjectTools):
         super().__init__(obj)
         self.model_file = ""
         self.step_count = 1
+        self.vf_snapshots = None
 
     def prepare(self):
 
@@ -97,6 +98,7 @@ class CalculiXTools(ObjectTools):
             self.obj.WorkingDirectory,
             meshdatagetter.mat_geo_sets,
         )
+        w.vf_snapshots = self.vf_snapshots
         self.model_file = w.write_solver_input(step_count=self.step_count)
         # report to user if task succeeded
         self.input_deck = os.path.splitext(os.path.basename(self.model_file))[0]

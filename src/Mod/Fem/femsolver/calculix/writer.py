@@ -128,6 +128,80 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
         self.gravity = int(Units.Quantity(constants.gravity()).getValueAs("mm/s^2"))  # 9820 mm/s2
         self.units_information = units_information
 
+    def _apply_virtualforces_snapshot(self, step_index):
+        snapshots = getattr(self, "vf_snapshots", None)
+        if not snapshots or step_index >= len(snapshots):
+            return
+
+        step_snapshot = snapshots[step_index]
+        for femobj in self.member.cons_virtualforces:
+            vf_obj = femobj["Object"]
+            values = step_snapshot.get(vf_obj.Name)
+            if not values:
+                continue
+            for key, value in values.items():
+                setattr(vf_obj, key, value)
+
+    def _write_virtualforces_step_constraints(self, inpfile, step_index, step_count):
+        femobjs = self.member.cons_virtualforces
+        if not femobjs:
+            return
+
+        analysis_types = con_virtualforces.get_analysis_types()
+        if analysis_types != "all" and self.analysis_type not in analysis_types:
+            return
+
+        self._apply_virtualforces_snapshot(step_index)
+
+        write_before = con_virtualforces.get_before_write_constraint()
+        write_after = con_virtualforces.get_after_write_constraint()
+
+        inpfile.write("\n{}\n".format(59 * "*"))
+        inpfile.write(f"** {con_virtualforces.get_constraint_title()}\n")
+        if write_before:
+            inpfile.write(write_before)
+
+        op_new_pending = step_count > 1
+        for femobj in femobjs:
+            vf_obj = femobj["Object"]
+            inpfile.write(f"** {vf_obj.Label}\n")
+            con_virtualforces.write_constraint(
+                inpfile,
+                femobj,
+                vf_obj,
+                self,
+                op_new=op_new_pending,
+            )
+            op_new_pending = False
+
+        if write_after:
+            inpfile.write(write_after)
+
+    def _write_step_dependent_constraints(self, inpfile, step_index, step_count):
+        self.write_constraints_propdata(inpfile, self.member.cons_fixed, con_fixed)
+        self.write_constraints_propdata(
+            inpfile, self.member.cons_rigidbody_step, con_rigidbody_step
+        )
+        self.write_constraints_propdata(inpfile, self.member.cons_displacement, con_displacement)
+        self.write_constraints_propdata(inpfile, self.member.cons_sectionprint, con_sectionprint)
+        self._write_virtualforces_step_constraints(inpfile, step_index, step_count)
+        self.write_constraints_propdata(inpfile, self.member.cons_selfweight, con_selfweight)
+        self.write_constraints_propdata(inpfile, self.member.cons_centrif, con_centrif)
+        self.write_constraints_propdata(inpfile, self.member.cons_jig321, con_jig321)
+        self.write_constraints_propdata(
+            inpfile, self.member.cons_bodyheatsource, con_bodyheatsource
+        )
+        self.write_constraints_meshsets(inpfile, self.member.cons_force, con_force)
+        self.write_constraints_meshsets(inpfile, self.member.cons_pressure, con_pressure)
+        self.write_constraints_propdata(inpfile, self.member.cons_temperature, con_temperature)
+        self.write_constraints_propdata(inpfile, self.member.cons_finaltemperature, con_ftemp)
+        self.write_constraints_meshsets(inpfile, self.member.cons_heatflux, con_heatflux)
+        self.write_constraints_propdata(
+            inpfile, self.member.cons_electricchargedensity, con_electricchargedensity
+        )
+        self.write_constraints_propdata(inpfile, self.member.cons_electrostatic, con_electrostatic)
+        con_fluidsection.write_constraints_fluidsection(inpfile, self)
+
     # ********************************************************************************************
     # write calculix input
     def write_solver_input(self, step_count=1):
@@ -194,55 +268,14 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
         # amplitudes
         write_amplitude.write_amplitude(inpfile, self)
 
-        if step_count > 1:
-            FreeCAD.Console.PrintWarning(
-                "Multi-step CalculiX input is not fully enabled yet; "
-                "falling back to the existing single-step deck.\n"
-            )
+        if step_count < 1:
             step_count = 1
 
-        # step equation
-        if step_count == 1:
+        for step_index in range(step_count):
             write_step_equation.write_step_equation(inpfile, self)
-
-            # constraints dependent from steps
-            self.write_constraints_propdata(inpfile, self.member.cons_fixed, con_fixed)
-            self.write_constraints_propdata(
-                inpfile, self.member.cons_rigidbody_step, con_rigidbody_step
-            )
-            self.write_constraints_propdata(
-                inpfile, self.member.cons_displacement, con_displacement
-            )
-            self.write_constraints_propdata(
-                inpfile, self.member.cons_sectionprint, con_sectionprint
-            )
-            self.write_constraints_propdata(inpfile, self.member.cons_selfweight, con_selfweight)
-            self.write_constraints_propdata(inpfile, self.member.cons_centrif, con_centrif)
-            self.write_constraints_propdata(inpfile, self.member.cons_jig321, con_jig321)
-            self.write_constraints_propdata(
-                inpfile, self.member.cons_virtualforces, con_virtualforces
-            )
-            self.write_constraints_propdata(
-                inpfile, self.member.cons_bodyheatsource, con_bodyheatsource
-            )
-            self.write_constraints_meshsets(inpfile, self.member.cons_force, con_force)
-            self.write_constraints_meshsets(inpfile, self.member.cons_pressure, con_pressure)
-            self.write_constraints_propdata(inpfile, self.member.cons_temperature, con_temperature)
-            self.write_constraints_propdata(inpfile, self.member.cons_finaltemperature, con_ftemp)
-            self.write_constraints_meshsets(inpfile, self.member.cons_heatflux, con_heatflux)
-            self.write_constraints_propdata(
-                inpfile, self.member.cons_electricchargedensity, con_electricchargedensity
-            )
-            self.write_constraints_propdata(
-                inpfile, self.member.cons_electrostatic, con_electrostatic
-            )
-            con_fluidsection.write_constraints_fluidsection(inpfile, self)
-
-            # output and step end
+            self._write_step_dependent_constraints(inpfile, step_index, step_count)
             write_step_output.write_step_output(inpfile, self)
             write_step_equation.write_step_end(inpfile, self)
-        else:
-            write_step_equation.write_step_blocks(inpfile, self, step_count)
 
         # footer
         write_footer.write_footer(inpfile, self)

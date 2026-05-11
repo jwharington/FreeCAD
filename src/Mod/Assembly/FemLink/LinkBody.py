@@ -345,21 +345,119 @@ class LinkBody(FPBase):
         # delete Fem::FemPostPipeline
 
     def runAnalysisBatch(self, fp, states, dry_run=False):
-        """Compatibility batch entrypoint for future multi-loadcase solves.
+        """Run all states in one solver invocation when supported.
 
-        The initial implementation preserves current behavior by executing the
-        existing per-state analysis path, so callers can already switch to the
-        batch API without changing results.
+        Batch mode currently threads per-step virtual-force snapshots into the
+        CalculiX writer and emits one multi-step input deck.
         """
         self.batch_result_map = {}
-        for index, state in enumerate(states):
+        if not states:
+            return self.batch_result_map
+
+        if not (analysis := self.findAnalysis(fp)):
+            Console.PrintMessage("no analysis found\n")
+            return self.batch_result_map
+
+        solver = find_common_group_objects(analysis, "Fem::FemSolverObjectPython")[0]
+        if hasattr(solver, "WorkingDirectory") and not solver.WorkingDirectory:
+            solver.WorkingDirectory = get_pref_working_dir(solver)
+
+        # Remove stale DAT file objects before importing new results.
+        stale_dat = [
+            o
+            for o in analysis.Group
+            if o.TypeId == "App::TextDocument" and o.Name.startswith("ccx_dat_file")
+        ]
+        for o in stale_dat:
+            analysis.Document.removeObject(o.Name)
+
+        def get_results():
+            result_series = find_common_group_objects(analysis, "Fem::FemResultObjectPython")
+            return {r.Label: r for r in result_series}
+
+        results_old = get_results()
+
+        vf_snapshots = []
+        for state in states:
             self.state_set(fp, state)
             self.updateFEMLinks(fp, mode=UpdateMode.LOAD)
-            if dry_run:
-                continue
-            self.runAnalysis(fp, index=index)
-            if hasattr(self, "result_map") and index in self.result_map:
-                self.batch_result_map[index] = self.result_map[index]
+
+            step_snapshot = {}
+            for obj in find_common_group_objects(analysis, "Fem::ConstraintPython"):
+                proxy = getattr(obj, "Proxy", None)
+                if not proxy or getattr(proxy, "Type", "") != "Fem::ConstraintVirtualForces":
+                    continue
+                step_snapshot[obj.Name] = {
+                    "CenterOfMass": Vector(
+                        obj.CenterOfMass.x,
+                        obj.CenterOfMass.y,
+                        obj.CenterOfMass.z,
+                    ),
+                    "LinearAcceleration": Vector(
+                        obj.LinearAcceleration.x,
+                        obj.LinearAcceleration.y,
+                        obj.LinearAcceleration.z,
+                    ),
+                    "LinearVelocity": Vector(
+                        obj.LinearVelocity.x,
+                        obj.LinearVelocity.y,
+                        obj.LinearVelocity.z,
+                    ),
+                    "AngularVelocity": Vector(
+                        obj.AngularVelocity.x,
+                        obj.AngularVelocity.y,
+                        obj.AngularVelocity.z,
+                    ),
+                    "AngularAcceleration": Vector(
+                        obj.AngularAcceleration.x,
+                        obj.AngularAcceleration.y,
+                        obj.AngularAcceleration.z,
+                    ),
+                    "RelativeVelocity": Vector(
+                        obj.RelativeVelocity.x,
+                        obj.RelativeVelocity.y,
+                        obj.RelativeVelocity.z,
+                    ),
+                    "InertialCorrectionFactor": float(
+                        getattr(obj, "InertialCorrectionFactor", 1.0)
+                    ),
+                }
+            vf_snapshots.append(step_snapshot)
+
+        if dry_run:
+            return self.batch_result_map
+
+        # Keep initial state active so non-snapshotted constraints use the
+        # first load case values as baseline.
+        self.state_set(fp, states[0])
+        self.updateFEMLinks(fp, mode=UpdateMode.LOAD)
+
+        assembly_prefs = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Mod/Assembly")
+        solve_on_recompute = assembly_prefs.GetBool("SolveOnRecompute", True)
+        try:
+            if solve_on_recompute:
+                assembly_prefs.SetBool("SolveOnRecompute", False)
+            run_fem_solver(
+                solver,
+                solver.WorkingDirectory,
+                step_count=len(states),
+                vf_snapshots=vf_snapshots,
+            )
+        finally:
+            if solve_on_recompute:
+                assembly_prefs.SetBool("SolveOnRecompute", True)
+
+        results_new = [v for k, v in get_results().items() if k not in results_old]
+        if results_new:
+            batch_result = results_new[-1]
+            batch_result.Mesh.Placement = self.mesh_placement
+            if not hasattr(self, "result_map"):
+                self.result_map = {}
+            for index, _state in enumerate(states):
+                self.result_map[index] = batch_result
+                self.batch_result_map[index] = batch_result
+
+        clear_post_pipelines(analysis)
         return self.batch_result_map
 
     def findAnalysis(self, fp):
