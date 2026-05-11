@@ -122,6 +122,14 @@ def emit_reaction_diagnostics(elem_info, prs_obj, face_no_corrections, Console):
         )
 
 
+def _moment_at_reference(force, moment_at_origin, origin_base, reference_base):
+    """Return equivalent moment at a different reference point.
+
+    Wrench transfer: M_ref = M_origin + (origin - ref) x F
+    """
+    return moment_at_origin + (origin_base - reference_base).cross(force)
+
+
 def write_reaction_distributing_coupling(
     f,
     prs_obj,
@@ -131,6 +139,7 @@ def write_reaction_distributing_coupling(
     reaction_coupling_shift_free_m_limit,
     reaction_coupling_shift_scale,
     Console,
+    op_new=False,
 ):
     # Experimental alternative to face-pressure DLOAD delivery:
     # build a DCOUP3D + *DISTRIBUTING COUPLING from the selected
@@ -146,6 +155,8 @@ def write_reaction_distributing_coupling(
         coupling_cache = {}
         ccxwriter._reaction_coupling_cache = coupling_cache
 
+    step_index = getattr(ccxwriter, "_current_step_index", None)
+    step_scoped = isinstance(step_index, int) and step_index >= 0
     cache_key = prs_obj.Name
     cached = coupling_cache.get(cache_key)
 
@@ -186,11 +197,184 @@ def write_reaction_distributing_coupling(
             )
             node_weights = _build_area_node_weights(elem_info)
 
+    # Exclude Jig321-constrained nodes to avoid *BOUNDARY/*DISTRIBUTING COUPLING DOF conflict.
+    # The Jig321 support nodes are fully constrained (*BOUNDARY), so DCOUP3D cannot couple to them.
+    jig321_nodes = set()
+    for femobj in getattr(ccxwriter.member, "cons_jig321", []):
+        # Try the new SupportNodeIds key first (if write_constraint_jig321 has populated it)
+        support_ids = femobj.get("SupportNodeIds", [])
+        if not support_ids:
+            # Fallback: try to map jig321_obj.Supports positions to mesh nodes
+            jig321_obj = femobj.get("Object")
+            if jig321_obj and hasattr(jig321_obj, "Supports"):
+                mesh = femmesh
+                for support_pos in jig321_obj.Supports:
+                    min_dist = float("inf")
+                    closest_nid = None
+                    for nid, node_pos in mesh.Nodes.items():
+                        try:
+                            node_vec = Vector(node_pos[0], node_pos[1], node_pos[2])
+                            dist = (node_vec - support_pos).Length
+                            if dist < min_dist:
+                                min_dist = dist
+                                closest_nid = nid
+                        except Exception:
+                            continue
+                    if closest_nid is not None and min_dist < 1.0:
+                        support_ids = list(support_ids) + [closest_nid]
+        jig321_nodes.update(support_ids)
+
+    nodes_excluded = 0
+    for nid in jig321_nodes:
+        if nid in node_weights:
+            del node_weights[nid]
+            nodes_excluded += 1
+    if nodes_excluded > 0:
+        Console.PrintWarning(
+            "ConstraintReaction {}: excluded {} Jig321-constrained nodes from "
+            "DCOUP3D to avoid *BOUNDARY DOF conflict.\n".format(
+                prs_obj.Name,
+                nodes_excluded,
+            )
+        )
+    elif len(getattr(ccxwriter.member, "cons_jig321", [])) > 0:
+        Console.PrintMessage(
+            "ConstraintReaction {}: no Jig321-constrained nodes found in coupling node set (different faces?).\n".format(
+                prs_obj.Name
+            )
+        )
+
     total_weight = sum(node_weights.values())
     if total_weight <= 0.0:
         Console.PrintWarning(
             "ConstraintReaction {}: distributing-coupling mode requested but "
             "no valid face-node weights were built; reaction is skipped.\n".format(prs_obj.Name)
+        )
+        return
+
+    if step_scoped:
+        # Batch-safe path: do not define new nodes/elements inside step blocks.
+        # Instead, apply a nodal *CLOAD distribution that preserves both
+        # resultant force and moment at this step.
+        if prs_obj.EnableAmplitude:
+            if op_new:
+                f.write(f"*CLOAD, OP=NEW, AMPLITUDE={prs_obj.Name}\n")
+            else:
+                f.write(f"*CLOAD, AMPLITUDE={prs_obj.Name}\n")
+        else:
+            if op_new:
+                f.write("*CLOAD, OP=NEW\n")
+            else:
+                f.write("*CLOAD\n")
+
+        weighted_nodes = []
+        nodal_forces = {}
+        centroid = Vector(0, 0, 0)
+
+        for nid, area_w in node_weights.items():
+            w = area_w / total_weight
+            node_pos = femmesh.Nodes[nid]
+            if hasattr(node_pos, "x"):
+                node_vec = node_pos
+            else:
+                node_vec = Vector(node_pos[0], node_pos[1], node_pos[2])
+            r = node_vec - ref_base
+            weighted_nodes.append((nid, w, r))
+            centroid += r * w
+            nodal_forces[nid] = force_cpl * w
+
+        moment_from_force = Vector(0, 0, 0)
+        for nid, w, r in weighted_nodes:
+            moment_from_force = moment_from_force + r.cross(nodal_forces[nid])
+
+        target_couple_moment = moment_cpl - moment_from_force
+
+        couple_forces = {}
+        realized_couple_moment = Vector(0, 0, 0)
+        moment_error = 0.0
+
+        if target_couple_moment.Length > 1e-14:
+
+            def moment_from_mu(mu):
+                moment = Vector(0, 0, 0)
+                for _nid, _w, _r in weighted_nodes:
+                    f_vec = mu.cross(_r - centroid) * _w
+                    moment = moment + _r.cross(f_vec)
+                return moment
+
+            col_x = moment_from_mu(Vector(1, 0, 0))
+            col_y = moment_from_mu(Vector(0, 1, 0))
+            col_z = moment_from_mu(Vector(0, 0, 1))
+
+            a11, a12, a13 = col_x.x, col_y.x, col_z.x
+            a21, a22, a23 = col_x.y, col_y.y, col_z.y
+            a31, a32, a33 = col_x.z, col_y.z, col_z.z
+
+            det = (
+                a11 * (a22 * a33 - a23 * a32)
+                - a12 * (a21 * a33 - a23 * a31)
+                + a13 * (a21 * a32 - a22 * a31)
+            )
+
+            if abs(det) > 1e-18:
+                inv11 = (a22 * a33 - a23 * a32) / det
+                inv12 = (a13 * a32 - a12 * a33) / det
+                inv13 = (a12 * a23 - a13 * a22) / det
+                inv21 = (a23 * a31 - a21 * a33) / det
+                inv22 = (a11 * a33 - a13 * a31) / det
+                inv23 = (a13 * a21 - a11 * a23) / det
+                inv31 = (a21 * a32 - a22 * a31) / det
+                inv32 = (a12 * a31 - a11 * a32) / det
+                inv33 = (a11 * a22 - a12 * a21) / det
+
+                mu = Vector(
+                    inv11 * target_couple_moment.x
+                    + inv12 * target_couple_moment.y
+                    + inv13 * target_couple_moment.z,
+                    inv21 * target_couple_moment.x
+                    + inv22 * target_couple_moment.y
+                    + inv23 * target_couple_moment.z,
+                    inv31 * target_couple_moment.x
+                    + inv32 * target_couple_moment.y
+                    + inv33 * target_couple_moment.z,
+                )
+
+                for nid, w, r in weighted_nodes:
+                    f_vec = mu.cross(r - centroid) * w
+                    if f_vec.Length > 1e-18:
+                        couple_forces[nid] = f_vec
+
+                realized_couple_moment = moment_from_mu(mu)
+            else:
+                Console.PrintWarning(
+                    "ConstraintReaction {}: batch nodal-couple moment system is singular "
+                    "(det={:.3g}); moment transfer skipped.\n".format(
+                        prs_obj.Name,
+                        det,
+                    )
+                )
+
+        for nid in sorted(nodal_forces):
+            f_vec = nodal_forces[nid] + couple_forces.get(nid, Vector(0, 0, 0))
+            if abs(f_vec.x) > 1e-14:
+                f.write(f"{nid},1,{f_vec.x:.13G}\n")
+            if abs(f_vec.y) > 1e-14:
+                f.write(f"{nid},2,{f_vec.y:.13G}\n")
+            if abs(f_vec.z) > 1e-14:
+                f.write(f"{nid},3,{f_vec.z:.13G}\n")
+
+        realized_total_moment = moment_from_force + realized_couple_moment
+        moment_error = (realized_total_moment - moment_cpl).Length
+
+        Console.PrintMessage(
+            "ConstraintReaction {}: wrote batch nodal reaction with {} nodes; "
+            "|F|={:.3g} N, |M|={:.3g} Nmm, |M_err|={:.3g} Nmm.\n".format(
+                prs_obj.Name,
+                len(node_weights),
+                force_cpl.Length,
+                moment_cpl.Length,
+                moment_error,
+            )
         )
         return
 
@@ -248,11 +432,21 @@ def write_reaction_distributing_coupling(
         ref_node_id = cached["ref_node_id"]
         elset_name = cached["elset_name"]
         ref_base = cached["ref_base"]
+        # In batch mode, the reaction origin can move between steps while the
+        # cached coupling reference node stays fixed. Transfer the step wrench
+        # to that fixed reference to preserve force/moment equivalence.
+        moment_cpl = _moment_at_reference(force_cpl, moment_cpl, base, ref_base)
 
     if prs_obj.EnableAmplitude:
-        f.write(f"*CLOAD, AMPLITUDE={prs_obj.Name}\n")
+        if op_new:
+            f.write(f"*CLOAD, OP=NEW, AMPLITUDE={prs_obj.Name}\n")
+        else:
+            f.write(f"*CLOAD, AMPLITUDE={prs_obj.Name}\n")
     else:
-        f.write("*CLOAD\n")
+        if op_new:
+            f.write("*CLOAD, OP=NEW\n")
+        else:
+            f.write("*CLOAD\n")
     if abs(force_cpl.x) > 1e-14:
         f.write(f"{ref_node_id},1,{force_cpl.x:.13G}\n")
     if abs(force_cpl.y) > 1e-14:

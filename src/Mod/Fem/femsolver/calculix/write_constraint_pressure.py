@@ -78,7 +78,7 @@ def has_pressure_field(prs_obj):
     return False
 
 
-def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
+def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter, op_new=False):
     # floats read from ccx should use {:.13G}, see comment in writer module
 
     is_reaction = has_pressure_field(prs_obj)
@@ -313,6 +313,7 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter):
             REACTION_COUPLING_SHIFT_FREE_M_LIMIT,
             REACTION_COUPLING_SHIFT_SCALE,
             Console,
+            op_new=op_new,
         )
         return
 

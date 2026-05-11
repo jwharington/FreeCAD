@@ -65,6 +65,13 @@ def _fvec(v):
 
 
 def write_meshdata_constraint(f, femobj, jig321_obj, ccxwriter):
+    # Store the 3 support node IDs for later access by the reaction constraint writer.
+    # The reaction writer needs to exclude these from DCOUP3D coupling to avoid DOF conflicts.
+    if "SupportNodeIds" not in femobj and "Nodes" in femobj:
+        # The first 3 entries in femobj["Nodes"] are assumed to be the support nodes
+        # (selected as the largest triangle from the face nodes by the constraint proxy)
+        femobj["SupportNodeIds"] = femobj["Nodes"][:3]
+
     for idx, n in enumerate(femobj["Nodes"]):
         jname = jig_name(jig321_obj=jig321_obj, idx=idx)
         f.write(f"*NSET,NSET={jname}\n")

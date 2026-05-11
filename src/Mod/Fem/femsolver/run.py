@@ -78,6 +78,7 @@ def run_fem_solver(
     step_count=1,
     vf_snapshots=None,
     reaction_snapshots=None,
+    batch_step_states=None,
 ):
     """Execute *solver* of the solver framework.
 
@@ -128,6 +129,8 @@ def run_fem_solver(
             tool.vf_snapshots = vf_snapshots
         if hasattr(tool, "reaction_snapshots"):
             tool.reaction_snapshots = reaction_snapshots
+        if hasattr(tool, "batch_step_states"):
+            tool.batch_step_states = batch_step_states
         # Redirect process error to report view
         print_error = lambda: App.Console.PrintError(
             tool.process.readAllStandardError().data().decode("utf-8")
@@ -154,6 +157,7 @@ def run_fem_solver(
         fea.step_count = step_count
         fea.vf_snapshots = vf_snapshots
         fea.reaction_snapshots = reaction_snapshots
+        fea.batch_step_states = batch_step_states
         fea.reset_mesh_purge_results_checked()
         if working_dir is None:
             fea.run()  # standard, no working dir is given in solver

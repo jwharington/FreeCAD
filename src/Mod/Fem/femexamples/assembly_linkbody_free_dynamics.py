@@ -168,7 +168,7 @@ TaskAssemblyLinkBody workflow.
 When `exercise_loadcases=True`, this example also exercises the LinkBody
 load-case pipeline used by TaskAssemblyLinkBody:
 	create+run dynamic assembly simulation -> collect/synthesize states
-	-> full/reduced stored analysis
+	-> selected stored analysis mode: full, reduced, or both
 	(full FEM analysis, not dry-run)
 
 """
@@ -178,6 +178,8 @@ def setup(
 	doc=None,
 	solvertype="ccxtools",
 	exercise_loadcases=True,
+	loadcase_analysis_mode="both",
+	batch_mode=True,
 	assembly_rotation_deg_x=0.0,
 	assembly_shift_x=0.0,
 	assembly_shift_y=0.0,
@@ -330,6 +332,8 @@ def setup(
 	mat["PoissonRatio"] = "0.30"
 	mat["Density"] = "7900 kg/m^3"
 	material_obj.Material = mat
+	# Leave References empty for single-material setup so the solver applies
+	# this material to the full meshed part.
 	analysis.addObject(material_obj)
 
 	# NOTE:
@@ -367,12 +371,15 @@ def setup(
 			assembly,
 			linkbody_fp,
 			dry_run=False,
+			batch_mode=batch_mode,
+			analysis_mode=loadcase_analysis_mode,
 		)
 		FreeCAD.Console.PrintMessage(
 			f"Assembly dynamic simulation frames: {n_frames}\n"
 		)
 		FreeCAD.Console.PrintMessage(
 			"LinkBody load-case exercise: "
+			f"mode={loadcase_analysis_mode}, "
 			f"states={summary['num_states']}, "
 			f"full_hull={summary['full_hull_size']}, "
 			f"reduced_hull={summary['reduced_hull_size']}\n"
