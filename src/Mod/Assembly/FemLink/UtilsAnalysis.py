@@ -60,6 +60,11 @@ def _update_view_object(obj):
         view_obj.update()
 
 
+def _batch_mode_enabled() -> bool:
+    raw = os.environ.get("FREECAD_FEMLINK_BATCH_ANALYSIS", "0")
+    return raw not in {"", "0", "false", "False", "no", "No"}
+
+
 def extract_results(femlnk) -> dict:
     analysis = femlnk.Proxy.findAnalysis(femlnk)
     result_series = find_common_group_objects(analysis, "Fem::FemResultObjectPython")
@@ -139,7 +144,17 @@ def svd_qhull_reduce(states, n_bodies, num_hull=8):
     return A_convex, A_hull, A_reduced
 
 
-def out_forces(femlnk, states, dry_run=False):
+def _run_state_sequence(femlnk, states, dry_run=False, batch_mode=False):
+    """Execute a sequence of FEM load states.
+
+    The current implementation preserves the legacy one-solve-per-state path.
+    batch_mode is reserved for a future batch solver entrypoint and falls back
+    to the legacy loop when that entrypoint is unavailable.
+    """
+    if batch_mode and hasattr(femlnk.Proxy, "runAnalysisBatch"):
+        femlnk.Proxy.runAnalysisBatch(femlnk, states, dry_run=dry_run)
+        return
+
     for idx, row in enumerate(states):
         Console.PrintMessage(f"...    set frame {idx}\n")
         femlnk.Proxy.state_set(femlnk, row)
@@ -151,19 +166,25 @@ def out_forces(femlnk, states, dry_run=False):
             femlnk.Document.recompute()
 
 
-def run_stored_analysis(femlnk, reduced=False, dry_run=False):
+def out_forces(femlnk, states, dry_run=False, batch_mode=False):
+    _run_state_sequence(femlnk, states, dry_run=dry_run, batch_mode=batch_mode)
+
+
+def run_stored_analysis(femlnk, reduced=False, dry_run=False, batch_mode=None):
     Console.PrintMessage("... assembly FEM analysis\n")
     if not femlnk.Proxy.num_states():
         return None, None
+    if batch_mode is None:
+        batch_mode = _batch_mode_enabled()
     states = np.array(list(femlnk.Proxy.states_vector(femlnk)))
     states_reduced, hull, dim_reduced = svd_qhull_reduce(
         states,
         n_bodies=femlnk.Proxy.num_bodies(femlnk),
     )
     if reduced:
-        out_forces(femlnk, states_reduced, dry_run=dry_run)
+        out_forces(femlnk, states_reduced, dry_run=dry_run, batch_mode=batch_mode)
     else:
-        out_forces(femlnk, states, dry_run=dry_run)
+        out_forces(femlnk, states, dry_run=dry_run, batch_mode=batch_mode)
     return hull, dim_reduced
 
 
@@ -243,7 +264,9 @@ def synthesize_load_cases(femlnk, scale_factors=None):
     return femlnk.Proxy.num_states()
 
 
-def exercise_load_case_pipeline(assembly, femlnk, dry_run=True, scale_factors=None):
+def exercise_load_case_pipeline(
+    assembly, femlnk, dry_run=True, scale_factors=None, batch_mode=None
+):
     """Exercise the same load-case handling path used by TaskAssemblyLinkBody.
 
     Steps:
@@ -268,8 +291,15 @@ def exercise_load_case_pipeline(assembly, femlnk, dry_run=True, scale_factors=No
             "reduced_hull_size": 0,
         }
 
-    hull_full, _ = run_stored_analysis(femlnk, reduced=False, dry_run=dry_run)
-    hull_reduced, _ = run_stored_analysis(femlnk, reduced=True, dry_run=dry_run)
+    if batch_mode is None:
+        batch_mode = _batch_mode_enabled()
+
+    hull_full, _ = run_stored_analysis(
+        femlnk, reduced=False, dry_run=dry_run, batch_mode=batch_mode
+    )
+    hull_reduced, _ = run_stored_analysis(
+        femlnk, reduced=True, dry_run=dry_run, batch_mode=batch_mode
+    )
 
     return {
         "num_states": num_states,

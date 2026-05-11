@@ -144,3 +144,24 @@ def write_step_equation(f, ccxwriter):
 def write_step_end(f, ccxwriter):
     f.write("\n{}\n".format(59 * "*"))
     f.write("*END STEP\n")
+
+
+def write_step_block(f, ccxwriter):
+    """Write one complete CalculiX step block.
+
+    This is a convenience wrapper for future multi-loadcase input generation.
+    The current solver path still emits a single step block through the
+    existing write_step_equation / write_step_end calls.
+    """
+    write_step_equation(f, ccxwriter)
+    write_step_end(f, ccxwriter)
+
+
+def write_step_blocks(f, ccxwriter, step_count):
+    """Write multiple step blocks with the current single-step payload.
+
+    This is intentionally conservative: it only repeats the current step
+    structure and does not change constraint data emission yet.
+    """
+    for _ in range(step_count):
+        write_step_block(f, ccxwriter)

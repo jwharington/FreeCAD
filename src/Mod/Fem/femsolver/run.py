@@ -44,23 +44,20 @@ from traceback import format_exception_only
 from PySide import QtCore
 
 # import threading  # not used ATM
-
 import FreeCAD as App
+from femtools import femutils, membertools
+from femtools.errors import DirectoryDoesNotExistError, MustSaveError
+from PySide import QtCore
 
-from . import settings
-from . import signal
-from . import task
-from femsolver.elmer import elmertools
 from femsolver.calculix import calculixtools
+from femsolver.elmer import elmertools
 from femsolver.z88 import z88tools
-from femtools import femutils
-from femtools import membertools
-from femtools.errors import DirectoryDoesNotExistError
-from femtools.errors import MustSaveError
+
+from . import settings, signal, task
 
 if App.GuiUp:
-    from PySide import QtGui
     import FreeCADGui
+    from PySide import QtGui
 
 
 CHECK = 0
@@ -74,7 +71,7 @@ _machines = {}
 _dirTypes = {}
 
 
-def run_fem_solver(solver, working_dir=None, blocking=False):
+def run_fem_solver(solver, working_dir=None, blocking=False, step_count=1):
     """Execute *solver* of the solver framework.
 
     Uses :meth:`getMachine <femsolver.solverbase.Proxy.getMachine>` to obtain a
@@ -118,6 +115,8 @@ def run_fem_solver(solver, working_dir=None, blocking=False):
             tool = z88tools.Z88Tools(solver)
 
     if tool is not None:
+        if hasattr(tool, "step_count"):
+            tool.step_count = step_count
         # Redirect process error to report view
         print_error = lambda: App.Console.PrintError(
             tool.process.readAllStandardError().data().decode("utf-8")
