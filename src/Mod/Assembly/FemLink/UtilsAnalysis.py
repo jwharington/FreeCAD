@@ -66,8 +66,15 @@ def _batch_mode_enabled() -> bool:
 
 
 def extract_results(femlnk) -> dict:
-    analysis = femlnk.Proxy.findAnalysis(femlnk)
-    result_series = find_common_group_objects(analysis, "Fem::FemResultObjectPython")
+    proxy = femlnk.Proxy
+    # Prefer result_map for state-ordered, batch-aware extraction.
+    result_map = getattr(proxy, "result_map", None)
+    if result_map:
+        sorted_indices = sorted(result_map.keys())
+        result_series = [result_map[idx] for idx in sorted_indices]
+    else:
+        analysis = proxy.findAnalysis(femlnk)
+        result_series = find_common_group_objects(analysis, "Fem::FemResultObjectPython")
 
     def process(result):
         return {"max vonMises": np.max(result.vonMises)}

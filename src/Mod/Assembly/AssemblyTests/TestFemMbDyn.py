@@ -3315,20 +3315,19 @@ class TestLinkBody(unittest.TestCase):
         self.assertIn(0, out)
         self.assertIn(1, out)
         self.assertIn(2, out)
-        self.assertIs(extra_result_obj, out[0])
-        self.assertIs(extra_result_obj, out[1])
+        self.assertIs(result_obj, out[0])
+        self.assertIs(result_obj, out[1])
         self.assertIs(extra_result_obj, out[2])
-        self.assertIs(extra_result_obj, proxy.result_map[0])
-        self.assertIs(extra_result_obj, proxy.result_map[1])
+        self.assertIs(result_obj, proxy.result_map[0])
+        self.assertIs(result_obj, proxy.result_map[1])
         self.assertIs(extra_result_obj, proxy.result_map[2])
 
         removed_names = [call.args[0] for call in analysis_doc.removeObject.call_args_list]
         self.assertIn(stale_dat.Name, removed_names)
-        self.assertIn(result_obj.Name, removed_names)
 
-    def test_batch_real_run_keeps_single_new_result_object(self):
-        """Batch run keeps one canonical newly imported FEM result object."""
-        _msg("  Test batch real run consolidates new results")
+    def test_batch_real_run_maps_states_to_increment_results(self):
+        """Batch run maps states to increment results even when increment count differs."""
+        _msg("  Test batch real run maps states to increment results")
         ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
         ua = _import_or_skip(self, "FemLink.UtilsAnalysis")
 
@@ -3384,19 +3383,29 @@ class TestLinkBody(unittest.TestCase):
             final_names = {o.Name for o in final_results}
             new_names = final_names - initial_names
 
-            # Batch run may import multiple increment results internally; LinkBody
-            # should expose at most one newly visible canonical result object.
-            # Some solver runs can fail to produce FRD results (DAT-only import),
-            # in which case zero new FemResult objects is also acceptable.
-            self.assertLessEqual(len(new_names), 1)
+            # FRD increments can differ from state count. Ensure the batch result map
+            # still contains one mapped entry per state and points to new results.
+            # DAT-only solves produce zero FemResult objects — also acceptable.
+            self.assertGreaterEqual(len(new_names), 0)
 
             if new_names:
                 self.assertTrue(hasattr(femlnk.Proxy, "batch_result_map"))
-                self.assertGreaterEqual(len(femlnk.Proxy.batch_result_map), n_states)
-                mapped_results = set(femlnk.Proxy.batch_result_map.values())
-                self.assertEqual(1, len(mapped_results))
-                canonical_result = next(iter(mapped_results))
-                self.assertIn(canonical_result.Name, new_names)
+                batch_result_map = femlnk.Proxy.batch_result_map
+                analyzed_state_count = len(list(femlnk.Proxy.states_vector(femlnk)))
+                self.assertEqual(len(batch_result_map), analyzed_state_count)
+
+                # All mapped result objects must be in the new result set.
+                for idx, result in batch_result_map.items():
+                    self.assertIn(
+                        result.Name,
+                        new_names,
+                        f"batch_result_map[{idx}] points to a result not in the new batch",
+                    )
+
+                # State mapping may contain duplicate results when increment and
+                # state counts differ, but it must never exceed the state count.
+                mapped_results = set(batch_result_map.values())
+                self.assertLessEqual(len(mapped_results), analyzed_state_count)
         finally:
             if doc and getattr(doc, "Name", ""):
                 App.closeDocument(doc.Name)

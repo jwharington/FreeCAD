@@ -462,18 +462,31 @@ class LinkBody(FPBase):
 
         results_new = [v for k, v in get_results().items() if k not in results_old]
         if results_new:
-            batch_result = results_new[-1]
-            # Batch solves can import one result object per FRD increment.
-            # Keep one canonical result object to avoid result proliferation.
-            for stale_result in results_new[:-1]:
-                analysis.Document.removeObject(stale_result.Name)
-            if getattr(batch_result, "Mesh", None) is not None:
-                batch_result.Mesh.Placement = self.mesh_placement
             if not hasattr(self, "result_map"):
                 self.result_map = {}
-            for index, _state in enumerate(states):
-                self.result_map[index] = batch_result
-                self.batch_result_map[index] = batch_result
+
+            for result in results_new:
+                if getattr(result, "Mesh", None) is not None:
+                    result.Mesh.Placement = self.mesh_placement
+
+            state_count = len(states)
+            result_count = len(results_new)
+            if result_count != state_count:
+                Console.PrintWarning(
+                    f"FemLink batch: got {result_count} result increments for "
+                    f"{state_count} states; mapping states to end-of-bin increments.\n"
+                )
+
+            # Map each state to a representative increment, preferring the
+            # end of each uniform bin so per-state values track final step states.
+            mapped_indices = [
+                min(result_count - 1, max(0, ((index + 1) * result_count) // state_count - 1))
+                for index in range(state_count)
+            ]
+            for index, result_index in enumerate(mapped_indices):
+                mapped = results_new[result_index]
+                self.result_map[index] = mapped
+                self.batch_result_map[index] = mapped
 
         clear_post_pipelines(analysis)
         return self.batch_result_map
