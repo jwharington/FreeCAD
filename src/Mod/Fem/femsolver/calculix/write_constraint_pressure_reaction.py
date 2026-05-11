@@ -141,11 +141,19 @@ def write_reaction_distributing_coupling(
     moment_cpl = -prs_obj.Torque
     ref_base = Vector(base.x, base.y, base.z)
 
+    coupling_cache = getattr(ccxwriter, "_reaction_coupling_cache", None)
+    if coupling_cache is None:
+        coupling_cache = {}
+        ccxwriter._reaction_coupling_cache = coupling_cache
+
+    cache_key = prs_obj.Name
+    cached = coupling_cache.get(cache_key)
+
     # Decompose wrench: shift line-of-action to absorb moment component
     # perpendicular to force, then transfer only the free (parallel)
     # moment as a nodal couple. This reduces cancellation artefacts.
     force_sq = force_cpl.dot(force_cpl)
-    if force_sq > 1e-18 and moment_cpl.Length > 1e-14:
+    if cached is None and force_sq > 1e-18 and moment_cpl.Length > 1e-14:
         m_parallel = force_cpl * (moment_cpl.dot(force_cpl) / force_sq)
         m_perp = moment_cpl - m_parallel
         if m_perp.Length > 1e-14 and m_parallel.Length <= reaction_coupling_shift_free_m_limit:
@@ -204,31 +212,42 @@ def write_reaction_distributing_coupling(
             if eid > max_elem_id:
                 max_elem_id = eid
 
-    ref_node_id = max_node_id + 1000 + 2 * obj_idx + 1
-    dco_elem_id = max_elem_id + 1000 + obj_idx + 1
+    if cached is None:
+        ref_node_id = max_node_id + 1000 + 2 * obj_idx + 1
+        dco_elem_id = max_elem_id + 1000 + obj_idx + 1
 
-    coupling_base = f"RDCPL_{prs_obj.Name}"
-    if len(coupling_base) > 60:
-        coupling_base = coupling_base[:60]
-    elset_name = f"{coupling_base}_EL"
+        coupling_base = f"RDCPL_{prs_obj.Name}"
+        if len(coupling_base) > 60:
+            coupling_base = coupling_base[:60]
+        elset_name = f"{coupling_base}_EL"
 
-    f.write(f"** ConstraintReaction {prs_obj.Name}: using *DISTRIBUTING COUPLING delivery\n")
-    f.write("*NODE\n")
-    f.write(
-        "{},{:.13G},{:.13G},{:.13G}\n".format(
-            ref_node_id,
-            ref_base.x,
-            ref_base.y,
-            ref_base.z,
+        f.write(f"** ConstraintReaction {prs_obj.Name}: using *DISTRIBUTING COUPLING delivery\n")
+        f.write("*NODE\n")
+        f.write(
+            "{},{:.13G},{:.13G},{:.13G}\n".format(
+                ref_node_id,
+                ref_base.x,
+                ref_base.y,
+                ref_base.z,
+            )
         )
-    )
-    f.write(f"*ELEMENT,TYPE=DCOUP3D,ELSET={elset_name}\n")
-    f.write(f"{dco_elem_id},{ref_node_id}\n")
-    f.write(f"*DISTRIBUTING COUPLING, ELSET={elset_name}\n")
-    for nid in sorted(node_weights):
-        f.write(f"{nid},{(node_weights[nid] / total_weight):.13G}\n")
-    # Keep coupling translational for now; rotational coupling DOFs
-    # are intentionally omitted to avoid spurious support-couple modes.
+        f.write(f"*ELEMENT,TYPE=DCOUP3D,ELSET={elset_name}\n")
+        f.write(f"{dco_elem_id},{ref_node_id}\n")
+        f.write(f"*DISTRIBUTING COUPLING, ELSET={elset_name}\n")
+        for nid in sorted(node_weights):
+            f.write(f"{nid},{(node_weights[nid] / total_weight):.13G}\n")
+        # Keep coupling translational for now; rotational coupling DOFs
+        # are intentionally omitted to avoid spurious support-couple modes.
+
+        coupling_cache[cache_key] = {
+            "ref_node_id": ref_node_id,
+            "elset_name": elset_name,
+            "ref_base": ref_base,
+        }
+    else:
+        ref_node_id = cached["ref_node_id"]
+        elset_name = cached["elset_name"]
+        ref_base = cached["ref_base"]
 
     if prs_obj.EnableAmplitude:
         f.write(f"*CLOAD, AMPLITUDE={prs_obj.Name}\n")

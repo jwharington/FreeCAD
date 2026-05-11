@@ -334,7 +334,8 @@ class LinkBody(FPBase):
             self.result_map = {}
         results = [v for k, v in get_results().items() if k not in results_old]
         for result in results:
-            result.Mesh.Placement = self.mesh_placement
+            if getattr(result, "Mesh", None) is not None:
+                result.Mesh.Placement = self.mesh_placement
             self.result_map[index] = result
             # assumes one result per index
 
@@ -351,7 +352,7 @@ class LinkBody(FPBase):
         CalculiX writer and emits one multi-step input deck.
         """
         self.batch_result_map = {}
-        if not states:
+        if states is None or len(states) == 0:
             return self.batch_result_map
 
         if not (analysis := self.findAnalysis(fp)):
@@ -466,7 +467,8 @@ class LinkBody(FPBase):
             # Keep one canonical result object to avoid result proliferation.
             for stale_result in results_new[:-1]:
                 analysis.Document.removeObject(stale_result.Name)
-            batch_result.Mesh.Placement = self.mesh_placement
+            if getattr(batch_result, "Mesh", None) is not None:
+                batch_result.Mesh.Placement = self.mesh_placement
             if not hasattr(self, "result_map"):
                 self.result_map = {}
             for index, _state in enumerate(states):

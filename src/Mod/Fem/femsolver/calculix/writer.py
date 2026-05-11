@@ -290,10 +290,12 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
             step_count = 1
 
         for step_index in range(step_count):
+            self._current_step_index = step_index
             write_step_equation.write_step_equation(inpfile, self)
             self._write_step_dependent_constraints(inpfile, step_index, step_count)
             write_step_output.write_step_output(inpfile, self)
             write_step_equation.write_step_end(inpfile, self)
+        self._current_step_index = None
 
         # footer
         write_footer.write_footer(inpfile, self)

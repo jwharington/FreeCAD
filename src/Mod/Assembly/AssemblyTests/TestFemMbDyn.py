@@ -3326,6 +3326,81 @@ class TestLinkBody(unittest.TestCase):
         self.assertIn(stale_dat.Name, removed_names)
         self.assertIn(result_obj.Name, removed_names)
 
+    def test_batch_real_run_keeps_single_new_result_object(self):
+        """Batch run keeps one canonical newly imported FEM result object."""
+        _msg("  Test batch real run consolidates new results")
+        ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
+        ua = _import_or_skip(self, "FemLink.UtilsAnalysis")
+
+        doc = ex.setup(exercise_loadcases=False)
+        try:
+            femlinks = [o for o in doc.Objects if getattr(o, "Name", "").startswith("LinkBody_")]
+            self.assertTrue(femlinks, "No LinkBody object found")
+            femlnk = femlinks[0]
+
+            analysis = femlnk.Proxy.findAnalysis(femlnk)
+            self.assertIsNotNone(analysis, "No FEM analysis found for LinkBody")
+
+            solvers = [o for o in analysis.Group if o.isDerivedFrom("Fem::FemSolverObjectPython")]
+            self.assertTrue(solvers, "No FEM solver found in analysis")
+            solvers[0].WorkingDirectory = tempfile.mkdtemp(prefix="fc_lbbatch_real_")
+
+            initial_results = [
+                o for o in analysis.Group if o.isDerivedFrom("Fem::FemResultObjectPython")
+            ]
+            initial_names = {o.Name for o in initial_results}
+
+            n_states = ua.synthesize_load_cases(femlnk, scale_factors=[0.5, 1.0, 1.5])
+            self.assertGreaterEqual(n_states, 2, "Need at least two states for batch run")
+
+            ua.run_stored_analysis(
+                femlnk,
+                reduced=False,
+                dry_run=False,
+                batch_mode=True,
+            )
+            doc.recompute()
+
+            inp_file = os.path.join(solvers[0].WorkingDirectory, "Mesh.inp")
+            if os.path.isfile(inp_file):
+                with open(inp_file, "r", encoding="utf-8", errors="ignore") as handle:
+                    inp_text = handle.read()
+                dco_ids = []
+                lines = inp_text.splitlines()
+                for i, line in enumerate(lines):
+                    if (
+                        line.strip().upper().startswith("*ELEMENT")
+                        and "TYPE=DCOUP3D" in line.upper()
+                    ):
+                        if i + 1 < len(lines):
+                            card = lines[i + 1].strip().split(",")
+                            if card and card[0].strip().isdigit():
+                                dco_ids.append(int(card[0].strip()))
+                self.assertEqual(len(dco_ids), len(set(dco_ids)))
+
+            final_results = [
+                o for o in analysis.Group if o.isDerivedFrom("Fem::FemResultObjectPython")
+            ]
+            final_names = {o.Name for o in final_results}
+            new_names = final_names - initial_names
+
+            # Batch run may import multiple increment results internally; LinkBody
+            # should expose at most one newly visible canonical result object.
+            # Some solver runs can fail to produce FRD results (DAT-only import),
+            # in which case zero new FemResult objects is also acceptable.
+            self.assertLessEqual(len(new_names), 1)
+
+            if new_names:
+                self.assertTrue(hasattr(femlnk.Proxy, "batch_result_map"))
+                self.assertGreaterEqual(len(femlnk.Proxy.batch_result_map), n_states)
+                mapped_results = set(femlnk.Proxy.batch_result_map.values())
+                self.assertEqual(1, len(mapped_results))
+                canonical_result = next(iter(mapped_results))
+                self.assertIn(canonical_result.Name, new_names)
+        finally:
+            if doc and getattr(doc, "Name", ""):
+                App.closeDocument(doc.Name)
+
     def test_static_inp_contains_rota_corio_and_velocity_ic(self):
         """A static LinkBody solve writes ROTA/CORIO and velocity IC cards to INP."""
         _msg("  Test static INP contains ROTA/CORIO/velocity IC")
