@@ -344,6 +344,24 @@ class LinkBody(FPBase):
         # Fem::FemMeshObjectPython within Fem::FemResultObjectPython
         # delete Fem::FemPostPipeline
 
+    def runAnalysisBatch(self, fp, states, dry_run=False):
+        """Compatibility batch entrypoint for future multi-loadcase solves.
+
+        The initial implementation preserves current behavior by executing the
+        existing per-state analysis path, so callers can already switch to the
+        batch API without changing results.
+        """
+        self.batch_result_map = {}
+        for index, state in enumerate(states):
+            self.state_set(fp, state)
+            self.updateFEMLinks(fp, mode=UpdateMode.LOAD)
+            if dry_run:
+                continue
+            self.runAnalysis(fp, index=index)
+            if hasattr(self, "result_map") and index in self.result_map:
+                self.batch_result_map[index] = self.result_map[index]
+        return self.batch_result_map
+
     def findAnalysis(self, fp):
         label = analysis_label(fp.Body.getLinkedObject().Label)
         doc = fp.Document

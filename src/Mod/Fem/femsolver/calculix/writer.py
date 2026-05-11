@@ -62,7 +62,6 @@ from . import write_constraint_force as con_force
 from . import write_constraint_heatflux as con_heatflux
 from . import write_constraint_initialtemperature as con_itemp
 from . import write_constraint_jig321 as con_jig321
-from . import write_constraint_virtualforces as con_virtualforces
 from . import write_constraint_planerotation as con_planerotation
 from . import write_constraint_pressure as con_pressure
 from . import write_constraint_rigidbody as con_rigidbody
@@ -72,6 +71,7 @@ from . import write_constraint_selfweight as con_selfweight
 from . import write_constraint_temperature as con_temperature
 from . import write_constraint_tie as con_tie
 from . import write_constraint_transform as con_transform
+from . import write_constraint_virtualforces as con_virtualforces
 
 # Interesting forum topic: https://forum.freecad.org/viewtopic.php?&t=48451
 # TODO somehow set units at beginning and every time a value is retrieved use this identifier
@@ -130,7 +130,7 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
 
     # ********************************************************************************************
     # write calculix input
-    def write_solver_input(self):
+    def write_solver_input(self, step_count=1):
 
         time_start = time.process_time()
         FreeCAD.Console.PrintMessage("\n")  # because of time print in separate line
@@ -194,37 +194,55 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
         # amplitudes
         write_amplitude.write_amplitude(inpfile, self)
 
+        if step_count > 1:
+            FreeCAD.Console.PrintWarning(
+                "Multi-step CalculiX input is not fully enabled yet; "
+                "falling back to the existing single-step deck.\n"
+            )
+            step_count = 1
+
         # step equation
-        write_step_equation.write_step_equation(inpfile, self)
+        if step_count == 1:
+            write_step_equation.write_step_equation(inpfile, self)
 
-        # constraints dependent from steps
-        self.write_constraints_propdata(inpfile, self.member.cons_fixed, con_fixed)
-        self.write_constraints_propdata(
-            inpfile, self.member.cons_rigidbody_step, con_rigidbody_step
-        )
-        self.write_constraints_propdata(inpfile, self.member.cons_displacement, con_displacement)
-        self.write_constraints_propdata(inpfile, self.member.cons_sectionprint, con_sectionprint)
-        self.write_constraints_propdata(inpfile, self.member.cons_selfweight, con_selfweight)
-        self.write_constraints_propdata(inpfile, self.member.cons_centrif, con_centrif)
-        self.write_constraints_propdata(inpfile, self.member.cons_jig321, con_jig321)
-        self.write_constraints_propdata(inpfile, self.member.cons_virtualforces, con_virtualforces)
-        self.write_constraints_propdata(
-            inpfile, self.member.cons_bodyheatsource, con_bodyheatsource
-        )
-        self.write_constraints_meshsets(inpfile, self.member.cons_force, con_force)
-        self.write_constraints_meshsets(inpfile, self.member.cons_pressure, con_pressure)
-        self.write_constraints_propdata(inpfile, self.member.cons_temperature, con_temperature)
-        self.write_constraints_propdata(inpfile, self.member.cons_finaltemperature, con_ftemp)
-        self.write_constraints_meshsets(inpfile, self.member.cons_heatflux, con_heatflux)
-        self.write_constraints_propdata(
-            inpfile, self.member.cons_electricchargedensity, con_electricchargedensity
-        )
-        self.write_constraints_propdata(inpfile, self.member.cons_electrostatic, con_electrostatic)
-        con_fluidsection.write_constraints_fluidsection(inpfile, self)
+            # constraints dependent from steps
+            self.write_constraints_propdata(inpfile, self.member.cons_fixed, con_fixed)
+            self.write_constraints_propdata(
+                inpfile, self.member.cons_rigidbody_step, con_rigidbody_step
+            )
+            self.write_constraints_propdata(
+                inpfile, self.member.cons_displacement, con_displacement
+            )
+            self.write_constraints_propdata(
+                inpfile, self.member.cons_sectionprint, con_sectionprint
+            )
+            self.write_constraints_propdata(inpfile, self.member.cons_selfweight, con_selfweight)
+            self.write_constraints_propdata(inpfile, self.member.cons_centrif, con_centrif)
+            self.write_constraints_propdata(inpfile, self.member.cons_jig321, con_jig321)
+            self.write_constraints_propdata(
+                inpfile, self.member.cons_virtualforces, con_virtualforces
+            )
+            self.write_constraints_propdata(
+                inpfile, self.member.cons_bodyheatsource, con_bodyheatsource
+            )
+            self.write_constraints_meshsets(inpfile, self.member.cons_force, con_force)
+            self.write_constraints_meshsets(inpfile, self.member.cons_pressure, con_pressure)
+            self.write_constraints_propdata(inpfile, self.member.cons_temperature, con_temperature)
+            self.write_constraints_propdata(inpfile, self.member.cons_finaltemperature, con_ftemp)
+            self.write_constraints_meshsets(inpfile, self.member.cons_heatflux, con_heatflux)
+            self.write_constraints_propdata(
+                inpfile, self.member.cons_electricchargedensity, con_electricchargedensity
+            )
+            self.write_constraints_propdata(
+                inpfile, self.member.cons_electrostatic, con_electrostatic
+            )
+            con_fluidsection.write_constraints_fluidsection(inpfile, self)
 
-        # output and step end
-        write_step_output.write_step_output(inpfile, self)
-        write_step_equation.write_step_end(inpfile, self)
+            # output and step end
+            write_step_output.write_step_output(inpfile, self)
+            write_step_equation.write_step_end(inpfile, self)
+        else:
+            write_step_equation.write_step_blocks(inpfile, self, step_count)
 
         # footer
         write_footer.write_footer(inpfile, self)

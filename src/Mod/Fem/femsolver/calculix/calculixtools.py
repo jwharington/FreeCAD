@@ -26,26 +26,24 @@ __author__ = "Mario Passaglia"
 __url__ = "https://www.freecad.org"
 
 
-from PySide.QtCore import QProcess, QThread, QProcessEnvironment
 import os
 import shutil
 
-from vtkmodules.util import numpy_support as vtk_np
-from vtkmodules.vtkIOXML import vtkXMLMultiBlockDataReader
-from vtkmodules.vtkCommonDataModel import vtkMultiBlockDataSet
-import numpy as np
-
-import FreeCAD
 import Fem
-
-from . import writer
-from .. import settings
-from .calculixutils import define_masks
-
+import FreeCAD
+import numpy as np
 from femmesh import meshsetsgetter
 from femtools import membertools
 from femtools.checksanalysis import check_member_for_solver_calculix
 from femtools.objecttools import ObjectTools
+from PySide.QtCore import QProcess, QProcessEnvironment, QThread
+from vtkmodules.util import numpy_support as vtk_np
+from vtkmodules.vtkCommonDataModel import vtkMultiBlockDataSet
+from vtkmodules.vtkIOXML import vtkXMLMultiBlockDataReader
+
+from .. import settings
+from . import writer
+from .calculixutils import define_masks
 
 
 class CalculiXTools(ObjectTools):
@@ -55,6 +53,7 @@ class CalculiXTools(ObjectTools):
     def __init__(self, obj):
         super().__init__(obj)
         self.model_file = ""
+        self.step_count = 1
 
     def prepare(self):
 
@@ -98,7 +97,7 @@ class CalculiXTools(ObjectTools):
             self.obj.WorkingDirectory,
             meshdatagetter.mat_geo_sets,
         )
-        self.model_file = w.write_solver_input()
+        self.model_file = w.write_solver_input(step_count=self.step_count)
         # report to user if task succeeded
         self.input_deck = os.path.splitext(os.path.basename(self.model_file))[0]
 

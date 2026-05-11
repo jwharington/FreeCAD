@@ -168,12 +168,12 @@ class TaskAssemblyLinkBody(QtCore.QObject):
         Console.PrintMessage("scale FEA results\n")
         self.linkObj.Proxy.scale(self.linkObj)
 
-    def run_analysis(self, reduced=False):
+    def run_analysis(self, reduced=False, batch_mode=None):
         Console.PrintMessage("run_analysis\n")
         dry_run = self.jForm.checkDryRun.isChecked()
         self.saveTransparency()
         hull, dim_reduced = UtilsAnalysis.run_stored_analysis(
-            self.linkObj, reduced=reduced, dry_run=dry_run
+            self.linkObj, reduced=reduced, dry_run=dry_run, batch_mode=batch_mode
         )
         self.restoreTransparency()
         if hull is None:
