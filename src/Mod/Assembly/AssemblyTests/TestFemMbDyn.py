@@ -3186,6 +3186,120 @@ class TestLinkBody(unittest.TestCase):
             if doc and getattr(doc, "Name", ""):
                 App.closeDocument(doc.Name)
 
+    def test_runanalysisbatch_runs_solver_once_with_snapshots(self):
+        """runAnalysisBatch executes one solve and threads per-step VF snapshots."""
+        _msg("  Test runAnalysisBatch single solve")
+        lb_mod = _import_or_skip(self, "FemLink.LinkBody")
+
+        solver = type(
+            "Solver",
+            (),
+            {
+                "WorkingDirectory": "/tmp/fc_batch_test",
+            },
+        )()
+
+        stale_dat = type(
+            "StaleDat",
+            (),
+            {
+                "TypeId": "App::TextDocument",
+                "Name": "ccx_dat_file_old",
+            },
+        )()
+
+        result_obj = type(
+            "Result",
+            (),
+            {
+                "Label": "BatchResult",
+                "Mesh": type("Mesh", (), {"Placement": None})(),
+            },
+        )()
+
+        vf_obj = type(
+            "VFObj",
+            (),
+            {
+                "Name": "VirtualForces_Body",
+                "Proxy": type("VFProxy", (), {"Type": "Fem::ConstraintVirtualForces"})(),
+                "CenterOfMass": App.Vector(1, 2, 3),
+                "LinearAcceleration": App.Vector(4, 5, 6),
+                "LinearVelocity": App.Vector(7, 8, 9),
+                "AngularVelocity": App.Vector(1, 0, 0),
+                "AngularAcceleration": App.Vector(0, 1, 0),
+                "RelativeVelocity": App.Vector(0, 0, 1),
+                "InertialCorrectionFactor": 1.25,
+            },
+        )()
+        vf_constraint = {
+            "Object": vf_obj,
+        }
+
+        analysis_doc = type("Doc", (), {})()
+        analysis_doc.removeObject = Mock()
+        analysis = type("Analysis", (), {})()
+        analysis.Group = [stale_dat]
+        analysis.Document = analysis_doc
+
+        fp = object()
+        proxy = lb_mod.LinkBody.__new__(lb_mod.LinkBody)
+        proxy.findAnalysis = Mock(return_value=analysis)
+        proxy.state_set = Mock()
+        proxy.updateFEMLinks = Mock()
+        proxy.mesh_placement = App.Placement()
+
+        states = [[1.0], [2.0], [3.0]]
+        result_call_count = [0]
+
+        def fake_find_common_group_objects(_analysis, type_id):
+            if type_id == "Fem::FemSolverObjectPython":
+                return [solver]
+            if type_id == "Fem::ConstraintPython":
+                return [vf_obj]
+            if type_id == "Fem::FemResultObjectPython":
+                result_call_count[0] += 1
+                if result_call_count[0] == 1:
+                    return []
+                return [result_obj]
+            if type_id == "Fem::FemPostPipeline":
+                return []
+            return []
+
+        prefs = type("Prefs", (), {})()
+        prefs.GetBool = Mock(return_value=False)
+        prefs.SetBool = Mock()
+
+        with patch(
+            "FemLink.LinkBody.find_common_group_objects",
+            side_effect=fake_find_common_group_objects,
+        ), patch("FemLink.LinkBody.run_fem_solver") as run_solver, patch(
+            "FemLink.LinkBody.FreeCAD.ParamGet",
+            return_value=prefs,
+        ):
+            out = proxy.runAnalysisBatch(fp, states, dry_run=False)
+
+        run_solver.assert_called_once()
+        args, kwargs = run_solver.call_args
+        self.assertIs(args[0], solver)
+        self.assertEqual(solver.WorkingDirectory, args[1])
+        self.assertEqual(len(states), kwargs.get("step_count"))
+        snapshots = kwargs.get("vf_snapshots")
+        self.assertEqual(len(states), len(snapshots))
+        self.assertEqual(1.25, snapshots[0][vf_obj.Name]["InertialCorrectionFactor"])
+
+        self.assertIn(0, out)
+        self.assertIn(1, out)
+        self.assertIn(2, out)
+        self.assertIs(result_obj, out[0])
+        self.assertIs(result_obj, out[1])
+        self.assertIs(result_obj, out[2])
+        self.assertIs(result_obj, proxy.result_map[0])
+        self.assertIs(result_obj, proxy.result_map[1])
+        self.assertIs(result_obj, proxy.result_map[2])
+
+        analysis_doc.removeObject.assert_called_once_with(stale_dat.Name)
+
     def test_static_inp_contains_rota_corio_and_velocity_ic(self):
         """A static LinkBody solve writes ROTA/CORIO and velocity IC cards to INP."""
         _msg("  Test static INP contains ROTA/CORIO/velocity IC")
