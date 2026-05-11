@@ -71,7 +71,13 @@ _machines = {}
 _dirTypes = {}
 
 
-def run_fem_solver(solver, working_dir=None, blocking=False, step_count=1):
+def run_fem_solver(
+    solver,
+    working_dir=None,
+    blocking=False,
+    step_count=1,
+    vf_snapshots=None,
+):
     """Execute *solver* of the solver framework.
 
     Uses :meth:`getMachine <femsolver.solverbase.Proxy.getMachine>` to obtain a
@@ -117,6 +123,8 @@ def run_fem_solver(solver, working_dir=None, blocking=False, step_count=1):
     if tool is not None:
         if hasattr(tool, "step_count"):
             tool.step_count = step_count
+        if hasattr(tool, "vf_snapshots"):
+            tool.vf_snapshots = vf_snapshots
         # Redirect process error to report view
         print_error = lambda: App.Console.PrintError(
             tool.process.readAllStandardError().data().decode("utf-8")

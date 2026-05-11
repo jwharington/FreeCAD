@@ -65,7 +65,7 @@ def vf_body_nodes_name(vf_obj):
     return f"{vf_obj.Name}-BODY"
 
 
-def _write_axis_dload(f, elset, label, value, axis0, axis_dir):
+def _write_axis_dload(f, elset, label, value, axis0, axis_dir, dload_header_fn=None):
     axis_mag = axis_dir.Length
     if axis_mag <= 0.0:
         return False
@@ -78,7 +78,8 @@ def _write_axis_dload(f, elset, label, value, axis0, axis_dir):
     # would normalise (p1+direction)/|(p1+direction)| giving the wrong axis
     # whenever p1 is far from the origin.
     axis_hat = axis_dir / axis_mag
-    f.write("*DLOAD\n")
+    header = dload_header_fn() if dload_header_fn is not None else "*DLOAD\n"
+    f.write(header)
     f.write(
         "{},{},{:.13G},{:.13G},{:.13G},{:.13G},{:.13G},{:.13G},{:.13G}\n".format(
             elset,
@@ -226,10 +227,22 @@ def write_meshdata_constraint(f, femobj, vf_obj, ccxwriter):
             f.write(f"{node},\n")
 
 
-def write_constraint(f, femobj, vf_obj, ccxwriter):
+def write_constraint(f, femobj, vf_obj, ccxwriter, op_new=False):
     if _env_bool("FREECAD_FEM_SKIP_CONSTRAINT_VIRTUAL_FORCES", False):
         f.write(f"** FREECAD_FEM_SKIP_CONSTRAINT_VIRTUAL_FORCES: {vf_obj.Name} loads suppressed\n")
         return
+
+    # op_new: emit OP=NEW on the first *DLOAD line in this step block to
+    # clear all distributed loads from the previous step, giving an independent
+    # per-load-case result. Only the first *DLOAD in this constraint write
+    # carries OP=NEW; subsequent ones do not (CalculiX OP=NEW is additive with
+    # loads that follow within the same step block).
+    _op_new_pending = [op_new]
+
+    def _dload_hdr():
+        h = "*DLOAD, OP=NEW\n" if _op_new_pending[0] else "*DLOAD\n"
+        _op_new_pending[0] = False
+        return h
 
     is_static = str(getattr(ccxwriter, "analysis_type", "")).lower() == "static"
     # Short-term mesh/discretisation correction model:
@@ -282,6 +295,7 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
             inertial_correction_factor * (o_mag**2),
             center_of_rotation,
             omega,
+            dload_header_fn=_dload_hdr,
         )
         if wrote_centrif:
             # Keep GRAV orthogonal to explicit centrifugal term.
@@ -303,6 +317,7 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
             angular_acceleration.Length,
             center_of_rotation,
             angular_acceleration,
+            dload_header_fn=_dload_hdr,
         )
         if wrote_rota:
             # Keep GRAV orthogonal to explicit Euler term.
@@ -324,6 +339,7 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
             angular_acceleration.Length,
             center_of_mass,  # axis through CM → zero net force
             -angular_acceleration,  # negated: ROTA gives +I·α, need −I·α
+            dload_header_fn=_dload_hdr,
         )
 
     relative_velocity = getattr(vf_obj, "RelativeVelocity", Vector(0, 0, 0))
@@ -347,7 +363,7 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
     a_mag = grav_accel.Length
     if a_mag > 0.0:
         a_norm = -grav_accel / a_mag
-        f.write("*DLOAD\n")
+        f.write(_dload_hdr())
         f.write(
             "{},GRAV,{:.13G},{:.13G},{:.13G},{:.13G}\n".format(
                 ccxwriter.ccx_eall,
@@ -397,6 +413,7 @@ def write_constraint(f, femobj, vf_obj, ccxwriter):
         inertial_correction_factor * (o_mag**2),
         center_of_rotation,
         omega,
+        dload_header_fn=_dload_hdr,
     )
 
 
