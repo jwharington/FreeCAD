@@ -3191,9 +3191,15 @@ class TestLinkBody(unittest.TestCase):
         _msg("  Test static INP contains ROTA/CORIO/velocity IC")
         ex = _import_or_skip(self, "femexamples.assembly_linkbody_free_dynamics")
         lb_mod = _import_or_skip(self, "FemLink.LinkBody")
+        vf_writer_mod = _import_or_skip(self, "femsolver.calculix.write_constraint_virtualforces")
 
         doc = ex.setup(exercise_loadcases=True)
         try:
+            old_decompose = vf_writer_mod.VF_DECOMPOSE_ACCEL
+            # Keep this test deterministic: CORIO emission currently requires
+            # decomposition mode in the VirtualForces writer.
+            vf_writer_mod.VF_DECOMPOSE_ACCEL = True
+
             femlinks = [o for o in doc.Objects if getattr(o, "Name", "").startswith("LinkBody_")]
             self.assertTrue(femlinks, "No LinkBody object found")
             femlnk = femlinks[0]
@@ -3243,6 +3249,7 @@ class TestLinkBody(unittest.TestCase):
             self.assertIn(",CORIO,", inp_text)
             self.assertIn("*INITIAL CONDITIONS,TYPE=VELOCITY", inp_text)
         finally:
+            vf_writer_mod.VF_DECOMPOSE_ACCEL = old_decompose
             if doc and getattr(doc, "Name", ""):
                 App.closeDocument(doc.Name)
 
