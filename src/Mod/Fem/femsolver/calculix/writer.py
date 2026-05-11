@@ -142,6 +142,23 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
             for key, value in values.items():
                 setattr(vf_obj, key, value)
 
+    def _apply_reaction_snapshot(self, step_index):
+        snapshots = getattr(self, "reaction_snapshots", None)
+        if not snapshots or step_index >= len(snapshots):
+            return
+
+        step_snapshot = snapshots[step_index]
+        for femobj in self.member.cons_pressure:
+            reaction_obj = femobj["Object"]
+            proxy = getattr(reaction_obj, "Proxy", None)
+            if not proxy or getattr(proxy, "Type", "") != "Fem::ConstraintReaction":
+                continue
+            values = step_snapshot.get(reaction_obj.Name)
+            if not values:
+                continue
+            for key, value in values.items():
+                setattr(reaction_obj, key, value)
+
     def _write_virtualforces_step_constraints(self, inpfile, step_index, step_count):
         femobjs = self.member.cons_virtualforces
         if not femobjs:
@@ -185,6 +202,7 @@ class FemInputWriterCcx(writerbase.FemInputWriter):
         self.write_constraints_propdata(inpfile, self.member.cons_displacement, con_displacement)
         self.write_constraints_propdata(inpfile, self.member.cons_sectionprint, con_sectionprint)
         self._write_virtualforces_step_constraints(inpfile, step_index, step_count)
+        self._apply_reaction_snapshot(step_index)
         self.write_constraints_propdata(inpfile, self.member.cons_selfweight, con_selfweight)
         self.write_constraints_propdata(inpfile, self.member.cons_centrif, con_centrif)
         self.write_constraints_propdata(inpfile, self.member.cons_jig321, con_jig321)

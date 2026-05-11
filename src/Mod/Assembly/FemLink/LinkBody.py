@@ -378,51 +378,62 @@ class LinkBody(FPBase):
         results_old = get_results()
 
         vf_snapshots = []
+        reaction_snapshots = []
         for state in states:
             self.state_set(fp, state)
             self.updateFEMLinks(fp, mode=UpdateMode.LOAD)
 
             step_snapshot = {}
+            reaction_step_snapshot = {}
             for obj in find_common_group_objects(analysis, "Fem::ConstraintPython"):
                 proxy = getattr(obj, "Proxy", None)
-                if not proxy or getattr(proxy, "Type", "") != "Fem::ConstraintVirtualForces":
+                if not proxy:
                     continue
-                step_snapshot[obj.Name] = {
-                    "CenterOfMass": Vector(
-                        obj.CenterOfMass.x,
-                        obj.CenterOfMass.y,
-                        obj.CenterOfMass.z,
-                    ),
-                    "LinearAcceleration": Vector(
-                        obj.LinearAcceleration.x,
-                        obj.LinearAcceleration.y,
-                        obj.LinearAcceleration.z,
-                    ),
-                    "LinearVelocity": Vector(
-                        obj.LinearVelocity.x,
-                        obj.LinearVelocity.y,
-                        obj.LinearVelocity.z,
-                    ),
-                    "AngularVelocity": Vector(
-                        obj.AngularVelocity.x,
-                        obj.AngularVelocity.y,
-                        obj.AngularVelocity.z,
-                    ),
-                    "AngularAcceleration": Vector(
-                        obj.AngularAcceleration.x,
-                        obj.AngularAcceleration.y,
-                        obj.AngularAcceleration.z,
-                    ),
-                    "RelativeVelocity": Vector(
-                        obj.RelativeVelocity.x,
-                        obj.RelativeVelocity.y,
-                        obj.RelativeVelocity.z,
-                    ),
-                    "InertialCorrectionFactor": float(
-                        getattr(obj, "InertialCorrectionFactor", 1.0)
-                    ),
-                }
+                proxy_type = getattr(proxy, "Type", "")
+
+                if proxy_type == "Fem::ConstraintVirtualForces":
+                    step_snapshot[obj.Name] = {
+                        "CenterOfMass": Vector(
+                            obj.CenterOfMass.x,
+                            obj.CenterOfMass.y,
+                            obj.CenterOfMass.z,
+                        ),
+                        "LinearAcceleration": Vector(
+                            obj.LinearAcceleration.x,
+                            obj.LinearAcceleration.y,
+                            obj.LinearAcceleration.z,
+                        ),
+                        "LinearVelocity": Vector(
+                            obj.LinearVelocity.x,
+                            obj.LinearVelocity.y,
+                            obj.LinearVelocity.z,
+                        ),
+                        "AngularVelocity": Vector(
+                            obj.AngularVelocity.x,
+                            obj.AngularVelocity.y,
+                            obj.AngularVelocity.z,
+                        ),
+                        "AngularAcceleration": Vector(
+                            obj.AngularAcceleration.x,
+                            obj.AngularAcceleration.y,
+                            obj.AngularAcceleration.z,
+                        ),
+                        "RelativeVelocity": Vector(
+                            obj.RelativeVelocity.x,
+                            obj.RelativeVelocity.y,
+                            obj.RelativeVelocity.z,
+                        ),
+                        "InertialCorrectionFactor": float(
+                            getattr(obj, "InertialCorrectionFactor", 1.0)
+                        ),
+                    }
+                elif proxy_type == "Fem::ConstraintReaction":
+                    reaction_step_snapshot[obj.Name] = {
+                        "Force": Vector(obj.Force.x, obj.Force.y, obj.Force.z),
+                        "Torque": Vector(obj.Torque.x, obj.Torque.y, obj.Torque.z),
+                    }
             vf_snapshots.append(step_snapshot)
+            reaction_snapshots.append(reaction_step_snapshot)
 
         if dry_run:
             return self.batch_result_map
@@ -442,6 +453,7 @@ class LinkBody(FPBase):
                 solver.WorkingDirectory,
                 step_count=len(states),
                 vf_snapshots=vf_snapshots,
+                reaction_snapshots=reaction_snapshots,
             )
         finally:
             if solve_on_recompute:
