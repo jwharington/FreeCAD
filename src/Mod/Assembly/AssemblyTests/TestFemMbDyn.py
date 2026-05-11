@@ -3213,6 +3213,16 @@ class TestLinkBody(unittest.TestCase):
             (),
             {
                 "Label": "BatchResult",
+                "Name": "BatchResult",
+                "Mesh": type("Mesh", (), {"Placement": None})(),
+            },
+        )()
+        extra_result_obj = type(
+            "ResultExtra",
+            (),
+            {
+                "Label": "BatchResult_Extra",
+                "Name": "BatchResult_Extra",
                 "Mesh": type("Mesh", (), {"Placement": None})(),
             },
         )()
@@ -3271,7 +3281,7 @@ class TestLinkBody(unittest.TestCase):
                 result_call_count[0] += 1
                 if result_call_count[0] == 1:
                     return []
-                return [result_obj]
+                return [result_obj, extra_result_obj]
             if type_id == "Fem::FemPostPipeline":
                 return []
             return []
@@ -3305,14 +3315,16 @@ class TestLinkBody(unittest.TestCase):
         self.assertIn(0, out)
         self.assertIn(1, out)
         self.assertIn(2, out)
-        self.assertIs(result_obj, out[0])
-        self.assertIs(result_obj, out[1])
-        self.assertIs(result_obj, out[2])
-        self.assertIs(result_obj, proxy.result_map[0])
-        self.assertIs(result_obj, proxy.result_map[1])
-        self.assertIs(result_obj, proxy.result_map[2])
+        self.assertIs(extra_result_obj, out[0])
+        self.assertIs(extra_result_obj, out[1])
+        self.assertIs(extra_result_obj, out[2])
+        self.assertIs(extra_result_obj, proxy.result_map[0])
+        self.assertIs(extra_result_obj, proxy.result_map[1])
+        self.assertIs(extra_result_obj, proxy.result_map[2])
 
-        analysis_doc.removeObject.assert_called_once_with(stale_dat.Name)
+        removed_names = [call.args[0] for call in analysis_doc.removeObject.call_args_list]
+        self.assertIn(stale_dat.Name, removed_names)
+        self.assertIn(result_obj.Name, removed_names)
 
     def test_static_inp_contains_rota_corio_and_velocity_ic(self):
         """A static LinkBody solve writes ROTA/CORIO and velocity IC cards to INP."""

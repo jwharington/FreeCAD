@@ -30,22 +30,22 @@ __url__ = "https://www.freecad.org"
 #  @{
 
 import os
-import sys
-import subprocess
 import shutil
 from traceback import format_exception_only
+import subprocess
+import sys
 
 import FreeCAD
-
-from femtools import femutils
-from femtools import membertools
 from femsolver.calculix.calculixutils import define_masks
+from PySide import (
+    QtCore,  # there might be a special reason this is not guarded ?!?
+)
 
-from PySide import QtCore  # there might be a special reason this is not guarded ?!?
+from femtools import femutils, membertools
 
 if FreeCAD.GuiUp:
-    from PySide import QtGui
     import FemGui
+    from PySide import QtGui
 
 
 class FemToolsCcx(QtCore.QRunnable, QtCore.QObject):
