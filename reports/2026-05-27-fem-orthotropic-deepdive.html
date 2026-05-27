@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FreeCAD FEM Orthotropic Branch Deep-Dive (2026-05-27)</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121a2b;
+      --panel-2: #0f1626;
+      --text: #e6edf7;
+      --muted: #a9b6cc;
+      --accent: #6cb6ff;
+      --good: #7ee787;
+      --warn: #f2cc60;
+      --border: #2a3550;
+      --code: #0a0f1a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 290px 1fr;
+      min-height: 100vh;
+    }
+    .toc {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      overflow: auto;
+      padding: 20px 16px;
+      background: var(--panel-2);
+      border-right: 1px solid var(--border);
+    }
+    .toc h2 {
+      font-size: 1rem;
+      margin: 0 0 12px;
+      color: var(--accent);
+    }
+    .toc a {
+      color: var(--muted);
+      text-decoration: none;
+      display: block;
+      padding: 5px 8px;
+      border-radius: 6px;
+      margin: 2px 0;
+    }
+    .toc a:hover { background: #1a2540; color: var(--text); }
+    .toc .sub { padding-left: 18px; font-size: 0.93rem; }
+    main {
+      padding: 28px 34px;
+      max-width: 1200px;
+    }
+    h1 { margin-top: 0; font-size: 1.8rem; }
+    h2 {
+      margin-top: 34px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+      color: var(--accent);
+      font-size: 1.35rem;
+    }
+    h3 { margin-top: 22px; color: #cfe3ff; font-size: 1.05rem; }
+    p, li { color: var(--text); }
+    .muted { color: var(--muted); }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin: 12px 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0 18px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+    }
+    th, td {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+      font-size: 0.94rem;
+    }
+    th { color: #d8e6ff; background: #141f35; }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: var(--code);
+      color: #d6e3ff;
+    }
+    code { padding: 1px 5px; border-radius: 4px; }
+    pre {
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      overflow: auto;
+    }
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      border: 1px solid var(--border);
+      margin-right: 6px;
+    }
+    .tag.good { color: var(--good); border-color: #2f6c3a; }
+    .tag.warn { color: var(--warn); border-color: #786424; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="toc">
+      <h2>Table of Contents</h2>
+      <a href="#scope">1. Scope & Method</a>
+      <a href="#overview">2. Delta Overview</a>
+      <a class="sub" href="#overview-commit-list">2.1 Commit List</a>
+      <a href="#features">3. New Feature Deep-Dive</a>
+      <a class="sub" href="#feature-orthotropic">3.1 Orthotropic Material/LCS Pipeline</a>
+      <a class="sub" href="#feature-laminate">3.2 Laminate/Draped Shell Support</a>
+      <a class="sub" href="#feature-failure">3.3 Failure Models & Stress Exposure Factor</a>
+      <a class="sub" href="#feature-other">3.4 Orthogonal Non-FEM Changes</a>
+      <a href="#reorder">4. Commit Reordering Applied</a>
+      <a href="#tests-examples">5. FEM Examples & FEM Tests Opportunities</a>
+      <a href="#risks">6. Gaps, Risks, and Follow-ups</a>
+      <a href="#appendix">7. Appendix</a>
+    </aside>
+
+    <main>
+      <h1>FreeCAD FEM Orthotropic Branch Deep-Dive</h1>
+      <p class="muted"><strong>Date:</strong> 2026-05-27<br/>
+      <strong>Branch:</strong> <code>fem-orthotropic</code><br/>
+      <strong>Baseline:</strong> <code>upstream/main</code> at merge-base <code>7ee479d09006a2665c1a78ca04777f1f227d3a62</code></p>
+
+      <div class="card">
+        <span class="tag good">15 commits</span>
+        <span class="tag good">27 files changed</span>
+        <span class="tag good">+852 / -264 LOC</span>
+        <span class="tag warn">2 commits are non-FEM and orthogonal</span>
+        <p style="margin:8px 0 0 0;">Primary value delivered: end-to-end orthotropic/composite FEM enablement in CalculiX writing path, material object model, mesh-set orientation handling, and post-processing failure metrics.</p>
+      </div>
+
+      <h2 id="scope">1. Scope & Method</h2>
+      <h3>What was reviewed</h3>
+      <ul>
+        <li>All commits in <code>merge-base(upstream/main, HEAD)..HEAD</code>.</li>
+        <li>Per-commit touched files and intent inferred from diffs/messages.</li>
+        <li>Feature clustering by dependency and orthogonality.</li>
+        <li>Current <code>src/Mod/Fem/femexamples</code> and <code>src/Mod/Fem/femtest</code> layout for practical test/example insertion points.</li>
+      </ul>
+      <h3>What this report does not do</h3>
+      <ul>
+        <li>No runtime validation or solver benchmark execution.</li>
+        <li>No runtime validation or solver benchmark execution was run as part of the rebase operation.</li>
+      </ul>
+
+      <h2 id="overview">2. Delta Overview</h2>
+      <h3 id="overview-commit-list">2.1 Commit list (chronological)</h3>
+      <table>
+        <thead>
+          <tr><th>#</th><th>Commit</th><th>Subject</th><th>Files</th><th>+/-</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1</td><td><code>f65d035231</code></td><td>Gui: fix Gizmo QFlags::toInt() compilation error</td><td>1</td><td>+6/-3</td></tr>
+          <tr><td>2</td><td><code>ad20bad160</code></td><td>Add areal mass unit</td><td>9</td><td>+152/-110</td></tr>
+          <tr><td>3</td><td><code>a77f66266a</code></td><td>Fem: add checksanalysis: routines to check linear mechanical properties</td><td>3</td><td>+54/-9</td></tr>
+          <tr><td>4</td><td><code>7704e75860</code></td><td>Fem: material_common: add link to local coordinate system for ortho matl</td><td>1</td><td>+10/-1</td></tr>
+          <tr><td>5</td><td><code>3dfd685b2f</code></td><td>Fem: write_step_output: don't write in global coords</td><td>1</td><td>+1/-1</td></tr>
+          <tr><td>6</td><td><code>813c851641</code></td><td>Fem: get elements for 2D if more than 0 present</td><td>1</td><td>+1/-1</td></tr>
+          <tr><td>7</td><td><code>a0a5ec3235</code></td><td>Fem: add drapetools for draped/laminated structures</td><td>2</td><td>+48/-0</td></tr>
+          <tr><td>8</td><td><code>e6da4fffaf</code></td><td>Fem: meshsetsgetter: hook up draped/laminated and refactor</td><td>1</td><td>+45/-31</td></tr>
+          <tr><td>9</td><td><code>19fe61a57a</code></td><td>Fem: meshsetsgetter: lcs for non-draped solids/shells</td><td>1</td><td>+15/-0</td></tr>
+          <tr><td>10</td><td><code>724bc8730c</code></td><td>Fem: membertools: get laminate materials</td><td>1</td><td>+4/-0</td></tr>
+          <tr><td>11</td><td><code>6fd7b2bca2</code></td><td>Fem: write_femelement_material: orthotropic/laminated material support</td><td>1</td><td>+37/-6</td></tr>
+          <tr><td>12</td><td><code>291970e9b9</code></td><td>Fem: write_femelement_geometry (ccx) provide for orthotropic  materials</td><td>1</td><td>+147/-101</td></tr>
+          <tr><td>13</td><td><code>494bf04d3b</code></td><td>Fem: add stress exposure factor</td><td>7</td><td>+148/-1</td></tr>
+          <tr><td>14</td><td><code>4c171c697c</code></td><td>Fem: failuremodels, resulttools allowable hookup</td><td>2</td><td>+154/-24</td></tr>
+          <tr><td>15</td><td><code>01eff1caca</code></td><td>Fem: expanded_mesh_tools: add parser for 12d mapping</td><td>2</td><td>+54/-0</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="features">3. New Feature Deep-Dive</h2>
+
+      <h3 id="feature-orthotropic">3.1 Orthotropic material + local coordinate system pipeline</h3>
+      <div class="card">
+        <strong>Outcome:</strong> Orthotropic material definitions and orientations now propagate from material object to CalculiX sections and output conventions.
+      </div>
+      <ul>
+        <li><code>material_common.py</code> adds <code>LocalCoordinateSystem</code> (<code>App::PropertyLinkGlobal</code>) on material objects.</li>
+        <li><code>meshsetsgetter.py</code> now injects <code>orientation</code> into material-geometry sets for solids/shells and handles element-wise orientation where needed.</li>
+        <li><code>write_femelement_material.py</code> emits <code>*ELASTIC,TYPE=ENGINEERING CONSTANTS</code> when orthotropic constants are present.</li>
+        <li><code>write_femelement_geometry.py</code> emits <code>*ORIENTATION</code> blocks and attaches orientation to section cards.</li>
+        <li><code>write_step_output.py</code> changes element result export to <code>*EL FILE, GLOBAL=NO</code>, aligning result tensors with local material axes.</li>
+      </ul>
+      <p><strong>Impact:</strong> This is the core feature path enabling physically meaningful anisotropic analysis output rather than only isotropic assumptions.</p>
+
+      <h3 id="feature-laminate">3.2 Laminated/draped shell support</h3>
+      <div class="card">
+        <strong>Outcome:</strong> Composite shell workflows gain drape-aware orientation and laminate material collection for writer output.
+      </div>
+      <ul>
+        <li>New <code>femmesh/drapetools.py</code> for:
+          <ul>
+            <li>composite shell detection,</li>
+            <li>drape LCS extraction by FEM element,</li>
+            <li>laminate resolution and material collection.</li>
+          </ul>
+        </li>
+        <li><code>meshsetsgetter.py</code> supports heterogeneous shell orientation (<code>element_ids</code> + per-element orientation map).</li>
+        <li><code>membertools.py</code> tracks indirect laminate materials via shell geometry refs.</li>
+        <li><code>write_femelement_geometry.py</code> writes per-element ELSET sections for heterogeneous orientation and composite section payloads.</li>
+        <li><code>write_femelement_material.py</code> writes laminate materials from laminate proxies in addition to direct linear materials.</li>
+      </ul>
+      <p><strong>Impact:</strong> Enables laminated shell decks beyond constant-thickness isotropic shell assumptions, with drape-specific orientation support.</p>
+
+      <h3 id="feature-failure">3.3 Failure models & Stress Exposure Factor (SEF)</h3>
+      <div class="card">
+        <strong>Outcome:</strong> New failure-criterion computation layer with UI-visible node result channel (<code>StressExposureFactor</code>).
+      </div>
+      <ul>
+        <li>New <code>femresult/failuremodels.py</code> defines maximum strain/stress, Tsai-Wu, and Hashin criteria + scalar minimization-based exposure factor.</li>
+        <li><code>resulttools.py</code> adds <code>add_stress_exposure_factor</code>, applied during FRD import.</li>
+        <li><code>importCcxFrdResults.py</code> invokes SEF computation for feature-python objects in the result parent group.</li>
+        <li><code>result_mechanical.py</code>, <code>FemVTKTools.cpp</code>, and <code>task_result_mechanical.py</code> expose SEF in data model + UI.</li>
+      </ul>
+      <p><strong>Impact:</strong> Adds a practical failure-oriented result quantity and foundations for future material-allowable-driven post processing.</p>
+
+      <h3 id="feature-other">3.4 Orthogonal (non-FEM orthotropic) changes</h3>
+      <ul>
+        <li><code>ad20bad160</code>: global unit-system extension introducing areal mass units.</li>
+        <li><code>f65d035231</code>: GUI build fix for Gizmo QFlags conversion.</li>
+      </ul>
+      <p>These are orthogonal to FEM orthotropic/composite work and should be separated in history if the branch is intended as a clean FEM-focused PR series.</p>
+
+      <h2 id="reorder">4. Commit Reordering Applied</h2>
+      <h3>Execution status</h3>
+      <div class="card">
+        <p><strong>Completed:</strong> interactive rebase was performed and the branch now reflects grouped commit ordering. The working tree content is unchanged versus the pre-rebase tip (history-only rewrite).</p>
+        <p><strong>Branch state:</strong> local <code>fem-orthotropic</code> is currently <code>ahead 12, behind 12</code> relative to <code>origin/fem-orthotropic</code> and requires a force-push.</p>
+      </div>
+
+      <h3>Applied grouped history</h3>
+      <table>
+        <thead>
+          <tr><th>Group</th><th>Intent</th><th>Commits (applied order)</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>A</td>
+            <td>Non-FEM orthogonal fixes</td>
+            <td><code>f65d035231</code>, <code>ad20bad160</code></td>
+          </tr>
+          <tr>
+            <td>B</td>
+            <td>Orthotropic primitives and validation</td>
+            <td><code>a77f66266a</code>, <code>7704e75860</code>, <code>3dfd685b2f</code></td>
+          </tr>
+          <tr>
+            <td>C</td>
+            <td>Laminated/draped shell plumbing</td>
+            <td><code>813c851641</code>, <code>a0a5ec3235</code>, <code>e6da4fffaf</code>, <code>19fe61a57a</code>, <code>724bc8730c</code></td>
+          </tr>
+          <tr>
+            <td>D</td>
+            <td>Writer integration for orthotropic/composite</td>
+            <td><code>6fd7b2bca2</code>, <code>291970e9b9</code></td>
+          </tr>
+          <tr>
+            <td>E</td>
+            <td>Post-processing failure metrics</td>
+            <td><code>494bf04d3b</code>, <code>4c171c697c</code></td>
+          </tr>
+          <tr>
+            <td>F</td>
+            <td>Future-facing utility (not wired yet)</td>
+            <td><code>01eff1caca</code></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Notes on ordering constraints</h3>
+      <ul>
+        <li><code>meshsetsgetter: lcs for non-draped solids/shells</code> (<code>19fe61a57a</code>) was placed after drape plumbing due function dependency in <code>meshsetsgetter.py</code>.</li>
+        <li><code>expanded_mesh_tools</code> remains last to keep its currently-unwired parser utility isolated and reviewable.</li>
+      </ul>
+
+      <h3>Next git action</h3>
+      <pre>git push --force-with-lease origin fem-orthotropic</pre>
+
+      <h2 id="tests-examples">5. Opportunities: add femexamples and femtests</h2>
+      <h3>5.1 High-value new femexamples</h3>
+      <table>
+        <thead>
+          <tr><th>Proposed example</th><th>What it demonstrates</th><th>Primary files exercised</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>ccx_orthotropic_solid_lcs.py</code></td>
+            <td>Single solid, orthotropic engineering constants, material-local LCS orientation sensitivity.</td>
+            <td><code>material_common.py</code>, <code>meshsetsgetter.py</code>, <code>write_femelement_material.py</code>, <code>write_femelement_geometry.py</code></td>
+          </tr>
+          <tr>
+            <td><code>ccx_laminate_shell_drape.py</code></td>
+            <td>Draped composite shell with per-element orientation and composite section writing.</td>
+            <td><code>drapetools.py</code>, <code>membertools.py</code>, <code>meshsetsgetter.py</code>, <code>write_femelement_geometry.py</code></td>
+          </tr>
+          <tr>
+            <td><code>ccx_failure_sef_demo.py</code></td>
+            <td>Post-import Stress Exposure Factor visualization and comparison under load scaling.</td>
+            <td><code>failuremodels.py</code>, <code>resulttools.py</code>, <code>task_result_mechanical.py</code></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>5.2 High-value femtest additions</h3>
+      <table>
+        <thead>
+          <tr><th>Proposed test</th><th>Type</th><th>Assertion focus</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>femtest/app/test_checksmaterials.py</code></td>
+            <td>unit</td>
+            <td><code>is_linear_orthotropic</code> detection and validation messages for missing/invalid orthotropic constants.</td>
+          </tr>
+          <tr>
+            <td><code>femtest/app/test_failuremodels.py</code></td>
+            <td>unit</td>
+            <td>Deterministic outputs for maximum-strain/max-stress/Tsai-Wu/Hashin on fixed tensors; SEF monotonicity under scaled stress.</td>
+          </tr>
+          <tr>
+            <td><code>femtest/app/test_ccx_writer_orthotropic.py</code></td>
+            <td>integration-lite</td>
+            <td>Generated INP contains <code>*ELASTIC,TYPE=ENGINEERING CONSTANTS</code>, <code>*ORIENTATION</code>, and section cards with orientation references.</td>
+          </tr>
+          <tr>
+            <td><code>femtest/app/test_drapetools.py</code></td>
+            <td>unit/mock</td>
+            <td>Drape LCS extraction + laminate discovery on mocked shell references and FEM mesh node mappings.</td>
+          </tr>
+          <tr>
+            <td><code>femtest/app/test_result_sef.py</code></td>
+            <td>integration-lite</td>
+            <td><code>StressExposureFactor</code> property populated and visible in result scalar map/UI plumbing.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>5.3 Prioritized execution plan</h3>
+      <ol>
+        <li>Add <code>test_failuremodels.py</code> + <code>test_checksmaterials.py</code> first (fast, deterministic, no solver dependency).</li>
+        <li>Add writer text-generation test for orthotropic/composite keywords.</li>
+        <li>Add one canonical example (<code>ccx_orthotropic_solid_lcs.py</code>), then laminated example.</li>
+        <li>Follow with SEF demo example once allowables are wired from material data (currently mostly default options).</li>
+      </ol>
+
+      <h2 id="risks">6. Gaps, Risks, and Follow-ups</h2>
+      <h3>Observed gaps</h3>
+      <ul>
+        <li><code>expanded_mesh_tools.parse_12d</code> is added but not yet integrated into SEF path (explicit TODO in <code>resulttools.py</code>).</li>
+        <li>SEF currently uses default/fallback model options; material-specific allowable extraction appears incomplete.</li>
+        <li>Debug/console prints remain in hot paths (e.g., <code>resulttools.py</code>), likely useful during development but noisy for release behavior.</li>
+        <li>No new FEM test coverage landed with these FEM feature commits.</li>
+      </ul>
+
+      <h3>Suggested immediate follow-up PR split</h3>
+      <ol>
+        <li>PR 1: Orthotropic writer + LCS plumbing (+ tests).</li>
+        <li>PR 2: Laminate/drape shell workflow (+ examples).</li>
+        <li>PR 3: Failure models + SEF result channel (+ deterministic unit tests).</li>
+        <li>PR 4 (optional): integrate 12d expansion mapping and close TODOs.</li>
+      </ol>
+
+      <h2 id="appendix">7. Appendix</h2>
+      <h3>Changed FEM files (high level)</h3>
+      <p><code>src/Mod/Fem/</code> touched areas include <code>femmesh</code>, <code>femtools</code>, <code>femobjects</code>, <code>femsolver/calculix</code>, <code>femresult</code>, <code>feminout</code>, and UI task panel integration.</p>
+
+      <h3>Executive summary</h3>
+      <p>The branch contains substantial and meaningful FEM functionality for orthotropic/composite analysis and result interpretation. The main request now is not feature creation but history hygiene and coverage hardening: isolate orthogonal commits, group related FEM commits by concern, and add targeted examples/tests so the feature set is demonstrable and regression-safe.</p>
+    </main>
+  </div>
+</body>
+</html>

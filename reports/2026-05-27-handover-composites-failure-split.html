@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Handover Plan — Composite Failure Model Split (2026-05-27)</title>
+  <style>
+    :root { --bg:#0b1020; --panel:#121a2b; --panel2:#0f1626; --text:#e7eefc; --muted:#aebbd1; --border:#2a3550; --accent:#7dc4ff; }
+    body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif;line-height:1.45}
+    .layout{display:grid;grid-template-columns:300px 1fr;min-height:100vh}
+    aside{position:sticky;top:0;height:100vh;overflow:auto;background:var(--panel2);border-right:1px solid var(--border);padding:18px}
+    aside h2{font-size:1rem;color:var(--accent);margin:0 0 10px}
+    aside a{display:block;color:var(--muted);text-decoration:none;padding:5px 8px;border-radius:6px}
+    aside a:hover{background:#1a2540;color:var(--text)}
+    aside .sub{padding-left:18px;font-size:.94rem}
+    main{padding:28px 34px;max-width:1200px}
+    h1{margin-top:0;font-size:1.7rem}
+    h2{color:var(--accent);border-top:1px solid var(--border);padding-top:10px;margin-top:30px}
+    h3{color:#d4e6ff;margin-top:20px}
+    .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:10px 0}
+    table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--border);margin:10px 0 16px}
+    th,td{padding:8px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+    th{background:#16213a}
+    code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#0b1323;color:#d9e7ff}
+    code{padding:1px 5px;border-radius:4px}
+    pre{padding:10px;border:1px solid var(--border);border-radius:8px;overflow:auto}
+    .muted{color:var(--muted)}
+  </style>
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <h2>Table of Contents</h2>
+    <a href="#context">1. Context and Scope</a>
+    <a href="#extracts">2. Extracts from Current Plan</a>
+    <a href="#split">3. Precise File/Function Split</a>
+    <a class="sub" href="#keep">3.1 Keep in FreeCAD FEM</a>
+    <a class="sub" href="#move">3.2 Move to Composites WB</a>
+    <a href="#interfaces">4. Minimal Core Interface</a>
+    <a href="#work-freecad">5. Work in ~/opt/FreeCAD</a>
+    <a href="#work-composites">6. Work in ~/opt/FreeCAD-CompositesWB</a>
+    <a href="#contract">7. Integration Contract</a>
+    <a href="#risks">8. Risks and Rollback</a>
+    <a href="#sequence">9. Delivery Sequence</a>
+    <a href="#ops">10. Operator Checklist</a>
+  </aside>
+  <main>
+    <h1>Handover Plan — Composite Failure Model Split</h1>
+    <p class="muted"><strong>Date:</strong> 2026-05-27<br/>
+      <strong>Source branch:</strong> <code>fem-orthotropic</code> (rebased)<br/>
+      <strong>Confirmed scope:</strong> keep failure-model framework in FEM core; move only composite-specific failure models to <code>~/opt/FreeCAD-CompositesWB</code>.</p>
+
+    <h2 id="context">1. Context and Scope</h2>
+    <div class="card">
+      This plan provides a concrete handover split between FreeCAD FEM core and Composites Workbench, with a function-level move map and phased execution plan for both repositories.
+    </div>
+
+    <h2 id="extracts">2. Extracts from Current Plan</h2>
+    <ul>
+      <li>From the rebased deep-dive report: <strong>Group C</strong> (laminated/draped shell plumbing) and <strong>Group E</strong> (post-processing failure metrics) are the key continuity anchors.</li>
+      <li>Open gaps retained as follow-up requirements:
+        <ul>
+          <li><code>expanded_mesh_tools.parse_12d</code> not yet integrated in SEF path.</li>
+          <li>SEF uses fallback/default allowables in current state.</li>
+          <li>Insufficient dedicated FEM tests for new failure-model pipeline.</li>
+        </ul>
+      </li>
+    </ul>
+
+    <h2 id="split">3. Precise File/Function Split</h2>
+
+    <h3 id="keep">3.1 Keep in FreeCAD FEM core (<code>~/opt/FreeCAD</code>)</h3>
+    <table>
+      <thead><tr><th>File</th><th>Keep</th><th>Move Out</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>src/Mod/Fem/femresult/failuremodels.py</code></td>
+          <td>
+            <code>default_options</code> (core-safe subset),<br/>
+            <code>calc_failure_maximum_strain</code>,<br/>
+            <code>calc_failure_maximum_stress</code>,<br/>
+            failure model registry,<br/>
+            <code>calc_stress_exposure_factor</code>
+          </td>
+          <td>
+            <code>calc_failure_tsai_wu</code>,<br/>
+            <code>calc_failure_hashin</code>,<br/>
+            composite interaction params (<code>f12,f13,f23</code>)
+          </td>
+        </tr>
+        <tr>
+          <td><code>src/Mod/Fem/femresult/resulttools.py</code></td>
+          <td><code>add_stress_exposure_factor</code> (model lookup via registry/provider)</td>
+          <td>Any direct composite-specific options resolution</td>
+        </tr>
+        <tr>
+          <td><code>src/Mod/Fem/feminout/importCcxFrdResults.py</code></td>
+          <td>SEF call integration remains</td>
+          <td>None</td>
+        </tr>
+        <tr>
+          <td><code>src/Mod/Fem/femobjects/result_mechanical.py</code>, <code>src/Mod/Fem/App/FemVTKTools.cpp</code>, <code>src/Mod/Fem/femtaskpanels/task_result_mechanical.py</code></td>
+          <td>SEF data model + visualization/UI</td>
+          <td>None</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3 id="move">3.2 Move to Composites WB (<code>~/opt/FreeCAD-CompositesWB</code>)</h3>
+    <ul>
+      <li>Create provider module, e.g. <code>freecad/Composites/fem/failure_models_composites.py</code>.</li>
+      <li>Port composite-specific criteria:
+        <ul>
+          <li>Tsai-Wu</li>
+          <li>Hashin</li>
+        </ul>
+      </li>
+      <li>Add composite allowables mapping helpers for laminate/material objects.</li>
+      <li>Register models at WB startup into FEM registry.</li>
+    </ul>
+
+    <h2 id="interfaces">4. Minimal Core Interface (new)</h2>
+    <pre>register_failure_model(name: str, fn: callable, metadata: dict | None = None)
+get_failure_model(name: str)
+list_failure_models()
+# optional: unregister_failure_model(name: str)</pre>
+    <ul>
+      <li>Core includes built-ins only (<code>maximum_strain</code>, <code>maximum_stress</code>).</li>
+      <li>Composites WB dynamically adds <code>tsai_wu</code> and <code>hashin</code>.</li>
+      <li>No FEM core import dependency on Composites WB.</li>
+    </ul>
+
+    <h2 id="work-freecad">5. Work to perform in <code>~/opt/FreeCAD</code></h2>
+    <ol>
+      <li>Refactor <code>failuremodels.py</code> into built-ins + registry API.</li>
+      <li>Remove composite models from core file.</li>
+      <li>Update <code>resulttools.add_stress_exposure_factor</code> to resolve by registry and fail-soft on unknown model.</li>
+      <li>Add tests:
+        <ul>
+          <li><code>femtest/app/test_failuremodels.py</code> (max stress/strain + SEF monotonicity)</li>
+          <li>No composite-model assertions in core test suite</li>
+        </ul>
+      </li>
+    </ol>
+
+    <h2 id="work-composites">6. Work to perform in <code>~/opt/FreeCAD-CompositesWB</code></h2>
+    <ol>
+      <li>Add composite failure provider module.</li>
+      <li>Register provider at Composites WB init (fail-soft if registry unavailable).</li>
+      <li>Implement laminate/material allowables adapter.</li>
+      <li>Add tests:
+        <ul>
+          <li>deterministic Tsai-Wu/Hashin numeric tests</li>
+          <li>integration test proving registration visible to FEM registry</li>
+        </ul>
+      </li>
+    </ol>
+
+    <h2 id="contract">7. Integration Contract</h2>
+    <ul>
+      <li>FEM core must run without Composites WB installed.</li>
+      <li>Composites WB may extend FEM behavior only through registry API.</li>
+      <li>Unknown model names must never break FRD import or result pipeline.</li>
+    </ul>
+
+    <h2 id="risks">8. Risks and Rollback</h2>
+    <ul>
+      <li>Risk: model-name mismatch between stored analysis options and provider registration.</li>
+      <li>Mitigation: support aliases (<code>tsai_wu</code>, <code>composites.tsai_wu</code> etc.).</li>
+      <li>Rollback: temporarily re-register composite models in core if provider integration blocks release.</li>
+    </ul>
+
+    <h2 id="sequence">9. Recommended Delivery Sequence</h2>
+    <ol>
+      <li>FreeCAD PR: registry split + core tests.</li>
+      <li>Composites WB PR: provider + registration + tests.</li>
+      <li>Joint integration run (with and without Composites WB loaded).</li>
+    </ol>
+
+    <h2 id="ops">10. Operator Checklist</h2>
+    <pre># in ~/opt/FreeCAD
+git checkout -b fem-failure-registry-split
+
+# in ~/opt/FreeCAD-CompositesWB
+git checkout -b composites-failure-provider</pre>
+  </main>
+</div>
+</body>
+</html>
