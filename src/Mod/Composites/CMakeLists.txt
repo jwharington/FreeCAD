@@ -49,7 +49,7 @@ if(COMPOSITES_BUILD_CPP)
     SET_PYTHON_PREFIX_SUFFIX(Composites_drape)
     
     set_target_properties(Composites_drape PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Mod/Composites
     )
     
     message(STATUS "Composites: C++ extension configured")
