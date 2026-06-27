@@ -40,7 +40,10 @@ def _import_solver():
         pass
     try:
         from ..ext import _native
-        return _native.solve
+        solver = getattr(_native, "solve", None)
+        if solver is None:
+            raise ImportError("_native.solve is None")
+        return solver
     except ImportError:
         raise RuntimeError(
             "nextdrape C++ extension not available. "

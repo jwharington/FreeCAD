@@ -36,7 +36,7 @@ else:
             import Composites_drape as _mod
             solve = _mod.solve
         except ImportError:
-            solve = None  # will be caught upstream
+            raise ImportError("No Composites_drape solver found")
     else:
         _spec = importlib.util.spec_from_file_location("Composites_drape", _found)
         _mod = importlib.util.module_from_spec(_spec)

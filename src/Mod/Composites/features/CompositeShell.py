@@ -251,6 +251,13 @@ class CompositeShellFP(CompositeBaseFP):
             # Store mesh in backend for ViewProvider shader attachment
             if hasattr(self, "_backend") and self._backend:
                 self._backend.mesh = display_mesh
+                # Trigger shader reload so the grid appears
+                vp = getattr(fp, "ViewObject", None)
+                if vp and hasattr(vp, "Proxy") and hasattr(vp.Proxy, "reload_shader"):
+                    try:
+                        vp.Proxy.reload_shader()
+                    except Exception:
+                        pass
         except Exception as exc:
             self._backend = None
             self.draper = None
@@ -640,8 +647,9 @@ class ViewProviderCompositeShell:
     def remove_shader(self):
         if not self.Active:
             return
-        aobj = self.Object.Mesh
-        self.grid_shader.detach(aobj)
+        obj = self.Object
+        if hasattr(obj, "Mesh") and obj.Mesh:
+            self.grid_shader.detach(obj.Mesh)
         self.Active = False
         FreeCADGui.Selection.removeObserver(self)
 
