@@ -1,0 +1,12 @@
+# Build artifacts
+*.so
+*.a
+*.pyc
+__pycache__/
+
+# Generated demo outputs
+demos/generated/
+
+# OS junk
+.DS_Store
+Thumbs.db
