@@ -122,14 +122,6 @@ class CompositeShellFP(CompositeBaseFP):
             hidden=True,
         )
 
-        obj.Mesh = obj.Document.addObject(
-            "Mesh::Feature",
-            "DrapeMesh",
-        )
-        obj.Mesh.ViewObject.Visibility = False
-        obj.setPropertyStatus("Mesh", "LockDynamic")
-        obj.setPropertyStatus("Mesh", "ReadOnly")
-
         obj.MaxLength = 1.25
         obj.SkipDraper = False
         obj.DraperMaxFacets = 3000
@@ -256,8 +248,9 @@ class CompositeShellFP(CompositeBaseFP):
                             "CompositeShell backend invalid after mesh generation.\n",
                         )
 
-            # Publish the effective drape mesh used for orientation mapping.
-            fp.Mesh.Mesh = display_mesh
+            # Store mesh in backend for ViewProvider shader attachment
+            if hasattr(self, "_backend") and self._backend:
+                self._backend.mesh = display_mesh
         except Exception as exc:
             self._backend = None
             self.draper = None
@@ -637,11 +630,10 @@ class ViewProviderCompositeShell:
         if not (hasattr(obj, "draper") or hasattr(obj, "_backend")):
             return
 
-        aobj = vobj.Mesh
         offset_angle_deg = self.get_offset_angle(vobj)
         tex_coords = obj.get_tex_coords(offset_angle_deg=offset_angle_deg)
-        if tex_coords and self.grid_shader:
-            self.grid_shader.attach(vobj, aobj, tex_coords)
+        if tex_coords and self.grid_shader and obj._backend and getattr(obj._backend, "mesh", None):
+            self.grid_shader.attach(vobj, obj._backend.mesh, tex_coords)
             self.Active = True
             FreeCADGui.Selection.addObserver(self)
 

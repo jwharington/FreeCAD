@@ -445,6 +445,10 @@ def create_composite_feature_stack(
 
     record_diagnostic_event(diagnostics, "feature_stack.done")
 
+    # Organize objects into groups for proper document hierarchy
+    if doc is not None and shell_obj is not None:
+        _organize_into_groups(doc, support, laminae, laminate_obj, lcs_obj, shell_obj)
+
     return {
         "created": True,
         "reason": None,
@@ -948,6 +952,31 @@ def evaluate_failure_criteria(analysis, model_options=None, top_n=10):
         "max_failure_index": max(max_tsai, max_hashin),
         "hotspots": rows[:top_n],
     }
+
+
+def _organize_into_groups(doc, support, laminae, laminate, lcs, shell_obj):
+    """Organize composite objects into groups for proper document hierarchy."""
+    try:
+        import FreeCADGui
+
+        # Create Geometry group
+        geo_group = doc.addObject("App::DocumentObjectGroup", "Geometry")
+        geo_group.Group = [support, lcs] if lcs else [support]
+
+        # Create Composite group
+        comp_group = doc.addObject("App::DocumentObjectGroup", "Composite")
+        comp_items = [laminate, shell_obj] + ([lcs] if lcs else [])
+        if laminae:
+            comp_items = laminae + comp_items
+        comp_group.Group = comp_items
+
+        # Hide the groups by default (users can expand them)
+        for grp in [geo_group, comp_group]:
+            if hasattr(grp, "ViewObject") and grp.ViewObject:
+                grp.ViewObject.ShowLabel = False
+                grp.ViewObject.ShowNumber = False
+    except Exception:
+        pass  # Grouping is cosmetic, don't fail if it doesn't work
 
 
 def run_full_shell_job(doc, support, *, case_id, boundary_conditions, solve=True, shell_obj=None):
