@@ -126,6 +126,7 @@ class CompositeShellFP(CompositeBaseFP):
             "Mesh::Feature",
             "DrapeMesh",
         )
+        obj.Mesh.ViewObject.Visibility = False
         obj.setPropertyStatus("Mesh", "LockDynamic")
         obj.setPropertyStatus("Mesh", "ReadOnly")
 

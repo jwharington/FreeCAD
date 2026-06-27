@@ -558,16 +558,14 @@ def _add_shell_section_and_material(doc, analysis, support, tag, shell_obj=None)
 
     if material_obj is not None and hasattr(material_obj, "Material"):
         mat = dict(getattr(material_obj, "Material", {}) or {})
-        if shell_obj is not None and hasattr(shell_obj, "Laminate"):
-            # Composite shell — let the FEM extension providers handle
-            # orthotropic material + draped LCS.  Leave Material blank
-            # so the indirect_material_provider injects the composite defs.
-            mat.clear()
-        else:
-            mat.setdefault("Name", "CompositeEquivalent")
-            mat.setdefault("YoungsModulus", "70000 MPa")
-            mat.setdefault("PoissonRatio", "0.3")
-            mat.setdefault("Density", "1600 kg/m^3")
+        # Always provide basic material properties so the FEM solver
+        # recognizes the material.  The drape_laminate_provider hooks
+        # (shell_orientation_provider, shell_section_provider) handle
+        # orthotropic orientation and per-layer shell sections separately.
+        mat.setdefault("Name", "Composite")
+        mat.setdefault("YoungsModulus", "70000 MPa")
+        mat.setdefault("PoissonRatio", "0.3")
+        mat.setdefault("Density", "1600 kg/m^3")
         material_obj.Material = mat
 
     if material_obj is not None:
