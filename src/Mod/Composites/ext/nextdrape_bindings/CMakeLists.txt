@@ -163,6 +163,12 @@ set(NEXTDRAPE_TK_LIBS
 
 pybind11_add_module(drape_nextdrape binding.cpp)
 
+target_include_directories(drape_nextdrape PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../src/3rdParty/nextdrape/include
+    ${EIGEN3_INCLUDE_DIR}
+    ${OCC_INCLUDE_DIR}
+)
+
 target_link_libraries(drape_nextdrape PRIVATE nextdrape_core)
 # Link TK libs so symbols resolve at load time
 foreach(_tklib IN LISTS NEXTDRAPE_TK_LIBS)
