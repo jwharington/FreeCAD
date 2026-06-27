@@ -107,28 +107,50 @@ def create_support_feature(doc, name, shape):
     return support
 
 
+def _ensure_matgui_stub():
+    try:
+        import MatGui
+    except Exception:
+        MatGui = None
+
+    if MatGui is None:
+        mod = types.ModuleType("MatGui")
+        mod.MaterialTreeWidget = type("MaterialTreeWidget", (), {})
+        sys.modules["MatGui"] = mod
+        return
+
+    # MatGui exists but may be incomplete in headless mode
+    if not hasattr(MatGui, "MaterialTreeWidget"):
+        MatGui.MaterialTreeWidget = type("MaterialTreeWidget", (), {})
+
+
 def _ensure_freecadgui_stub():
     try:
-        import FreeCADGui  # noqa: F401
-        return
+        import FreeCADGui
     except Exception:
-        pass
+        FreeCADGui = None
 
-    mod = types.ModuleType("FreeCADGui")
-    mod.addCommand = lambda *args, **kwargs: None
-    mod.Selection = types.SimpleNamespace(
-        addObserver=lambda *args, **kwargs: None,
-        removeObserver=lambda *args, **kwargs: None,
-    )
-    mod.Control = types.SimpleNamespace(
-        showDialog=lambda *args, **kwargs: None,
-        closeDialog=lambda *args, **kwargs: None,
-    )
-    mod.getDocument = lambda *args, **kwargs: types.SimpleNamespace(
-        getInEdit=lambda: False,
-        setEdit=lambda *a, **k: None,
-    )
-    sys.modules["FreeCADGui"] = mod
+    if FreeCADGui is None:
+        mod = types.ModuleType("FreeCADGui")
+        mod.addCommand = lambda *args, **kwargs: None
+        mod.Selection = types.SimpleNamespace(
+            addObserver=lambda *args, **kwargs: None,
+            removeObserver=lambda *args, **kwargs: None,
+        )
+        mod.Control = types.SimpleNamespace(
+            showDialog=lambda *args, **kwargs: None,
+            closeDialog=lambda *args, **kwargs: None,
+        )
+        mod.getDocument = lambda *args, **kwargs: types.SimpleNamespace(
+            getInEdit=lambda: False,
+            setEdit=lambda *a, **k: None,
+        )
+        sys.modules["FreeCADGui"] = mod
+        return
+
+    # FreeCADGui exists but may lack addCommand in headless mode
+    if not hasattr(FreeCADGui, "addCommand"):
+        FreeCADGui.addCommand = lambda *args, **kwargs: None
 
 
 def _ensure_taskpanel_stub(module_name):
@@ -141,6 +163,7 @@ def _ensure_taskpanel_stub(module_name):
 
 def _prepare_feature_import_environment():
     _ensure_freecadgui_stub()
+    _ensure_matgui_stub()
     _ensure_taskpanel_stub(
         "freecad.Composites.taskpanels.task_fibre_composite_lamina",
     )
@@ -377,53 +400,52 @@ def create_composite_feature_stack(
 
     shell_obj = None
     shell_error = None
-    if gui_up:
-        try:
-            record_diagnostic_event(diagnostics, "feature_stack.shell.import.begin")
-            from ...features.CompositeShell import (  # noqa: WPS433
-                CompositeShellFP,
-                ViewProviderCompositeShell,
+    try:
+        record_diagnostic_event(diagnostics, "feature_stack.shell.import.begin")
+        from ...features.CompositeShell import (  # noqa: WPS433
+            CompositeShellFP,
+            ViewProviderCompositeShell,
+        )
+        record_diagnostic_event(diagnostics, "feature_stack.shell.import.done")
+
+        record_diagnostic_event(diagnostics, "feature_stack.shell.add_object.begin")
+        shell_obj = doc.addObject("Part::FeaturePython", f"{name_prefix}Shell")
+        record_diagnostic_event(diagnostics, "feature_stack.shell.add_object.done")
+
+        record_diagnostic_event(diagnostics, "feature_stack.shell.fp_ctor.begin")
+        CompositeShellFP(
+            shell_obj,
+            support=support,
+            laminate=laminate_obj,
+            lcs=lcs_obj,
+        )
+        record_diagnostic_event(diagnostics, "feature_stack.shell.fp_ctor.done")
+
+        # Configure drape behavior. In skip_recompute mode, avoid writing
+        # properties that trigger fp.recompute() through onChanged.
+        proxy = getattr(shell_obj, "Proxy", None)
+        if proxy is not None:
+            setattr(proxy, "_force_skip_draper", bool(skip_draper))
+
+        if hasattr(shell_obj, "SkipDraper") and not skip_recompute:
+            shell_obj.SkipDraper = bool(skip_draper)
+
+        # Finer drape mesh for examples so fibre-path preview is clearer.
+        if not skip_recompute:
+            shell_obj.MaxLength = 0.1
+
+        if attach_view_providers and getattr(shell_obj, "ViewObject", None):
+            record_diagnostic_event(
+                diagnostics,
+                "feature_stack.shell.view_provider.begin",
             )
-            record_diagnostic_event(diagnostics, "feature_stack.shell.import.done")
-
-            record_diagnostic_event(diagnostics, "feature_stack.shell.add_object.begin")
-            shell_obj = doc.addObject("Part::FeaturePython", f"{name_prefix}Shell")
-            record_diagnostic_event(diagnostics, "feature_stack.shell.add_object.done")
-
-            record_diagnostic_event(diagnostics, "feature_stack.shell.fp_ctor.begin")
-            CompositeShellFP(
-                shell_obj,
-                support=support,
-                laminate=laminate_obj,
-                lcs=lcs_obj,
+            ViewProviderCompositeShell(shell_obj.ViewObject)
+            record_diagnostic_event(
+                diagnostics,
+                "feature_stack.shell.view_provider.done",
             )
-            record_diagnostic_event(diagnostics, "feature_stack.shell.fp_ctor.done")
-
-            # Configure drape behavior. In skip_recompute mode, avoid writing
-            # properties that trigger fp.recompute() through onChanged.
-            proxy = getattr(shell_obj, "Proxy", None)
-            if proxy is not None:
-                setattr(proxy, "_force_skip_draper", bool(skip_draper))
-
-            if hasattr(shell_obj, "SkipDraper") and not skip_recompute:
-                shell_obj.SkipDraper = bool(skip_draper)
-
-            # Finer drape mesh for examples so fibre-path preview is clearer.
-            if not skip_recompute:
-                shell_obj.MaxLength = 0.1
-
-            if attach_view_providers and getattr(shell_obj, "ViewObject", None):
-                record_diagnostic_event(
-                    diagnostics,
-                    "feature_stack.shell.view_provider.begin",
-                )
-                ViewProviderCompositeShell(shell_obj.ViewObject)
-                record_diagnostic_event(
-                    diagnostics,
-                    "feature_stack.shell.view_provider.done",
-                )
-        except Exception as exc:
-            shell_error = str(exc)
+    except Exception as exc:
+        shell_error = str(exc)
 
     record_diagnostic_event(
         diagnostics,
