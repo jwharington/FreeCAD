@@ -4,17 +4,13 @@
 import json
 from datetime import datetime, timezone
 
-import FreeCADGui
-import MeshEnums
 from FreeCAD import Console
-from pivy import coin
 
 from .. import (
     COMPOSITE_SHELL_TOOL_ICON,
     is_comp_type,
     roma_map,
 )
-from ..shaders.MeshGridShader import MeshGridShader
 from ..tools.drape_backend_nextdrape import NextDrapeBackend
 from ..tools.fibre import (
     make_fibre_length_analysis,
@@ -25,7 +21,6 @@ from .Command import BaseCommand
 from .Container import getCompositesContainer
 from .Laminate import is_laminate
 from .Rosette import is_rosette
-from .RosetteSymbol import RosetteSymbol
 from .VPCompositeBase import CompositeBaseFP
 
 
@@ -259,6 +254,9 @@ class CompositeShellFP(CompositeBaseFP):
                     except Exception:
                         pass
         except Exception as exc:
+            import traceback
+            Console.PrintMessage(f"DEBUG execute exception: {exc}\n")
+            Console.PrintMessage(traceback.format_exc())
             self._backend = None
             self.draper = None
             self._set_drape_diagnostics(
@@ -398,6 +396,9 @@ class CompositeShellFP(CompositeBaseFP):
 
 class ViewProviderCompositeShell:
     def __init__(self, obj):
+        # Lazy import to avoid GUI dependency in headless mode
+        from ..shaders.MeshGridShader import MeshGridShader
+
         self.grid_shader = MeshGridShader()
 
         obj.addProperty(
@@ -466,6 +467,10 @@ class ViewProviderCompositeShell:
         # self.load_shader()
 
         # Fibre orientation rosette: always-visible overlay on the root node
+        from pivy import coin
+
+        from .RosetteSymbol import RosetteSymbol
+
         self.rosette = RosetteSymbol()
         self.rosette_switch = coin.SoSwitch()
         self.rosette_switch.addChild(self.rosette.separator)
@@ -505,6 +510,8 @@ class ViewProviderCompositeShell:
             mesh.addProperty("Mesh::PropertyMaterial", "Material")
         strains = vobj.Object.Proxy.get_strains()
         if strains is not None:
+            import MeshEnums
+
             material = {
                 "binding": MeshEnums.Binding.PER_FACE,
                 "transparency": [0.0] * n,
@@ -603,6 +610,8 @@ class ViewProviderCompositeShell:
                 self.reload_shader()
             case "ShowRosette":
                 if hasattr(self, "rosette_switch"):
+                    from pivy import coin
+
                     self.rosette_switch.whichChild = (
                         0 if vobj.ShowRosette else coin.SO_SWITCH_NONE
                     )
@@ -642,6 +651,8 @@ class ViewProviderCompositeShell:
         if tex_coords and self.grid_shader and obj._backend and getattr(obj._backend, "mesh", None):
             self.grid_shader.attach(vobj, obj._backend.mesh, tex_coords)
             self.Active = True
+            import FreeCADGui
+
             FreeCADGui.Selection.addObserver(self)
 
     def remove_shader(self):
@@ -651,6 +662,8 @@ class ViewProviderCompositeShell:
         if hasattr(obj, "Mesh") and obj.Mesh:
             self.grid_shader.detach(obj.Mesh)
         self.Active = False
+        import FreeCADGui
+
         FreeCADGui.Selection.removeObserver(self)
 
     def __getstate__(self):
@@ -688,10 +701,14 @@ class CompositeShellCommand(BaseCommand):
     type_id = "Part::FeaturePython"
     instance_name = "CompositeShell"
     cls_fp = CompositeShellFP
-    cls_vp = ViewProviderCompositeShell
+cls_vp = ViewProviderCompositeShell
 
+try:
+    import FreeCADGui
 
-FreeCADGui.addCommand(
-    "Composites_CompositeShell",
-    CompositeShellCommand(),
-)
+    FreeCADGui.addCommand(
+        "Composites_CompositeShell",
+        CompositeShellCommand(),
+    )
+except ImportError:
+    pass  # Headless mode - no GUI command registration
