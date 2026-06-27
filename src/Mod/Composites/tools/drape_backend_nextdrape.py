@@ -95,7 +95,11 @@ class NextDrapeBackend(DrapeBackend):
         """Return backend diagnostics payload."""
         r = self._run_solve()
         if not r.get("success"):
-            return {"error": r.get("error", "solve failed")}
+            return {
+                "backend": self.backend_name,
+                "status": "failed",
+                "failure_reason": r.get("error", "solve failed"),
+            }
         d = r.get("diagnostics", {})
         return {
             "solver": "nextdrape",
