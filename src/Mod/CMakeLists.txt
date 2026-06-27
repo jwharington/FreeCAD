@@ -12,6 +12,10 @@ endif(BUILD_BIM)
 
 if(BUILD_ASSEMBLY)
   add_subdirectory(Assembly)
+
+if(BUILD_COMPOSITES)
+  add_subdirectory(Composites)
+endif(BUILD_COMPOSITES)
 endif(BUILD_ASSEMBLY)
 
 if(BUILD_CLOUD)
