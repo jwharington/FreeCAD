@@ -80,6 +80,7 @@ def build(doc=None, run_solver=False, debug_options=None):
             case_id="cylindrical_panel_segment",
             boundary_conditions=BOUNDARY_CONDITIONS,
             solve=not bool(opts.get("mesh_only", False)),
+            shell_obj=feature_stack.get("shell"),
         )
         record_diagnostic_event(diagnostics, "build.fem.done")
 

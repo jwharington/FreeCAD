@@ -523,7 +523,14 @@ def _set_constraint_refs(constraint, refs):
         constraint.References = refs
 
 
-def _add_shell_section_and_material(doc, analysis, support, tag):
+def _add_shell_section_and_material(doc, analysis, support, tag, shell_obj=None):
+    """Create FEM shell section and material objects.
+
+    When shell_obj is a CompositeShell (Composite::Shell proxy), the shell
+    thickness and material reference it so the FEM extension providers
+    (drape_laminate_provider) can wire up orthotropic orientations and
+    per-layer shell sections automatically.
+    """
     import ObjectsFem
 
     thickness_obj = None
@@ -544,16 +551,30 @@ def _add_shell_section_and_material(doc, analysis, support, tag):
         f"{tag}_Material",
     )
 
+    # Determine what to reference: CompositeShell (for orthotropic+drape)
+    # or fall back to the support shape (generic isotropic).
+    ref_obj = shell_obj if shell_obj is not None else support
+    ref_sub = "Face1"
+
     if material_obj is not None and hasattr(material_obj, "Material"):
         mat = dict(getattr(material_obj, "Material", {}) or {})
-        mat.setdefault("Name", "CompositeEquivalent")
-        mat.setdefault("YoungsModulus", "70000 MPa")
-        mat.setdefault("PoissonRatio", "0.3")
-        mat.setdefault("Density", "1600 kg/m^3")
+        if shell_obj is not None and hasattr(shell_obj, "Laminate"):
+            # Composite shell — let the FEM extension providers handle
+            # orthotropic material + draped LCS.  Leave Material blank
+            # so the indirect_material_provider injects the composite defs.
+            mat.clear()
+        else:
+            mat.setdefault("Name", "CompositeEquivalent")
+            mat.setdefault("YoungsModulus", "70000 MPa")
+            mat.setdefault("PoissonRatio", "0.3")
+            mat.setdefault("Density", "1600 kg/m^3")
         material_obj.Material = mat
 
     if material_obj is not None:
-        _set_constraint_refs(material_obj, [(support, "Face1")])
+        _set_constraint_refs(material_obj, [(ref_obj, ref_sub)])
+
+    if thickness_obj is not None:
+        _set_constraint_refs(thickness_obj, [(ref_obj, ref_sub)])
 
     _add_analysis_member(analysis, thickness_obj)
     _add_analysis_member(analysis, material_obj)
@@ -931,7 +952,7 @@ def evaluate_failure_criteria(analysis, model_options=None, top_n=10):
     }
 
 
-def run_full_shell_job(doc, support, *, case_id, boundary_conditions, solve=True):
+def run_full_shell_job(doc, support, *, case_id, boundary_conditions, solve=True, shell_obj=None):
     """Create analysis, mesh, constraints, and execute CalculiX.
 
     Parameters
@@ -945,6 +966,12 @@ def run_full_shell_job(doc, support, *, case_id, boundary_conditions, solve=True
         ``conical_panel_segment``.
     boundary_conditions
         Human-readable condition dictionary attached to result metadata.
+    solve
+        Whether to run the CalculiX solver (default True).
+    shell_obj
+        Optional CompositeShell FeaturePython object.  When provided the
+        FEM extension providers wire up orthotropic material orientations
+        and per-layer shell sections from the draped laminate.
     """
 
     if doc is None or support is None:
@@ -958,6 +985,7 @@ def run_full_shell_job(doc, support, *, case_id, boundary_conditions, solve=True
         analysis,
         support,
         case_id,
+        shell_obj=shell_obj,
     )
     mesher = _mesh_support(mesh_obj, support)
 
