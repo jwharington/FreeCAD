@@ -98,13 +98,11 @@ class TestCompositeExamplesRunner(unittest.TestCase):
                 "dummy",
                 run_solver=True,
                 doc=doc,
-                debug_options={"skip_draper": True},
             )
 
         module.build.assert_called_once_with(
             doc=doc,
             run_solver=True,
-            debug_options={"skip_draper": True},
         )
         self.assertIs(result, expected)
 

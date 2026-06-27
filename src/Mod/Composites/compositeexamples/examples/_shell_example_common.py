@@ -290,7 +290,6 @@ def create_composite_feature_stack(
     support,
     *,
     name_prefix="Example",
-    skip_draper=False,
     skip_recompute=False,
     skip_view_providers=False,
     diagnostics=None,
@@ -306,7 +305,6 @@ def create_composite_feature_stack(
         "feature_stack.start",
         has_doc=doc is not None,
         has_support=support is not None,
-        skip_draper=bool(skip_draper),
         skip_recompute=bool(skip_recompute),
         skip_view_providers=bool(skip_view_providers),
     )
@@ -420,15 +418,6 @@ def create_composite_feature_stack(
             lcs=lcs_obj,
         )
         record_diagnostic_event(diagnostics, "feature_stack.shell.fp_ctor.done")
-
-        # Configure drape behavior. In skip_recompute mode, avoid writing
-        # properties that trigger fp.recompute() through onChanged.
-        proxy = getattr(shell_obj, "Proxy", None)
-        if proxy is not None:
-            setattr(proxy, "_force_skip_draper", bool(skip_draper))
-
-        if hasattr(shell_obj, "SkipDraper") and not skip_recompute:
-            shell_obj.SkipDraper = bool(skip_draper)
 
         # Finer drape mesh for examples so fibre-path preview is clearer.
         if not skip_recompute:

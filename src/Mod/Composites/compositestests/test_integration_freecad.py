@@ -121,7 +121,6 @@ class TestFreeCADIntegration(unittest.TestCase):
                 doc=None,
                 debug_options={
                     "mesh_only": True,
-                    "skip_draper": True,
                     "skip_view_providers": True,
                 },
             )

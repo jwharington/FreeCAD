@@ -79,20 +79,6 @@ class CompositeShellFP(CompositeBaseFP):
         )
 
         obj.addProperty(
-            type="App::PropertyBool",
-            name="SkipDraper",
-            group="Draping",
-            doc="Generate drape mesh but skip Draper strain/orientation solve",
-        )
-
-        obj.addProperty(
-            type="App::PropertyInteger",
-            name="DraperMaxFacets",
-            group="Draping",
-            doc="Maximum facet count allowed for Draper solve before fallback",
-        )
-
-        obj.addProperty(
             type="App::PropertyEnumeration",
             name="DrapeBackend",
             group="Draping",
@@ -118,8 +104,6 @@ class CompositeShellFP(CompositeBaseFP):
         )
 
         obj.MaxLength = 1.25
-        obj.SkipDraper = False
-        obj.DraperMaxFacets = 3000
         obj.DrapeDiagnostics = ""
         obj.LocalCoordinateSystem = lcs
         obj.Rosette = rosette
@@ -149,116 +133,48 @@ class CompositeShellFP(CompositeBaseFP):
 
         try:
             mesh = mesh_util.shape2Mesh(fp.Shape, fp.MaxLength)
-            display_mesh = mesh
-            self._backend = None
-            self.draper = None
-
-            skip_draper = bool(
-                getattr(fp, "SkipDraper", False)
-                or getattr(self, "_force_skip_draper", False),
+            self._backend = self._make_backend(
+                self._selected_backend_name(fp),
+                mesh,
+                get_lcs(),
+                fp.Shape,
             )
-            if skip_draper:
-                Console.PrintMessage(
-                    "CompositeShell skipping Draper (SkipDraper=True).\n",
-                )
-                self._set_drape_diagnostics(
-                    fp,
-                    backend=self._selected_backend_name(fp),
-                    status="skipped",
-                    failure_reason="solver_unsolved",
-                )
-            else:
-                backend_name = self._selected_backend_name(fp)
-                backend_mesh = mesh
 
-                if backend_name == "legacy":
-                    max_facets = int(
-                        getattr(fp, "DraperMaxFacets", 3000) or 3000
-                    )
-                    facet_count = int(
-                        getattr(backend_mesh, "CountFacets", 0)
-                    )
-                    if facet_count > max_facets:
-                        for seg in (20, 16, 12, 10, 8, 6):
-                            candidate = mesh_util.shape2MeshLegacy(
-                                fp.Shape,
-                                float(fp.MaxLength),
-                                seg_min=seg,
-                                seg_max=seg,
-                            )
-                            cfacets = int(
-                                getattr(candidate, "CountFacets", 0)
-                            )
-                            if cfacets <= max_facets:
-                                backend_mesh = candidate
-                                facet_count = cfacets
-                                break
-                        if facet_count > max_facets:
-                            Console.PrintWarning(
-                                "CompositeShell skipping Draper: mesh too dense "
-                                f"({facet_count} facets > {max_facets}).\n",
-                            )
-                            backend_mesh = None
-                            self._set_drape_diagnostics(
-                                fp,
-                                backend=backend_name,
-                                status="invalid",
-                                failure_reason="solver_unsolved",
-                            )
+            diag = self._backend.diagnostics()
+            self._set_drape_diagnostics(
+                fp,
+                backend=diag.get("backend", self._selected_backend_name(fp)),
+                status=diag.get("status", "invalid"),
+                failure_reason=diag.get("failure_reason"),
+                extras={
+                    k: v for k, v in diag.items()
+                    if k not in {"backend", "status", "failure_reason"}
+                },
+            )
 
-                if backend_mesh is not None:
-                    display_mesh = backend_mesh
-                    self._backend = self._make_backend(
-                        backend_name,
-                        backend_mesh,
-                        get_lcs(),
-                        fp.Shape,
-                    )
-                    self.draper = getattr(
-                        self._backend, "draper", None
-                    )
+            # The draper must always be valid after execute — if it isn't,
+            # that is a bug in the draping pipeline, not a recoverable state.
+            assert self._backend.is_valid(), (
+                "Draper invalid after mesh generation – "
+                f"status={diag.get('status')} reason={diag.get('failure_reason')}"
+            )
 
-                    diag = self._backend.diagnostics()
-                    self._set_drape_diagnostics(
-                        fp,
-                        backend=diag.get("backend", backend_name),
-                        status=diag.get("status", "invalid"),
-                        failure_reason=diag.get("failure_reason"),
-                        extras={
-                            k: v
-                            for k, v in diag.items()
-                            if k
-                            not in {
-                                "backend",
-                                "status",
-                                "failure_reason",
-                            }
-                        },
-                    )
-
-                    if self.has_valid_draper():
-                        self.fibre_analysis(fp)
-                    else:
-                        Console.PrintWarning(
-                            "CompositeShell backend invalid after mesh generation.\n",
-                        )
+            self.fibre_analysis(fp)
 
             # Store mesh in backend for ViewProvider shader attachment
-            if hasattr(self, "_backend") and self._backend:
-                self._backend.mesh = display_mesh
-                # Trigger shader reload so the grid appears
-                vp = getattr(fp, "ViewObject", None)
-                if vp and hasattr(vp, "Proxy") and hasattr(vp.Proxy, "reload_shader"):
-                    try:
-                        vp.Proxy.reload_shader()
-                    except Exception:
-                        pass
+            self._backend.mesh = mesh
+            # Trigger shader reload so the grid appears
+            vp = getattr(fp, "ViewObject", None)
+            if vp and hasattr(vp, "Proxy") and hasattr(vp.Proxy, "reload_shader"):
+                try:
+                    vp.Proxy.reload_shader()
+                except Exception:
+                    pass
         except Exception as exc:
             import traceback
             Console.PrintMessage(f"DEBUG execute exception: {exc}\n")
             Console.PrintMessage(traceback.format_exc())
             self._backend = None
-            self.draper = None
             self._set_drape_diagnostics(
                 fp,
                 backend=self._selected_backend_name(fp),
@@ -327,67 +243,41 @@ class CompositeShellFP(CompositeBaseFP):
             case (
                 "MaxLength"
                 | "Support"
-                | "SkipDraper"
-                | "DraperMaxFacets"
                 | "DrapeBackend"
             ):
                 fp.recompute()
 
-    def has_valid_draper(self):
-        if hasattr(self, "_backend") and self._backend:
-            return bool(self._backend.is_valid())
-        return bool(
-            hasattr(self, "draper")
-            and self.draper
-            and self.draper.isValid()
+    def _require_valid(self):
+        """Assert the draper is valid; raise if it isn't."""
+        assert self._backend is not None and self._backend.is_valid(), (
+            "Draper not valid – execute() should have produced a valid backend"
         )
 
     def get_tex_coords(self, offset_angle_deg):
-        if self.has_valid_draper():
-            if hasattr(self, "_backend") and self._backend:
-                return self._backend.get_tex_coords(
-                    offset_angle_deg=offset_angle_deg
-                    + getattr(self, "_rosette_angle", 0.0),
-                )
-            return self.draper.get_tex_coords(
-                offset_angle_deg=offset_angle_deg
-                + getattr(self, "_rosette_angle", 0.0),
-            )
-        return None
+        self._require_valid()
+        return self._backend.get_tex_coords(
+            offset_angle_deg=offset_angle_deg
+            + getattr(self, "_rosette_angle", 0.0),
+        )
 
     def get_draper(self):
-        if self.has_valid_draper() and getattr(
-            self._backend, "draper", None
-        ):
-            return self._backend.draper
-        raise ValueError("Draper invalid")
+        self._require_valid()
+        return self._backend.draper
 
     def get_drape_lcs(self, tris):
-        if self.has_valid_draper():
-            if hasattr(self, "_backend") and self._backend:
-                return self._backend.get_lcs(tris)
-            return self.draper.get_lcs(tris)
-        return None
+        self._require_valid()
+        return self._backend.get_lcs(tris)
 
     def get_boundaries(self, offset_angle_deg):
-        if self.has_valid_draper():
-            if hasattr(self, "_backend") and self._backend:
-                return self._backend.get_boundaries(
-                    offset_angle_deg=offset_angle_deg
-                    + getattr(self, "_rosette_angle", 0.0),
-                )
-            return self.draper.get_boundaries(
-                offset_angle_deg=offset_angle_deg
-                + getattr(self, "_rosette_angle", 0.0),
-            )
-        return None
+        self._require_valid()
+        return self._backend.get_boundaries(
+            offset_angle_deg=offset_angle_deg
+            + getattr(self, "_rosette_angle", 0.0),
+        )
 
     def get_strains(self):
-        if self.has_valid_draper():
-            if hasattr(self, "_backend") and self._backend:
-                return self._backend.strains
-            return self.draper.strains
-        return None
+        self._require_valid()
+        return self._backend.strains
 
     def get_stack_assembly(self, fp):
         lam_obj = fp.Laminate
@@ -648,7 +538,7 @@ class ViewProviderCompositeShell:
 
         offset_angle_deg = self.get_offset_angle(vobj)
         tex_coords = obj.get_tex_coords(offset_angle_deg=offset_angle_deg)
-        if tex_coords and self.grid_shader and obj._backend and getattr(obj._backend, "mesh", None):
+        if tex_coords and self.grid_shader and getattr(obj._backend, "mesh", None):
             self.grid_shader.attach(vobj, obj._backend.mesh, tex_coords)
             self.Active = True
             import FreeCADGui

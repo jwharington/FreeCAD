@@ -67,7 +67,6 @@ def build(doc=None, run_solver=False, debug_options=None):
         doc,
         support,
         name_prefix="ConicalPanel",
-        skip_draper=bool(opts.get("skip_draper", False)),
         skip_recompute=bool(opts.get("skip_recompute", False)),
         skip_view_providers=bool(opts.get("skip_view_providers", False)),
         diagnostics=diagnostics,

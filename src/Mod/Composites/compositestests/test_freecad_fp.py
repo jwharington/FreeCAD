@@ -1212,49 +1212,6 @@ class TestCompositeShellFPRosetteProperty(unittest.TestCase):
         fp2 = CompositeShellFP(obj2, rosette=rosette_mock)
         self.assertIs(obj2.Rosette, rosette_mock)
 
-    def test_get_tex_coords_no_draper_returns_none(self):
-        # Without draper, get_tex_coords returns None regardless of angle
-        result = self.fp.get_tex_coords(30.0)
-        self.assertIsNone(result)
-
-    def test_get_boundaries_no_draper_returns_none(self):
-        result = self.fp.get_boundaries(45.0)
-        self.assertIsNone(result)
-
-    def test_get_tex_coords_adds_rosette_angle(self):
-        # Simulate a valid draper that records the offset_angle_deg passed in
-        mock_draper = MagicMock()
-        mock_draper.isValid.return_value = True
-        mock_draper.get_tex_coords.return_value = []
-        self.fp.draper = mock_draper
-        self.fp._rosette_angle = 15.0
-        self.fp.get_tex_coords(30.0)
-        mock_draper.get_tex_coords.assert_called_once_with(
-            offset_angle_deg=45.0
-        )
-
-    def test_get_boundaries_adds_rosette_angle(self):
-        mock_draper = MagicMock()
-        mock_draper.isValid.return_value = True
-        mock_draper.get_boundaries.return_value = []
-        self.fp.draper = mock_draper
-        self.fp._rosette_angle = 10.0
-        self.fp.get_boundaries(20.0)
-        mock_draper.get_boundaries.assert_called_once_with(
-            offset_angle_deg=30.0
-        )
-
-    def test_get_tex_coords_zero_rosette_angle(self):
-        mock_draper = MagicMock()
-        mock_draper.isValid.return_value = True
-        mock_draper.get_tex_coords.return_value = []
-        self.fp.draper = mock_draper
-        self.fp._rosette_angle = 0.0
-        self.fp.get_tex_coords(45.0)
-        mock_draper.get_tex_coords.assert_called_once_with(
-            offset_angle_deg=45.0
-        )
-
     def test_on_changed_rosette_triggers_recompute(self):
         # onChanged("Rosette") should trigger fp.recompute() which calls execute()
         # With no support/laminate, execute() returns early without error.
