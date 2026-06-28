@@ -480,6 +480,14 @@ class CompositeShellFP(CompositeBaseFP):
         )
 
         obj.addProperty(
+            type="App::PropertyFloat",
+            name="_LastRosetteAngle",
+            group="Draping",
+            doc="Cached rosette angle for detecting angle changes",
+            hidden=True,
+        )
+
+        obj.addProperty(
             type="App::PropertyLinkGlobal",
             name="Mesh",
             group="Orthographic",
@@ -700,7 +708,18 @@ class CompositeShellFP(CompositeBaseFP):
         stored = getattr(fp, "ShapeFingerprint", "")
         if not stored:
             return False
-        return current == stored
+        if current != stored:
+            return False
+        # Rosette angle affects texture coordinate rotation.
+        # If the angle changed, the persisted tex_coords are stale.
+        try:
+            current_angle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
+            stored_angle = getattr(fp, "_LastRosetteAngle", 0.0)
+            if abs(current_angle - stored_angle) > 0.001:
+                return False
+        except Exception:
+            return False
+        return True
 
     def _rehydrate(self, fp) -> None:
         """Replace _backend with a _RehydratedBackend from persisted data."""
@@ -768,6 +787,8 @@ class CompositeShellFP(CompositeBaseFP):
         )
         # Cache the shape fingerprint so _can_use_persisted skips rehashing
         fp.ShapeFingerprint = self._shape_fingerprint(fp.Support.Shape)
+        # Cache the rosette angle so _can_use_persisted detects changes
+        fp._LastRosetteAngle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
 
     def fibre_analysis(self, fp):
         histograms_length = make_fibre_length_analysis(fp)

@@ -160,13 +160,19 @@ class MeshGridShader:
 
         self.grp.addChild(self.texcoords)
         self._texcoords_attached = True
+
+        # Tell the geometry to use per-vertex texture coordinates.
+        # Without this, the default binding is NONE and gl_TexCoord[0]
+        # stays (0,0,0,1) — the grid collapses to a solid colour.
+        self.coord_binding = coin.SoTextureCoordinateBinding()
+        self.coord_binding.value = coin.SoTextureCoordinateBinding.PER_VERTEX
+        self.grp.addChild(self.coord_binding)
+
         self.root = child.ViewObject.RootNode
         self.grp.addChild(self.root)
 
-        switch = child.ViewObject.SwitchNode
-        switch = self.root
         type_name = "SoFCIndexedFaceSet"
-        node = has_child(switch, type_name)
+        node = has_child(self.root, type_name)
         geom = find_child(node, type_name)
         # With explicit per-vertex texture coordinates (SoTextureCoordinate2),
         # no textureCoordIndex mapping is needed — the point array is already
