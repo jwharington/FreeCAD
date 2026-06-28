@@ -1,3 +1,7 @@
+## Debugging philosophy
+- When debugging, do not fix symptoms — discover and address the root cause.
+- A fix that silences an error without solving the underlying problem will surface again elsewhere. Always trace the error chain back to its origin.
+
 ## MCP usage
 - When working on an example or demonstration, prefer to edit a Python file within the `examples/` directory of the source rather than writing raw Python into MCP tool calls.
 - Generally retain MCP tool calls to short commands for debugging, triggering loads, and quick inspections — not for building multi-step examples.
