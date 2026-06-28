@@ -167,8 +167,6 @@ class CompositeShellFP(CompositeBaseFP):
                 self.fibre_analysis(fp)
 
             # Create the DrapeMesh FeaturePython object for shader attachment.
-            # The backend stores the raw mesh internally; the DrapeMesh feature
-            # provides the ViewObject root node that the shader needs.
             if not hasattr(fp, "Mesh") or fp.Mesh is None:
                 fp.Mesh = fp.Document.addObject(
                     "Mesh::Feature",
