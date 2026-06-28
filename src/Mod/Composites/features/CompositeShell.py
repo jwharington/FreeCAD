@@ -166,13 +166,29 @@ class CompositeShellFP(CompositeBaseFP):
             if diag.get("status") != "failed":
                 self.fibre_analysis(fp)
 
+            # Create the DrapeMesh FeaturePython object for shader attachment.
+            # The backend stores the raw mesh internally; the DrapeMesh feature
+            # provides the ViewObject root node that the shader needs.
+            if not hasattr(fp, "Mesh") or fp.Mesh is None:
+                fp.Mesh = fp.Document.addObject(
+                    "Mesh::Feature",
+                    "DrapeMesh",
+                )
+                fp.setPropertyStatus("Mesh", "LockDynamic")
+                fp.setPropertyStatus("Mesh", "ReadOnly")
+
             # Store mesh in backend for ViewProvider shader attachment
-            self._backend.mesh = mesh
-            # Trigger shader reload so the grid appears
+            self._backend._mesh = mesh
+            self._backend._mesh_feat = fp.Mesh  # persist Mesh feature ref for shader
+            fp.Mesh.Mesh = mesh
+
+            # Load the shader directly here while _backend is still valid.
+            # The _backend attribute is not persisted across recompute cycles,
+            # so we must load the shader synchronously before execute() returns.
             vp = getattr(fp, "ViewObject", None)
-            if vp and hasattr(vp, "Proxy") and hasattr(vp.Proxy, "reload_shader"):
+            if vp and hasattr(vp, "Proxy"):
                 try:
-                    vp.Proxy.reload_shader()
+                    vp.Proxy.load_shader()
                 except Exception:
                     pass
         except Exception as exc:
@@ -403,7 +419,10 @@ class ViewProviderCompositeShell:
         n = mesh.Mesh.CountFacets
         if "Material" not in mesh.PropertiesList:
             mesh.addProperty("Mesh::PropertyMaterial", "Material")
-        strains = vobj.Object.Proxy.get_strains()
+        try:
+            strains = vobj.Object.Proxy.get_strains()
+        except Exception:
+            strains = None
         if strains is not None:
             import MeshEnums
 
@@ -536,15 +555,24 @@ class ViewProviderCompositeShell:
     def load_shader(self):
         if self.Active:
             return
+        # self.Object is the FeaturePython object, self.Object.Proxy is the FP proxy.
         vobj = self.Object
         obj = vobj.Proxy
-        if not (hasattr(obj, "draper") or hasattr(obj, "_backend")):
+        if not hasattr(obj, "_backend"):
+            return
+        backend = obj._backend
+        if backend is None or backend._mesh is None:
+            return
+        # Need the DrapeMesh FeaturePython object (with ViewObject),
+        # not the raw Mesh.MeshObject stored in the backend.
+        mesh_feat = getattr(backend, "_mesh_feat", None)
+        if mesh_feat is None:
             return
 
         offset_angle_deg = self.get_offset_angle(vobj)
         tex_coords = obj.get_tex_coords(offset_angle_deg=offset_angle_deg)
-        if tex_coords and self.grid_shader and getattr(obj._backend, "mesh", None):
-            self.grid_shader.attach(vobj, obj._backend.mesh, tex_coords)
+        if tex_coords and self.grid_shader:
+            self.grid_shader.attach(vobj, mesh_feat, tex_coords)
             self.Active = True
             import FreeCADGui
 
