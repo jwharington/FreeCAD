@@ -59,22 +59,34 @@ class TexturePlanFP(CompositePartFP):
                         try:
                             u, v = float(uv[0]), float(uv[1])
                             if support_shape is not None:
-                                # Project UV to 3D using the support shape's surface
+                                # Project UV to 3D using the support shape's surface.
+                                # Use face.isInside() to correctly handle trimmed faces
+                                # where a UV point may lie outside UVBounds but still
+                                # map to a valid 3D point on the physical face.
+                                uv_point = FreeCAD.Base.Vector(u, v)
+                                projected = False
                                 for face in support_shape.Faces:
                                     try:
-                                        bbox = face.UVBounds
-                                        if bbox[0] <= u <= bbox[1] and bbox[2] <= v <= bbox[3]:
+                                        if face.isInside(uv_point, 1e-6, True):
                                             pt = face.value(u, v)
-                                            pts.append(pt)
-                                            break
+                                            if pt.isValid():
+                                                pts.append(pt)
+                                                projected = True
+                                                break
                                     except Exception:
                                         continue
+                                # If no face accepted the UV point (outside all UVBounds
+                                # AND outside all physical face boundaries), fall back
+                                # to the XY plane rather than silently dropping it.
+                                if not projected:
+                                    pts.append(
+                                        FreeCAD.Vector(float(uv[0]), float(uv[1]), 0.0)
+                                    )
                         except Exception:
                             pass
-                        # Fallback: XY plane
-                        if len(pts) < len([uv for uv in w if isinstance(uv, (list, tuple))]):
-                            pts.append(FreeCAD.Vector(float(uv[0]), float(uv[1]), 0.0))
-                    if len(pts) >= 2:
+                    # Validate the loop has enough points to form a valid polygon.
+                    # At least 3 distinct points are required for Part.makePolygon.
+                    if len(pts) >= 3:
                         shapes.append(Part.Wire(Part.makePolygon(pts)))
         fp.Shape = Part.makeCompound(shapes)
 

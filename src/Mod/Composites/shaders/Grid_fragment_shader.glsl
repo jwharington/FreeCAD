@@ -1,5 +1,9 @@
 #version 130
-precision mediump float;
+// High precision required for large models (automotive panels, ship hulls)
+// where UV coordinates span tens of thousands of mm. Mediump (~7 digits)
+// causes grid line jitter and aliased mod() output. Highp (~15 digits)
+// matches the precision of double-precision input coordinates.
+precision highp float;
 
 uniform float darken = 0.5;
 uniform float x_scale = 16.0;
@@ -64,7 +68,7 @@ float mixcol(float col, float amount) {
 void main() {
   float pixel_width = 1.0;
   float feather = 0.0;
-  vec3 coord = vec3(x_scale * gl_TexCoord[0].s,
+  highp vec3 coord = highp vec3(x_scale * gl_TexCoord[0].s,
                     y_scale * gl_TexCoord[0].t,
                     z_scale * gl_TexCoord[0].r);
   vec3 grid = vec3(gridFactor(coord.x, pixel_width, feather),

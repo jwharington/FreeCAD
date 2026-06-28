@@ -59,6 +59,9 @@ class MeshGridShader:
         self.darken = coin.SoShaderParameter1f()
         self.darken.name = "darken"
 
+        # Track whether self.texcoords has been added to self.grp
+        self._texcoords_attached = False
+
         self.Spacing = [20.0, 2.0, 10.0]
         self.Darken = 0.1
 
@@ -124,22 +127,47 @@ class MeshGridShader:
         textureCoords = coin.SoTextureCoordinate3()
         textureCoords.setName("my_texcoord")
         if tex_coords is not None:
-            for index, (s, t, q) in enumerate(tex_coords):
+            for index, pt in enumerate(tex_coords):
+                if len(pt) >= 3:
+                    s, t, q = pt[0], pt[1], pt[2]
+                else:
+                    s, t = pt[0], pt[1]
+                    q = 0.0
                 textureCoords.point.set1Value(index, s, t, q)
         return textureCoords
 
     def detach(self, obj=None):
+        """Detach the shader from the scene graph.
+
+        Removes any previously attached texcoords and root nodes from self.grp.
+        Idempotent -- safe to call multiple times.
+        """
+        self._cleanup()
         self.attach(obj, None, None)
+
+    def _cleanup(self):
+        """Remove self.texcoords from self.grp if it was previously added.
+
+        Counterpart to the addChild in attach(). Safe to call even if nothing
+        was ever attached -- acts as a no-op in that case.
+        """
+        if self._texcoords_attached and hasattr(self, "texcoords"):
+            try:
+                self.grp.removeChild(self.texcoords)
+            except Exception:
+                pass  # Already removed or invalid -- graceful degradation
+            self._texcoords_attached = False
 
     def attach(self, obj, child, tex_coords=None):
         self.texcoords = self.getTextureCoords(tex_coords)
 
         if tex_coords is None:
-            remove_by_name(self.grp, self.texcoords.getName())
-            remove_by_name(self.grp, self.root.getName())
+            if hasattr(self, "root") and self.root is not None:
+                remove_by_name(self.grp, self.root.getName())
             return
 
         self.grp.addChild(self.texcoords)
+        self._texcoords_attached = True
         self.root = child.ViewObject.RootNode
         self.grp.addChild(self.root)
 
