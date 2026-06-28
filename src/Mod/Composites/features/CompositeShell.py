@@ -1147,7 +1147,7 @@ class ViewProviderCompositeShell:
         offset_angle_deg = self.get_offset_angle(vobj)
         tex_coords = obj.get_tex_coords(offset_angle_deg=offset_angle_deg)
         if tex_coords and self.grid_shader:
-            self.grid_shader.attach(vobj, mesh_feat, tex_coords)
+            self.grid_shader.attach(vobj, mesh_feat, tex_coords, offset_angle_deg)
             self.Active = True
             import FreeCADGui
 
