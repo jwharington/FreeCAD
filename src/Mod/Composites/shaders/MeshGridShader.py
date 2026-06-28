@@ -62,7 +62,10 @@ class MeshGridShader:
         # Track whether self.texcoords has been added to self.grp
         self._texcoords_attached = False
 
-        self.Spacing = [0.1, 0.01, 0.05]
+        # Spacing in UV units (mm on the draped surface).
+        # UV ranges: u≈[-105,105] (210), v≈[-650,650] (1300).
+        # With spacing 5: scale=0.2 → coord≈0.2*105=21 → ~21 grid lines.
+        self.Spacing = [5.0, 5.0, 5.0]
         self.Darken = 0.1
 
         shader_params = [
@@ -184,27 +187,15 @@ class MeshGridShader:
         self._cleanup()
         if hasattr(self, "root") and self.root is not None:
             remove_by_name(self.grp, self.root.getName())
+            # Also remove shader nodes inserted into the old root
+            self._remove_shader_from_root()
 
         if tex_coords is None:
             return
 
-        # Scene graph structure (siblings in traversal order):
-        #   grp
-        #   ├── my_shader (SoShaderProgram)           ← sets shader state
-        #   ├── tex_matrix (SoTextureMatrixTransform) ← rotates UV coords
-        #   ├── my_texcoord (SoTextureCoordinate3)    ← generates from 3D pos
-        #   └── root (SwitchNode → geometry)          ← rendered with shader
-
         self.texcoords = self.getTextureCoords(tex_coords)
-        self._cleanup()
-        if hasattr(self, "root") and self.root is not None:
-            remove_by_name(self.grp, self.root.getName())
-
-        self.grp.addChild(self.shaderProgram)
 
         # Apply rosette angle as a 2D rotation in the UV plane.
-        # SoTextureMatrixTransform multiplies gl_TexCoord[0].st by this
-        # matrix, effectively rotating the grid pattern.
         if offset_angle_deg:
             import math
             ang = math.radians(-offset_angle_deg)
@@ -223,13 +214,43 @@ class MeshGridShader:
                 0, 0, 0, 1,
             )
 
-        self.grp.addChild(self.tex_matrix_transform)
-        self.grp.addChild(self.texcoords)
+        # Get the DrapeMesh root node (SoFCSelectionRoot, inherits SoSeparator).
+        # We must insert the shader nodes INSIDE this separator, right before
+        # the Separator that contains the geometry.  Setting the shader as a
+        # sibling BEFORE the separator doesn't work — the separator saves
+        # and restores GL state, overriding our shader.
+        self.root = child.ViewObject.RootNode
+
+        # Find the Switch child inside the root that contains the geometry.
+        # The mesh geometry (SoFCIndexedFaceSet) is inside this Switch.
+        # The shader must be inserted BEFORE this Switch so it's set before
+        # the geometry is rendered during scene graph traversal.
+        root_children = self.root.getChildren()
+        switch_index = -1
+        if root_children:
+            for i in range(root_children.getLength()):
+                c = root_children[i]
+                if str(c.getTypeId().getName()) == "Switch":
+                    switch_index = i
+                    break
+
+        if switch_index >= 0:
+            # Insert shader nodes BEFORE the Switch, inside the root
+            self.root.insertChild(self.texcoords, switch_index)
+            self.root.insertChild(self.tex_matrix_transform, switch_index)
+            self.root.insertChild(self.shaderProgram, switch_index)
+            self._shader_in_root = True
+        else:
+            # Fallback: add to grp as before
+            self.grp.addChild(self.shaderProgram)
+            self.grp.addChild(self.tex_matrix_transform)
+            self.grp.addChild(self.texcoords)
+            self._texcoords_attached = True
+            self.grp.addChild(self.root)
+
         self._texcoords_attached = True
 
-        self.root = child.ViewObject.RootNode
-        self.grp.addChild(self.root)
-
+        # Set textureCoordIndex on the geometry
         type_name = "SoFCIndexedFaceSet"
         node = has_child(self.root, type_name)
         geom = find_child(node, type_name)
@@ -241,8 +262,26 @@ class MeshGridShader:
                 coordinateIndex,
             )
 
-        # move the original node
+        # Move the root from the scene graph into our display-mode group
         doc = obj.Document
         doc = FreeCADGui.getDocument(doc.Name)
         graph = doc.ActiveView.getSceneGraph()
-        graph.removeChild(self.root)
+        try:
+            graph.removeChild(self.root)
+        except Exception:
+            pass  # Already moved or not a direct child
+        self.grp.addChild(self.root)
+
+    def _remove_shader_from_root(self):
+        """Remove shader nodes inserted into the DrapeMesh root."""
+        if not getattr(self, "_shader_in_root", False):
+            return
+        if not hasattr(self, "root") or self.root is None:
+            self._shader_in_root = False
+            return
+        for node in [self.shaderProgram, self.tex_matrix_transform, self.texcoords]:
+            try:
+                self.root.removeChild(node)
+            except Exception:
+                pass
+        self._shader_in_root = False

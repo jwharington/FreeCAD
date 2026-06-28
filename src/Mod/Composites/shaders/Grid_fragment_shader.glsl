@@ -67,16 +67,12 @@ float mixcol(float col, float amount) {
 
 void main() {
   float pixel_width = 1.0;
-  float feather = 0.0;
   highp vec3 coord = vec3(x_scale * gl_TexCoord[0].s,
                     y_scale * gl_TexCoord[0].t,
                     z_scale * gl_TexCoord[0].r);
-  vec3 grid = vec3(gridFactor(coord.x, pixel_width, feather),
-                   gridFactor(coord.y, pixel_width, feather),
-                   gridFactor(coord.z, pixel_width, feather));
-  // Solid base colour — the grid lines darken this base, not the mesh
-  // material/vertex colour.  Using a neutral grey avoids the underlying
-  // mesh shading (e.g. brick texture) leaking through outside the grid.
+  vec3 grid = vec3(gridFactor(coord.x, pixel_width),
+                   gridFactor(coord.y, pixel_width),
+                   gridFactor(coord.z, pixel_width));
   vec3 baseColor = vec3(0.92, 0.92, 0.92);
   gl_FragColor = vec4(mixcol(baseColor.r, grid.x),
                       mixcol(baseColor.g, grid.y),
