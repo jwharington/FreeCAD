@@ -141,7 +141,16 @@ def create_cylindrical_panel(
         vp = ViewProviderCompositeShell(shell.ViewObject)
         vp.attach(shell.ViewObject)
 
-    # ── 7. Report results ──────────────────────────────────────
+    # ── 7. Switch to isometric view and fit all ────────────────
+    import FreeCADGui
+
+    gui_doc = FreeCADGui.getDocument(doc.Name)
+    view = gui_doc.ActiveView
+    if view:
+        view.viewIsometric()
+        view.fitAll()
+
+    # ── 8. Report results ──────────────────────────────────────
     print(f"Document: {doc.Name}")
     print(f"Objects: {[o.Name for o in doc.Objects]}")
     print(f"Shell diagnostics: {shell.DrapeDiagnostics}")
