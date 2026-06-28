@@ -74,8 +74,12 @@ void main() {
   vec3 grid = vec3(gridFactor(coord.x, pixel_width, feather),
                    gridFactor(coord.y, pixel_width, feather),
                    gridFactor(coord.z, pixel_width, feather));
-  gl_FragColor = vec4(mixcol(gl_Color.r, grid.x),
-                      mixcol(gl_Color.g, grid.y),
-                      mixcol(gl_Color.b, grid.z),
-                      gl_Color.a);
+  // Solid base colour — the grid lines darken this base, not the mesh
+  // material/vertex colour.  Using a neutral grey avoids the underlying
+  // mesh shading (e.g. brick texture) leaking through outside the grid.
+  vec3 baseColor = vec3(0.92, 0.92, 0.92);
+  gl_FragColor = vec4(mixcol(baseColor.r, grid.x),
+                      mixcol(baseColor.g, grid.y),
+                      mixcol(baseColor.b, grid.z),
+                      1.0);
 }

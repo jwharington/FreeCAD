@@ -84,18 +84,9 @@ class MeshGridShader:
         self.shaderProgram = coin.SoShaderProgram()
         self.shaderProgram.shaderObject.set1Value(0, self.fragmentShader)
         self.shaderProgram.setName("my_shader")
-        self.texture = self.make_texture()
 
         self.grp = coin.SoGroup()
         self.grp.addChild(self.shaderProgram)
-        self.grp.addChild(self.texture)
-
-    def make_texture(self):
-        fname = path.join(MeshGridShader.shaderpath, "brick.png")
-        texture = coin.SoTexture3()
-        texture.setName("my_texture")
-        texture.filenames.set1Value(0, fname)
-        return texture
 
     @property
     def Spacing(self):
@@ -124,16 +115,17 @@ class MeshGridShader:
         return self.root
 
     def getTextureCoords(self, tex_coords):
-        textureCoords = coin.SoTextureCoordinate3()
+        # Use SoTextureCoordinate2 (explicit per-vertex 2D coordinates)
+        # rather than SoTextureCoordinate3 (auto-generates from 3D
+        # positions).  The latter ignores the point values and defeats
+        # the angle rotation.
+        textureCoords = coin.SoTextureCoordinate2()
         textureCoords.setName("my_texcoord")
         if tex_coords is not None:
             for index, pt in enumerate(tex_coords):
-                if len(pt) >= 3:
-                    s, t, q = pt[0], pt[1], pt[2]
-                else:
-                    s, t = pt[0], pt[1]
-                    q = 0.0
-                textureCoords.point.set1Value(index, s, t, q)
+                # SoTextureCoordinate2 only supports 2D (s, t)
+                s, t = pt[0], pt[1]
+                textureCoords.point.set1Value(index, s, t)
         return textureCoords
 
     def detach(self, obj=None):
@@ -176,13 +168,10 @@ class MeshGridShader:
         type_name = "SoFCIndexedFaceSet"
         node = has_child(switch, type_name)
         geom = find_child(node, type_name)
-        if geom:
-            coordinateIndex = geom.coordIndex.getValues()
-            geom.textureCoordIndex.setValues(
-                0,
-                len(coordinateIndex),
-                coordinateIndex,
-            )
+        # With explicit per-vertex texture coordinates (SoTextureCoordinate2),
+        # no textureCoordIndex mapping is needed — the point array is already
+        # indexed 1:1 with vertices.  Removing the old index-copying code
+        # that assumed auto-generated coordinates (SoTextureCoordinate3).
 
         # move the original node
         doc = obj.Document
