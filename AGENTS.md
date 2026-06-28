@@ -1,3 +1,9 @@
+## Testing discipline
+- NEVER relax, widen, or remove test thresholds/tolerances/assertions to make a failing test pass.
+- A failing test exposes a real bug in the code or the algorithm. Fix the code. If the algorithm is genuinely incapable of meeting the threshold, fix the algorithm — do not lower the bar.
+- If a test threshold seems unrealistic, investigate WHY the code fails first. Only after exhausting all legitimate fixes should you consider whether the threshold itself is wrong — and even then, ask the user before changing it.
+- This applies to all test frameworks (googletest, pytest, doctest, etc.) and all project types.
+
 ## Debugging philosophy
 - When debugging, do not fix symptoms — discover and address the root cause.
 - A fix that silences an error without solving the underlying problem will surface again elsewhere. Always trace the error chain back to its origin.
