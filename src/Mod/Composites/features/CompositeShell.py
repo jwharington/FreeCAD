@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
+import hashlib
 import json
 from datetime import datetime, timezone
+
+import numpy as np
 
 from FreeCAD import Console
 
@@ -31,6 +34,329 @@ def _build_drapecd_mesh(node_positions, quads):
         mesh.addFacet(vertices[i0], vertices[i1], vertices[i2])
         mesh.addFacet(vertices[i0], vertices[i2], vertices[i3])
     return mesh
+
+
+class _RehydratedBackend:
+    """Transient backend rebuilt from persisted JSON properties.
+
+    When the support shape hasn't changed across recompute cycles,
+    the draper solve result is reconstructed from FreeCAD properties
+    (NodePositionsJSON, QuadsJSON, TexCoordsJSON, StrainsJSON) instead
+    of re-running the C++ solver.  This class implements the same
+    interface as NextDrapeBackend so that execute() and all public
+    accessor methods on CompositeShellFP work identically.
+
+    Attributes
+    ----------
+    _node_positions : ndarray (N, 3)
+        Draped node positions in world space.
+    _quads : list[list[int]]
+        Quad connectivity as lists of four vertex indices.
+    _tex_coords : ndarray (N, 2)
+        Texture (UV) coordinates per node.
+    _strains : ndarray (M,)
+        Per-quad shear angles in degrees.
+    _status : str
+        Solve status from the original solve ("valid" or "failed").
+    _failure_reason : str or None
+        Reason string if the original solve failed.
+    """
+
+    backend_name = "nextdrape"
+
+    def __init__(
+        self,
+        node_positions_json: str,
+        quads_json: str,
+        tex_coords_json: str,
+        strains_json: str,
+        status: str = "valid",
+        failure_reason: str | None = None,
+    ) -> None:
+        self._node_positions = np.array(json.loads(node_positions_json))
+        self._quads = json.loads(quads_json)
+        self._tex_coords = np.array(json.loads(tex_coords_json)) if tex_coords_json else np.empty((0, 2))
+        self._strains = np.array(json.loads(strains_json)) if strains_json else np.array([])
+        self._status = status
+        self._failure_reason = failure_reason
+
+    # ── DrapeBackend protocol ────────────────────────────────────
+
+    def is_valid(self) -> bool:
+        return self._status == "valid"
+
+    def diagnostics(self) -> dict:
+        if self._status != "valid":
+            return {
+                "backend": self.backend_name,
+                "status": "failed",
+                "failure_reason": self._failure_reason or "solve_failed",
+            }
+        return {
+            "backend": self.backend_name,
+            "status": "valid",
+            "solver": "nextdrape",
+            "nodes": len(self._node_positions),
+            "quads": len(self._quads),
+            "max_shear_deg": float(np.max(self._strains)) if len(self._strains) else 0.0,
+            "max_strain": float(np.max(self._strains)) if len(self._strains) else 0.0,
+        }
+
+    def get_tex_coords(self, offset_angle_deg: float = 0) -> list | None:
+        if self._status != "valid" or len(self._tex_coords) == 0:
+            return None
+        tex = self._tex_coords.copy()
+        if offset_angle_deg:
+            import math
+            ang = math.radians(-offset_angle_deg)
+            cos_a, sin_a = math.cos(ang), math.sin(ang)
+            tex = np.column_stack([
+                tex[:, 0] * cos_a - tex[:, 1] * sin_a,
+                tex[:, 0] * sin_a + tex[:, 1] * cos_a,
+            ])
+        return [[float(u), float(v)] for u, v in tex]
+
+    def get_boundaries(self, offset_angle_deg: float = 0) -> list | None:
+        # Boundaries are not persisted — return empty list
+        # (consistent with a fresh solve returning no boundaries)
+        return []
+
+    def get_lcs(self, tri) -> "FreeCAD.Placement | None":
+        """Compute LCS from persisted node_positions and quads."""
+        import FreeCAD
+        from scipy.spatial.transform import Rotation
+
+        if self._status != "valid" or not self._quads or len(self._node_positions) == 0:
+            return None
+
+        node_positions = self._node_positions
+        quads = self._quads
+
+        if isinstance(tri, (list, tuple)) and len(tri) == 3:
+            first = tri[0]
+            if isinstance(first, (int, np.integer)):
+                i0, i1, i2 = [int(idx) for idx in tri]
+                v0, v1, v2 = node_positions[i0], node_positions[i1], node_positions[i2]
+            elif isinstance(first, (tuple, list)) and len(first) == 3:
+                v0, v1, v2 = np.array(tri[0]), np.array(tri[1]), np.array(tri[2])
+            else:
+                return None
+        else:
+            return None
+
+        centroid = (v0 + v1 + v2) / 3.0
+
+        warp = v1 - v0
+        warp_norm = np.linalg.norm(warp)
+        if warp_norm < 1e-10:
+            return None
+        warp_unit = warp / warp_norm
+
+        weft_raw = v2 - v0
+        weft_unit = weft_raw - np.dot(weft_raw, warp_unit) * warp_unit
+        weft_unit_norm = np.linalg.norm(weft_unit)
+        if weft_unit_norm < 1e-10:
+            return None
+        weft_unit = weft_unit / weft_unit_norm
+
+        normal = np.cross(warp_unit, weft_unit)
+        normal_norm = np.linalg.norm(normal)
+        if normal_norm < 1e-10:
+            return None
+        normal_unit = normal / normal_norm
+
+        y_axis = np.cross(normal_unit, warp_unit)
+        rot_matrix = np.column_stack([warp_unit, y_axis, normal_unit])
+        rotation = Rotation.from_matrix(rot_matrix)
+        quat = rotation.as_quat()
+
+        fc_placement = FreeCAD.Placement()
+        fc_placement.Rotation = FreeCAD.Rotation(quat[3], quat[0], quat[1], quat[2])
+        fc_placement.Base = FreeCAD.Vector(centroid[0], centroid[1], centroid[2])
+        return fc_placement
+
+    def get_lcs_at_point(self, center) -> "FreeCAD.Placement | None":
+        """Compute LCS at a 3D point from persisted data."""
+        import FreeCAD
+        from scipy.spatial.transform import Rotation
+
+        if self._status != "valid" or not self._quads or len(self._node_positions) == 0:
+            return None
+
+        node_positions = self._node_positions
+        quads = self._quads
+
+        cx, cy, cz = float(center[0]), float(center[1]), float(center[2])
+        cp = np.array([cx, cy, cz])
+
+        best_quad = None
+        best_dist = float("inf")
+
+        for q in quads:
+            i0, i1, i2, i3 = [int(idx) for idx in q]
+            centroid = (node_positions[i0] + node_positions[i1] +
+                       node_positions[i2] + node_positions[i3]) / 4.0
+            dist = np.linalg.norm(cp - centroid)
+            if dist < best_dist:
+                best_dist = dist
+                best_quad = q
+
+        if best_quad is None:
+            return None
+
+        i0, i1, i2, i3 = [int(idx) for idx in best_quad]
+        v0, v1, v2, v3 = node_positions[i0], node_positions[i1], node_positions[i2], node_positions[i3]
+
+        centroid = (v0 + v1 + v2 + v3) / 4.0
+        warp = v1 - v0
+        warp_norm = np.linalg.norm(warp)
+        if warp_norm < 1e-10:
+            return None
+        warp_unit = warp / warp_norm
+
+        weft_raw = v3 - v0
+        weft_unit = weft_raw - np.dot(weft_raw, warp_unit) * warp_unit
+        weft_unit_norm = np.linalg.norm(weft_unit)
+        if weft_unit_norm < 1e-10:
+            return None
+        weft_unit = weft_unit / weft_unit_norm
+
+        normal = np.cross(warp_unit, weft_unit)
+        normal_norm = np.linalg.norm(normal)
+        if normal_norm < 1e-10:
+            return None
+        normal_unit = normal / normal_norm
+
+        y_axis = np.cross(normal_unit, warp_unit)
+        rot_matrix = np.column_stack([warp_unit, y_axis, normal_unit])
+        rotation = Rotation.from_matrix(rot_matrix)
+        quat = rotation.as_quat()
+
+        fc_placement = FreeCAD.Placement()
+        fc_placement.Rotation = FreeCAD.Rotation(quat[3], quat[0], quat[1], quat[2])
+        fc_placement.Base = FreeCAD.Vector(centroid[0], centroid[1], centroid[2])
+        return fc_placement
+
+    def get_tex_coord_at_point(self, point, offset_angle_deg: float = 0) -> list | None:
+        """Interpolate UV at a 3D point from persisted data."""
+        if self._status != "valid" or not self._quads or len(self._node_positions) == 0:
+            return None
+
+        node_positions = self._node_positions
+        quads = self._quads
+        tex_coords = self._tex_coords
+
+        px, py, pz = float(point[0]), float(point[1]), float(point[2])
+
+        best_quad = None
+        best_dist = float("inf")
+        best_u, best_v = 0.0, 0.0
+
+        for q in quads:
+            i0, i1, i2, i3 = [int(idx) for idx in q]
+            c0, c1, c2, c3 = node_positions[i0], node_positions[i1], node_positions[i2], node_positions[i3]
+
+            centroid = (c0 + c1 + c2 + c3) / 4.0
+            v1, v2 = c1 - c0, c3 - c0
+            normal = np.cross(v1, v2)
+            norm_len = np.linalg.norm(normal)
+            if norm_len < 1e-10:
+                continue
+            normal /= norm_len
+
+            to_point = np.array([px, py, pz]) - centroid
+            dist_to_plane = abs(np.dot(to_point, normal))
+            if dist_to_plane > 5.0:
+                continue
+
+            proj_point = np.array([px, py, pz]) - normal * dist_to_plane * np.sign(
+                np.dot(to_point, normal)
+            )
+
+            e0 = c1 - c0
+            e1 = c3 - c0
+            e0_norm = np.linalg.norm(e0)
+            e1_norm = np.linalg.norm(e1)
+            if e0_norm < 1e-10 or e1_norm < 1e-10:
+                continue
+            e0_unit = e0 / e0_norm
+            e1_unit = e1 - np.dot(e1, e0_unit) * e0_unit
+            e1_unit_norm = np.linalg.norm(e1_unit)
+            if e1_unit_norm < 1e-10:
+                continue
+            e1_unit /= e1_unit_norm
+
+            delta = proj_point - c0
+            u_est = np.dot(delta, e0_unit) / e0_norm
+            v_est = np.dot(delta, e1_unit) / e1_unit_norm
+
+            if -0.05 <= u_est <= 1.05 and -0.05 <= v_est <= 1.05:
+                c_corner = c2 - c1 - c3 + c0
+                if np.linalg.norm(c_corner) > 1e-10:
+                    a_u = np.dot(c_corner, e0_unit)
+                    b_u = np.dot(e0, e0_unit) + np.dot(c_corner, e1_unit) * v_est - np.dot(delta, e0_unit)
+                    c_u = np.dot(e0, e0_unit) * v_est + np.dot(c0, e0_unit) - np.dot(delta, e0_unit)
+                    if abs(a_u) > 1e-15:
+                        disc = b_u * b_u - 4 * a_u * c_u
+                        if disc >= 0:
+                            u_est = (-b_u + np.sqrt(disc)) / (2 * a_u)
+                            if 0 <= u_est <= 1:
+                                a_v = np.dot(c_corner, e1_unit)
+                                b_v = np.dot(e1, e1_unit) + np.dot(c_corner, e0_unit) * u_est - np.dot(delta, e1_unit)
+                                c_v = np.dot(e1, e1_unit) * u_est + np.dot(c0, e1_unit) - np.dot(delta, e1_unit)
+                                if abs(a_v) > 1e-15:
+                                    disc_v = b_v * b_v - 4 * a_v * c_v
+                                    if disc_v >= 0:
+                                        v_est = (-b_v + np.sqrt(disc_v)) / (2 * a_v)
+                else:
+                    u_est = np.dot(delta, e0_unit) / e0_norm
+                    v_est = np.dot(delta, e1_unit) / e1_unit_norm
+
+                if 0 <= u_est <= 1 and 0 <= v_est <= 1:
+                    uv = (
+                        (1 - u_est) * (1 - v_est) * tex_coords[i0]
+                        + u_est * (1 - v_est) * tex_coords[i1]
+                        + u_est * v_est * tex_coords[i2]
+                        + (1 - u_est) * v_est * tex_coords[i3]
+                    )
+                    dist = np.linalg.norm(proj_point - (c0 + u_est * (c1 - c0) + v_est * (c3 - c0)))
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_quad = q
+                        best_u, best_v = uv[0], uv[1]
+
+        if best_quad is None:
+            return None
+
+        if offset_angle_deg:
+            import math
+            ang = math.radians(-offset_angle_deg)
+            cos_a, sin_a = math.cos(ang), math.sin(ang)
+            best_u, best_v = (
+                best_u * cos_a - best_v * sin_a,
+                best_u * sin_a + best_v * cos_a,
+            )
+
+        return [best_u, best_v]
+
+    @property
+    def strains(self) -> np.ndarray:
+        return self._strains
+
+    # ── execute() compatibility ──────────────────────────────────
+    # execute() calls _backend._run_solve() to obtain raw solve data.
+    # We provide the same dict interface so execute() works unchanged.
+
+    def _run_solve(self) -> dict:
+        """Return cached solve result dict (no actual solve performed)."""
+        return {
+            "success": self._status == "valid",
+            "error": self._failure_reason,
+            "node_positions": self._node_positions.tolist(),
+            "quads": self._quads,
+            "tex_coords": self._tex_coords.tolist(),
+            "shear_angle": self._strains.tolist(),
+        }
 
 
 from ..tools.fibre import (
@@ -124,6 +450,35 @@ class CompositeShellFP(CompositeBaseFP):
             doc="Serialized texture coordinates from the drape solve",
         )
 
+        # Persisted draper solve data — allows skipping re-solve when the
+        # support shape is unchanged across recompute cycles.
+        obj.addProperty(
+            type="App::PropertyString",
+            name="NodePositionsJSON",
+            group="Draping",
+            doc="Serialized node positions [N,3] from the drape solve",
+        )
+        obj.addProperty(
+            type="App::PropertyString",
+            name="QuadsJSON",
+            group="Draping",
+            doc="Serialized quad connectivity [M,4] from the drape solve",
+        )
+        obj.addProperty(
+            type="App::PropertyString",
+            name="StrainsJSON",
+            group="Draping",
+            doc="Serialized per-quad shear angles from the drape solve",
+        )
+
+        obj.addProperty(
+            type="App::PropertyString",
+            name="ShapeFingerprint",
+            group="Draping",
+            doc="SHA256 hash of the support shape for detecting geometry changes",
+            hidden=True,
+        )
+
         obj.addProperty(
             type="App::PropertyLinkGlobal",
             name="Mesh",
@@ -149,8 +504,6 @@ class CompositeShellFP(CompositeBaseFP):
         if (not fp.Support) or (not fp.Laminate):
             return
 
-        fp.Shape = fp.Support.Shape
-
         def get_lcs():
             if fp.Rosette:
                 return fp.Rosette.LocalCoordinateSystem
@@ -159,6 +512,20 @@ class CompositeShellFP(CompositeBaseFP):
             return fp.Support
 
         self._rosette_angle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
+
+        # ── Try to rehydrate from persisted data ───────────────────
+        # If the support shape is unchanged and we have persisted solve
+        # data, skip the expensive mesh generation and C++ solve.
+        if self._can_use_persisted(fp):
+            try:
+                self._rehydrate(fp)
+                return
+            except Exception:
+                # Corrupted persisted data — fall through to full solve
+                pass
+
+        # ── Full solve path ────────────────────────────────────────
+        fp.Shape = fp.Support.Shape
 
         try:
             import os
@@ -230,6 +597,10 @@ class CompositeShellFP(CompositeBaseFP):
             else:
                 fp.TexCoordsJSON = ""
 
+            # Persist additional solve data for rehydration on future
+            # recompute cycles (when the support shape is unchanged).
+            self._persist_solve_data(fp, solve_result)
+
             # Store mesh in backend for ViewProvider shader attachment
             self._backend._mesh = drapecd_mesh
             self._backend._mesh_feat = fp.Mesh  # persist Mesh feature ref for shader
@@ -257,6 +628,9 @@ class CompositeShellFP(CompositeBaseFP):
             self._backend = None
             fp.DrapeValid = False
             fp.TexCoordsJSON = ""
+            fp.NodePositionsJSON = ""
+            fp.QuadsJSON = ""
+            fp.StrainsJSON = ""
             self._set_drape_diagnostics(
                 fp,
                 backend="nextdrape",
@@ -270,6 +644,130 @@ class CompositeShellFP(CompositeBaseFP):
         view_object = getattr(fp, "ViewObject", None)
         if view_object:
             view_object.update()
+
+    # ── Persistence helpers ────────────────────────────────────────
+
+    def _shape_fingerprint(self, shape) -> str:
+        """Compute a fast structural hash of a FreeCAD shape.
+
+        Used to detect whether the support geometry has changed between
+        recompute cycles.  Combines shape-level metadata that is cheap
+        to compute but sufficiently discriminative.
+        """
+        h = hashlib.sha256()
+        h.update(b"shape:v1:")
+        try:
+            h.update(getattr(shape, "Label", "").encode())
+        except Exception:
+            pass
+        try:
+            h.update(f"{shape.Volume:.6f}".encode())
+        except Exception:
+            pass
+        try:
+            bb = shape.BoundBox
+            h.update(f"{bb.XMin:.3f},{bb.YMin:.3f},{bb.ZMin:.3f},"
+                     f"{bb.XMax:.3f},{bb.YMax:.3f},{bb.ZMax:.3f}".encode())
+        except Exception:
+            pass
+        try:
+            verts, edges, faces, shells = (
+                len(shape.Vertexes),
+                len(shape.Edges),
+                len(shape.Faces),
+                len(shape.Shells),
+            )
+            h.update(f"V{verts}E{edges}F{faces}S{shells}".encode())
+        except Exception:
+            pass
+        return h.hexdigest()[:16]
+
+    def _can_use_persisted(self, fp) -> bool:
+        """Return True if persisted solve data is still valid."""
+        # Must have a valid prior solve
+        if not fp.DrapeValid:
+            return False
+        # Must have all persisted fields
+        if not (fp.NodePositionsJSON and fp.QuadsJSON and fp.TexCoordsJSON):
+            return False
+        # Support shape must be unchanged
+        if not fp.Support:
+            return False
+        try:
+            current = self._shape_fingerprint(fp.Support.Shape)
+        except Exception:
+            return False
+        stored = getattr(fp, "ShapeFingerprint", "")
+        if not stored:
+            return False
+        return current == stored
+
+    def _rehydrate(self, fp) -> None:
+        """Replace _backend with a _RehydratedBackend from persisted data."""
+        self._backend = _RehydratedBackend(
+            node_positions_json=fp.NodePositionsJSON,
+            quads_json=fp.QuadsJSON,
+            tex_coords_json=fp.TexCoordsJSON,
+            strains_json=fp.StrainsJSON,
+            status="valid",
+            failure_reason=None,
+        )
+
+        # Update diagnostics from rehydrated state
+        diag = self._backend.diagnostics()
+        self._set_drape_diagnostics(
+            fp,
+            backend=diag.get("backend", "nextdrape"),
+            status=diag.get("status", "invalid"),
+            failure_reason=diag.get("failure_reason"),
+            extras={
+                k: v for k, v in diag.items()
+                if k not in {"backend", "status", "failure_reason"}
+            },
+        )
+
+        # Run fibre analysis (uses rehydrated strains/boundaries)
+        if diag.get("status") != "failed":
+            self.fibre_analysis(fp)
+
+        # Rebuild the draped mesh from persisted node_positions + quads
+        solve_result = self._backend._run_solve()
+        node_positions = solve_result.get("node_positions", [])
+        quads = solve_result.get("quads", [])
+        drapecd_mesh = _build_drapecd_mesh(node_positions, quads)
+
+        # Ensure DrapeMesh feature exists
+        if not hasattr(fp, "Mesh") or fp.Mesh is None:
+            fp.Mesh = fp.Document.addObject(
+                "Mesh::Feature",
+                "DrapeMesh",
+            )
+            fp.setPropertyStatus("Mesh", "LockDynamic")
+            fp.setPropertyStatus("Mesh", "ReadOnly")
+
+        fp.Mesh.Mesh = drapecd_mesh
+
+        # Load the shader (same as full solve path)
+        vp = getattr(fp, "ViewObject", None)
+        if vp and hasattr(vp, "Proxy"):
+            try:
+                vp.Proxy.load_shader()
+            except Exception:
+                pass
+
+    def _persist_solve_data(self, fp, solve_result: dict) -> None:
+        """Store solve result arrays as JSON properties for rehydration."""
+        fp.NodePositionsJSON = json.dumps(
+            solve_result.get("node_positions", []).tolist()
+        )
+        fp.QuadsJSON = json.dumps(
+            solve_result.get("quads", [])
+        )
+        fp.StrainsJSON = json.dumps(
+            solve_result.get("shear_angle", []).tolist()
+        )
+        # Cache the shape fingerprint so _can_use_persisted skips rehashing
+        fp.ShapeFingerprint = self._shape_fingerprint(fp.Support.Shape)
 
     def fibre_analysis(self, fp):
         histograms_length = make_fibre_length_analysis(fp)
