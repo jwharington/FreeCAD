@@ -66,7 +66,7 @@ class MeshGridShader:
         # UV ranges: u≈[-105,105] (210), v≈[-650,650] (1300).
         # With spacing 5: scale=0.2 → coord≈0.2*105=21 → ~21 grid lines.
         self.Spacing = [5.0, 5.0, 5.0]
-        self.Darken = 0.1
+        self.Darken = 0.8
 
         shader_params = [
             self.x_scale,
