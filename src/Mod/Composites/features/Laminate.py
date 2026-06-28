@@ -163,7 +163,8 @@ class ViewProviderLaminate(VPCompositeBase):
         pass
 
     def claimChildren(self):
-        return self.Object.Layers
+        layers = self.Object.Layers if hasattr(self.Object, "Layers") else []
+        return [l for l in layers if l is not None]
 
 
 class LaminateCommand(BaseCommand):

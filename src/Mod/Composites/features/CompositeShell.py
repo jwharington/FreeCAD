@@ -78,14 +78,7 @@ class CompositeShellFP(CompositeBaseFP):
             doc="Max length of draping mesh",
         )
 
-        obj.addProperty(
-            type="App::PropertyEnumeration",
-            name="DrapeBackend",
-            group="Draping",
-            doc="Draping backend (nextdrape or legacy)",
-        )
-        obj.DrapeBackend = ["nextdrape", "legacy"]
-        obj.DrapeBackend = "nextdrape"
+
 
         obj.addProperty(
             type="App::PropertyString",
@@ -132,9 +125,17 @@ class CompositeShellFP(CompositeBaseFP):
         self._rosette_angle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
 
         try:
+            import os
+
+            debug_file = "/tmp/nextdrape_debug.txt"
+            with open(debug_file, "w") as f:
+                f.write(f"[execute] START\n")
+                f.flush()
             mesh = mesh_util.shape2Mesh(fp.Shape, fp.MaxLength)
+            with open(debug_file, "a") as f:
+                f.write(f"[execute] mesh created, facets={mesh.CountFacets}\n")
+                f.flush()
             self._backend = self._make_backend(
-                self._selected_backend_name(fp),
                 mesh,
                 get_lcs(),
                 fp.Shape,
@@ -143,7 +144,7 @@ class CompositeShellFP(CompositeBaseFP):
             diag = self._backend.diagnostics()
             self._set_drape_diagnostics(
                 fp,
-                backend=diag.get("backend", self._selected_backend_name(fp)),
+                backend=diag.get("backend", "nextdrape"),
                 status=diag.get("status", "invalid"),
                 failure_reason=diag.get("failure_reason"),
                 extras={
@@ -172,12 +173,18 @@ class CompositeShellFP(CompositeBaseFP):
                     pass
         except Exception as exc:
             import traceback
+
+            debug_file = "/tmp/nextdrape_debug.txt"
+            with open(debug_file, "a") as f:
+                f.write(f"[execute] EXCEPTION: {exc}\n")
+                f.write(traceback.format_exc())
+                f.flush()
             Console.PrintMessage(f"DEBUG execute exception: {exc}\n")
             Console.PrintMessage(traceback.format_exc())
             self._backend = None
             self._set_drape_diagnostics(
                 fp,
-                backend=self._selected_backend_name(fp),
+                backend="nextdrape",
                 status="error",
                 failure_reason="solver_unsolved",
             )
@@ -199,17 +206,7 @@ class CompositeShellFP(CompositeBaseFP):
         for orientation, fraction in orientation_fraction.items():
             Console.PrintMessage(f"  {orientation}: {fraction:.2f}")
 
-    def _selected_backend_name(self, fp):
-        backend = (
-            str(getattr(fp, "DrapeBackend", "nextdrape") or "nextdrape").lower()
-        )
-        return backend if backend in {"nextdrape", "legacy"} else "nextdrape"
-
-    def _make_backend(self, backend_name, mesh, lcs, shape):
-        if backend_name == "legacy":
-            from ..tools.drape_backend_legacy import LegacyDrapeBackend
-
-            return LegacyDrapeBackend(mesh, lcs, shape)
+    def _make_backend(self, mesh, lcs, shape):
         return NextDrapeBackend(mesh, lcs, shape)
 
     def _set_drape_diagnostics(
@@ -243,7 +240,7 @@ class CompositeShellFP(CompositeBaseFP):
             case (
                 "MaxLength"
                 | "Support"
-                | "DrapeBackend"
+
             ):
                 fp.recompute()
 
@@ -339,10 +336,12 @@ class ViewProviderCompositeShell:
         return COMPOSITE_SHELL_TOOL_ICON
 
     def claimChildren(self):
-        return [
-            self.Object.Mesh,
-            self.Object.LocalCoordinateSystem,
-        ]
+        children = []
+        if hasattr(self.Object, "Mesh") and self.Object.Mesh:
+            children.append(self.Object.Mesh)
+        if hasattr(self.Object, "LocalCoordinateSystem") and self.Object.LocalCoordinateSystem:
+            children.append(self.Object.LocalCoordinateSystem)
+        return children
 
     def attach(self, obj):
         self.Active = False
@@ -395,6 +394,8 @@ class ViewProviderCompositeShell:
     def update_mesh_material(self, vobj):
         # use draper to determine distortion for coloring
         mesh = vobj.Object.Mesh
+        if mesh is None:
+            return
         n = mesh.Mesh.CountFacets
         if "Material" not in mesh.PropertiesList:
             mesh.addProperty("Mesh::PropertyMaterial", "Material")

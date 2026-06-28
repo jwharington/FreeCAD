@@ -47,7 +47,8 @@ class TexturePlanFP(CompositePartFP):
                 if not boundaries:
                     continue
                 for w in boundaries:
-                    shapes.append(Part.Wire(Part.makePolygon(w)))
+                    if len(w) >= 2:
+                        shapes.append(Part.Wire(Part.makePolygon(w)))
         fp.Shape = Part.makeCompound(shapes)
 
         # fp.ViewObject.update()

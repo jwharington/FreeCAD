@@ -78,10 +78,24 @@ class NextDrapeBackend(DrapeBackend):
 
     def _run_solve(self) -> dict:
         """Run the solver once and cache the result."""
+        import os
+
+        debug_file = "/tmp/nextdrape_debug.txt"
+        with open(debug_file, "a") as f:
+            f.write(f"[_run_solve] START, _result={self._result}\n")
+            f.flush()
         if self._result is None:
             seed = self._build_seed()
             params = self._build_params()
+            with open(debug_file, "a") as f:
+                f.write(f"[_run_solve] calling solve...\n")
+                f.flush()
             self._result = self._solve(self._shape, seed, params)
+            with open(debug_file, "a") as f:
+                f.write(f"[_run_solve] solved, success={self._result.get('success')}\n")
+                if not self._result.get("success"):
+                    f.write(f"[_run_solve] error={self._result.get('error')}\n")
+                f.flush()
             if not self._result.get("success"):
                 self._valid = False
         return self._result
@@ -179,25 +193,86 @@ class NextDrapeBackend(DrapeBackend):
 
     # ── Internal helpers ─────────────────────────────────────────
 
+    def _project_point_to_surface(self, point) -> list:
+        """Project a point onto the shape surface.
+
+        When the center of mass lies inside a solid (e.g. a cylinder),
+        projecting it onto the surface ensures the draper seed lands
+        on valid geometry rather than failing with NonDrapable.
+
+        Strategy: push the point to the nearest bounding-box face by
+        clamping each coordinate independently and measuring the
+        resulting displacement.  Pick the axis that yields the
+        shortest push.
+        """
+        shape = self._shape
+        bbox = shape.BoundBox
+
+        px, py, pz = point
+        candidates: list[tuple[float, list[float]]] = []
+
+        # Push along X
+        cx_high = max(px, bbox.XMax) if px < bbox.XMax else min(px, bbox.XMin)
+        cx_low = min(px, bbox.XMin) if px > bbox.XMin else max(px, bbox.XMax)
+        for cx_val in (cx_high, cx_low):
+            d = abs(cx_val - px)
+            candidates.append((d, [cx_val, py, pz]))
+
+        # Push along Y
+        cy_high = max(py, bbox.YMax) if py < bbox.YMax else min(py, bbox.YMin)
+        cy_low = min(py, bbox.YMin) if py > bbox.YMax else max(py, bbox.YMax)
+        for cy_val in (cy_high, cy_low):
+            d = abs(cy_val - py)
+            candidates.append((d, [px, cy_val, pz]))
+
+        # Push along Z
+        cz_high = max(pz, bbox.ZMax) if pz < bbox.ZMax else min(pz, bbox.ZMin)
+        cz_low = min(pz, bbox.ZMin) if pz > bbox.ZMax else max(pz, bbox.ZMax)
+        for cz_val in (cz_high, cz_low):
+            d = abs(cz_val - pz)
+            candidates.append((d, [px, py, cz_val]))
+
+        # Return the candidate with the shortest push
+        candidates.sort(key=lambda c: c[0])
+        return candidates[0][1] if candidates else point
+
     def _build_seed(self) -> dict:
         """Build nextdrape SeedInput dict.
 
-        Requires a seed point ON the surface and a warp direction
-        (tangent to the surface).
+        Uses the Rosette LCS (LocalCoordinateSystem) to position the
+        seed point and orient the warp direction.  Falls back to the
+        shape center-of-mass projected onto the surface when no LCS
+        is available.
         """
         mesh = self._mesh
         shape = self._shape
 
+        # ── Seed point ───────────────────────────────────────────
         if hasattr(mesh, "seed_point") and mesh.seed_point is not None:
             point = list(mesh.seed_point)
+        elif self._lcs and hasattr(self._lcs, "Placement"):
+            # Use the LCS placement base as the seed point
+            base = self._lcs.Placement.Base
+            point = [base.x, base.y, base.z]
         elif hasattr(shape, "CenterOfMass"):
             com = shape.CenterOfMass
-            point = [com.x, com.y, com.z]
+            point = self._project_point_to_surface(com)
         else:
             point = [0.0, 0.0, 0.0]
 
+        # ── Warp direction ───────────────────────────────────────
         if hasattr(mesh, "warp_direction") and mesh.warp_direction is not None:
             warp_dir = list(mesh.warp_direction)
+        elif self._lcs and hasattr(self._lcs, "Placement"):
+            # Use the LCS X-axis as the warp direction (fiber direction).
+            # The Rosette LCS is oriented with X along fibers, Z normal
+            # to the surface.  Transform the standard X vector by the
+            # LCS rotation to get the world-space warp direction.
+            from FreeCAD import Vector
+
+            rot = self._lcs.Placement.Rotation
+            axis = rot.multVec(Vector(1, 0, 0))
+            warp_dir = [axis.x, axis.y, axis.z]
         else:
             warp_dir = [1.0, 0.0, 0.0]
 

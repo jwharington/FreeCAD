@@ -42,7 +42,8 @@ class FibreHistogram:
 def get_surface(boundaries):
     wires = []
     for w in boundaries:
-        wires.append(Part.Wire(Part.makePolygon(w)))
+        if len(w) >= 2:
+            wires.append(Part.Wire(Part.makePolygon(w)))
     # f = Part.makeCompound(shapes)
     from BIM.ArchCommands import makeFace
 
