@@ -153,6 +153,11 @@ def create_cylindrical_panel(
         view.viewIsometric()
         view.fitAll()
 
+    # Hide the support shape — its surface was consumed by the draper
+    # and the draped CompositeShell mesh is what the user wants to see.
+    if support.ViewObject:
+        support.ViewObject.Visibility = False
+
     # ── 9. Report results ──────────────────────────────────────
     print(f"Document: {doc.Name}")
     print(f"Objects: {[o.Name for o in doc.Objects]}")

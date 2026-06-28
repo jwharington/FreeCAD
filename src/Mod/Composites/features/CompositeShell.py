@@ -878,9 +878,9 @@ class CompositeShellFP(CompositeBaseFP):
 class ViewProviderCompositeShell:
     def __init__(self, obj):
         # Lazy import to avoid GUI dependency in headless mode
-        from ..shaders.MeshGridShader import MeshGridShader
+        from ..shaders.DrapeGridOverlay import DrapeGridOverlay
 
-        self.grid_shader = MeshGridShader()
+        self.grid_shader = DrapeGridOverlay()
 
         obj.addProperty(
             "App::PropertyFloatConstraint",
@@ -946,7 +946,7 @@ class ViewProviderCompositeShell:
         if not hasattr(self, "grid_shader"):
             self.grid_shader = MeshGridShader()
 
-        obj.addDisplayMode(self.grid_shader.grp, "Grid")
+        obj.addDisplayMode(self.grid_shader.root, "Grid")
         # self.load_shader()
 
         # Fibre orientation rosette: always-visible overlay on the root node
@@ -1090,8 +1090,8 @@ class ViewProviderCompositeShell:
             case "DisplayMode":
                 self.update_mesh_material(vobj)
             case "Darken":
-                if self.grid_shader:
-                    self.grid_shader.Darken = vobj.Darken
+                # Darken property no longer applies to the line-set overlay.
+                pass
             case "DisplayLayer":
                 self.reload_shader()
             case "ShapeAppearance":
@@ -1134,7 +1134,6 @@ class ViewProviderCompositeShell:
         obj = vobj.Proxy
 
         # Access the DrapeMesh feature directly from the shell feature.
-        # This avoids relying on the transient _backend attribute.
         mesh_feat = getattr(vobj, "Mesh", None)
         if mesh_feat is None or mesh_feat.Mesh is None:
             return
@@ -1144,10 +1143,23 @@ class ViewProviderCompositeShell:
         if mesh_data.CountFacets == 0:
             return
 
+        # Get node_positions and quads from the backend.
+        # The overlay draws warp/weft edges directly from the draper
+        # topology — no texture coordinates or GLSL shaders needed.
+        solve_result = obj._backend._run_solve()
+        node_positions = solve_result.get("node_positions", [])
+        quads = solve_result.get("quads", [])
+        if not quads or not node_positions:
+            return
+
         offset_angle_deg = self.get_offset_angle(vobj)
-        tex_coords = obj.get_tex_coords(offset_angle_deg=offset_angle_deg)
-        if tex_coords and self.grid_shader:
-            self.grid_shader.attach(vobj, mesh_feat, tex_coords, offset_angle_deg)
+        if self.grid_shader:
+            self.grid_shader.attach(
+                mesh_feat,
+                node_positions,
+                quads,
+                offset_angle_deg,
+            )
             self.Active = True
             import FreeCADGui
 
