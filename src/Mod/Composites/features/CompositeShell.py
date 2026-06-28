@@ -160,7 +160,11 @@ class CompositeShellFP(CompositeBaseFP):
                 f"status={diag.get('status')} reason={diag.get('failure_reason')}"
             )
 
-            self.fibre_analysis(fp)
+            # Only run fibre analysis if the drape actually succeeded.
+            # Stale cached boundaries from a prior solve cause
+            # Part.makePolygon failures when the current solve failed.
+            if diag.get("status") != "failed":
+                self.fibre_analysis(fp)
 
             # Store mesh in backend for ViewProvider shader attachment
             self._backend.mesh = mesh
