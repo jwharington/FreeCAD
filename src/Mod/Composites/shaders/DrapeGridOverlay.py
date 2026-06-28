@@ -1,15 +1,12 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
-"""Render draped mesh warp/weft edges as coloured line sets.
+"""Render draped mesh fibre directions as coloured line segments.
 
-Replaces the GLSL shader approach with a simple Coin3D overlay that
-draws quad edges coloured by direction:
-  - Warp edges (i0->i1, i2->i3): one colour
-  - Weft edges (i1->i2, i3->i0): another colour
-
-This avoids all shader/texture-coordinate plumbing and gives a clear
-visual indication of the fibre orientation on the draped surface.
+Draws short line segments through each quad centroid, oriented along
+the warp and weft directions rotated by the lamina's stacking angle.
+This gives a clear visual indication of fibre orientation on the
+draped surface for the selected lamina layer.
 """
 
 from __future__ import annotations
@@ -25,13 +22,13 @@ def _apply_rotation(u: float, v: float, angle_deg: float) -> tuple[float, float]
     """Rotate a UV pair by the rosette offset angle."""
     if not angle_deg:
         return u, v
-    ang = math.radians(-angle_deg)
+    ang = math.radians(angle_deg)
     c, s = math.cos(ang), math.sin(ang)
     return u * c - v * s, u * s + v * c
 
 
 class DrapeGridOverlay:
-    """Builds and manages a Coin3D scene-graph overlay of warp/weft edges."""
+    """Builds and manages a Coin3D scene-graph overlay of fibre directions."""
 
     def __init__(self) -> None:
         self.warp_color = (0.1, 0.4, 0.9)   # blue
@@ -80,13 +77,13 @@ class DrapeGridOverlay:
             Quad connectivity.  Warp edges are i0->i1 and i2->i3.
             Weft edges are i1->i2 and i3->i0.
         offset_angle_deg : float
-            Rosette rotation angle (applied to UV to classify direction).
+            Lamina stacking angle (degrees).  Rotates the fibre direction
+            relative to the draper's warp/weft grid.
         """
-        # Build line sets
-        warp_coords, warp_idx = self._build_edges(
+        warp_coords, warp_idx = self._build_segments(
             node_positions, quads, offset_angle_deg, warp=True
         )
-        weft_coords, weft_idx = self._build_edges(
+        weft_coords, weft_idx = self._build_segments(
             node_positions, quads, offset_angle_deg, warp=False
         )
 
@@ -122,39 +119,87 @@ class DrapeGridOverlay:
                 pass
 
     # ------------------------------------------------------------------
-    def _build_edges(
+    def _build_segments(
         self,
         node_positions: list,
         quads: list,
         offset_angle_deg: float,
         warp: bool,
     ) -> tuple[list, list]:
-        """Collect edge endpoints for warp or weft edges.
+        """Build line segments showing fibre direction within each quad.
+
+        For each quad, draws a line segment through the centroid, oriented
+        along the warp (or weft) direction, rotated by the lamina angle.
 
         Returns (coords, num_vertices) where coords is a flat list of
         [x,y,z] and num_vertices is a list of 2s (each line = 2 vertices).
         """
+        import numpy as np
+
         coords: list[list[float]] = []
         num_vertices: list[int] = []
+
+        # The lamina angle rotates the fibre direction relative to the
+        # draper's warp/weft grid.  For a 0° ply, fibres run along warp.
+        # For a 45° ply, fibres run at 45° to warp.
+        angle_rad = math.radians(offset_angle_deg)
+        cos_a = math.cos(angle_rad)
+        sin_a = math.sin(angle_rad)
 
         for q in quads:
             if len(q) < 4:
                 continue
             i0, i1, i2, i3 = q[0], q[1], q[2], q[3]
 
-            # Warp edges: i0->i1, i2->i3
-            # Weft edges: i1->i2, i3->i0
-            if warp:
-                edges = [(i0, i1), (i2, i3)]
-            else:
-                edges = [(i1, i2), (i3, i0)]
+            p0 = np.asarray(node_positions[i0], dtype=float)
+            p1 = np.asarray(node_positions[i1], dtype=float)
+            p2 = np.asarray(node_positions[i2], dtype=float)
+            p3 = np.asarray(node_positions[i3], dtype=float)
 
-            for a, b in edges:
-                pa = node_positions[a]
-                pb = node_positions[b]
-                coords.append([float(pa[0]), float(pa[1]), float(pa[2])])
-                coords.append([float(pb[0]), float(pb[1]), float(pb[2])])
-                num_vertices.append(2)
+            # Quad centroid
+            centroid = (p0 + p1 + p2 + p3) / 4.0
+
+            # Warp direction: i0->i1 (and i3->i2)
+            # Weft direction: i1->i2 (and i0->i3)
+            if warp:
+                base_dir = p1 - p0
+            else:
+                base_dir = p2 - p1
+
+            # Compute surface normal via cross product of quad edges
+            edge1 = p1 - p0
+            edge2 = p3 - p0
+            normal = np.cross(edge1, edge2)
+            norm_len = np.linalg.norm(normal)
+            if norm_len < 1e-10:
+                continue
+            normal = normal / norm_len
+
+            # Rotate base_dir by angle_rad around the surface normal.
+            # Rodrigues' rotation formula:
+            #   v_rot = v*cos + (n×v)*sin + n*(n·v)*(1-cos)
+            v = base_dir
+            n = normal
+            v_rot = (v * cos_a
+                     + np.cross(n, v) * sin_a
+                     + n * np.dot(n, v) * (1.0 - cos_a))
+
+            # Normalize and scale to ~80% of half-edge length for visibility
+            v_len = np.linalg.norm(v_rot)
+            if v_len < 1e-10:
+                continue
+            v_dir = v_rot / v_len
+
+            # Segment length: 80% of the average edge length
+            edge_len = (np.linalg.norm(p1 - p0) + np.linalg.norm(p2 - p1)) / 2.0
+            seg_len = edge_len * 0.8
+
+            p_start = centroid - v_dir * (seg_len / 2.0)
+            p_end = centroid + v_dir * (seg_len / 2.0)
+
+            coords.append([float(p_start[0]), float(p_start[1]), float(p_start[2])])
+            coords.append([float(p_end[0]), float(p_end[1]), float(p_end[2])])
+            num_vertices.append(2)
 
         return coords, num_vertices
 
