@@ -62,7 +62,7 @@ class MeshGridShader:
         # Track whether self.texcoords has been added to self.grp
         self._texcoords_attached = False
 
-        self.Spacing = [20.0, 2.0, 10.0]
+        self.Spacing = [0.1, 0.01, 0.05]
         self.Darken = 0.1
 
         shader_params = [
