@@ -96,7 +96,6 @@ class MeshGridShader:
         )
 
         self.grp = coin.SoGroup()
-        self.grp.addChild(self.shaderProgram)
 
     @property
     def Spacing(self):
@@ -153,7 +152,7 @@ class MeshGridShader:
         self.attach(obj, None, None)
 
     def _cleanup(self):
-        """Remove self.texcoords, coord_binding, and tex_matrix_transform from self.grp.
+        """Remove all dynamically-added nodes from self.grp.
 
         Counterpart to the addChild calls in attach(). Safe to call even if
         nothing was ever attached -- acts as a no-op in that case.
@@ -174,13 +173,19 @@ class MeshGridShader:
                 self.grp.removeChild(self.tex_matrix_transform)
             except Exception:
                 pass
+        if hasattr(self, "shaderProgram"):
+            try:
+                self.grp.removeChild(self.shaderProgram)
+            except Exception:
+                pass
 
     def attach(self, obj, child, tex_coords=None, offset_angle_deg=0):
-        self.texcoords = self.getTextureCoords(tex_coords)
+        # Clean up old nodes FIRST, before creating new ones.
+        self._cleanup()
+        if hasattr(self, "root") and self.root is not None:
+            remove_by_name(self.grp, self.root.getName())
 
         if tex_coords is None:
-            if hasattr(self, "root") and self.root is not None:
-                remove_by_name(self.grp, self.root.getName())
             return
 
         # Scene graph structure (siblings in traversal order):
@@ -189,6 +194,8 @@ class MeshGridShader:
         #   ├── tex_matrix (SoTextureMatrixTransform) ← rotates UV coords
         #   ├── my_texcoord (SoTextureCoordinate3)    ← generates from 3D pos
         #   └── root (SwitchNode → geometry)          ← rendered with shader
+
+        self.texcoords = self.getTextureCoords(tex_coords)
         self._cleanup()
         if hasattr(self, "root") and self.root is not None:
             remove_by_name(self.grp, self.root.getName())
