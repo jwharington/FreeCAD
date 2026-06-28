@@ -12,6 +12,125 @@ from .. import (
     roma_map,
 )
 from ..tools.drape_backend_nextdrape import NextDrapeBackend
+
+
+class _RehydratedBackend:
+    """Lightweight backend rebuilt from persisted feature state.
+
+    Used after recompute when the original NextDrapeBackend instance
+    (a transient Python attribute) has been garbage-collected.  Pulls
+    the mesh from the DrapeMesh feature and caches the previously
+    computed texture coordinates so that ``load_shader`` and other
+    consumers continue to work without re-running the solver.
+    """
+
+    backend_name = "nextdrape"
+
+    def __init__(self, mesh, mesh_feat, valid=True, tex_coords=None):
+        self._mesh = mesh
+        self._mesh_feat = mesh_feat
+        self._valid = valid
+        self._tex_coords_cached = tex_coords
+
+    def is_valid(self):
+        return self._valid
+
+    def diagnostics(self):
+        if not self._valid:
+            return {
+                "backend": self.backend_name,
+                "status": "failed",
+                "failure_reason": "recomputed_without_re_solve",
+            }
+        return {
+            "backend": self.backend_name,
+            "status": "valid",
+            "solver": "nextdrape",
+        }
+
+    def get_tex_coords(self, offset_angle_deg=0):
+        if self._tex_coords_cached is None:
+            return None
+        tex = self._tex_coords_cached
+        if offset_angle_deg:
+            import math
+            ang = math.radians(offset_angle_deg)
+            cos_a, sin_a = math.cos(ang), math.sin(ang)
+            tex = [[
+                u * cos_a - v * sin_a,
+                u * sin_a + v * cos_a,
+            ] for u, v in tex]
+        return tex
+
+    def get_boundaries(self, offset_angle_deg=0):
+        return []
+
+    def get_lcs(self, tri):
+        import FreeCAD
+        return FreeCAD.Placement()
+
+    def get_lcs_at_point(self, center):
+        import FreeCAD
+        return FreeCAD.Placement()
+
+    def get_tex_coord_at_point(self, point, offset_angle_deg=0):
+        return None
+
+    @property
+    def strains(self):
+        return []
+
+    @property
+    def draper(self):
+        return None
+
+
+def _reconstruct_backend(fp):
+    """Build a _RehydratedBackend from the DrapeMesh feature.
+
+    Called from ViewProviderCompositeShell.attach() when the transient
+    _backend attribute has been lost due to recompute.
+    """
+    import Mesh
+
+    mesh_feat = getattr(fp, "Mesh", None)
+    if mesh_feat is None:
+        return None
+    # mesh_feat.Mesh is the Mesh.MeshObject
+    mesh_data = getattr(mesh_feat, "Mesh", None)
+    if mesh_data is None:
+        return None
+
+    try:
+        verts = mesh_data.Points
+        facs = mesh_data.Facets
+        vertices = []
+        for v in verts:
+            vertices.append([v.x, v.y, v.z])
+        facets = []
+        for f in facs:
+            facets.append(list(f.PointIndices))
+        mesh = Mesh.Mesh(vertices, facets)
+    except Exception:
+        return None
+
+    valid = getattr(fp, "DrapeValid", False)
+    tex_json = getattr(fp, "TexCoordsJSON", None)
+    tex_coords = None
+    if tex_json:
+        try:
+            tex_coords = json.loads(tex_json)
+        except Exception:
+            pass
+
+    return _RehydratedBackend(
+        mesh=mesh,
+        mesh_feat=mesh_feat,
+        valid=bool(valid),
+        tex_coords=tex_coords,
+    )
+
+
 from ..tools.fibre import (
     make_fibre_length_analysis,
     make_fibre_orientation_analysis,
@@ -87,6 +206,21 @@ class CompositeShellFP(CompositeBaseFP):
             doc="Read-only JSON diagnostics for drape backend status",
         )
         obj.setPropertyStatus("DrapeDiagnostics", "ReadOnly")
+
+        obj.addProperty(
+            type="App::PropertyBool",
+            name="DrapeValid",
+            group="Draping",
+            doc="Whether the drape solve succeeded (persisted across recompute)",
+        )
+        obj.DrapeValid = False
+
+        obj.addProperty(
+            type="App::PropertyString",
+            name="TexCoordsJSON",
+            group="Draping",
+            doc="Serialized texture coordinates from the drape solve",
+        )
 
         obj.addProperty(
             type="App::PropertyLinkGlobal",
@@ -175,10 +309,26 @@ class CompositeShellFP(CompositeBaseFP):
                 fp.setPropertyStatus("Mesh", "LockDynamic")
                 fp.setPropertyStatus("Mesh", "ReadOnly")
 
+            # Persist the drape solve state so that the backend survives
+            # recompute cycles.  The mesh lives in the DrapeMesh feature;
+            # the validity flag and texture coordinates are stored as
+            # FreeCAD properties on the shell itself.
+            fp.DrapeValid = self._backend.is_valid()
+            tc = self._backend.get_tex_coords()
+            if tc is not None:
+                fp.TexCoordsJSON = json.dumps(tc)
+            else:
+                fp.TexCoordsJSON = ""
+
             # Store mesh in backend for ViewProvider shader attachment
             self._backend._mesh = mesh
             self._backend._mesh_feat = fp.Mesh  # persist Mesh feature ref for shader
             fp.Mesh.Mesh = mesh
+
+            # Replace the transient NextDrapeBackend with a rehydrated
+            # version that pulls the mesh from the DrapeMesh feature.
+            # This makes _backend survive recompute cycles.
+            self._backend = _reconstruct_backend(fp)
 
             # Load the shader directly here while _backend is still valid.
             # The _backend attribute is not persisted across recompute cycles,
@@ -200,6 +350,8 @@ class CompositeShellFP(CompositeBaseFP):
             Console.PrintMessage(f"DEBUG execute exception: {exc}\n")
             Console.PrintMessage(traceback.format_exc())
             self._backend = None
+            fp.DrapeValid = False
+            fp.TexCoordsJSON = ""
             self._set_drape_diagnostics(
                 fp,
                 backend="nextdrape",
@@ -366,6 +518,17 @@ class ViewProviderCompositeShell:
 
         self.ViewObject = obj
         self.Object = obj.Object
+
+        # Reconstruct the backend from persisted feature state.
+        # After recompute the transient _backend attribute is gone,
+        # but the DrapeMesh feature + DrapeValid/TexCoordsJSON props
+        # survive.  Rebuild a _RehydratedBackend so load_shader works.
+        if not hasattr(self.Object, "Proxy") or self.Object.Proxy is None:
+            pass
+        else:
+            proxy = self.Object.Proxy
+            if getattr(proxy, "_backend", None) is None:
+                proxy._backend = _reconstruct_backend(proxy)
 
         if not hasattr(self, "grid_shader"):
             self.grid_shader = MeshGridShader()
