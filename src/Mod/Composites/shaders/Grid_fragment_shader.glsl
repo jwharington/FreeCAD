@@ -68,7 +68,7 @@ float mixcol(float col, float amount) {
 void main() {
   float pixel_width = 1.0;
   float feather = 0.0;
-  highp vec3 coord = highp vec3(x_scale * gl_TexCoord[0].s,
+  highp vec3 coord = vec3(x_scale * gl_TexCoord[0].s,
                     y_scale * gl_TexCoord[0].t,
                     z_scale * gl_TexCoord[0].r);
   vec3 grid = vec3(gridFactor(coord.x, pixel_width, feather),
