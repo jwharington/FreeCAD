@@ -41,7 +41,8 @@ class _RehydratedBackend:
 
     When the support shape hasn't changed across recompute cycles,
     the draper solve result is reconstructed from FreeCAD properties
-    (NodePositionsJSON, QuadsJSON, TexCoordsJSON, StrainsJSON) instead
+    (NodePositionsJSON, QuadsJSON, TexCoordsJSON, StrainsJSON, QualityJSON)
+    instead
     of re-running the C++ solver.  This class implements the same
     interface as NextDrapeBackend so that execute() and all public
     accessor methods on CompositeShellFP work identically.
@@ -70,6 +71,7 @@ class _RehydratedBackend:
         quads_json: str,
         tex_coords_json: str,
         strains_json: str,
+        quality_json: str = "{}",
         status: str = "valid",
         failure_reason: str | None = None,
     ) -> None:
@@ -77,6 +79,7 @@ class _RehydratedBackend:
         self._quads = json.loads(quads_json)
         self._tex_coords = np.array(json.loads(tex_coords_json)) if tex_coords_json else np.empty((0, 2))
         self._strains = np.array(json.loads(strains_json)) if strains_json else np.array([])
+        self._quality = json.loads(quality_json)
         self._status = status
         self._failure_reason = failure_reason
 
@@ -358,6 +361,7 @@ class _RehydratedBackend:
             "quads": self._quads,
             "tex_coords": self._tex_coords.tolist(),
             "shear_angle": self._strains.tolist(),
+            "quality": self._quality,
         }
 
 
@@ -489,6 +493,12 @@ class CompositeShellFP(CompositeBaseFP):
             name="StrainsJSON",
             group="Draping",
             doc="Serialized per-quad shear angles from the drape solve",
+        )
+        obj.addProperty(
+            type="App::PropertyString",
+            name="QualityJSON",
+            group="Draping",
+            doc="Serialized quality result from the drape solve",
         )
 
         obj.addProperty(
@@ -624,12 +634,9 @@ class CompositeShellFP(CompositeBaseFP):
             # Human-readable quality status (from already-computed solve result)
             qual = solve_result.get("quality", {})
             if not fp.DrapeValid:
-                fp.DrapeQuality = "invalid"
-            elif qual.get("overall_pass", True):
-                fp.DrapeQuality = "pass"
+                fp.DrapeQuality = repr(qual)
             else:
-                failures = qual.get("failures", [])
-                fp.DrapeQuality = "fail: " + "; ".join(failures) if failures else "fail"
+                fp.DrapeQuality = repr(qual)
             tc = self._backend.get_tex_coords()
             if tc is not None:
                 fp.TexCoordsJSON = json.dumps(tc)
@@ -672,7 +679,7 @@ class CompositeShellFP(CompositeBaseFP):
             self._backend = None
             fp.DrapeValid = False
             fp.QualityPass = False
-            fp.DrapeQuality = "error: " + str(exc)[:100]
+            fp.DrapeQuality = "error: " + str(exc)[:200]
             fp.TexCoordsJSON = ""
             fp.NodePositionsJSON = ""
             fp.QuadsJSON = ""
@@ -766,6 +773,7 @@ class CompositeShellFP(CompositeBaseFP):
             quads_json=fp.QuadsJSON,
             tex_coords_json=fp.TexCoordsJSON,
             strains_json=fp.StrainsJSON,
+            quality_json=fp.QualityJSON if hasattr(fp, "QualityJSON") else "{}",
             status="valid",
             failure_reason=None,
         )
@@ -806,13 +814,7 @@ class CompositeShellFP(CompositeBaseFP):
 
         # Human-readable quality status (from rehydrated solve result)
         qual = solve_result.get("quality", {})
-        if diag.get("status") == "failed":
-            fp.DrapeQuality = "invalid"
-        elif qual.get("overall_pass", True):
-            fp.DrapeQuality = "pass"
-        else:
-            failures = qual.get("failures", [])
-            fp.DrapeQuality = "fail: " + "; ".join(failures) if failures else "fail"
+        fp.DrapeQuality = repr(qual) if diag.get("status") != "failed" else "invalid"
 
         # Hide the DrapeMesh — the DrapeGridOverlay renders the draped
         # quad edges as lines so the filled mesh is unnecessary.
@@ -837,6 +839,9 @@ class CompositeShellFP(CompositeBaseFP):
         )
         fp.StrainsJSON = json.dumps(
             solve_result.get("shear_angle", []).tolist()
+        )
+        fp.QualityJSON = json.dumps(
+            solve_result.get("quality", {})
         )
         # Cache the shape fingerprint so _can_use_persisted skips rehashing
         fp.ShapeFingerprint = self._shape_fingerprint(fp.Support.Shape)
