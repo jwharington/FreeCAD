@@ -627,6 +627,11 @@ class CompositeShellFP(CompositeBaseFP):
             self._backend._mesh_feat = fp.Mesh  # persist Mesh feature ref for shader
             fp.Mesh.Mesh = drapecd_mesh
 
+            # Hide the DrapeMesh — the DrapeGridOverlay renders the draped
+            # quad edges as lines so the filled mesh is unnecessary.
+            if hasattr(fp.Mesh, "ViewObject"):
+                fp.Mesh.ViewObject.Visibility = False
+
             # Load the shader directly here while _backend is still valid.
             # The _backend attribute is not persisted across recompute cycles,
             # so we must load the shader synchronously before execute() returns.
@@ -779,6 +784,11 @@ class CompositeShellFP(CompositeBaseFP):
             fp.setPropertyStatus("Mesh", "ReadOnly")
 
         fp.Mesh.Mesh = drapecd_mesh
+
+        # Hide the DrapeMesh — the DrapeGridOverlay renders the draped
+        # quad edges as lines so the filled mesh is unnecessary.
+        if hasattr(fp.Mesh, "ViewObject"):
+            fp.Mesh.ViewObject.Visibility = False
 
         # Load the shader (same as full solve path)
         vp = getattr(fp, "ViewObject", None)
