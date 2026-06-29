@@ -987,7 +987,6 @@ class ViewProviderCompositeShell:
             return
         display_layer_opts = list(fp.Laminate.StackOrientation.keys())
         sel = fp.ViewObject.DisplayLayer
-        fp.ViewObject.DisplayLayer = display_layer_opts
         if sel in display_layer_opts:
             return
         if display_layer_opts:
@@ -1002,6 +1001,8 @@ class ViewProviderCompositeShell:
             mesh_vobj.Visibility = visible
         if self.Object.LocalCoordinateSystem:
             self.Object.LocalCoordinateSystem.Visibility = visible
+        if self.Object.Support:
+            self.Object.Support.Visibility = visible
 
     def update_mesh_material(self, vobj):
         # use draper to determine distortion for coloring
