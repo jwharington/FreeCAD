@@ -44,23 +44,16 @@ class DrapeGridOverlay:
         self._weft_material = coin.SoMaterial()
         self._weft_material.diffuseColor = self.weft_color
 
-        # Group that holds the complete overlay (added as display mode)
+        # Group that holds the complete overlay (added as display mode).
         # Must be SoSeparator so all children render together when used
         # as a Coin3D display mode (SoSwitch whichChild=0 only shows child 0).
         self.root = coin.SoSeparator()
         self.root.setName("DrapeGridOverlay")
         self.root.addChild(self._draw_style)
-
-        # Separate visibility switch — used by set_visible()
-        self._visibility_switch = coin.SoSwitch()
-        self._visibility_switch.whichChild = 0  # visible by default
-        self._visibility_switch.addChild(self.root)
-
-        # Placeholders — repopulated by attach()
-        self._warp_sep = coin.SoSeparator()
-        self._weft_sep = coin.SoSeparator()
         self.root.addChild(self._warp_sep)
         self.root.addChild(self._weft_sep)
+
+        self._attached = False
 
         self._attached = False
 
@@ -217,6 +210,3 @@ class DrapeGridOverlay:
         self._warp_sep.removeAllChildren()
         self._weft_sep.removeAllChildren()
 
-    def set_visible(self, visible: bool) -> None:
-        """Show or hide the overlay without removing it from the scene graph."""
-        self._visibility_switch.whichChild = 0 if visible else coin.SO_SWITCH_NONE

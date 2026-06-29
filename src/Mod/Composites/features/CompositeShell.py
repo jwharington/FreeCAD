@@ -958,9 +958,11 @@ class ViewProviderCompositeShell:
         self.Object = obj.Object
 
         if not hasattr(self, "grid_shader"):
-            self.grid_shader = MeshGridShader()
+            from ..shaders.DrapeGridOverlay import DrapeGridOverlay
 
-        obj.addDisplayMode(self.grid_shader._visibility_switch, "Grid")
+            self.grid_shader = DrapeGridOverlay()
+
+        obj.addDisplayMode(self.grid_shader.root, "Grid")
         # self.load_shader()
 
         # Fibre orientation rosette: always-visible overlay on the root node
@@ -1000,11 +1002,6 @@ class ViewProviderCompositeShell:
             mesh_vobj.Visibility = visible
         if self.Object.LocalCoordinateSystem:
             self.Object.LocalCoordinateSystem.Visibility = visible
-        # The warp/weft overlay (DrapeGridOverlay) attaches itself to the
-        # DrapeMesh's RootNode, so it is not hidden by the CompositeShell's
-        # display-mode switch.  Toggle it explicitly.
-        if hasattr(self, "grid_shader") and self.grid_shader is not None:
-            self.grid_shader.set_visible(visible)
 
     def update_mesh_material(self, vobj):
         # use draper to determine distortion for coloring
