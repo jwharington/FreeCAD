@@ -1000,6 +1000,11 @@ class ViewProviderCompositeShell:
             mesh_vobj.Visibility = visible
         if self.Object.LocalCoordinateSystem:
             self.Object.LocalCoordinateSystem.Visibility = visible
+        # The warp/weft overlay (DrapeGridOverlay) attaches itself to the
+        # DrapeMesh's RootNode, so it is not hidden by the CompositeShell's
+        # display-mode switch.  Toggle it explicitly.
+        if hasattr(self, "grid_shader") and self.grid_shader is not None:
+            self.grid_shader.set_visible(visible)
 
     def update_mesh_material(self, vobj):
         # use draper to determine distortion for coloring
@@ -1165,7 +1170,7 @@ class ViewProviderCompositeShell:
         solve_result = obj._backend._run_solve()
         node_positions = solve_result.get("node_positions", [])
         quads = solve_result.get("quads", [])
-        if not quads or not node_positions:
+        if len(quads) == 0 or len(node_positions) == 0:
             return
 
         offset_angle_deg = self.get_offset_angle(vobj)

@@ -45,8 +45,9 @@ class DrapeGridOverlay:
         self._weft_material.diffuseColor = self.weft_color
 
         # Group that holds the complete overlay (added to display mode)
-        self.root = coin.SoSeparator()
+        self.root = coin.SoSwitch()
         self.root.setName("DrapeGridOverlay")
+        self.root.whichChild = 0  # visible by default
         self.root.addChild(self._draw_style)
 
         # Placeholders — repopulated by attach()
@@ -215,3 +216,7 @@ class DrapeGridOverlay:
         self._attached = False
         self._warp_sep.removeAllChildren()
         self._weft_sep.removeAllChildren()
+
+    def set_visible(self, visible: bool) -> None:
+        """Show or hide the overlay without removing it from the scene graph."""
+        self.root.whichChild = 0 if visible else coin.SO_SWITCH_NONE
