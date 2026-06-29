@@ -442,6 +442,16 @@ class CompositeShellFP(CompositeBaseFP):
             doc="Whether the drape solve succeeded (persisted across recompute)",
         )
         obj.DrapeValid = False
+        obj.setPropertyStatus("DrapeValid", "ReadOnly")
+
+        obj.addProperty(
+            type="App::PropertyBool",
+            name="QualityPass",
+            group="Draping",
+            doc="Whether the drape quality check passed (readonly)",
+        )
+        obj.QualityPass = True
+        obj.setPropertyStatus("QualityPass", "ReadOnly")
 
         obj.addProperty(
             type="App::PropertyString",
@@ -543,7 +553,7 @@ class CompositeShellFP(CompositeBaseFP):
                 f.write(f"[execute] START\n")
                 f.flush()
             mesh = mesh_util.shape2Mesh(fp.Shape, fp.MaxLength)
-            with open(debug_file, "a") as f:
+            with open(debug_file, "a", encoding="utf-8") as f:
                 f.write(f"[execute] mesh created, facets={mesh.CountFacets}\n")
                 f.flush()
             self._backend = self._make_backend(
@@ -599,6 +609,7 @@ class CompositeShellFP(CompositeBaseFP):
             # the validity flag and texture coordinates are stored as
             # FreeCAD properties on the shell itself.
             fp.DrapeValid = self._backend.is_valid()
+            fp.QualityPass = self._backend.quality_pass()
             tc = self._backend.get_tex_coords()
             if tc is not None:
                 fp.TexCoordsJSON = json.dumps(tc)
@@ -627,7 +638,7 @@ class CompositeShellFP(CompositeBaseFP):
             import traceback
 
             debug_file = "/tmp/nextdrape_debug.txt"
-            with open(debug_file, "a") as f:
+            with open(debug_file, "a", encoding="utf-8") as f:
                 f.write(f"[execute] EXCEPTION: {exc}\n")
                 f.write(traceback.format_exc())
                 f.flush()
@@ -635,6 +646,7 @@ class CompositeShellFP(CompositeBaseFP):
             Console.PrintMessage(traceback.format_exc())
             self._backend = None
             fp.DrapeValid = False
+            fp.QualityPass = False
             fp.TexCoordsJSON = ""
             fp.NodePositionsJSON = ""
             fp.QuadsJSON = ""
@@ -981,7 +993,9 @@ class ViewProviderCompositeShell:
         visible = vobj.Visibility
         if vobj.DisplayMode not in self.getDisplayModes(vobj):
             visible = False
-        self.Object.Mesh.Visibility = visible
+        mesh_vobj = getattr(self.Object, "Mesh", None)
+        if mesh_vobj is not None:
+            mesh_vobj.Visibility = visible
         if self.Object.LocalCoordinateSystem:
             self.Object.LocalCoordinateSystem.Visibility = visible
 

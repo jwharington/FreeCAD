@@ -88,6 +88,11 @@ class NextDrapeBackend(DrapeBackend):
             seed = self._build_seed()
             params = self._build_params()
             with open(debug_file, "a") as f:
+                f.write(f"[_run_solve] seed: {seed}\n")
+                f.write(f"[_run_solve] params: {params}\n")
+                f.write(f"[_run_solve] shape type: {type(self._shape)}\n")
+                f.flush()
+            with open(debug_file, "a") as f:
                 f.write(f"[_run_solve] calling solve...\n")
                 f.flush()
             self._result = self._solve(self._shape, seed, params)
@@ -95,6 +100,8 @@ class NextDrapeBackend(DrapeBackend):
                 f.write(f"[_run_solve] solved, success={self._result.get('success')}\n")
                 if not self._result.get("success"):
                     f.write(f"[_run_solve] error={self._result.get('error')}\n")
+                # Always dump full result for diagnostics
+                f.write(f"[_run_solve] result keys: {list(self._result.keys())}\n")
                 f.flush()
             if not self._result.get("success"):
                 self._valid = False
@@ -104,6 +111,12 @@ class NextDrapeBackend(DrapeBackend):
 
     def is_valid(self) -> bool:
         return self._valid
+
+    def quality_pass(self) -> bool:
+        """Return whether the drape quality check passed."""
+        r = self._run_solve()
+        qual = r.get("quality", {})
+        return bool(qual.get("overall_pass", True))
 
     def diagnostics(self) -> dict[str, Any]:
         """Return backend diagnostics payload."""
@@ -529,6 +542,11 @@ class NextDrapeBackend(DrapeBackend):
             point = [base.x, base.y, base.z]
         elif hasattr(shape, "CenterOfMass"):
             com = shape.CenterOfMass
+            with open(debug_file, "a") as f:
+                f.write(f"[_run_solve] COM: ({com.x:.4f}, {com.y:.4f}, {com.z:.4f})\n")
+                if hasattr(shape, "BoundBox"):
+                    bb = shape.BoundBox
+                    f.write(f"[_run_solve] BBox: x[{bb.XMin:.2f},{bb.XMax:.2f}] y[{bb.YMin:.2f},{bb.YMax:.2f}] z[{bb.ZMin:.2f},{bb.ZMax:.2f}]\n")
             point = self._project_point_to_surface(com)
         else:
             point = [0.0, 0.0, 0.0]
@@ -561,6 +579,7 @@ class NextDrapeBackend(DrapeBackend):
             "max_weft_steps": getattr(mesh, "max_weft_steps", 40),
             "shear_warn_deg": getattr(mesh, "shear_warn_deg", 20.0),
             "shear_fail_deg": getattr(mesh, "shear_fail_deg", 35.0),
+            "strain_fail": getattr(mesh, "strain_fail", 0.15),
             "projection_tol": getattr(mesh, "projection_tol", 0.5),
             "boundary_tol": getattr(mesh, "boundary_tol", 1e-3),
             "use_geodesic": getattr(mesh, "use_geodesic", False),
