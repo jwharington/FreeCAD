@@ -457,6 +457,14 @@ class CompositeShellFP(CompositeBaseFP):
 
         obj.addProperty(
             type="App::PropertyString",
+            name="DrapeQuality",
+            group="Draping",
+            doc="Human-readable draping quality status",
+        )
+        obj.setPropertyStatus("DrapeQuality", "ReadOnly")
+
+        obj.addProperty(
+            type="App::PropertyString",
             name="TexCoordsJSON",
             group="Draping",
             doc="Serialized texture coordinates from the drape solve",
@@ -612,6 +620,16 @@ class CompositeShellFP(CompositeBaseFP):
             # FreeCAD properties on the shell itself.
             fp.DrapeValid = self._backend.is_valid()
             fp.QualityPass = self._backend.quality_pass()
+
+            # Human-readable quality status (from already-computed solve result)
+            qual = solve_result.get("quality", {})
+            if not fp.DrapeValid:
+                fp.DrapeQuality = "invalid"
+            elif qual.get("overall_pass", True):
+                fp.DrapeQuality = "pass"
+            else:
+                failures = qual.get("failures", [])
+                fp.DrapeQuality = "fail: " + "; ".join(failures) if failures else "fail"
             tc = self._backend.get_tex_coords()
             if tc is not None:
                 fp.TexCoordsJSON = json.dumps(tc)
@@ -654,6 +672,7 @@ class CompositeShellFP(CompositeBaseFP):
             self._backend = None
             fp.DrapeValid = False
             fp.QualityPass = False
+            fp.DrapeQuality = "error: " + str(exc)[:100]
             fp.TexCoordsJSON = ""
             fp.NodePositionsJSON = ""
             fp.QuadsJSON = ""
@@ -784,6 +803,16 @@ class CompositeShellFP(CompositeBaseFP):
             fp.setPropertyStatus("Mesh", "ReadOnly")
 
         fp.Mesh.Mesh = drapecd_mesh
+
+        # Human-readable quality status (from rehydrated solve result)
+        qual = solve_result.get("quality", {})
+        if diag.get("status") == "failed":
+            fp.DrapeQuality = "invalid"
+        elif qual.get("overall_pass", True):
+            fp.DrapeQuality = "pass"
+        else:
+            failures = qual.get("failures", [])
+            fp.DrapeQuality = "fail: " + "; ".join(failures) if failures else "fail"
 
         # Hide the DrapeMesh — the DrapeGridOverlay renders the draped
         # quad edges as lines so the filled mesh is unnecessary.
