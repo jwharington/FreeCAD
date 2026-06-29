@@ -960,7 +960,7 @@ class ViewProviderCompositeShell:
         if not hasattr(self, "grid_shader"):
             self.grid_shader = MeshGridShader()
 
-        obj.addDisplayMode(self.grid_shader.root, "Grid")
+        obj.addDisplayMode(self.grid_shader._visibility_switch, "Grid")
         # self.load_shader()
 
         # Fibre orientation rosette: always-visible overlay on the root node
