@@ -905,15 +905,6 @@ class ViewProviderCompositeShell:
         obj.Darken = 0.5
 
         obj.addProperty(
-            "App::PropertyEnumeration",
-            "DisplayLayer",
-            "AnalysisOptions",
-            "Select layer to display",
-        )
-        obj.DisplayLayer = ["0"]
-        obj.DisplayLayer = "0"
-
-        obj.addProperty(
             "App::PropertyBool",
             "ShowRosette",
             "Rosette",
@@ -965,6 +956,22 @@ class ViewProviderCompositeShell:
         obj.addDisplayMode(self.grid_shader.root, "Grid")
         # self.load_shader()
 
+        # Add DisplayLayer property to ViewObject (enumeration for layer
+        # selection dropdown). Must be added here because FreeCAD mirrors
+        # App::PropertyEnumeration from the FeaturePython to the ViewObject
+        # but adds the 'hidden' flag on mirroring.
+        if not hasattr(obj, "DisplayLayer"):
+            obj.addProperty(
+                "App::PropertyEnumeration",
+                "DisplayLayer",
+                "AnalysisOptions",
+                "Select layer to display",
+            )
+            obj.DisplayLayer = ["0"]
+            obj.DisplayLayer = "0"
+            # Remove the 'hidden' flag that FreeCAD adds on mirroring
+            obj.setPropertyStatus("DisplayLayer", "Hidden", False)
+
         # Fibre orientation rosette: always-visible overlay on the root node
         from pivy import coin
 
@@ -987,6 +994,7 @@ class ViewProviderCompositeShell:
             return
         display_layer_opts = list(fp.Laminate.StackOrientation.keys())
         sel = fp.ViewObject.DisplayLayer
+        fp.ViewObject.DisplayLayer = display_layer_opts
         if sel in display_layer_opts:
             return
         if display_layer_opts:
