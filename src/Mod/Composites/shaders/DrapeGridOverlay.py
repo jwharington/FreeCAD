@@ -50,10 +50,12 @@ class DrapeGridOverlay:
         self.root = coin.SoSeparator()
         self.root.setName("DrapeGridOverlay")
         self.root.addChild(self._draw_style)
+
+        # Placeholders — repopulated by attach()
+        self._warp_sep = coin.SoSeparator()
+        self._weft_sep = coin.SoSeparator()
         self.root.addChild(self._warp_sep)
         self.root.addChild(self._weft_sep)
-
-        self._attached = False
 
         self._attached = False
 
