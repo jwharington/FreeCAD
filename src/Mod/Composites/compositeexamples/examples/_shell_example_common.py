@@ -628,6 +628,9 @@ def _create_fem_base(doc, tag):
 
     _add_analysis_member(analysis, solver)
     _add_analysis_member(analysis, mesh_obj)
+    # COMPOSITE shell sections require quadratic elements (S6/S8R).
+    if hasattr(mesh_obj, "ElementOrder"):
+        mesh_obj.ElementOrder = "2nd"
     return analysis, solver, mesh_obj
 
 

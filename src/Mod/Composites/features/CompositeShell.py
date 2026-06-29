@@ -137,10 +137,12 @@ class _RehydratedBackend:
             if isinstance(first, (int, np.integer)):
                 i0, i1, i2 = [int(idx) for idx in tri]
                 v0, v1, v2 = node_positions[i0], node_positions[i1], node_positions[i2]
-            elif isinstance(first, (tuple, list)) and len(first) == 3:
-                v0, v1, v2 = np.array(tri[0]), np.array(tri[1]), np.array(tri[2])
             else:
-                return None
+                # FreeCAD.Vector, tuples, lists, or any iterable of 3 floats
+                try:
+                    v0, v1, v2 = np.asarray(tri[0]), np.asarray(tri[1]), np.asarray(tri[2])
+                except Exception:
+                    return None
         else:
             return None
 
