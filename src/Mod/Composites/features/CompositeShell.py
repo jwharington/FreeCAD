@@ -654,8 +654,9 @@ class CompositeShellFP(CompositeBaseFP):
 
             # Hide the DrapeMesh — the DrapeGridOverlay renders the draped
             # quad edges as lines so the filled mesh is unnecessary.
-            if hasattr(fp.Mesh, "ViewObject"):
-                fp.Mesh.ViewObject.Visibility = False
+            mesh_vo = getattr(fp.Mesh, "ViewObject", None)
+            if mesh_vo is not None:
+                mesh_vo.Visibility = False
 
             # Load the shader directly here while _backend is still valid.
             # The _backend attribute is not persisted across recompute cycles,
@@ -818,8 +819,9 @@ class CompositeShellFP(CompositeBaseFP):
 
         # Hide the DrapeMesh — the DrapeGridOverlay renders the draped
         # quad edges as lines so the filled mesh is unnecessary.
-        if hasattr(fp.Mesh, "ViewObject"):
-            fp.Mesh.ViewObject.Visibility = False
+        mesh_vo = getattr(fp.Mesh, "ViewObject", None)
+        if mesh_vo is not None:
+            mesh_vo.Visibility = False
 
         # Load the shader (same as full solve path)
         vp = getattr(fp, "ViewObject", None)
@@ -1013,8 +1015,6 @@ class ViewProviderCompositeShell:
             )
             obj.DisplayLayer = ["0"]
             obj.DisplayLayer = "0"
-            # Remove the 'hidden' flag that FreeCAD adds on mirroring
-            obj.setPropertyStatus("DisplayLayer", "Hidden", False)
 
         # Fibre orientation rosette: always-visible overlay on the root node
         from pivy import coin
