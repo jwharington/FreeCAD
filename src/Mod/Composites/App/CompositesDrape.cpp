@@ -181,10 +181,13 @@ PYBIND11_MODULE(Composites_drape, m) {
         diag["total_nodes"] = static_cast<int>(result.nodes.size());
         res["diagnostics"] = diag;
 
-        // Quality result
+        // Quality result — forward from C++ CheckQuality
         py::dict qual;
-        qual["overall_pass"] = true;
+        qual["overall_pass"] = result.qualityResult.overallPass;
         py::list qual_failures;
+        for (const auto& f : result.qualityResult.failures) {
+            qual_failures.append(f);
+        }
         qual["failures"] = qual_failures;
         res["quality"] = qual;
 
