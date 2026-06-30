@@ -159,96 +159,96 @@ _features_dir = os.path.join(_REPO_ROOT, "freecad", "Composites", "features")
 
 # Leaf enums
 _sym_mod = _load_module(
-    "freecad.Composites.objects.symmetry_type",
-    "freecad/Composites/objects/symmetry_type.py",
+    "Composites.objects.symmetry_type",
+    "Composites/objects/symmetry_type.py",
 )
 _weave_mod = _load_module(
-    "freecad.Composites.objects.weave_type",
-    "freecad/Composites/objects/weave_type.py",
+    "Composites.objects.weave_type",
+    "Composites/objects/weave_type.py",
 )
 
 # Stub objects package (exposes only already-loaded symbols to avoid
 # the circular import in objects/__init__.py)
 _fake_objects_pkg = _make_package_stub(
-    "freecad.Composites.objects", _objects_dir
+    "Composites.objects", _objects_dir
 )
 _fake_objects_pkg.SymmetryType = _sym_mod.SymmetryType
 _fake_objects_pkg.WeaveType = _weave_mod.WeaveType
 
 # Load mechanics.stack_model_type (no deps)
 _smt_mod = _load_module(
-    "freecad.Composites.mechanics.stack_model_type",
-    "freecad/Composites/mechanics/stack_model_type.py",
+    "Composites.mechanics.stack_model_type",
+    "Composites/mechanics/stack_model_type.py",
 )
 
 # Stub mechanics package
 _fake_mech_pkg = _make_package_stub(
-    "freecad.Composites.mechanics", _mechanics_dir
+    "Composites.mechanics", _mechanics_dir
 )
 _fake_mech_pkg.StackModelType = _smt_mod.StackModelType
 
 # Load the Composites package (__init__.py — FreeCAD is mocked)
-import freecad.Composites  # noqa: E402
+import Composites  # noqa: E402
 
 # Geometry util (requires objects stub above)
-from freecad.Composites.util.geometry_util import (  # noqa: E402
+from Composites.util.geometry_util import (  # noqa: E402
     expand_symmetry,
 )
 
 # Leaf object modules
 _lamina_mod = _load_module(
-    "freecad.Composites.objects.lamina",
-    "freecad/Composites/objects/lamina.py",
+    "Composites.objects.lamina",
+    "Composites/objects/lamina.py",
 )
 _ply_mod = _load_module(
-    "freecad.Composites.objects.ply",
-    "freecad/Composites/objects/ply.py",
+    "Composites.objects.ply",
+    "Composites/objects/ply.py",
 )
 
 # Mechanics modules
-from freecad.Composites.mechanics.material_properties import (  # noqa: E402
+from Composites.mechanics.material_properties import (  # noqa: E402
     material_from_dict,
     ortho_material2dict,
 )
-from freecad.Composites.mechanics.shell_model import (  # noqa: E402
+from Composites.mechanics.shell_model import (  # noqa: E402
     material_shell_properties,
 )
 
 _homo_mod = _load_module(
-    "freecad.Composites.objects.homogeneous_lamina",
-    "freecad/Composites/objects/homogeneous_lamina.py",
+    "Composites.objects.homogeneous_lamina",
+    "Composites/objects/homogeneous_lamina.py",
 )
 _comp_lamina_mod = _load_module(
-    "freecad.Composites.objects.composite_lamina",
-    "freecad/Composites/objects/composite_lamina.py",
+    "Composites.objects.composite_lamina",
+    "Composites/objects/composite_lamina.py",
 )
 _fabric_mod = _load_module(
-    "freecad.Composites.objects.fabric",
-    "freecad/Composites/objects/fabric.py",
+    "Composites.objects.fabric",
+    "Composites/objects/fabric.py",
 )
 _sf_mod = _load_module(
-    "freecad.Composites.objects.simple_fabric",
-    "freecad/Composites/objects/simple_fabric.py",
+    "Composites.objects.simple_fabric",
+    "Composites/objects/simple_fabric.py",
 )
 _stack_model_mod = _load_module(
-    "freecad.Composites.mechanics.stack_model",
-    "freecad/Composites/mechanics/stack_model.py",
+    "Composites.mechanics.stack_model",
+    "Composites/mechanics/stack_model.py",
 )
 _stack_exp_mod = _load_module(
-    "freecad.Composites.mechanics.stack_expansion",
-    "freecad/Composites/mechanics/stack_expansion.py",
+    "Composites.mechanics.stack_expansion",
+    "Composites/mechanics/stack_expansion.py",
 )
 _fcl_obj_mod = _load_module(
-    "freecad.Composites.objects.fibre_composite_lamina",
-    "freecad/Composites/objects/fibre_composite_lamina.py",
+    "Composites.objects.fibre_composite_lamina",
+    "Composites/objects/fibre_composite_lamina.py",
 )
 _laminate_obj_mod = _load_module(
-    "freecad.Composites.objects.laminate",
-    "freecad/Composites/objects/laminate.py",
+    "Composites.objects.laminate",
+    "Composites/objects/laminate.py",
 )
 _comp_lam_obj_mod = _load_module(
-    "freecad.Composites.objects.composite_laminate",
-    "freecad/Composites/objects/composite_laminate.py",
+    "Composites.objects.composite_laminate",
+    "Composites/objects/composite_laminate.py",
 )
 
 # Populate objects package stub with all symbols
@@ -267,18 +267,18 @@ _fake_mech_pkg.StackModelType = _smt_mod.StackModelType
 
 # Util modules
 _fem_util_mod = _load_module(
-    "freecad.Composites.util.fem_util",
-    "freecad/Composites/util/fem_util.py",
+    "Composites.util.fem_util",
+    "Composites/util/fem_util.py",
 )
 _bom_util_mod = _load_module(
-    "freecad.Composites.util.bom_util",
-    "freecad/Composites/util/bom_util.py",
+    "Composites.util.bom_util",
+    "Composites/util/bom_util.py",
 )
 
 # Stub taskpanels package — feature files import task panel modules but
 # we have no Qt, so just mock the whole sub-package.
 _fake_taskpanels = _make_package_stub(
-    "freecad.Composites.taskpanels",
+    "Composites.taskpanels",
     os.path.join(_REPO_ROOT, "freecad", "Composites", "taskpanels"),
 )
 for _tp in (
@@ -288,7 +288,7 @@ for _tp in (
 ):
     _tp_mod = MagicMock()
     _tp_mod._TaskPanel = MagicMock
-    sys.modules[f"freecad.Composites.taskpanels.{_tp}"] = _tp_mod
+    sys.modules[f"Composites.taskpanels.{_tp}"] = _tp_mod
     setattr(_fake_taskpanels, _tp, _tp_mod)
 
 # ---------------------------------------------------------------------------
@@ -296,104 +296,104 @@ for _tp in (
 # ---------------------------------------------------------------------------
 
 _fake_features_pkg = _make_package_stub(
-    "freecad.Composites.features", _features_dir
+    "Composites.features", _features_dir
 )
 
 _vpbase_mod = _load_module(
-    "freecad.Composites.features.VPCompositeBase",
-    "freecad/Composites/features/VPCompositeBase.py",
+    "Composites.features.VPCompositeBase",
+    "Composites/features/VPCompositeBase.py",
 )
 _container_mod = _load_module(
-    "freecad.Composites.features.Container",
-    "freecad/Composites/features/Container.py",
+    "Composites.features.Container",
+    "Composites/features/Container.py",
 )
 _command_mod = _load_module(
-    "freecad.Composites.features.Command",
-    "freecad/Composites/features/Command.py",
+    "Composites.features.Command",
+    "Composites/features/Command.py",
 )
 _composite_mod = _load_module(
-    "freecad.Composites.features.Composite",
-    "freecad/Composites/features/Composite.py",
+    "Composites.features.Composite",
+    "Composites/features/Composite.py",
 )
 _lamina_feature_mod = _load_module(
-    "freecad.Composites.features.Lamina",
-    "freecad/Composites/features/Lamina.py",
+    "Composites.features.Lamina",
+    "Composites/features/Lamina.py",
 )
 _homo_feature_mod = _load_module(
-    "freecad.Composites.features.HomogeneousLamina",
-    "freecad/Composites/features/HomogeneousLamina.py",
+    "Composites.features.HomogeneousLamina",
+    "Composites/features/HomogeneousLamina.py",
 )
 _fcl_feature_mod = _load_module(
-    "freecad.Composites.features.FibreCompositeLamina",
-    "freecad/Composites/features/FibreCompositeLamina.py",
+    "Composites.features.FibreCompositeLamina",
+    "Composites/features/FibreCompositeLamina.py",
 )
 _laminate_feature_mod = _load_module(
-    "freecad.Composites.features.Laminate",
-    "freecad/Composites/features/Laminate.py",
+    "Composites.features.Laminate",
+    "Composites/features/Laminate.py",
 )
 _comp_lam_feature_mod = _load_module(
-    "freecad.Composites.features.CompositeLaminate",
-    "freecad/Composites/features/CompositeLaminate.py",
+    "Composites.features.CompositeLaminate",
+    "Composites/features/CompositeLaminate.py",
 )
 _rosette_feature_mod = _load_module(
-    "freecad.Composites.features.Rosette",
-    "freecad/Composites/features/Rosette.py",
+    "Composites.features.Rosette",
+    "Composites/features/Rosette.py",
 )
 
 # Load tools and shaders stubs needed by CompositeShell.py
 _tools_dir = os.path.join(_REPO_ROOT, "freecad", "Composites", "tools")
 _shaders_dir = os.path.join(_REPO_ROOT, "freecad", "Composites", "shaders")
 
-_fake_tools_pkg = _make_package_stub("freecad.Composites.tools", _tools_dir)
+_fake_tools_pkg = _make_package_stub("Composites.tools", _tools_dir)
 _fake_shaders_pkg = _make_package_stub(
-    "freecad.Composites.shaders", _shaders_dir
+    "Composites.shaders", _shaders_dir
 )
 
 _geom_util_mod = _load_module(
-    "freecad.Composites.util.geometry_util",
-    "freecad/Composites/util/geometry_util.py",
+    "Composites.util.geometry_util",
+    "Composites/util/geometry_util.py",
 )
 
 _mesh_util_mod = _load_module(
-    "freecad.Composites.util.mesh_util",
-    "freecad/Composites/util/mesh_util.py",
+    "Composites.util.mesh_util",
+    "Composites/util/mesh_util.py",
 )
 
 _draper_mod = _load_module(
-    "freecad.Composites.tools.draper",
-    "freecad/Composites/tools/draper.py",
+    "Composites.tools.draper",
+    "Composites/tools/draper.py",
 )
 _fake_tools_pkg.draper = _draper_mod
 
 _lcs_mod = _load_module(
-    "freecad.Composites.tools.lcs",
-    "freecad/Composites/tools/lcs.py",
+    "Composites.tools.lcs",
+    "Composites/tools/lcs.py",
 )
 _fake_tools_pkg.lcs = _lcs_mod
 
 _fibre_mod = _load_module(
-    "freecad.Composites.tools.fibre",
-    "freecad/Composites/tools/fibre.py",
+    "Composites.tools.fibre",
+    "Composites/tools/fibre.py",
 )
 _fake_tools_pkg.fibre = _fibre_mod
 
 _mesh_grid_shader_mod = _load_module(
-    "freecad.Composites.shaders.MeshGridShader",
-    "freecad/Composites/shaders/MeshGridShader.py",
+    "Composites.shaders.MeshGridShader",
+    "Composites/shaders/MeshGridShader.py",
 )
 _fake_shaders_pkg.MeshGridShader = _mesh_grid_shader_mod
 
 _composite_shell_feature_mod = _load_module(
-    "freecad.Composites.features.CompositeShell",
-    "freecad/Composites/features/CompositeShell.py",
+    "Composites.features.CompositeShell",
+    "Composites/features/CompositeShell.py",
 )
 _transfer_lcs_feature_mod = _load_module(
-    "freecad.Composites.features.TransferLCS",
-    "freecad/Composites/features/TransferLCS.py",
+    "Composites.features.TransferLCS",
+    "Composites/features/TransferLCS.py",
 )
 _align_fibre_lcs_feature_mod = _load_module(
-    "freecad.Composites.features.AlignFibreLCS",
-    "freecad/Composites/features/AlignFibreLCS.py",
+    "Composites.features.AlignFibreLCS",
+    "Composites/features/AlignFibreLCS.py",
 )
 
 # Short aliases for use in tests
@@ -1211,49 +1211,6 @@ class TestCompositeShellFPRosetteProperty(unittest.TestCase):
         obj2.Document = MagicMock()
         fp2 = CompositeShellFP(obj2, rosette=rosette_mock)
         self.assertIs(obj2.Rosette, rosette_mock)
-
-    def test_get_tex_coords_no_draper_returns_none(self):
-        # Without draper, get_tex_coords returns None regardless of angle
-        result = self.fp.get_tex_coords(30.0)
-        self.assertIsNone(result)
-
-    def test_get_boundaries_no_draper_returns_none(self):
-        result = self.fp.get_boundaries(45.0)
-        self.assertIsNone(result)
-
-    def test_get_tex_coords_adds_rosette_angle(self):
-        # Simulate a valid draper that records the offset_angle_deg passed in
-        mock_draper = MagicMock()
-        mock_draper.isValid.return_value = True
-        mock_draper.get_tex_coords.return_value = []
-        self.fp.draper = mock_draper
-        self.fp._rosette_angle = 15.0
-        self.fp.get_tex_coords(30.0)
-        mock_draper.get_tex_coords.assert_called_once_with(
-            offset_angle_deg=45.0
-        )
-
-    def test_get_boundaries_adds_rosette_angle(self):
-        mock_draper = MagicMock()
-        mock_draper.isValid.return_value = True
-        mock_draper.get_boundaries.return_value = []
-        self.fp.draper = mock_draper
-        self.fp._rosette_angle = 10.0
-        self.fp.get_boundaries(20.0)
-        mock_draper.get_boundaries.assert_called_once_with(
-            offset_angle_deg=30.0
-        )
-
-    def test_get_tex_coords_zero_rosette_angle(self):
-        mock_draper = MagicMock()
-        mock_draper.isValid.return_value = True
-        mock_draper.get_tex_coords.return_value = []
-        self.fp.draper = mock_draper
-        self.fp._rosette_angle = 0.0
-        self.fp.get_tex_coords(45.0)
-        mock_draper.get_tex_coords.assert_called_once_with(
-            offset_angle_deg=45.0
-        )
 
     def test_on_changed_rosette_triggers_recompute(self):
         # onChanged("Rosette") should trigger fp.recompute() which calls execute()

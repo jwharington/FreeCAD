@@ -107,28 +107,50 @@ def create_support_feature(doc, name, shape):
     return support
 
 
+def _ensure_matgui_stub():
+    try:
+        import MatGui
+    except Exception:
+        MatGui = None
+
+    if MatGui is None:
+        mod = types.ModuleType("MatGui")
+        mod.MaterialTreeWidget = type("MaterialTreeWidget", (), {})
+        sys.modules["MatGui"] = mod
+        return
+
+    # MatGui exists but may be incomplete in headless mode
+    if not hasattr(MatGui, "MaterialTreeWidget"):
+        MatGui.MaterialTreeWidget = type("MaterialTreeWidget", (), {})
+
+
 def _ensure_freecadgui_stub():
     try:
-        import FreeCADGui  # noqa: F401
-        return
+        import FreeCADGui
     except Exception:
-        pass
+        FreeCADGui = None
 
-    mod = types.ModuleType("FreeCADGui")
-    mod.addCommand = lambda *args, **kwargs: None
-    mod.Selection = types.SimpleNamespace(
-        addObserver=lambda *args, **kwargs: None,
-        removeObserver=lambda *args, **kwargs: None,
-    )
-    mod.Control = types.SimpleNamespace(
-        showDialog=lambda *args, **kwargs: None,
-        closeDialog=lambda *args, **kwargs: None,
-    )
-    mod.getDocument = lambda *args, **kwargs: types.SimpleNamespace(
-        getInEdit=lambda: False,
-        setEdit=lambda *a, **k: None,
-    )
-    sys.modules["FreeCADGui"] = mod
+    if FreeCADGui is None:
+        mod = types.ModuleType("FreeCADGui")
+        mod.addCommand = lambda *args, **kwargs: None
+        mod.Selection = types.SimpleNamespace(
+            addObserver=lambda *args, **kwargs: None,
+            removeObserver=lambda *args, **kwargs: None,
+        )
+        mod.Control = types.SimpleNamespace(
+            showDialog=lambda *args, **kwargs: None,
+            closeDialog=lambda *args, **kwargs: None,
+        )
+        mod.getDocument = lambda *args, **kwargs: types.SimpleNamespace(
+            getInEdit=lambda: False,
+            setEdit=lambda *a, **k: None,
+        )
+        sys.modules["FreeCADGui"] = mod
+        return
+
+    # FreeCADGui exists but may lack addCommand in headless mode
+    if not hasattr(FreeCADGui, "addCommand"):
+        FreeCADGui.addCommand = lambda *args, **kwargs: None
 
 
 def _ensure_taskpanel_stub(module_name):
@@ -141,6 +163,7 @@ def _ensure_taskpanel_stub(module_name):
 
 def _prepare_feature_import_environment():
     _ensure_freecadgui_stub()
+    _ensure_matgui_stub()
     _ensure_taskpanel_stub(
         "freecad.Composites.taskpanels.task_fibre_composite_lamina",
     )
@@ -267,7 +290,6 @@ def create_composite_feature_stack(
     support,
     *,
     name_prefix="Example",
-    skip_draper=False,
     skip_recompute=False,
     skip_view_providers=False,
     diagnostics=None,
@@ -283,7 +305,6 @@ def create_composite_feature_stack(
         "feature_stack.start",
         has_doc=doc is not None,
         has_support=support is not None,
-        skip_draper=bool(skip_draper),
         skip_recompute=bool(skip_recompute),
         skip_view_providers=bool(skip_view_providers),
     )
@@ -377,53 +398,43 @@ def create_composite_feature_stack(
 
     shell_obj = None
     shell_error = None
-    if gui_up:
-        try:
-            record_diagnostic_event(diagnostics, "feature_stack.shell.import.begin")
-            from ...features.CompositeShell import (  # noqa: WPS433
-                CompositeShellFP,
-                ViewProviderCompositeShell,
+    try:
+        record_diagnostic_event(diagnostics, "feature_stack.shell.import.begin")
+        from ...features.CompositeShell import (  # noqa: WPS433
+            CompositeShellFP,
+            ViewProviderCompositeShell,
+        )
+        record_diagnostic_event(diagnostics, "feature_stack.shell.import.done")
+
+        record_diagnostic_event(diagnostics, "feature_stack.shell.add_object.begin")
+        shell_obj = doc.addObject("Part::FeaturePython", f"{name_prefix}Shell")
+        record_diagnostic_event(diagnostics, "feature_stack.shell.add_object.done")
+
+        record_diagnostic_event(diagnostics, "feature_stack.shell.fp_ctor.begin")
+        CompositeShellFP(
+            shell_obj,
+            support=support,
+            laminate=laminate_obj,
+            lcs=lcs_obj,
+        )
+        record_diagnostic_event(diagnostics, "feature_stack.shell.fp_ctor.done")
+
+        # Finer drape mesh for examples so fibre-path preview is clearer.
+        if not skip_recompute:
+            shell_obj.MaxLength = 0.1
+
+        if attach_view_providers and getattr(shell_obj, "ViewObject", None):
+            record_diagnostic_event(
+                diagnostics,
+                "feature_stack.shell.view_provider.begin",
             )
-            record_diagnostic_event(diagnostics, "feature_stack.shell.import.done")
-
-            record_diagnostic_event(diagnostics, "feature_stack.shell.add_object.begin")
-            shell_obj = doc.addObject("Part::FeaturePython", f"{name_prefix}Shell")
-            record_diagnostic_event(diagnostics, "feature_stack.shell.add_object.done")
-
-            record_diagnostic_event(diagnostics, "feature_stack.shell.fp_ctor.begin")
-            CompositeShellFP(
-                shell_obj,
-                support=support,
-                laminate=laminate_obj,
-                lcs=lcs_obj,
+            ViewProviderCompositeShell(shell_obj.ViewObject)
+            record_diagnostic_event(
+                diagnostics,
+                "feature_stack.shell.view_provider.done",
             )
-            record_diagnostic_event(diagnostics, "feature_stack.shell.fp_ctor.done")
-
-            # Configure drape behavior. In skip_recompute mode, avoid writing
-            # properties that trigger fp.recompute() through onChanged.
-            proxy = getattr(shell_obj, "Proxy", None)
-            if proxy is not None:
-                setattr(proxy, "_force_skip_draper", bool(skip_draper))
-
-            if hasattr(shell_obj, "SkipDraper") and not skip_recompute:
-                shell_obj.SkipDraper = bool(skip_draper)
-
-            # Finer drape mesh for examples so fibre-path preview is clearer.
-            if not skip_recompute:
-                shell_obj.MaxLength = 0.1
-
-            if attach_view_providers and getattr(shell_obj, "ViewObject", None):
-                record_diagnostic_event(
-                    diagnostics,
-                    "feature_stack.shell.view_provider.begin",
-                )
-                ViewProviderCompositeShell(shell_obj.ViewObject)
-                record_diagnostic_event(
-                    diagnostics,
-                    "feature_stack.shell.view_provider.done",
-                )
-        except Exception as exc:
-            shell_error = str(exc)
+    except Exception as exc:
+        shell_error = str(exc)
 
     record_diagnostic_event(
         diagnostics,
@@ -444,6 +455,10 @@ def create_composite_feature_stack(
         _configure_shell_visuals(shell_obj, support)
 
     record_diagnostic_event(diagnostics, "feature_stack.done")
+
+    # Organize objects into groups for proper document hierarchy
+    if doc is not None and shell_obj is not None:
+        _organize_into_groups(doc, support, laminae, laminate_obj, lcs_obj, shell_obj)
 
     return {
         "created": True,
@@ -523,7 +538,14 @@ def _set_constraint_refs(constraint, refs):
         constraint.References = refs
 
 
-def _add_shell_section_and_material(doc, analysis, support, tag):
+def _add_shell_section_and_material(doc, analysis, support, tag, shell_obj=None):
+    """Create FEM shell section and material objects.
+
+    When shell_obj is a CompositeShell (Composite::Shell proxy), the shell
+    thickness and material reference it so the FEM extension providers
+    (drape_laminate_provider) can wire up orthotropic orientations and
+    per-layer shell sections automatically.
+    """
     import ObjectsFem
 
     thickness_obj = None
@@ -544,16 +566,28 @@ def _add_shell_section_and_material(doc, analysis, support, tag):
         f"{tag}_Material",
     )
 
+    # Determine what to reference: CompositeShell (for orthotropic+drape)
+    # or fall back to the support shape (generic isotropic).
+    ref_obj = shell_obj if shell_obj is not None else support
+    ref_sub = "Face1"
+
     if material_obj is not None and hasattr(material_obj, "Material"):
         mat = dict(getattr(material_obj, "Material", {}) or {})
-        mat.setdefault("Name", "CompositeEquivalent")
+        # Always provide basic material properties so the FEM solver
+        # recognizes the material.  The drape_laminate_provider hooks
+        # (shell_orientation_provider, shell_section_provider) handle
+        # orthotropic orientation and per-layer shell sections separately.
+        mat.setdefault("Name", "Composite")
         mat.setdefault("YoungsModulus", "70000 MPa")
         mat.setdefault("PoissonRatio", "0.3")
         mat.setdefault("Density", "1600 kg/m^3")
         material_obj.Material = mat
 
     if material_obj is not None:
-        _set_constraint_refs(material_obj, [(support, "Face1")])
+        _set_constraint_refs(material_obj, [(ref_obj, ref_sub)])
+
+    if thickness_obj is not None:
+        _set_constraint_refs(thickness_obj, [(ref_obj, ref_sub)])
 
     _add_analysis_member(analysis, thickness_obj)
     _add_analysis_member(analysis, material_obj)
@@ -931,7 +965,32 @@ def evaluate_failure_criteria(analysis, model_options=None, top_n=10):
     }
 
 
-def run_full_shell_job(doc, support, *, case_id, boundary_conditions, solve=True):
+def _organize_into_groups(doc, support, laminae, laminate, lcs, shell_obj):
+    """Organize composite objects into groups for proper document hierarchy."""
+    try:
+        import FreeCADGui
+
+        # Create Geometry group
+        geo_group = doc.addObject("App::DocumentObjectGroup", "Geometry")
+        geo_group.Group = [support, lcs] if lcs else [support]
+
+        # Create Composite group
+        comp_group = doc.addObject("App::DocumentObjectGroup", "Composite")
+        comp_items = [laminate, shell_obj] + ([lcs] if lcs else [])
+        if laminae:
+            comp_items = laminae + comp_items
+        comp_group.Group = comp_items
+
+        # Hide the groups by default (users can expand them)
+        for grp in [geo_group, comp_group]:
+            if hasattr(grp, "ViewObject") and grp.ViewObject:
+                grp.ViewObject.ShowLabel = False
+                grp.ViewObject.ShowNumber = False
+    except Exception:
+        pass  # Grouping is cosmetic, don't fail if it doesn't work
+
+
+def run_full_shell_job(doc, support, *, case_id, boundary_conditions, solve=True, shell_obj=None):
     """Create analysis, mesh, constraints, and execute CalculiX.
 
     Parameters
@@ -945,6 +1004,12 @@ def run_full_shell_job(doc, support, *, case_id, boundary_conditions, solve=True
         ``conical_panel_segment``.
     boundary_conditions
         Human-readable condition dictionary attached to result metadata.
+    solve
+        Whether to run the CalculiX solver (default True).
+    shell_obj
+        Optional CompositeShell FeaturePython object.  When provided the
+        FEM extension providers wire up orthotropic material orientations
+        and per-layer shell sections from the draped laminate.
     """
 
     if doc is None or support is None:
@@ -958,6 +1023,7 @@ def run_full_shell_job(doc, support, *, case_id, boundary_conditions, solve=True
         analysis,
         support,
         case_id,
+        shell_obj=shell_obj,
     )
     mesher = _mesh_support(mesh_obj, support)
 

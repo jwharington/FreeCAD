@@ -40,7 +40,10 @@ def _import_solver():
         pass
     try:
         from ..ext import _native
-        return _native.solve
+        solver = getattr(_native, "solve", None)
+        if solver is None:
+            raise ImportError("_native.solve is None")
+        return solver
     except ImportError:
         raise RuntimeError(
             "nextdrape C++ extension not available. "
@@ -92,7 +95,11 @@ class NextDrapeBackend(DrapeBackend):
         """Return backend diagnostics payload."""
         r = self._run_solve()
         if not r.get("success"):
-            return {"error": r.get("error", "solve failed")}
+            return {
+                "backend": self.backend_name,
+                "status": "failed",
+                "failure_reason": r.get("error", "solve failed"),
+            }
         d = r.get("diagnostics", {})
         return {
             "solver": "nextdrape",
@@ -149,11 +156,14 @@ class NextDrapeBackend(DrapeBackend):
         TODO: compute proper LCS from draped surface normals + warp/weft.
         Returns identity for now.
         """
-        return np.eye(3, dtype=float).reshape(1, 3, 3)
+        import FreeCAD
 
+        return FreeCAD.Placement()
     def get_lcs_at_point(self, center: Any) -> Any | None:
         """Return LCS at a 3D point. Identity for now."""
-        return np.eye(3, dtype=float).reshape(1, 3, 3)
+        import FreeCAD
+
+        return FreeCAD.Placement()
 
     def get_tex_coord_at_point(self, point: Any, offset_angle_deg: float = 0) -> Any | None:
         """Return texture coordinate at a 3D point. Not yet supported."""

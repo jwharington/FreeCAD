@@ -63,22 +63,22 @@ if _REPO_ROOT not in sys.path:
 # Import project modules — circular imports are fixed, so normal imports work.
 # ---------------------------------------------------------------------------
 
-import freecad.Composites  # noqa: E402
+import Composites  # noqa: E402
 
-from freecad.Composites.util.geometry_util import (  # noqa: E402
+from Composites.util.geometry_util import (  # noqa: E402
     expand_symmetry,
     format_layer,
     format_orientation,
     normalise_orientation,
 )
-from freecad.Composites.mechanics.material_properties import (  # noqa: E402
+from Composites.mechanics.material_properties import (  # noqa: E402
     common_material2dict,
     is_orthotropic,
     iso_material2dict,
     material_from_dict,
     ortho_material2dict,
 )
-from freecad.Composites.mechanics.shell_model import (  # noqa: E402
+from Composites.mechanics.shell_model import (  # noqa: E402
     compliance_matrix,
     material_rotate,
     material_shell_properties,
@@ -86,26 +86,26 @@ from freecad.Composites.mechanics.shell_model import (  # noqa: E402
     rotation_matrix_zaxis,
     stiffness_matrix_to_engineering_properties,
 )
-from freecad.Composites.mechanics.fibre_composite_model import (  # noqa: E402
+from Composites.mechanics.fibre_composite_model import (  # noqa: E402
     calc_fibre_composite_model,
 )
-from freecad.Composites.objects.symmetry_type import SymmetryType  # noqa: E402
-from freecad.Composites.objects.weave_type import WeaveType  # noqa: E402
-from freecad.Composites.mechanics.stack_model_type import StackModelType  # noqa: E402
-from freecad.Composites.objects.lamina import Lamina  # noqa: E402
-from freecad.Composites.objects.ply import Ply  # noqa: E402
-from freecad.Composites.objects.homogeneous_lamina import HomogeneousLamina  # noqa: E402
-from freecad.Composites.objects.fabric import Fabric  # noqa: E402
-from freecad.Composites.objects.simple_fabric import SimpleFabric  # noqa: E402
-from freecad.Composites.mechanics.stack_model import (  # noqa: E402
+from Composites.objects.symmetry_type import SymmetryType  # noqa: E402
+from Composites.objects.weave_type import WeaveType  # noqa: E402
+from Composites.mechanics.stack_model_type import StackModelType  # noqa: E402
+from Composites.objects.lamina import Lamina  # noqa: E402
+from Composites.objects.ply import Ply  # noqa: E402
+from Composites.objects.homogeneous_lamina import HomogeneousLamina  # noqa: E402
+from Composites.objects.fabric import Fabric  # noqa: E402
+from Composites.objects.simple_fabric import SimpleFabric  # noqa: E402
+from Composites.mechanics.stack_model import (  # noqa: E402
     calc_z,
     merge_clt,
     merge_single,
 )
-from freecad.Composites.mechanics.stack_expansion import calc_stack_model  # noqa: E402
-from freecad.Composites.objects.fibre_composite_lamina import FibreCompositeLamina  # noqa: E402
-from freecad.Composites.objects.laminate import Laminate  # noqa: E402
-from freecad.Composites.objects.composite_laminate import CompositeLaminate  # noqa: E402
+from Composites.mechanics.stack_expansion import calc_stack_model  # noqa: E402
+from Composites.objects.fibre_composite_lamina import FibreCompositeLamina  # noqa: E402
+from Composites.objects.laminate import Laminate  # noqa: E402
+from Composites.objects.composite_laminate import CompositeLaminate  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helper: build canonical material dicts the same way example_materials.py
@@ -144,7 +144,7 @@ def _make_resin():
 
 
 class TestGeometryUtil(unittest.TestCase):
-    """Tests for freecad/Composites/util/geometry_util.py."""
+    """Tests for Composites/util/geometry_util.py."""
 
     # expand_symmetry ---------------------------------------------------
 
@@ -226,7 +226,7 @@ class TestGeometryUtil(unittest.TestCase):
 
 
 class TestStackModelType(unittest.TestCase):
-    """Tests for freecad/Composites/mechanics/stack_model_type.py."""
+    """Tests for Composites/mechanics/stack_model_type.py."""
 
     def test_all_enum_members_exist(self):
         for name in ("Discrete", "SmearedFabric", "SmearedCore", "Smeared"):
@@ -284,7 +284,7 @@ class TestWeaveType(unittest.TestCase):
 
 
 class TestMaterialProperties(unittest.TestCase):
-    """Tests for freecad/Composites/mechanics/material_properties.py."""
+    """Tests for Composites/mechanics/material_properties.py."""
 
     def _iso(self):
         m = material_from_dict({}, orthotropic=False)
@@ -717,7 +717,7 @@ class TestFibreCompositeModel(unittest.TestCase):
 
 
 class TestLamina(unittest.TestCase):
-    """Tests for freecad/Composites/objects/lamina.py."""
+    """Tests for Composites/objects/lamina.py."""
 
     def test_default_core_is_false(self):
         la = Lamina()

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 
-# FreeCAD mock must be present before importing freecad.Composites package.
+# FreeCAD mock must be present before importing Composites package.
 if "FreeCAD" not in sys.modules:
     freecad_mock = MagicMock()
     freecad_mock.__unit_test__ = []
@@ -23,7 +23,7 @@ _REPO_ROOT = os.path.abspath(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from freecad.Composites.fem.failure_models_composites import (  # noqa: E402
+from Composites.fem.failure_models_composites import (  # noqa: E402
     calc_failure_hashin,
     calc_failure_tsai_wu,
     register_composite_failure_models,
