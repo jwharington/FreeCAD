@@ -66,16 +66,10 @@ float mixcol(float col, float amount) {
 }
 
 void main() {
-  float pixel_width = 1.0;
-  highp vec3 coord = vec3(x_scale * gl_TexCoord[0].s,
-                    y_scale * gl_TexCoord[0].t,
-                    z_scale * gl_TexCoord[0].r);
-  vec3 grid = vec3(gridFactor(coord.x, pixel_width),
-                   gridFactor(coord.y, pixel_width),
-                   gridFactor(coord.z, pixel_width));
-  vec3 baseColor = vec3(0.92, 0.92, 0.92);
-  gl_FragColor = vec4(mixcol(baseColor.r, grid.x),
-                      mixcol(baseColor.g, grid.y),
-                      mixcol(baseColor.b, grid.z),
+  // DEBUG: output texture coords as color
+  // Red = u (0-1), Green = v (0-1)
+  gl_FragColor = vec4(fract(gl_TexCoord[0].s * 0.01),
+                      fract(gl_TexCoord[0].t * 0.01),
+                      0.5,
                       1.0);
 }
