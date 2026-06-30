@@ -4,13 +4,12 @@
 import FreeCAD
 import FreeCADGui as Gui
 
-from . import WB_ICON
-
 
 class CompositesWorkbench(Gui.Workbench):
+    # Icon path defined inside class body to avoid exec() scoping issues
+    Icon = "/home/jmw/opt/FreeCAD/build/pixi-debug/Mod/Composites/resources/icons/CompositesWB.svg"
     MenuText = "Composites"
     ToolTip = "Tools for composite structures"
-    Icon = WB_ICON
 
     def Initialize(self):
         """This function is executed when the workbench is first activated.
@@ -18,11 +17,11 @@ class CompositesWorkbench(Gui.Workbench):
         function.
         """
 
-        from .features import CompositeShell  # noqa
-        from .features import TexturePlan  # noqa
-        from .features import ToolbarGroup  # noqa
-        from .features import Dart  # noqa
-        from .features import RunCompositeExample  # noqa
+        import Composites.features.CompositeShell  # noqa
+        import Composites.features.TexturePlan  # noqa
+        import Composites.features.ToolbarGroup  # noqa
+        import Composites.features.Dart  # noqa
+        import Composites.features.RunCompositeExample  # noqa
 
         cmds_section = [
             "Composites_LaminaTools",
