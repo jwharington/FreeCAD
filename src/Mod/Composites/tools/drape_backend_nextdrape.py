@@ -61,11 +61,17 @@ class NextDrapeBackend(DrapeBackend):
         mesh: Any,
         lcs: Any,
         shape: Any,
+        cut_wires: list | None = None,
+        cut_shape: Any = None,
+        use_cut_shape: bool = False,
     ) -> None:
         self._solve = _import_solver()
         self._mesh = mesh
         self._lcs = lcs
         self._shape = shape
+        self._cut_wires = cut_wires
+        self._cut_shape = cut_shape
+        self._use_cut_shape = use_cut_shape
         self._result: dict | None = None
         self._valid = True
 
@@ -92,7 +98,8 @@ class NextDrapeBackend(DrapeBackend):
                 f.write("[_run_solve] calling solve...\n")
                 f.flush()
 
-            self._result = self._solve(self._shape, seed, params)
+            solver_shape = self._cut_shape if self._use_cut_shape else self._shape
+            self._result = self._solve(solver_shape, seed, params)
 
             with open(debug_file, "a") as f:
                 f.write(f"[_run_solve] solved, success={self._result.get('success')}\n")
@@ -580,7 +587,7 @@ class NextDrapeBackend(DrapeBackend):
         """Build nextdrape DrapeParams dict."""
         mesh = self._mesh
         pitch = getattr(mesh, "pitch", 5.0)
-        return {
+        params: dict[str, Any] = {
             "pitch": pitch,
             "max_warp_steps": getattr(mesh, "max_warp_steps", 40),
             "max_weft_steps": getattr(mesh, "max_weft_steps", 40),
@@ -591,3 +598,12 @@ class NextDrapeBackend(DrapeBackend):
             "boundary_tol": getattr(mesh, "boundary_tol", 1e-3),
             "use_geodesic": getattr(mesh, "use_geodesic", False),
         }
+        # When cut wires are specified, enable the C++ cut-wire blocking
+        # engine. The wires are embedded in the compound support Shape
+        # so C++ DiscoverCutWires() can discover them natively.
+        if self._cut_wires:
+            params["cut_wires_enabled"] = True
+            params["cut_wires_proximity_tol"] = 0.5
+            params["cut_wires_block_nodes"] = True
+            params["cut_wires_block_quads"] = True
+        return params

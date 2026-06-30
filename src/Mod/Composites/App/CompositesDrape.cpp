@@ -79,6 +79,24 @@ PYBIND11_MODULE(Composites_drape, m) {
         if (params_dict.contains("strain_fail"))
             params.strainFail = params_dict["strain_fail"].cast<double>();
 
+        // === CUT-WIRE CONFIG ===
+        params.cutWires.enabled = false;
+        if (params_dict.contains("cut_wires_enabled"))
+            params.cutWires.enabled = pybind11::cast<bool>(
+                params_dict["cut_wires_enabled"]);
+        if (params_dict.contains("cut_wires_proximity_tol"))
+            params.cutWires.proximityTol =
+                params_dict["cut_wires_proximity_tol"].cast<double>();
+        if (params_dict.contains("cut_wires_block_nodes"))
+            params.cutWires.blockNodesOnWire =
+                pybind11::cast<bool>(
+                    params_dict["cut_wires_block_nodes"]);
+        if (params_dict.contains(
+                "cut_wires_block_quads"))
+            params.cutWires.blockQuadsCrossingWire =
+                pybind11::cast<bool>(
+                    params_dict["cut_wires_block_quads"]);
+
         nextdrape::SeedInput seed;
         if (seed_dict.contains("point")) {
             auto pt = seed_dict["point"].cast<py::tuple>();
@@ -190,6 +208,18 @@ PYBIND11_MODULE(Composites_drape, m) {
         }
         qual["failures"] = qual_failures;
         res["quality"] = qual;
+
+        // === CUT-WIRE DIAGNOSTICS ===
+        py::dict cut_diag;
+        cut_diag["nodes_blocked"] = result.cutWireDiagnostics.nodesBlocked;
+        cut_diag["quads_blocked"] = result.cutWireDiagnostics.quadsBlocked;
+        cut_diag["edges_crossing_wire"] = result.cutWireDiagnostics.edgesDetectedCrossing;
+        py::list blocked_descs;
+        for (const auto& desc : result.cutWireDiagnostics.blockedWireDescriptions) {
+            blocked_descs.append(desc);
+        }
+        cut_diag["blocked_wire_descriptions"] = blocked_descs;
+        res["cut_wire_diagnostics"] = cut_diag;
 
         return res;
     },

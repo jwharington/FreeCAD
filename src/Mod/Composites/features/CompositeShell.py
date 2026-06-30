@@ -480,6 +480,13 @@ class CompositeShellFP(CompositeBaseFP):
         obj.DrapePitch = 5.0
 
         obj.addProperty(
+            type="App::PropertyLinkList",
+            name="DrapeCuts",
+            group="Draping",
+            doc="Wires defining cut paths on the support surface during draping",
+        )
+
+        obj.addProperty(
             type="App::PropertyString",
             name="DrapeDiagnostics",
             group="Draping",
@@ -587,12 +594,22 @@ class CompositeShellFP(CompositeBaseFP):
 
         self._rosette_angle = 0.0
         self._backend = None
+        self._needs_recompute = False
 
         super().__init__(obj)
         self._initializing = False
 
     def onDocumentRestored(self, fp):
         """Initialize tracking fields for documents saved before they existed."""
+        # Ensure DrapeCuts property exists on older FCStd files
+        # that were saved before this property was added.
+        if not hasattr(fp, "DrapeCuts"):
+            fp.addProperty(
+                type="App::PropertyLinkList",
+                name="DrapeCuts",
+                group="Draping",
+                doc="Wires defining cut paths on the support surface during draping",
+            )
         if not hasattr(fp, "_LastDrapePitch") or fp._LastDrapePitch is None:
             fp._LastDrapePitch = float(fp.DrapePitch)
         if not hasattr(fp, "_LastRosetteAngle") or fp._LastRosetteAngle is None:
@@ -608,6 +625,10 @@ class CompositeShellFP(CompositeBaseFP):
         # Always hide the native LCS symbology so only the rosette
         # disk+arrows are visible in the 3D view.
         self._hide_lcs_view(fp)
+
+        # If DrapePitch was changed without an explicit recompute, do it now.
+        if getattr(fp.Proxy, "_needs_recompute", False):
+            fp.Proxy._needs_recompute = False
 
         if (not fp.Support) or (not fp.Laminate):
             return
@@ -709,6 +730,8 @@ class CompositeShellFP(CompositeBaseFP):
             root = mesh_vobj.RootNode
             self._remove_existing_coin_geometry(root)
             self._inject_coin_geometry(root, drapecd_coin)
+            self._remove_cut_edges(root)
+            self._inject_cut_edges(root, result.get("cut_edges"))
 
         # Load the shader
         vp = getattr(fp, "ViewObject", None)
@@ -768,6 +791,72 @@ class CompositeShellFP(CompositeBaseFP):
         """Inject Coin3D geometry as a child of root."""
         root.addChild(coin_geo)
 
+    def _inject_cut_edges(self, root, cut_edges: list) -> None:
+        """Inject cut-edge line geometry as visible overlays.
+
+        Each cut is a list of 3D point tuples forming a polyline.
+        A red line is drawn through the points so cut boundaries
+        are clearly visible on top of the draped mesh.
+        """
+        from pivy import coin
+
+        sep = coin.SoSeparator()
+        sep_copy: list[list[tuple[float, float, float]]] = cut_edges
+
+        for walk in sep_copy:
+            pc = len(walk)
+            if pc < 2:
+                continue
+            wire_sep = coin.SoSeparator()
+            # Red material
+            wire_mat = coin.SoMaterial()
+            wire_mat.diffuseColor.setValue(1.0, 0.0, 0.0)
+            wire_sep.addChild(wire_mat)
+            # 3D coordinates
+            wire_coords = coin.SoCoordinate3()
+            pts: list[coin.SbVec3f] = [
+                coin.SbVec3f(float(p[0]), float(p[1]), float(p[2]))
+                for p in walk
+            ]
+            wire_coords.point.setValues(0, pc, pts)
+            wire_sep.addChild(wire_coords)
+            # Linear line segments
+            line_set = coin.SoLineSet()
+            wire_sep.addChild(line_set)
+            sep.addChild(wire_sep)
+
+        # Put cut-edge layer *after* the main mesh so it draws on top.
+        root.addChild(sep)
+
+    def _remove_cut_edges(self, root) -> None:
+        """Remove previously injected cut-edge separator from root."""
+        from pivy import coin
+        children = root.getChildren()
+        if children is None or children.getLength() == 0:
+            return
+        last = children[children.getLength() - 1]
+        if (
+            last
+            and not str(last.getTypeId().getName())
+            in ("Separator", "Switch", "Path", "Group")
+        ):
+            # Check if it looks like a cut-edge group:
+            # Coordinate3 + SoLineSet
+            sub = last.getChildren()
+            if sub and sub.getLength() >= 2:
+                has_coord = has_lineset = False
+                for j in range(int(sub.getLength())):
+                    sc = sub[j]
+                    if sc is None:
+                        continue
+                    st = str(sc.getTypeId().getName())
+                    if st == "Coordinate3":
+                        has_coord = True
+                    if "LineSet" in st:
+                        has_lineset = True
+                if has_coord and has_lineset:
+                    root.removeChild(last)
+
     def _mark_failed(self, fp, error_msg):
         """Mark the shell as failed (main thread)."""
         import json
@@ -792,6 +881,20 @@ class CompositeShellFP(CompositeBaseFP):
             view_object.update()
 
     # ── Persistence helpers ────────────────────────────────────────
+
+    def _drape_cuts_fingerprint(self, fp) -> str:
+        """Compute a fingerprint of the DrapeCuts wire list.
+
+        Used in _can_use_persisted to detect when cut wires change.
+        """
+        import hashlib
+        h = hashlib.sha256()
+        h.update(b"dravecif:int")
+        cuts = getattr(fp, "DrapeCuts", None) or []
+        h.update(f"n{len(cuts)}".encode())
+        for label in cuts:
+            h.update(f"{label!s}".encode())
+        return h.hexdigest()[:16]
 
     def _shape_fingerprint(self, shape) -> str:
         """Compute a fast structural hash of a FreeCAD shape.
@@ -854,6 +957,15 @@ class CompositeShellFP(CompositeBaseFP):
             current_angle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
             stored_angle = getattr(fp, "_LastRosetteAngle", 0.0)
             if abs(current_angle - stored_angle) > 0.001:
+                return False
+        except Exception:
+            return False
+        # Drape cuts affect the drape solve result.
+        # If cut wires changed, the persisted payload is stale.
+        try:
+            cuts_fp = self._drape_cuts_fingerprint(fp)
+            stored_cuts_fp = getattr(fp, "_DrapeCutsFingerprint", "")
+            if stored_cuts_fp and cuts_fp != stored_cuts_fp:
                 return False
         except Exception:
             return False
@@ -971,6 +1083,8 @@ class CompositeShellFP(CompositeBaseFP):
         fp._LastRosetteAngle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
         # Cache the drape pitch so _can_use_persisted detects changes
         fp._LastDrapePitch = float(fp.DrapePitch)
+        # Cache cut-wire fingerprint so _can_use_persisted detects wire changes
+        fp._DrapeCutsFingerprint = self._drape_cuts_fingerprint(fp)
 
     def fibre_analysis(self, fp):
         histograms_length = make_fibre_length_analysis(fp)
@@ -1024,11 +1138,19 @@ class CompositeShellFP(CompositeBaseFP):
                 fp.recompute()
             case "LocalCoordinateSystem" | "Rosette":
                 fp.recompute()
-            case (
-                "Support"
-                | "DrapePitch"
+            case "DrapePitch":
+                # Mark the shell as needing a recompute.  The actual
+                # recompute is deferred — the user (or a script) must
+                # call fp.recompute() explicitly after settling on a
+                # new pitch value.  This avoids hanging the GUI when
+                # dragging the slider (each tick would trigger a
+                # 1-2s solve).
+                fp.Proxy._needs_recompute = True
 
-            ):
+            case "DrapeCuts":
+                fp.Proxy._needs_recompute = True
+
+            case "Support":
                 fp.recompute()
 
     def _require_valid(self):
