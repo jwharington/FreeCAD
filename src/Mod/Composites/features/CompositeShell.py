@@ -41,7 +41,8 @@ class _RehydratedBackend:
 
     When the support shape hasn't changed across recompute cycles,
     the draper solve result is reconstructed from FreeCAD properties
-    (NodePositionsJSON, QuadsJSON, TexCoordsJSON, StrainsJSON) instead
+    (NodePositionsJSON, QuadsJSON, TexCoordsJSON, StrainsJSON, QualityJSON)
+    instead
     of re-running the C++ solver.  This class implements the same
     interface as NextDrapeBackend so that execute() and all public
     accessor methods on CompositeShellFP work identically.
@@ -70,6 +71,7 @@ class _RehydratedBackend:
         quads_json: str,
         tex_coords_json: str,
         strains_json: str,
+        quality_json: str = "{}",
         status: str = "valid",
         failure_reason: str | None = None,
     ) -> None:
@@ -77,6 +79,7 @@ class _RehydratedBackend:
         self._quads = json.loads(quads_json)
         self._tex_coords = np.array(json.loads(tex_coords_json)) if tex_coords_json else np.empty((0, 2))
         self._strains = np.array(json.loads(strains_json)) if strains_json else np.array([])
+        self._quality = json.loads(quality_json)
         self._status = status
         self._failure_reason = failure_reason
 
@@ -358,6 +361,7 @@ class _RehydratedBackend:
             "quads": self._quads,
             "tex_coords": self._tex_coords.tolist(),
             "shear_angle": self._strains.tolist(),
+            "quality": self._quality,
         }
 
 
@@ -457,6 +461,14 @@ class CompositeShellFP(CompositeBaseFP):
 
         obj.addProperty(
             type="App::PropertyString",
+            name="DrapeQuality",
+            group="Draping",
+            doc="Human-readable draping quality status",
+        )
+        obj.setPropertyStatus("DrapeQuality", "ReadOnly")
+
+        obj.addProperty(
+            type="App::PropertyString",
             name="TexCoordsJSON",
             group="Draping",
             doc="Serialized texture coordinates from the drape solve",
@@ -481,6 +493,12 @@ class CompositeShellFP(CompositeBaseFP):
             name="StrainsJSON",
             group="Draping",
             doc="Serialized per-quad shear angles from the drape solve",
+        )
+        obj.addProperty(
+            type="App::PropertyString",
+            name="QualityJSON",
+            group="Draping",
+            doc="Serialized quality result from the drape solve",
         )
 
         obj.addProperty(
@@ -612,6 +630,13 @@ class CompositeShellFP(CompositeBaseFP):
             # FreeCAD properties on the shell itself.
             fp.DrapeValid = self._backend.is_valid()
             fp.QualityPass = self._backend.quality_pass()
+
+            # Human-readable quality status (from already-computed solve result)
+            qual = solve_result.get("quality", {})
+            if not fp.DrapeValid:
+                fp.DrapeQuality = repr(qual)
+            else:
+                fp.DrapeQuality = repr(qual)
             tc = self._backend.get_tex_coords()
             if tc is not None:
                 fp.TexCoordsJSON = json.dumps(tc)
@@ -626,6 +651,12 @@ class CompositeShellFP(CompositeBaseFP):
             self._backend._mesh = drapecd_mesh
             self._backend._mesh_feat = fp.Mesh  # persist Mesh feature ref for shader
             fp.Mesh.Mesh = drapecd_mesh
+
+            # Hide the DrapeMesh — the DrapeGridOverlay renders the draped
+            # quad edges as lines so the filled mesh is unnecessary.
+            mesh_vo = getattr(fp.Mesh, "ViewObject", None)
+            if mesh_vo is not None:
+                mesh_vo.Visibility = False
 
             # Load the shader directly here while _backend is still valid.
             # The _backend attribute is not persisted across recompute cycles,
@@ -649,6 +680,7 @@ class CompositeShellFP(CompositeBaseFP):
             self._backend = None
             fp.DrapeValid = False
             fp.QualityPass = False
+            fp.DrapeQuality = "error: " + str(exc)[:200]
             fp.TexCoordsJSON = ""
             fp.NodePositionsJSON = ""
             fp.QuadsJSON = ""
@@ -742,6 +774,7 @@ class CompositeShellFP(CompositeBaseFP):
             quads_json=fp.QuadsJSON,
             tex_coords_json=fp.TexCoordsJSON,
             strains_json=fp.StrainsJSON,
+            quality_json=fp.QualityJSON if hasattr(fp, "QualityJSON") else "{}",
             status="valid",
             failure_reason=None,
         )
@@ -780,6 +813,16 @@ class CompositeShellFP(CompositeBaseFP):
 
         fp.Mesh.Mesh = drapecd_mesh
 
+        # Human-readable quality status (from rehydrated solve result)
+        qual = solve_result.get("quality", {})
+        fp.DrapeQuality = repr(qual) if diag.get("status") != "failed" else "invalid"
+
+        # Hide the DrapeMesh — the DrapeGridOverlay renders the draped
+        # quad edges as lines so the filled mesh is unnecessary.
+        mesh_vo = getattr(fp.Mesh, "ViewObject", None)
+        if mesh_vo is not None:
+            mesh_vo.Visibility = False
+
         # Load the shader (same as full solve path)
         vp = getattr(fp, "ViewObject", None)
         if vp and hasattr(vp, "Proxy"):
@@ -798,6 +841,9 @@ class CompositeShellFP(CompositeBaseFP):
         )
         fp.StrainsJSON = json.dumps(
             solve_result.get("shear_angle", []).tolist()
+        )
+        fp.QualityJSON = json.dumps(
+            solve_result.get("quality", {})
         )
         # Cache the shape fingerprint so _can_use_persisted skips rehashing
         fp.ShapeFingerprint = self._shape_fingerprint(fp.Support.Shape)
@@ -905,15 +951,6 @@ class ViewProviderCompositeShell:
         obj.Darken = 0.5
 
         obj.addProperty(
-            "App::PropertyEnumeration",
-            "DisplayLayer",
-            "AnalysisOptions",
-            "Select layer to display",
-        )
-        obj.DisplayLayer = ["0"]
-        obj.DisplayLayer = "0"
-
-        obj.addProperty(
             "App::PropertyBool",
             "ShowRosette",
             "Rosette",
@@ -958,10 +995,26 @@ class ViewProviderCompositeShell:
         self.Object = obj.Object
 
         if not hasattr(self, "grid_shader"):
-            self.grid_shader = MeshGridShader()
+            from ..shaders.DrapeGridOverlay import DrapeGridOverlay
+
+            self.grid_shader = DrapeGridOverlay()
 
         obj.addDisplayMode(self.grid_shader.root, "Grid")
         # self.load_shader()
+
+        # Add DisplayLayer property to ViewObject (enumeration for layer
+        # selection dropdown). Must be added here because FreeCAD mirrors
+        # App::PropertyEnumeration from the FeaturePython to the ViewObject
+        # but adds the 'hidden' flag on mirroring.
+        if not hasattr(obj, "DisplayLayer"):
+            obj.addProperty(
+                "App::PropertyEnumeration",
+                "DisplayLayer",
+                "AnalysisOptions",
+                "Select layer to display",
+            )
+            obj.DisplayLayer = ["0"]
+            obj.DisplayLayer = "0"
 
         # Fibre orientation rosette: always-visible overlay on the root node
         from pivy import coin
@@ -1000,6 +1053,8 @@ class ViewProviderCompositeShell:
             mesh_vobj.Visibility = visible
         if self.Object.LocalCoordinateSystem:
             self.Object.LocalCoordinateSystem.Visibility = visible
+        if self.Object.Support:
+            self.Object.Support.Visibility = visible
 
     def update_mesh_material(self, vobj):
         # use draper to determine distortion for coloring
@@ -1165,7 +1220,7 @@ class ViewProviderCompositeShell:
         solve_result = obj._backend._run_solve()
         node_positions = solve_result.get("node_positions", [])
         quads = solve_result.get("quads", [])
-        if not quads or not node_positions:
+        if len(quads) == 0 or len(node_positions) == 0:
             return
 
         offset_angle_deg = self.get_offset_angle(vobj)
