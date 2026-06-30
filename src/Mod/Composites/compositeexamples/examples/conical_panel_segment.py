@@ -3,7 +3,7 @@
 
 """Conical shell panel example (open frustum arc midsurface)."""
 
-from ._shell_example_common import (
+from compositeexamples.examples._shell_example_common import (
     create_composite_feature_stack,
     create_support_feature,
     ensure_document,

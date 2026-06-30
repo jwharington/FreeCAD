@@ -7,7 +7,7 @@ import sys
 import time
 import types
 
-from ...objects import (
+from Composites.objects import (
     CompositeLaminate,
     FibreCompositeLamina,
     SimpleFabric,
@@ -334,11 +334,11 @@ def create_composite_feature_stack(
 
     try:
         _prepare_feature_import_environment()
-        from ...features.CompositeLaminate import (  # noqa: WPS433
+        from Composites.features.CompositeLaminate import (  # noqa: WPS433
             CompositeLaminateFP,
             ViewProviderCompositeLaminate,
         )
-        from ...features.FibreCompositeLamina import (  # noqa: WPS433
+        from Composites.features.FibreCompositeLamina import (  # noqa: WPS433
             FibreCompositeLaminaFP,
             ViewProviderFibreCompositeLamina,
         )
@@ -400,7 +400,7 @@ def create_composite_feature_stack(
     shell_error = None
     try:
         record_diagnostic_event(diagnostics, "feature_stack.shell.import.begin")
-        from ...features.CompositeShell import (  # noqa: WPS433
+        from Composites.features.CompositeShell import (  # noqa: WPS433
             CompositeShellFP,
             ViewProviderCompositeShell,
         )
@@ -628,6 +628,9 @@ def _create_fem_base(doc, tag):
 
     _add_analysis_member(analysis, solver)
     _add_analysis_member(analysis, mesh_obj)
+    # COMPOSITE shell sections require quadratic elements (S6/S8R).
+    if hasattr(mesh_obj, "ElementOrder"):
+        mesh_obj.ElementOrder = "2nd"
     return analysis, solver, mesh_obj
 
 
@@ -917,7 +920,7 @@ def evaluate_failure_criteria(analysis, model_options=None, top_n=10):
             "hotspots": [],
         }
 
-    from ...fem.failure_models_composites import (
+    from Composites.fem.failure_models_composites import (
         calc_failure_hashin,
         calc_failure_tsai_wu,
     )
