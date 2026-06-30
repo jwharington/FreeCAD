@@ -421,7 +421,7 @@ def create_composite_feature_stack(
 
         # Finer drape mesh for examples so fibre-path preview is clearer.
         if not skip_recompute:
-            shell_obj.MaxLength = 0.1
+            shell_obj.MaxLength = 5.0
 
         if attach_view_providers and getattr(shell_obj, "ViewObject", None):
             record_diagnostic_event(

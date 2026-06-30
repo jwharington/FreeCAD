@@ -1,10 +1,7 @@
-varying vec4 eposition;
-varying vec3 normal;
-varying vec3 diffuseColor;
+#version 130
 
 void main()
 {
+    gl_TexCoord[0] = gl_MultiTexCoord0;
     gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;
-    eposition = gl_ModelViewMatrix * gl_Vertex;
-    normal = gl_NormalMatrix * gl_Normal;
 }
