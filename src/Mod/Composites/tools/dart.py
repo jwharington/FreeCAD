@@ -1,10 +1,25 @@
+# FIXME: This module needs a complete rewrite.  It depends on shape2Mesh
+# to tessellate a Part.Shape into a Mesh.Mesh, then operates on mesh
+# topology (facet clustering, point splitting).  NextDrape no longer
+# accepts mesh input, so Dart must be redesigned to work directly on
+# OCCT geometry (TopoDS_Shape / TopoDS_Edge) instead of tessellated
+# triangles.
+#
+# Current blockers:
+# - shape2Mesh removed from util/mesh_util.py
+# - make_dart() calls shape2Mesh(shape, max_length)
+# - All downstream functions (split_mesh_at_edge, generate_dart_mesh)
+#   operate on Mesh.Mesh topology structures
+#
+# Proposed approach: use Part::Tessellate or BRep_Tool::Triangulation
+# to get triangles on-demand, or redesign the dart cut algorithm to
+# work with edge/face intersection on the parametric surface.
+
 from collections import namedtuple
 
 import Mesh
 from FreeCAD import Vector
 from Part import Vertex
-
-from ..util.mesh_util import shape2Mesh
 
 DartPoly = namedtuple("DartPoly", ["poly_idx", "key_edges", "dart_points"])
 default_tolerance = 1.0e-3

@@ -34,16 +34,23 @@ def _build_drapecd_mesh(node_positions, quads):
     pts = [coin.SbVec3f(float(p[0]), float(p[1]), float(p[2])) for p in node_positions]
     coords.point.setValues(0, len(pts), pts)
 
-    # IndexedFaceSet: triangulated quads with node indices
+    # IndexedFaceSet: triangulated quads with node indices.
+    # Keep an explicit face→quad mapping so colors can be assigned per quad
+    # without ambiguity: each quad contributes two triangles.
     face_set = coin.SoIndexedFaceSet()
     indices = []
-    for q in quads:
+    material_indices = []
+    for quad_idx, q in enumerate(quads):
         i0, i1, i2, i3 = [int(idx) for idx in q]
-        # Two triangles per quad, separated by -1
+        # Two triangles per quad, separated by -1.
         indices.extend([i0, i1, i2, -1])
         indices.extend([i0, i2, i3, -1])
+        # Explicitly map both triangles back to the originating quad.
+        material_indices.extend([quad_idx, -1, quad_idx, -1])
     indices.append(-1)  # End of all faces
+    material_indices.append(-1)
     face_set.coordIndex.setValues(0, len(indices), indices)
+    face_set.materialIndex.setValues(0, len(material_indices), material_indices)
 
     # Build a simple SoSeparator with coords + face_set
     sep = coin.SoSeparator()
@@ -81,8 +88,10 @@ class _RehydratedBackend:
         Quad connectivity as lists of four vertex indices.
     _tex_coords : ndarray (N, 2)
         Texture (UV) coordinates per node.
-    _strains : ndarray (M,)
-        Per-quad shear angles in degrees.
+    _strains : ndarray
+        Persisted per-quad strain payload:
+        - legacy: (M,) shear angles only
+        - current: (M,3) [warp_strain, weft_strain, shear_angle]
     _status : str
         Solve status from the original solve ("valid" or "failed").
     _failure_reason : str or None
@@ -380,13 +389,25 @@ class _RehydratedBackend:
 
     def _run_solve(self) -> dict:
         """Return cached solve result dict (no actual solve performed)."""
+        strains = np.asarray(self._strains)
+        if strains.ndim == 2 and strains.shape[1] >= 3:
+            warp = strains[:, 0].tolist()
+            weft = strains[:, 1].tolist()
+            shear = strains[:, 2].tolist()
+        else:
+            warp = []
+            weft = []
+            shear = strains.tolist()
+
         return {
             "success": self._status == "valid",
             "error": self._failure_reason,
             "node_positions": self._node_positions.tolist(),
             "quads": self._quads,
             "tex_coords": self._tex_coords.tolist(),
-            "shear_angle": self._strains.tolist(),
+            "warp_strain": warp,
+            "weft_strain": weft,
+            "shear_angle": shear,
             "quality": self._quality,
         }
 
@@ -449,13 +470,6 @@ class CompositeShellFP(CompositeBaseFP):
             doc="Laminate material",
         )
         # section could be composite laminate, or homogeneous lamina
-
-        obj.addProperty(
-            type="App::PropertyFloat",
-            name="MaxLength",
-            group="Draping",
-            doc="Max length of draping mesh",
-        )
 
         obj.addProperty(
             type="App::PropertyFloat",
@@ -550,6 +564,14 @@ class CompositeShellFP(CompositeBaseFP):
         )
 
         obj.addProperty(
+            type="App::PropertyFloat",
+            name="_LastDrapePitch",
+            group="Draping",
+            doc="Cached drape pitch for detecting pitch changes",
+            hidden=True,
+        )
+
+        obj.addProperty(
             type="App::PropertyLinkGlobal",
             name="Mesh",
             group="Orthographic",
@@ -557,7 +579,6 @@ class CompositeShellFP(CompositeBaseFP):
             hidden=True,
         )
 
-        obj.MaxLength = 1.25
         obj.DrapeDiagnostics = ""
         obj.LocalCoordinateSystem = lcs
         obj.Rosette = rosette
@@ -570,7 +591,24 @@ class CompositeShellFP(CompositeBaseFP):
         super().__init__(obj)
         self._initializing = False
 
+    def onDocumentRestored(self, fp):
+        """Initialize tracking fields for documents saved before they existed."""
+        if not hasattr(fp, "_LastDrapePitch") or fp._LastDrapePitch is None:
+            fp._LastDrapePitch = float(fp.DrapePitch)
+        if not hasattr(fp, "_LastRosetteAngle") or fp._LastRosetteAngle is None:
+            fp._LastRosetteAngle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
+        if not hasattr(fp, "ShapeFingerprint") or not fp.ShapeFingerprint:
+            try:
+                fp.ShapeFingerprint = self._shape_fingerprint(fp.Support.Shape)
+            except Exception:
+                pass
+        super().onDocumentRestored(fp)
+
     def execute(self, fp):
+        # Always hide the native LCS symbology so only the rosette
+        # disk+arrows are visible in the 3D view.
+        self._hide_lcs_view(fp)
+
         if (not fp.Support) or (not fp.Laminate):
             return
 
@@ -607,7 +645,6 @@ class CompositeShellFP(CompositeBaseFP):
             fp,
             lcs,
             fp.Support.Shape,
-            fp.MaxLength,
         )
 
     def _complete_drape(self, fp, result):
@@ -824,7 +861,11 @@ class CompositeShellFP(CompositeBaseFP):
         # If the pitch changed, persisted node positions/quads are stale.
         try:
             current_pitch = float(fp.DrapePitch)
-            stored_pitch = getattr(fp, "_LastDrapePitch", current_pitch)
+            stored_pitch = getattr(fp, "_LastDrapePitch", None)
+            # If _LastDrapePitch was never recorded (e.g. data saved before
+            # this check existed), distrust the persisted payload.
+            if stored_pitch is None:
+                return False
             if abs(current_pitch - stored_pitch) > 0.001:
                 return False
         except Exception:
@@ -905,9 +946,22 @@ class CompositeShellFP(CompositeBaseFP):
         fp.QuadsJSON = json.dumps(
             solve_result.get("quads", [])
         )
-        fp.StrainsJSON = json.dumps(
-            solve_result.get("shear_angle", []).tolist()
-        )
+        shear = np.asarray(solve_result.get("shear_angle", []), dtype=float)
+        warp = np.asarray(solve_result.get("warp_strain", []), dtype=float)
+        weft = np.asarray(solve_result.get("weft_strain", []), dtype=float)
+        if (
+            shear.ndim == 1
+            and warp.ndim == 1
+            and weft.ndim == 1
+            and len(shear)
+            and len(warp) == len(shear)
+            and len(weft) == len(shear)
+        ):
+            strains_payload = np.column_stack([warp, weft, shear]).tolist()
+        else:
+            # Backward compatibility: persist shear-only if full tensor is absent.
+            strains_payload = shear.tolist()
+        fp.StrainsJSON = json.dumps(strains_payload)
         fp.QualityJSON = json.dumps(
             solve_result.get("quality", {})
         )
@@ -930,6 +984,17 @@ class CompositeShellFP(CompositeBaseFP):
 
     def _make_backend(self, mesh, lcs, shape):
         return NextDrapeBackend(mesh, lcs, shape)
+
+    def _hide_lcs_view(self, fp):
+        """Hide the native LCS symbology (planes + 3D arrows)."""
+        lcs = fp.LocalCoordinateSystem
+        if lcs is None and fp.Rosette:
+            lcs = fp.Rosette.LocalCoordinateSystem
+        if lcs is None:
+            return
+        lcs_vobj = getattr(lcs, "ViewObject", None)
+        if lcs_vobj is not None:
+            lcs_vobj.Visibility = False
 
     def _set_drape_diagnostics(
         self,
@@ -960,8 +1025,7 @@ class CompositeShellFP(CompositeBaseFP):
             case "LocalCoordinateSystem" | "Rosette":
                 fp.recompute()
             case (
-                "MaxLength"
-                | "Support"
+                "Support"
                 | "DrapePitch"
 
             ):
@@ -1082,6 +1146,11 @@ class ViewProviderCompositeShell:
         # Shader is attached directly to the DrapeMesh RootNode in load_shader().
         # No dedicated "Grid" display mode node is needed.
 
+        # Always hide the native LCS symbology (planes + 3D arrows);
+        # the rosette disk+arrows provide the same orientation info
+        # without cluttering the view.
+        self._hide_lcs(obj.Object)
+
         # Add DisplayLayer property to ViewObject (enumeration for layer
         # selection dropdown). Must be added here because FreeCAD mirrors
         # App::PropertyEnumeration from the FeaturePython to the ViewObject
@@ -1124,13 +1193,22 @@ class ViewProviderCompositeShell:
         if display_layer_opts:
             fp.ViewObject.DisplayLayer = display_layer_opts[0]
 
+    def _hide_lcs(self, fp):
+        """Always hide the native LCS symbology (planes + 3D arrows)."""
+        lcs = fp.LocalCoordinateSystem
+        if lcs is None and fp.Rosette:
+            lcs = fp.Rosette.LocalCoordinateSystem
+        if lcs is None:
+            return
+        lcs_vobj = getattr(lcs, "ViewObject", None)
+        if lcs_vobj is not None:
+            lcs_vobj.Visibility = False
+
     def update_visibility(self, vobj):
         visible = vobj.Visibility
         mesh_vobj = getattr(self.Object, "Mesh", None)
         if mesh_vobj is not None:
             mesh_vobj.Visibility = visible
-        if self.Object.LocalCoordinateSystem:
-            self.Object.LocalCoordinateSystem.Visibility = visible
         if self.Object.Support:
             self.Object.Support.Visibility = visible
 
@@ -1148,6 +1226,21 @@ class ViewProviderCompositeShell:
             strains = None
         if strains is not None:
             import MeshEnums
+
+            # Backward-safe shape handling:
+            # - legacy nextdrape persisted data: (N,) shear only
+            # - newer format: (N,3) [warp, weft, shear]
+            strains_arr = np.asarray(strains)
+            if strains_arr.ndim == 1:
+                nrows = len(strains_arr)
+                strains_arr = np.column_stack([
+                    np.zeros(nrows),
+                    np.zeros(nrows),
+                    strains_arr,
+                ])
+            elif strains_arr.ndim != 2 or strains_arr.shape[1] < 3:
+                self.update_visibility(vobj)
+                return
 
             material = {
                 "binding": MeshEnums.Binding.PER_FACE,
@@ -1171,7 +1264,7 @@ class ViewProviderCompositeShell:
                 case _:
                     index = -1
             if index >= 0:
-                s = strains[:, index]
+                s = strains_arr[:, index]
 
                 def map_val(x):
                     if x > 0:
@@ -1246,9 +1339,9 @@ class ViewProviderCompositeShell:
             case "ShapeAppearance":
                 self.reload_shader()
             case "ShowRosette":
-                if hasattr(self, "rosette_switch"):
-                    from pivy import coin
+                from pivy import coin
 
+                if hasattr(self, "rosette_switch"):
                     self.rosette_switch.whichChild = (
                         0 if vobj.ShowRosette else coin.SO_SWITCH_NONE
                     )

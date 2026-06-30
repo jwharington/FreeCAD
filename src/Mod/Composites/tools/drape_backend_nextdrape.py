@@ -78,8 +78,6 @@ class NextDrapeBackend(DrapeBackend):
 
     def _run_solve(self) -> dict:
         """Run the solver once and cache the result."""
-        import os
-
         debug_file = "/tmp/nextdrape_debug.txt"
         with open(debug_file, "a") as f:
             f.write(f"[_run_solve] START, _result={self._result}\n")
@@ -91,11 +89,11 @@ class NextDrapeBackend(DrapeBackend):
                 f.write(f"[_run_solve] seed: {seed}\n")
                 f.write(f"[_run_solve] params: {params}\n")
                 f.write(f"[_run_solve] shape type: {type(self._shape)}\n")
+                f.write("[_run_solve] calling solve...\n")
                 f.flush()
-            with open(debug_file, "a") as f:
-                f.write(f"[_run_solve] calling solve...\n")
-                f.flush()
+
             self._result = self._solve(self._shape, seed, params)
+
             with open(debug_file, "a") as f:
                 f.write(f"[_run_solve] solved, success={self._result.get('success')}\n")
                 if not self._result.get("success"):
@@ -472,11 +470,24 @@ class NextDrapeBackend(DrapeBackend):
 
     @property
     def strains(self) -> np.ndarray:
-        """Per-quad shear angles (degrees)."""
+        """Per-quad strains as [warp, weft, shear] when available.
+
+        Backward compatibility:
+        - legacy payloads may only expose shear_angle -> returns (N,)
+        - newer payloads expose warp_strain/weft_strain/shear_angle -> returns (N,3)
+        """
         r = self._run_solve()
         if not r.get("success"):
             return np.array([])
-        return np.asarray(r.get("shear_angle", []))
+
+        shear = np.asarray(r.get("shear_angle", []), dtype=float)
+        warp = np.asarray(r.get("warp_strain", []), dtype=float)
+        weft = np.asarray(r.get("weft_strain", []), dtype=float)
+
+        if shear.ndim == 1 and warp.ndim == 1 and weft.ndim == 1:
+            if len(shear) and len(warp) == len(shear) and len(weft) == len(shear):
+                return np.column_stack([warp, weft, shear])
+        return shear
 
     # ── Internal helpers ─────────────────────────────────────────
 
@@ -543,11 +554,6 @@ class NextDrapeBackend(DrapeBackend):
             point = [base.x, base.y, base.z]
         elif hasattr(shape, "CenterOfMass"):
             com = shape.CenterOfMass
-            with open(debug_file, "a") as f:
-                f.write(f"[_run_solve] COM: ({com.x:.4f}, {com.y:.4f}, {com.z:.4f})\n")
-                if hasattr(shape, "BoundBox"):
-                    bb = shape.BoundBox
-                    f.write(f"[_run_solve] BBox: x[{bb.XMin:.2f},{bb.XMax:.2f}] y[{bb.YMin:.2f},{bb.YMax:.2f}] z[{bb.ZMin:.2f},{bb.ZMax:.2f}]\n")
             point = self._project_point_to_surface(com)
         else:
             point = [0.0, 0.0, 0.0]
