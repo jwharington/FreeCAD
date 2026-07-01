@@ -1,10 +1,16 @@
-# SPDX-License-Identifier: LGPL-2.1-or-later
+# SPDX-License-Identifier: LGPL-2.1-or-copyright
 # Copyright 2025 John Wharington jwharington@gmail.com
 
-import Mesh
-import MeshPart
+"""Mesh utility functions for fibre analysis.
+
+Provides barycentric-coordinate helpers used by the fibre length and
+orientation analysis tools.  Mesh tessellation (shape2Mesh) was removed
+when NextDrape stopped requiring mesh input — see ``tools/dart.py``
+which still needs a rewrite to operate on OCCT geometry directly.
+"""
+
 import numpy as np
-from FreeCAD import Console, Vector
+from FreeCAD import Vector
 
 
 def proj(v, vn):
@@ -82,88 +88,3 @@ def calc_lambda_vec(
     lam0 = 1.0 - lam1 - lam2
 
     return np.array([lam0, lam1, lam2])
-
-
-def shape2MeshLegacy(shape, max_length, seg_min=6, seg_max=40):
-    if not shape.BoundBox.isValid():
-        return Mesh.Mesh()
-
-    maxl = (
-        float(max_length)
-        if max_length and max_length > 0
-        else shape.BoundBox.DiagonalLength / 32.0
-    )
-    diag = max(shape.BoundBox.DiagonalLength, 1.0e-6)
-    seg = int(diag / max(maxl, 1.0e-6))
-    seg = max(seg_min, min(seg_max, seg))
-
-    return MeshPart.meshFromShape(
-        shape,
-        GrowthRate=0,
-        SegPerEdge=seg,
-        SegPerRadius=seg,
-        SecondOrder=0,
-        Optimize=1,
-        AllowQuad=0,
-    )
-
-
-def shape2Mesh(shape, max_length):
-    if not shape.BoundBox.isValid():
-        return Mesh.Mesh()
-
-    maxl = (
-        float(max_length)
-        if max_length and max_length > 0
-        else shape.BoundBox.DiagonalLength / 64.0
-    )
-    # OCC tessellation is often conservative for curved shell segments.
-    # Tighten effective deflection so MaxLength changes are visible in drape mesh.
-    eff = max(maxl * 0.1, 1.0e-4)
-
-    # Path 1: direct tessellation with explicit linear deflection.
-    try:
-        tess = shape.tessellate(eff)
-        mesh = Mesh.Mesh(tess)
-        if getattr(mesh, "CountFacets", 0) > 0:
-            Console.PrintLog(
-                f"shape2Mesh tessellate maxl={maxl} eff={eff} -> facets={mesh.CountFacets}\n",
-            )
-            return mesh
-    except Exception:
-        pass
-
-    # Path 2: modern MeshPart signature with linear deflection.
-    try:
-        mesh = MeshPart.meshFromShape(
-            Shape=shape,
-            LinearDeflection=eff,
-            AngularDeflection=0.25,
-            Relative=False,
-        )
-        if getattr(mesh, "CountFacets", 0) > 0:
-            Console.PrintLog(
-                f"shape2Mesh linear-deflection maxl={maxl} eff={eff} -> facets={mesh.CountFacets}\n",
-            )
-            return mesh
-    except Exception:
-        pass
-
-    # Path 3: legacy signature; map max_length to segments conservatively.
-    diag = max(shape.BoundBox.DiagonalLength, 1.0e-6)
-    seg = int(diag / max(eff, 1.0e-6))
-    seg = max(8, min(400, seg))
-
-    mesh = MeshPart.meshFromShape(
-        shape,
-        GrowthRate=0,
-        SegPerEdge=seg,
-        SegPerRadius=seg,
-        SecondOrder=0,
-        Optimize=1,
-        AllowQuad=0,
-    )
-    Console.PrintLog(
-        f"shape2Mesh legacy seg={seg} (maxl={maxl}, eff={eff}) -> facets={mesh.CountFacets}\n",
-    )
-    return mesh
