@@ -745,23 +745,47 @@ class CompositeShellFP(CompositeBaseFP):
         drapecd_coin, mesh_proxy = drapecd_mesh
         fp.Mesh.Mesh = mesh_proxy  # Minimal proxy for Mesh::Feature compat
 
-        # Inject Coin3D geometry into the DrapeMesh ViewObject's RootNode.
-        # Remove any previously injected Coin3D geometry first to avoid duplicates.
-        mesh_vobj = getattr(fp.Mesh, "ViewObject", None)
-        if mesh_vobj and hasattr(mesh_vobj, "RootNode"):
-            root = mesh_vobj.RootNode
-            self._remove_existing_coin_geometry(root)
-            self._inject_coin_geometry(root, drapecd_coin)
-            self._remove_cut_edges(root)
-            self._inject_cut_edges(root, result.get("cut_edges"))
-
-        # Reload the shader (rebuild scene-graph nodes with new geometry)
+        # Defer geometry injection + shader load to the next event-loop
+        # iteration.  Setting fp.Mesh.Mesh triggers an asynchronous
+        # RootNode rebuild inside FreeCAD; if we inject geometry and
+        # attach the shader synchronously, the rebuild wipes them out.
         vp = getattr(fp, "ViewObject", None)
-        if vp and hasattr(vp, "Proxy"):
+        coin_to_inject = drapecd_coin
+        cut_edges = result.get("cut_edges")
+        if vp:
             try:
-                vp.Proxy.reload_shader()
+                from PySide6 import QtCore
+
+                def _deferred():
+                    try:
+                        mesh_vobj = getattr(fp.Mesh, "ViewObject", None)
+                        if mesh_vobj and hasattr(mesh_vobj, "RootNode"):
+                            root = mesh_vobj.RootNode
+                            self._remove_existing_coin_geometry(root)
+                            self._inject_coin_geometry(root, coin_to_inject)
+                            self._remove_cut_edges(root)
+                            self._inject_cut_edges(root, cut_edges)
+                        if hasattr(vp, "Proxy"):
+                            vp.Proxy.reload_shader()
+                            vp.Proxy._set_shell_transparency(vp)
+                    except Exception:
+                        pass
+
+                QtCore.QTimer.singleShot(0, _deferred)
             except Exception:
-                pass
+                # Fallback: synchronous injection
+                mesh_vobj = getattr(fp.Mesh, "ViewObject", None)
+                if mesh_vobj and hasattr(mesh_vobj, "RootNode"):
+                    root = mesh_vobj.RootNode
+                    self._remove_existing_coin_geometry(root)
+                    self._inject_coin_geometry(root, drapecd_coin)
+                    self._remove_cut_edges(root)
+                    self._inject_cut_edges(root, result.get("cut_edges"))
+                if vp and hasattr(vp, "Proxy"):
+                    try:
+                        vp.Proxy.reload_shader()
+                    except Exception:
+                        pass
 
         # Make shell semi-transparent so drape mesh shows through
         if vp:
@@ -1047,29 +1071,45 @@ class CompositeShellFP(CompositeBaseFP):
 
         fp.Mesh.Mesh = mesh_proxy  # Minimal proxy for Mesh::Feature compat
 
-        # Inject Coin3D geometry into the DrapeMesh ViewObject's RootNode.
-        # Remove any previously injected Coin3D geometry first to avoid duplicates.
-        mesh_vobj = getattr(fp.Mesh, "ViewObject", None)
-        if mesh_vobj and hasattr(mesh_vobj, "RootNode"):
-            root = mesh_vobj.RootNode
-            self._remove_existing_coin_geometry(root)
-            self._inject_coin_geometry(root, drapecd_coin)
+        # Defer geometry injection + shader load to the next event-loop
+        # iteration (same reason as _complete_drape).
+        vp = getattr(fp, "ViewObject", None)
+        coin_to_inject = drapecd_coin
+        if vp:
+            try:
+                from PySide6 import QtCore
+
+                def _deferred():
+                    try:
+                        mesh_vobj = getattr(fp.Mesh, "ViewObject", None)
+                        if mesh_vobj and hasattr(mesh_vobj, "RootNode"):
+                            root = mesh_vobj.RootNode
+                            self._remove_existing_coin_geometry(root)
+                            self._inject_coin_geometry(root, coin_to_inject)
+                        if hasattr(vp, "Proxy"):
+                            vp.Proxy.reload_shader()
+                            vp.Proxy._set_shell_transparency(vp)
+                    except Exception:
+                        pass
+
+                QtCore.QTimer.singleShot(0, _deferred)
+            except Exception:
+                mesh_vobj = getattr(fp.Mesh, "ViewObject", None)
+                if mesh_vobj and hasattr(mesh_vobj, "RootNode"):
+                    root = mesh_vobj.RootNode
+                    self._remove_existing_coin_geometry(root)
+                    self._inject_coin_geometry(root, drapecd_coin)
+                if vp and hasattr(vp, "Proxy"):
+                    try:
+                        vp.Proxy.reload_shader()
+                    except Exception:
+                        pass
 
         # Human-readable quality status (from rehydrated solve result)
         qual = solve_result.get("quality", {})
         fp.DrapeQuality = repr(qual) if diag.get("status") != "failed" else "invalid"
 
-        # Reload the shader (rebuild scene-graph nodes with new geometry)
-        vp = getattr(fp, "ViewObject", None)
-        if vp and hasattr(vp, "Proxy"):
-            try:
-                vp.Proxy.reload_shader()
-            except Exception:
-                pass
-            try:
-                vp.Proxy._set_shell_transparency(vp)
-            except Exception:
-                pass
+        # Transparency is set by the deferred callback above
 
     def _persist_solve_data(self, fp, solve_result: dict) -> None:
         """Store solve result arrays as JSON properties for rehydration."""
@@ -1492,7 +1532,6 @@ class ViewProviderCompositeShell:
             case "DisplayLayer":
                 self.reload_shader()
             case "ShapeAppearance":
-                self.reload_shader()
                 self._set_shell_transparency(vobj)
             case "ShowRosette":
                 from pivy import coin
@@ -1511,8 +1550,14 @@ class ViewProviderCompositeShell:
         return True
 
     def reload_shader(self):
-        self.remove_shader()
-        self.load_shader()
+        if getattr(self, "_reloading", False):
+            return
+        self._reloading = True
+        try:
+            self.remove_shader()
+            self.load_shader()
+        finally:
+            self._reloading = False
 
     def get_offset_angle(self, vobj):
         if not hasattr(vobj.ViewObject, "DisplayLayer"):

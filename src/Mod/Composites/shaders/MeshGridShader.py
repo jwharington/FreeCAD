@@ -333,8 +333,10 @@ class MeshGridShader:
     def _find_coin_geometry(self, node: Any) -> Any | None:
         """Find the Coin3D geometry separator injected by _build_drapecd_mesh.
 
-        Looks for a SoSeparator that contains both SoCoordinate3 and
-        SoIndexedFaceSet as children.
+        Looks for a SoSeparator named 'DrapedMeshGeometry' that contains
+        both SoCoordinate3 and SoIndexedFaceSet as children.
+        Skips the 'shader_state' group to avoid finding geometry that
+        was already moved there by a previous attach().
         """
         children = node.getChildren()
         if children is None or children.getLength() == 0:
@@ -343,6 +345,12 @@ class MeshGridShader:
             c = children[i]
             if c is None:
                 continue
+            # Skip our own shader_state group
+            try:
+                if c.getName() == "shader_state":
+                    continue
+            except AttributeError:
+                pass
             tname = str(c.getTypeId().getName())
             if "Separator" in tname and "Switch" not in tname:
                 # Check if this separator has both Coordinate3 and IndexedFaceSet
@@ -361,10 +369,10 @@ class MeshGridShader:
                             has_face = True
                 if has_coord and has_face:
                     return c
-            # Recurse
-            res = self._find_coin_geometry(c)
-            if res is not None:
-                return res
+                # Recurse into separators/groups (but not shader_state)
+                res = self._find_coin_geometry(c)
+                if res is not None:
+                    return res
         return None
 
     def _remove_node_from_parent(self, node: Any, parent: Any) -> bool:
