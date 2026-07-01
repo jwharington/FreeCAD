@@ -15,58 +15,17 @@ from .. import (
     roma_map,
 )
 from ..tools.drape_backend_nextdrape import NextDrapeBackend
+from .coin_geometry import (
+    build_drapecd_coin,
+    find_switch,
+    inject_coin_geometry,
+    inject_cut_edges,
+    remove_cut_edges,
+    remove_existing_coin_geometry,
+)
+from .VPCompositeShell import ViewProviderCompositeShell
 
 
-def _build_drapecd_mesh(node_positions, quads):
-    """Build Coin3D geometry from draper node_positions and quads.
-
-    Preserves 1:1 mapping: vertex i = node_positions[i].
-    No deduplication — matches old working version behavior.
-
-    Returns a tuple of (coin_separator, mesh_proxy) where:
-    - coin_separator: SoSeparator with SoCoordinate3 + SoIndexedFaceSet
-    - mesh_proxy: Minimal Mesh.Mesh for FreeCAD Mesh::Feature compatibility
-    """
-    from pivy import coin
-
-    # Coordinate3: one point per draper node (no dedup)
-    coords = coin.SoCoordinate3()
-    pts = [coin.SbVec3f(float(p[0]), float(p[1]), float(p[2])) for p in node_positions]
-    coords.point.setValues(0, len(pts), pts)
-
-    # IndexedFaceSet: triangulated quads with node indices.
-    # Keep an explicit face→quad mapping so colors can be assigned per quad
-    # without ambiguity: each quad contributes two triangles.
-    face_set = coin.SoIndexedFaceSet()
-    indices = []
-    material_indices = []
-    for quad_idx, q in enumerate(quads):
-        i0, i1, i2, i3 = [int(idx) for idx in q]
-        # Two triangles per quad, separated by -1.
-        indices.extend([i0, i1, i2, -1])
-        indices.extend([i0, i2, i3, -1])
-        # Explicitly map both triangles back to the originating quad.
-        material_indices.extend([quad_idx, -1, quad_idx, -1])
-    indices.append(-1)  # End of all faces
-    material_indices.append(-1)
-    face_set.coordIndex.setValues(0, len(indices), indices)
-    face_set.materialIndex.setValues(0, len(material_indices), material_indices)
-
-    # Build a simple SoSeparator with coords + face_set
-    sep = coin.SoSeparator()
-    sep.addChild(coords)
-    sep.addChild(face_set)
-
-    # Minimal mesh proxy for FreeCAD Mesh::Feature compatibility
-    import Mesh
-    import FreeCAD
-    mesh_proxy = Mesh.Mesh()
-    v1 = FreeCAD.Vector(0, 0, 0)
-    v2 = FreeCAD.Vector(0.001, 0, 0)
-    v3 = FreeCAD.Vector(0, 0.001, 0)
-    mesh_proxy.addFacets([(v1, v2, v3)])
-
-    return sep, mesh_proxy
 
 
 class _RehydratedBackend:
@@ -731,10 +690,8 @@ class CompositeShellFP(CompositeBaseFP):
         # Store mesh in backend for ViewProvider shader attachment
         backend._mesh = drapecd_mesh
 
-        # drapecd_mesh is a (coin_separator, mesh_proxy) tuple.
-        # We only need the Coin3D separator; the mesh_proxy was only
-        # needed for the now-removed DrapeMesh object.
-        drapecd_coin, _mesh_proxy = drapecd_mesh
+        # drapecd_mesh is now just the Coin3D separator (build_drapecd_coin)
+        drapecd_coin = drapecd_mesh
 
         # Defer geometry injection + shader load to the next event-loop
         # iteration so the Part ViewProvider has settled.
@@ -749,10 +706,10 @@ class CompositeShellFP(CompositeBaseFP):
                 def _deferred():
                     try:
                         if drape_host is not None:
-                            self._remove_existing_coin_geometry(drape_host)
-                            self._inject_coin_geometry(drape_host, coin_to_inject)
-                            self._remove_cut_edges(drape_host)
-                            self._inject_cut_edges(drape_host, cut_edges)
+                            remove_existing_coin_geometry(drape_host)
+                            inject_coin_geometry(drape_host, coin_to_inject)
+                            remove_cut_edges(drape_host)
+                            inject_cut_edges(drape_host, cut_edges)
                         vp.Proxy.reload_shader()
                         vp.Proxy._set_shell_transparency(vp)
                     except Exception:
@@ -761,10 +718,10 @@ class CompositeShellFP(CompositeBaseFP):
                 QtCore.QTimer.singleShot(0, _deferred)
             except Exception:
                 if drape_host is not None:
-                    self._remove_existing_coin_geometry(drape_host)
-                    self._inject_coin_geometry(drape_host, drapecd_coin)
-                    self._remove_cut_edges(drape_host)
-                    self._inject_cut_edges(drape_host, cut_edges)
+                    remove_existing_coin_geometry(drape_host)
+                    inject_coin_geometry(drape_host, drapecd_coin)
+                    remove_cut_edges(drape_host)
+                    inject_cut_edges(drape_host, cut_edges)
                 try:
                     vp.Proxy.reload_shader()
                 except Exception:
@@ -774,105 +731,6 @@ class CompositeShellFP(CompositeBaseFP):
         view_object = getattr(fp, "ViewObject", None)
         if view_object:
             view_object.update()
-
-    def _find_switch(self, node):
-        """Find the Switch child inside the given Coin3D node (recursive).
-
-        Returns the Switch node itself, or None if not found.
-        """
-        children = node.getChildren()
-        if children is None:
-            return None
-        for i in range(int(children.getLength())):
-            c = children[i]
-            if c and "Switch" in str(c.getTypeId().getName()):
-                return c
-        return None
-
-    def _remove_existing_coin_geometry(self, root):
-        """Remove any previously injected Coin3D geometry from root."""
-        children = root.getChildren()
-        if children is None:
-            return
-        for i in range(int(children.getLength()) - 1, -1, -1):
-            c = children[i]
-            if c is None:
-                continue
-            if c.getName() == "DrapedMeshGeometry":
-                root.removeChild(i)
-
-    def _inject_coin_geometry(self, root, coin_geo):
-        """Inject Coin3D geometry as a child of root."""
-        coin_geo.setName("DrapedMeshGeometry")
-        root.addChild(coin_geo)
-
-    def _inject_cut_edges(self, root, cut_edges: list) -> None:
-        """Inject cut-edge line geometry as visible overlays.
-
-        Each cut is a list of 3D point tuples forming a polyline.
-        A red line is drawn through the points so cut boundaries
-        are clearly visible on top of the draped mesh.
-        """
-        from pivy import coin
-
-        if not cut_edges:
-            return
-
-        sep = coin.SoSeparator()
-
-        for walk in cut_edges:
-            pc = len(walk)
-            if pc < 2:
-                continue
-            wire_sep = coin.SoSeparator()
-            # Red material
-            wire_mat = coin.SoMaterial()
-            wire_mat.diffuseColor.setValue(1.0, 0.0, 0.0)
-            wire_sep.addChild(wire_mat)
-            # 3D coordinates
-            wire_coords = coin.SoCoordinate3()
-            pts: list[coin.SbVec3f] = [
-                coin.SbVec3f(float(p[0]), float(p[1]), float(p[2]))
-                for p in walk
-            ]
-            wire_coords.point.setValues(0, pc, pts)
-            wire_sep.addChild(wire_coords)
-            # Linear line segments
-            line_set = coin.SoLineSet()
-            wire_sep.addChild(line_set)
-            sep.addChild(wire_sep)
-
-        # Put cut-edge layer *after* the main mesh so it draws on top.
-        root.addChild(sep)
-
-    def _remove_cut_edges(self, root) -> None:
-        """Remove previously injected cut-edge separator from root."""
-        from pivy import coin
-        children = root.getChildren()
-        if children is None or children.getLength() == 0:
-            return
-        last = children[children.getLength() - 1]
-        if (
-            last
-            and not str(last.getTypeId().getName())
-            in ("Separator", "Switch", "Path", "Group")
-        ):
-            # Check if it looks like a cut-edge group:
-            # Coordinate3 + SoLineSet
-            sub = last.getChildren()
-            if sub and sub.getLength() >= 2:
-                has_coord = has_lineset = False
-                for j in range(int(sub.getLength())):
-                    sc = sub[j]
-                    if sc is None:
-                        continue
-                    st = str(sc.getTypeId().getName())
-                    if st == "Coordinate3":
-                        has_coord = True
-                    if "LineSet" in st:
-                        has_lineset = True
-                if has_coord and has_lineset:
-                    root.removeChild(last)
 
     def _mark_failed(self, fp, error_msg):
         """Mark the shell as failed (main thread)."""
@@ -1034,7 +892,7 @@ class CompositeShellFP(CompositeBaseFP):
         solve_result = self._backend._run_solve()
         node_positions = solve_result.get("node_positions", [])
         quads = solve_result.get("quads", [])
-        drapecd_coin, _mesh_proxy = _build_drapecd_mesh(node_positions, quads)
+        drapecd_coin = build_drapecd_coin(node_positions, quads)
 
         # Defer geometry injection + shader load to the next event-loop
         # iteration (same reason as _complete_drape).
@@ -1048,8 +906,8 @@ class CompositeShellFP(CompositeBaseFP):
                 def _deferred():
                     try:
                         if drape_host is not None:
-                            self._remove_existing_coin_geometry(drape_host)
-                            self._inject_coin_geometry(drape_host, coin_to_inject)
+                            remove_existing_coin_geometry(drape_host)
+                            inject_coin_geometry(drape_host, coin_to_inject)
                         vp.Proxy.reload_shader()
                         vp.Proxy._set_shell_transparency(vp)
                     except Exception:
@@ -1058,8 +916,8 @@ class CompositeShellFP(CompositeBaseFP):
                 QtCore.QTimer.singleShot(0, _deferred)
             except Exception:
                 if drape_host is not None:
-                    self._remove_existing_coin_geometry(drape_host)
-                    self._inject_coin_geometry(drape_host, drapecd_coin)
+                    remove_existing_coin_geometry(drape_host)
+                    inject_coin_geometry(drape_host, drapecd_coin)
                 try:
                     vp.Proxy.reload_shader()
                 except Exception:
@@ -1209,341 +1067,6 @@ class CompositeShellFP(CompositeBaseFP):
     def get_stack_assembly(self, fp):
         lam_obj = fp.Laminate
         return lam_obj.Proxy.get_stack_assembly(lam_obj)
-
-
-class ViewProviderCompositeShell:
-    def __init__(self, obj):
-        # Lazy import to avoid GUI dependency in headless mode
-        from ..shaders.MeshGridShader import MeshGridShader
-
-        self.grid_shader = MeshGridShader()
-
-        obj.addProperty(
-            "App::PropertyFloatConstraint",
-            "Darken",
-            "AnalysisOptions",
-            "Grid darkness",
-        )
-        obj.Darken = 0.5
-
-        obj.addProperty(
-            "App::PropertyBool",
-            "ShowRosette",
-            "Rosette",
-            "Show fibre orientation rosette symbol in 3D view",
-        )
-        obj.ShowRosette = True
-
-        obj.addProperty(
-            "App::PropertyFloat",
-            "RosetteScale",
-            "Rosette",
-            "Radius of fibre orientation rosette symbol (mm)",
-        )
-        obj.RosetteScale = 20.0
-
-        obj.Proxy = self
-
-    def setDisplayMode(self, mode):
-        return mode
-
-    def getDisplayModes(self, obj):
-        # Keep standard display modes and add strain overlays.
-        # The shader now attaches to the DrapeMesh RootNode directly, so a
-        # dedicated "Grid" display mode is no longer required.
-        return [
-            "Shaded",
-            "Wireframe",
-            "Flat Lines",
-            "Points",
-            "Strain XX",
-            "Strain YY",
-            "Strain XY",
-        ]
-
-    def getDefaultDisplayMode(self):
-        return "Shaded"
-
-    def getIcon(self):
-        return COMPOSITE_SHELL_TOOL_ICON
-
-    def claimChildren(self):
-        children = []
-        if hasattr(self.Object, "LocalCoordinateSystem") and self.Object.LocalCoordinateSystem:
-            children.append(self.Object.LocalCoordinateSystem)
-        return children
-
-    def attach(self, obj):
-        self.Active = False
-
-        self.ViewObject = obj
-        self.Object = obj.Object
-
-        # Lazily create grid_shader if deserialized from file (__init__ skipped)
-        if not hasattr(self, "grid_shader"):
-            from ..shaders.MeshGridShader import MeshGridShader
-            self.grid_shader = MeshGridShader()
-
-        # Shader is attached to a dedicated drape_host separator on
-        # this ViewProvider's RootNode, not a separate DrapeMesh object.
-        from pivy import coin
-        self.drape_host = coin.SoSwitch()
-        self.drape_host.setName("DrapeHost")
-        self.drape_host.whichChild = coin.SO_SWITCH_ALL
-        try:
-            obj.RootNode.addChild(self.drape_host)
-        except AttributeError:
-            pass  # RootNode not available in non-GUI / test environments
-
-        # Always hide the native LCS symbology (planes + 3D arrows);
-        # the rosette disk+arrows provide the same orientation info
-        # without cluttering the view.
-        self._hide_lcs(obj.Object)
-
-        # Add DisplayLayer property to ViewObject (enumeration for layer
-        # selection dropdown). Must be added here because FreeCAD mirrors
-        # App::PropertyEnumeration from the FeaturePython to the ViewObject
-        # but adds the 'hidden' flag on mirroring.
-        if not hasattr(obj, "DisplayLayer"):
-            obj.addProperty(
-                "App::PropertyEnumeration",
-                "DisplayLayer",
-                "AnalysisOptions",
-                "Select layer to display",
-            )
-            obj.DisplayLayer = ["0"]
-            obj.DisplayLayer = "0"
-
-        # Fibre orientation rosette: always-visible overlay on the root node
-        from pivy import coin
-
-        from .RosetteSymbol import RosetteSymbol
-
-        self.rosette = RosetteSymbol()
-        self.rosette_switch = coin.SoSwitch()
-        self.rosette_switch.addChild(self.rosette.separator)
-        self.rosette_switch.whichChild = 0  # visible by default
-        try:
-            obj.RootNode.addChild(self.rosette_switch)
-        except AttributeError:
-            pass  # RootNode not available in non-GUI / test environments
-
-        # needed to trigger color update
-        self.onChanged(obj, "Color")
-
-    def update_display_layer(self, fp):
-        if not hasattr(fp.ViewObject, "DisplayLayer"):
-            return
-        display_layer_opts = list(fp.Laminate.StackOrientation.keys())
-        sel = fp.ViewObject.DisplayLayer
-        fp.ViewObject.DisplayLayer = display_layer_opts
-        if sel in display_layer_opts:
-            return
-        if display_layer_opts:
-            fp.ViewObject.DisplayLayer = display_layer_opts[0]
-
-    def _hide_lcs(self, fp):
-        """Always hide the native LCS symbology (planes + 3D arrows)."""
-        lcs = fp.LocalCoordinateSystem
-        if lcs is None and fp.Rosette:
-            lcs = fp.Rosette.LocalCoordinateSystem
-        if lcs is None:
-            return
-        lcs_vobj = getattr(lcs, "ViewObject", None)
-        if lcs_vobj is not None:
-            lcs_vobj.Visibility = False
-
-    def update_visibility(self, vobj):
-        visible = vobj.Visibility
-        # Drape geometry visibility follows the shell
-        drape_host = getattr(self, "drape_host", None)
-        if drape_host is not None:
-            try:
-                from pivy import coin
-                drape_host.whichChild = coin.SO_SWITCH_ALL if visible else coin.SO_SWITCH_NONE
-            except Exception:
-                pass
-        self._set_shell_transparency(vobj)
-        if self.Object.Support:
-            self.Object.Support.Visibility = visible
-
-    def _set_shell_transparency(self, vobj):
-        """Make the shell semi-transparent when drape geometry is present."""
-        has_drape = getattr(self, "drape_host", None) is not None and self.drape_host.getNumChildren() > 0
-        try:
-            vobj.Transparency = 50 if has_drape else 0
-        except Exception:
-            pass
-
-    def update_mesh_material(self, vobj):
-        # Strain coloring previously targeted the DrapeMesh Material
-        # property.  With DrapeMesh removed, the drape geometry lives
-        # inside the shader_state group.  Strain coloring will be wired
-        # to the shader's Material node in a follow-up.
-        self.update_visibility(vobj)
-
-    def updateData(self, fp, prop):
-        match prop:
-            case "LocalCoordinateSystem" | "Support" | "Rosette":
-                self.update_rosette(self.ViewObject)
-            case "Laminate":
-                if fp.Laminate:
-                    self.update_display_layer(fp)
-                self.update_rosette(self.ViewObject)
-            case _:
-                return
-        self.reload_shader()
-
-    def update_rosette(self, vobj):
-        """Rebuild the rosette symbol from the current laminate and LCS."""
-        if not hasattr(self, "rosette"):
-            return
-        obj = vobj.Object
-        laminate = obj.Laminate
-        if not laminate or not hasattr(laminate, "StackOrientation"):
-            return
-        stack_orientation = laminate.StackOrientation
-        if not hasattr(stack_orientation, "values"):
-            return
-        orientations = list(stack_orientation.values())
-        if not orientations:
-            return
-
-        lcs = None
-        if obj.Rosette:
-            lcs = obj.Rosette.LocalCoordinateSystem
-        elif obj.LocalCoordinateSystem:
-            lcs = obj.LocalCoordinateSystem
-
-        if lcs:
-            base = lcs.Placement.Base
-            position = (base.x, base.y, base.z)
-            q = lcs.Placement.Rotation.Q
-            rotation = (q[0], q[1], q[2], q[3])
-        else:
-            position = (0.0, 0.0, 0.0)
-            rotation = (0.0, 0.0, 0.0, 1.0)
-
-        scale = vobj.RosetteScale if hasattr(vobj, "RosetteScale") else 20.0
-        self.rosette.update(orientations, position, rotation, scale)
-
-    def onChanged(self, vobj, prop):
-        match prop:
-            case "Visibility":
-                self.update_visibility(vobj)
-            case "DisplayMode":
-                self.update_mesh_material(vobj)
-            case "Darken":
-                # Darken property no longer applies to the line-set overlay.
-                pass
-            case "DisplayLayer":
-                self.reload_shader()
-            case "ShapeAppearance":
-                self._set_shell_transparency(vobj)
-            case "ShowRosette":
-                from pivy import coin
-
-                if hasattr(self, "rosette_switch"):
-                    self.rosette_switch.whichChild = (
-                        0 if vobj.ShowRosette else coin.SO_SWITCH_NONE
-                    )
-            case "RosetteScale":
-                self.update_rosette(vobj)
-            case _:
-                pass
-
-    def onDelete(self, vobj, sub):
-        self.remove_shader()
-        return True
-
-    def reload_shader(self):
-        if getattr(self, "_reloading", False):
-            return
-        self._reloading = True
-        try:
-            self.remove_shader()
-            self.load_shader()
-        finally:
-            self._reloading = False
-
-    def get_offset_angle(self, vobj):
-        if not hasattr(vobj.ViewObject, "DisplayLayer"):
-            return 0
-        layer = vobj.ViewObject.DisplayLayer
-        if not vobj.Laminate:
-            return 0
-        if layer in vobj.Laminate.StackOrientation:
-            return int(vobj.Laminate.StackOrientation[layer])
-        return 0
-
-    def load_shader(self):
-        try:
-            if self.Active:
-                return
-            # Skip if already properly attached
-            if hasattr(self, "grid_shader") and self.grid_shader and self.grid_shader._attached:
-                return
-            # self.Object is the FeaturePython object, self.Object.Proxy is the FP proxy.
-            vobj = self.Object
-            obj = vobj.Proxy
-
-            # Guard: _backend may not exist during document deserialization
-            if not hasattr(obj, "_backend") or obj._backend is None:
-                return
-
-            # Use the drape_host separator on this ViewProvider's RootNode
-            drape_host = getattr(self, "drape_host", None)
-            if drape_host is None:
-                return
-
-            # Get texture coordinates from the backend.
-            # With Coin3D geometry (no deduplication), tex_coords[i]
-            # directly corresponds to vertex/coordinate index i.
-            tex_coords = obj._backend.get_tex_coords()
-            if tex_coords is None or len(tex_coords) == 0:
-                return
-
-            offset_angle_deg = self.get_offset_angle(vobj)
-            # Lazily create grid_shader if deserialized from file
-            if not hasattr(self, "grid_shader"):
-                from ..shaders.MeshGridShader import MeshGridShader
-                self.grid_shader = MeshGridShader()
-            if self.grid_shader:
-                self.grid_shader.attach(
-                    drape_host,
-                    tex_coords,
-                    offset_angle_deg,
-                )
-                self.Active = True
-                import FreeCADGui
-
-                FreeCADGui.Selection.addObserver(self)
-        except Exception as e:
-            # Log errors during deserialization or other non-critical contexts
-            import traceback
-            print(f'load_shader ERROR: {e}')
-            traceback.print_exc()
-
-    def remove_shader(self):
-        if not self.Active:
-            return
-        if hasattr(self, "grid_shader"):
-            try:
-                self.grid_shader.detach()
-            except Exception:
-                pass
-        self.Active = False
-        try:
-            import FreeCADGui
-            FreeCADGui.Selection.removeObserver(self)
-        except Exception:
-            pass
-
-    def __getstate__(self):
-        return {}
-
-    def __setstate__(self, state):
-        return None
 
 
 class CompositeShellCommand(BaseCommand):

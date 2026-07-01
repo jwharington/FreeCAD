@@ -128,14 +128,12 @@ def run_drape_task(
         else:
             solve_result = backend._run_solve()
 
-        # 5. Build draped mesh
-        from Composites.features.CompositeShell import (
-            _build_drapecd_mesh,
-        )
+        # 5. Build draped mesh Coin3D geometry
+        from Composites.features.coin_geometry import build_drapecd_coin
 
         node_positions = solve_result.get("node_positions", [])
         quads = solve_result.get("quads", [])
-        drapecd_mesh = _build_drapecd_mesh(node_positions, quads)
+        drapecd_mesh = build_drapecd_coin(node_positions, quads)
 
         # 6. Collect results
         return {
