@@ -1,13 +1,21 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
+import os
+
 import FreeCAD
 import FreeCADGui as Gui
 
 
 class CompositesWorkbench(Gui.Workbench):
-    # Icon path defined inside class body to avoid exec() scoping issues
-    Icon = "/home/jmw/opt/FreeCAD/build/pixi-debug/Mod/Composites/resources/icons/CompositesWB.svg"
+    # Icon path resolved relative to this module so it works from both
+    # the build tree (dev) and the install tree (cmake --install).
+    Icon = os.path.join(
+        os.path.dirname(__file__),
+        "resources",
+        "icons",
+        "CompositesWB.svg",
+    )
     MenuText = "Composites"
     ToolTip = "Tools for composite structures"
 
