@@ -26,6 +26,16 @@ class CompositesWorkbench(Gui.Workbench):
         It is executed once in a FreeCAD session followed by the Activated
         function.
         """
+        # ── Load C++ draping solver immediately so failures are visible at
+        #    workbench activation, not deep inside a draping operation. ────
+        try:
+            from Composites.ext._native import solve  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                "Composites: failed to load C++ draping solver "
+                f"({exc}). Was FreeCAD built with BUILD_COMPOSITES=ON? "
+                "Or is there a shared-library loading conflict?"
+            )
 
         import Composites.features.CompositeShell  # noqa
         import Composites.features.TexturePlan  # noqa

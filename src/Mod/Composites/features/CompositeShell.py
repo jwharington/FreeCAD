@@ -694,6 +694,7 @@ class CompositeShellFP(CompositeBaseFP):
         import json
 
         backend = result["backend"]
+        self._backend = backend
         drapecd_mesh = result["drapecd_mesh"]
         solve_result = result["solve_result"]
         diag = result["diag"]
@@ -754,11 +755,18 @@ class CompositeShellFP(CompositeBaseFP):
             self._remove_cut_edges(root)
             self._inject_cut_edges(root, result.get("cut_edges"))
 
-        # Load the shader
+        # Reload the shader (rebuild scene-graph nodes with new geometry)
         vp = getattr(fp, "ViewObject", None)
         if vp and hasattr(vp, "Proxy"):
             try:
-                vp.Proxy.load_shader()
+                vp.Proxy.reload_shader()
+            except Exception:
+                pass
+
+        # Make shell semi-transparent so drape mesh shows through
+        if vp:
+            try:
+                vp.Proxy._set_shell_transparency(vp)
             except Exception:
                 pass
 
@@ -790,26 +798,12 @@ class CompositeShellFP(CompositeBaseFP):
             c = children[i]
             if c is None:
                 continue
-            tname = str(c.getTypeId().getName())
-            if "Separator" in tname and "Switch" not in tname:
-                # Check if this separator has Coordinate3 + IndexedFaceSet
-                sub = c.getChildren()
-                has_coord = has_face = False
-                if sub:
-                    for j in range(int(sub.getLength())):
-                        sc = sub[j]
-                        if sc is None:
-                            continue
-                        st = str(sc.getTypeId().getName())
-                        if st == "Coordinate3":
-                            has_coord = True
-                        elif "IndexedFaceSet" in st and "SoFC" not in st:
-                            has_face = True
-                if has_coord and has_face:
-                    root.removeChild(c)
+            if c.getName() == "DrapedMeshGeometry":
+                root.removeChild(i)
 
     def _inject_coin_geometry(self, root, coin_geo):
         """Inject Coin3D geometry as a child of root."""
+        coin_geo.setName("DrapedMeshGeometry")
         root.addChild(coin_geo)
 
     def _inject_cut_edges(self, root, cut_edges: list) -> None:
@@ -1065,11 +1059,15 @@ class CompositeShellFP(CompositeBaseFP):
         qual = solve_result.get("quality", {})
         fp.DrapeQuality = repr(qual) if diag.get("status") != "failed" else "invalid"
 
-        # Load the shader (same as full solve path)
+        # Reload the shader (rebuild scene-graph nodes with new geometry)
         vp = getattr(fp, "ViewObject", None)
         if vp and hasattr(vp, "Proxy"):
             try:
-                vp.Proxy.load_shader()
+                vp.Proxy.reload_shader()
+            except Exception:
+                pass
+            try:
+                vp.Proxy._set_shell_transparency(vp)
             except Exception:
                 pass
 
@@ -1354,8 +1352,18 @@ class ViewProviderCompositeShell:
         mesh_vobj = getattr(self.Object, "Mesh", None)
         if mesh_vobj is not None:
             mesh_vobj.Visibility = visible
+        self._set_shell_transparency(vobj)
         if self.Object.Support:
             self.Object.Support.Visibility = visible
+
+    def _set_shell_transparency(self, vobj):
+        """Make the shell semi-transparent when a drape mesh is visible."""
+        mesh = getattr(self.Object, "Mesh", None)
+        has_mesh = mesh is not None and getattr(mesh, "ViewObject", None) and mesh.ViewObject.Visibility
+        try:
+            vobj.Transparency = 50 if has_mesh else 0
+        except Exception:
+            pass
 
     def update_mesh_material(self, vobj):
         # use draper to determine distortion for coloring
@@ -1485,6 +1493,7 @@ class ViewProviderCompositeShell:
                 self.reload_shader()
             case "ShapeAppearance":
                 self.reload_shader()
+                self._set_shell_transparency(vobj)
             case "ShowRosette":
                 from pivy import coin
 
@@ -1519,25 +1528,9 @@ class ViewProviderCompositeShell:
         try:
             if self.Active:
                 return
-            # Skip if grid_shader doesn't exist yet
-            if not hasattr(self, "grid_shader") or not self.grid_shader:
-                pass  # Will create below
-            elif self.grid_shader._attached:
-                # Already attached — skip to avoid recreating scene-graph nodes
+            # Skip if already properly attached
+            if hasattr(self, "grid_shader") and self.grid_shader and self.grid_shader._attached:
                 return
-            # Also skip if Coin3D geometry is already inside the shader group
-            # (indicates shader was attached in a previous recompute cycle)
-            if hasattr(self, "grid_shader") and self.grid_shader:
-                grp = getattr(self.grid_shader, 'grp', None)
-                if grp:
-                    has_coin = False
-                    for i in range(int(grp.getNumChildren())):
-                        c = grp.getChild(i)
-                        if c and "Coordinate3" in str(c.getTypeId().getName()):
-                            has_coin = True
-                            break
-                    if has_coin:
-                        return
             # self.Object is the FeaturePython object, self.Object.Proxy is the FP proxy.
             vobj = self.Object
             obj = vobj.Proxy

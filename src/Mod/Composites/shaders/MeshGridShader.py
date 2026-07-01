@@ -180,21 +180,20 @@ class MeshGridShader:
         return texture_coords
 
     def detach(self, obj: Any | None = None) -> None:
-        """Detach the shader from the scene graph."""
-        self._remove_from_scene()
+        """Detach the shader by clearing group contents.
+
+        The group stays in the scene graph (reused by next attach)
+        but its children are removed so nothing renders.
+        """
+        self._clear_group()
         self._attached = False
 
-    def _cleanup_nodes(self) -> None:
-        """Remove shader nodes from grp."""
-        for attr in ["texcoords", "coord_binding", "tex_matrix_transform",
-                      "shaderProgram", "mat_binding", "dummy_texture",
-                      "transparency_type", "material"]:
-            node = getattr(self, attr, None)
-            if node is not None:
-                try:
-                    self.grp.removeChild(node)
-                except Exception:
-                    pass
+    def _clear_group(self) -> None:
+        """Remove all children from self.grp by index (SWIG-safe)."""
+        if self.grp is None:
+            return
+        for i in range(int(self.grp.getNumChildren()) - 1, -1, -1):
+            self.grp.removeChild(i)
 
     def attach(
         self,
@@ -205,23 +204,10 @@ class MeshGridShader:
     ) -> None:
         """Attach the shader to the DrapeMesh's native geometry.
 
-        Inserts shader state nodes (material binding override, texture
-        coordinates, texture matrix transform, shader program) directly
-        into the DrapeMesh RootNode.  The Coin3D geometry (injected by
-        _build_drapecd_mesh) is placed inside the shader state group so
-        the shader affects it.  Works with Coin3D geometry
-        (SoCoordinate3 + SoIndexedFaceSet) that has correct 1:1
-        texcoord-to-vertex mapping.
-
-        Args:
-            obj: ViewProvider object (used to get the document/viewer).
-            child: DrapeMesh feature (provides RootNode).
-            tex_coords: Texture coordinates from the draper backend.
-            offset_angle_deg: Rosette angle for layer rotation.
+        If already attached, reuses the existing scene-graph group
+        (clears and repopulates) to avoid structural scene-graph edits
+        that can trigger reentrant callbacks and segfaults.
         """
-        self._cleanup_nodes()
-        self._remove_from_scene()
-
         if tex_coords is None or len(tex_coords) == 0:
             return
 
@@ -252,14 +238,15 @@ class MeshGridShader:
         # that was injected by _build_drapecd_mesh.
         coin_geo = self._find_coin_geometry(self.root)
 
-        # Find the switch index for positioning
-        switch_idx = self._find_switch_index()
+        # Reuse existing group if already in scene, else create new
+        if self._attached and self.grp is not None:
+            self._clear_group()
+        else:
+            self.grp = coin.SoGroup()
+            self.grp.setName("shader_state")
+            self._insert_into_scene()
 
-        # Assemble shader state group WITH the geometry as a child:
-        # [mat_binding, dummy_texture, coord_binding, texcoords,
-        #  tex_matrix_transform, shaderProgram, coin_geometry]
-        self.grp = coin.SoGroup()
-        self.grp.setName("shader_state")
+        # Rebuild shader state children
         self.grp.addChild(self.transparency_type)
         self.grp.addChild(self.material)
         self.grp.addChild(self.mat_binding)
@@ -270,7 +257,6 @@ class MeshGridShader:
         self.grp.addChild(self.shaderProgram)
 
         if coin_geo:
-            # Find and set textureCoordIndex on the face set inside the geometry
             face_set = self._find_face_set_in_root(coin_geo)
             if face_set:
                 coord_index = face_set.coordIndex.getValues()
@@ -279,14 +265,14 @@ class MeshGridShader:
                     len(coord_index),
                     coord_index,
                 )
-            # Move the geometry into the shader state group
             self.grp.addChild(coin_geo)
-            # Remove the geometry from its current location in root
             self._remove_node_from_parent(coin_geo, self.root)
 
-        # Insert the shader state group INSIDE the Switch's children so
-        # it respects display-mode and visibility toggles.  Add to all
-        # children so the grid shows in every display mode.
+        self._attached = True
+
+    def _insert_into_scene(self) -> None:
+        """Insert self.grp into the Switch's children inside root."""
+        switch_idx = self._find_switch_index()
         if switch_idx >= 0:
             switch_node = self.root.getChild(switch_idx)
             if switch_node and "Switch" in str(switch_node.getTypeId().getName()):
@@ -295,12 +281,8 @@ class MeshGridShader:
                     child = switch_node.getChild(ci)
                     if child and hasattr(child, 'addChild'):
                         child.addChild(self.grp)
-            else:
-                self.root.addChild(self.grp)
-        else:
-            self.root.addChild(self.grp)
-
-        self._attached = True
+                return
+        self.root.addChild(self.grp)
 
     def _find_switch_index(self) -> int:
         """Find the index of the Switch child inside the root."""
@@ -386,10 +368,13 @@ class MeshGridShader:
         return None
 
     def _remove_node_from_parent(self, node: Any, parent: Any) -> bool:
-        """Remove a child node from its parent. Uses pointer comparison
-        to handle SWIG proxy identity issues."""
+        """Remove a child node from its parent by name match.
+
+        SWIG proxy identity is unreliable, so we match by the node's
+        Coin3D name instead of comparing proxies.
+        """
         try:
-            target_ptr = hex(int(node.this))
+            target_name = node.getName()
         except AttributeError:
             return False
         children = parent.getChildren()
@@ -400,8 +385,8 @@ class MeshGridShader:
             if c is None:
                 continue
             try:
-                if hex(int(c.this)) == target_ptr:
-                    parent.removeChild(node)
+                if c.getName() == target_name and target_name:
+                    parent.removeChild(i)
                     return True
             except AttributeError:
                 continue
@@ -422,11 +407,40 @@ class MeshGridShader:
         return None
 
     def _remove_from_scene(self) -> None:
-        """Remove shader state group from the root node."""
-        if not self._attached:
+        """Remove shader state group from the scene graph.
+
+        The group was inserted into every child of the Switch node
+        inside root, so we search there and remove by name/index.
+        """
+        if self.root is None:
             return
-        if self.root is not None:
-            try:
-                self.root.removeChild(self.grp)
-            except Exception:
-                pass
+        # Find the Switch inside root
+        children = self.root.getChildren()
+        if children is None:
+            return
+        for i in range(int(children.getLength())):
+            c = children[i]
+            if c is None:
+                continue
+            if "Switch" not in str(c.getTypeId().getName()):
+                continue
+            # Remove 'shader_state' groups from all children of the switch
+            for j in range(int(c.getNumChildren()) - 1, -1, -1):
+                sub = c.getChild(j)
+                if sub is None or not hasattr(sub, "getNumChildren"):
+                    continue
+                for k in range(int(sub.getNumChildren()) - 1, -1, -1):
+                    gc = sub.getChild(k)
+                    if gc is None:
+                        continue
+                    try:
+                        if gc.getName() == "shader_state":
+                            sub.removeChild(k)
+                    except AttributeError:
+                        continue
+        # Also try direct removal from root (legacy path)
+        try:
+            self.root.removeChild(self.grp)
+        except Exception:
+            pass
+        self._attached = False

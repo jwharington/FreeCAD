@@ -419,10 +419,6 @@ def create_composite_feature_stack(
         )
         record_diagnostic_event(diagnostics, "feature_stack.shell.fp_ctor.done")
 
-        # Finer drape mesh for examples so fibre-path preview is clearer.
-        if not skip_recompute:
-            shell_obj.DrapePitch = 5.0
-
         if attach_view_providers and getattr(shell_obj, "ViewObject", None):
             record_diagnostic_event(
                 diagnostics,
