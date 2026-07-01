@@ -63,10 +63,29 @@ file(GLOB_RECURSE Composites_PY_SRCS_ALL
     "*.xml"
     "*.qrc"
     "*.css"
+    "*.FCMat"
 )
 
-# ── Install Python files ────────────────────────────────────────
+# ── Copy to build tree for development ──────────────────────────
 fc_copy_sources(Composites "${CMAKE_BINARY_DIR}/Mod/Composites" ${Composites_PY_SRCS_ALL})
-fc_copy_sources(Composites "${CMAKE_BINARY_DIR}/${CMAKE_INSTALL_DATADIR}/Mod/Composites" ${Composites_PY_SRCS_ALL})
+
+# ── Install like other workbenches ──────────────────────────────
+# Preserve the package layout so FreeCAD can import Composites from the
+# installed prefix exactly like Part, CAM, and other workbenches.
+install(
+    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/
+    DESTINATION Mod/Composites
+    FILES_MATCHING
+        PATTERN "*.py"
+        PATTERN "*.svg"
+        PATTERN "*.ui"
+        PATTERN "*.xml"
+        PATTERN "*.qrc"
+        PATTERN "*.css"
+        PATTERN "*.FCMat"
+    PATTERN "__pycache__" EXCLUDE
+    PATTERN "*.pyc" EXCLUDE
+    PATTERN ".git" EXCLUDE
+)
 
 message(STATUS "Composites module configured")

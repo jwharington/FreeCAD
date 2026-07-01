@@ -3,15 +3,17 @@
 
 import os
 
-import FreeCAD
+import FreeCAD as App
 import FreeCADGui as Gui
 
 
 class CompositesWorkbench(Gui.Workbench):
-    # Icon path resolved relative to this module so it works from both
-    # the build tree (dev) and the install tree (cmake --install).
+    # Resolve from FreeCAD's install root because this workbench is installed
+    # under <prefix>/Mod/Composites, not under the shared resource tree.
     Icon = os.path.join(
-        os.path.dirname(__file__),
+        App.getHomePath(),
+        "Mod",
+        "Composites",
         "resources",
         "icons",
         "CompositesWB.svg",
