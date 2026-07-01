@@ -1081,6 +1081,7 @@ std::map<std::string, std::string> _getFreeCADMechResultScalarProperties()
     resFCScalProp["UserDefined"] = "UserDefinedMyName";  // this is empty or am I wrong ?!
     resFCScalProp["MassFlowRate"] = "Mass Flow Rate";
     resFCScalProp["NetworkPressure"] = "Network Pressure";
+    resFCScalProp["StressExposureFactor"] = "Stress Exposure Factor";
 
     return resFCScalProp;
 }
