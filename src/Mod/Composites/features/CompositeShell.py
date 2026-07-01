@@ -511,6 +511,7 @@ class CompositeShellFP(CompositeBaseFP):
         )
         obj.QualityPass = True
         obj.setPropertyStatus("QualityPass", "ReadOnly")
+<<<<<<< HEAD
 
         obj.addProperty(
             type="App::PropertyString",
@@ -519,6 +520,8 @@ class CompositeShellFP(CompositeBaseFP):
             doc="Human-readable draping quality status",
         )
         obj.setPropertyStatus("DrapeQuality", "ReadOnly")
+=======
+>>>>>>> c234b8f94a (feat: add DrapeQuality metrics, CalculiX quad elements, and QualityPass)
 
         obj.addProperty(
             type="App::PropertyString",
@@ -679,9 +682,25 @@ class CompositeShellFP(CompositeBaseFP):
         except Exception:
             pass
 
+<<<<<<< HEAD
     def _run_drape_sync(self, fp, lcs):
         """Run the draper solve synchronously and return the result dict."""
         from ..compositetools.drape_task import run_drape_task
+=======
+            debug_file = "/tmp/nextdrape_debug.txt"
+            with open(debug_file, "w") as f:
+                f.write(f"[execute] START\n")
+                f.flush()
+            mesh = mesh_util.shape2Mesh(fp.Shape, fp.MaxLength)
+            with open(debug_file, "a", encoding="utf-8") as f:
+                f.write(f"[execute] mesh created, facets={mesh.CountFacets}\n")
+                f.flush()
+            self._backend = self._make_backend(
+                mesh,
+                get_lcs(),
+                fp.Shape,
+            )
+>>>>>>> c234b8f94a (feat: add DrapeQuality metrics, CalculiX quad elements, and QualityPass)
 
         return run_drape_task(
             fp,
@@ -717,8 +736,22 @@ class CompositeShellFP(CompositeBaseFP):
         fp.DrapeValid = valid
         fp.QualityPass = quality_pass
 
+<<<<<<< HEAD
         qual = solve_result.get("quality", {})
         fp.DrapeQuality = repr(qual)
+=======
+            # Persist the drape solve state so that the backend survives
+            # recompute cycles.  The mesh lives in the DrapeMesh feature;
+            # the validity flag and texture coordinates are stored as
+            # FreeCAD properties on the shell itself.
+            fp.DrapeValid = self._backend.is_valid()
+            fp.QualityPass = self._backend.quality_pass()
+            tc = self._backend.get_tex_coords()
+            if tc is not None:
+                fp.TexCoordsJSON = json.dumps(tc)
+            else:
+                fp.TexCoordsJSON = ""
+>>>>>>> c234b8f94a (feat: add DrapeQuality metrics, CalculiX quad elements, and QualityPass)
 
         if tex_coords is not None:
             fp.TexCoordsJSON = json.dumps(tex_coords)
@@ -770,10 +803,36 @@ class CompositeShellFP(CompositeBaseFP):
                 except Exception:
                     pass
 
+<<<<<<< HEAD
         # Update the view
         view_object = getattr(fp, "ViewObject", None)
         if view_object:
             view_object.update()
+=======
+            debug_file = "/tmp/nextdrape_debug.txt"
+            with open(debug_file, "a", encoding="utf-8") as f:
+                f.write(f"[execute] EXCEPTION: {exc}\n")
+                f.write(traceback.format_exc())
+                f.flush()
+            Console.PrintMessage(f"DEBUG execute exception: {exc}\n")
+            Console.PrintMessage(traceback.format_exc())
+            self._backend = None
+            fp.DrapeValid = False
+            fp.QualityPass = False
+            fp.TexCoordsJSON = ""
+            fp.NodePositionsJSON = ""
+            fp.QuadsJSON = ""
+            fp.StrainsJSON = ""
+            self._set_drape_diagnostics(
+                fp,
+                backend="nextdrape",
+                status="error",
+                failure_reason="solver_unsolved",
+            )
+            Console.PrintWarning(
+                f"CompositeShell drape setup failed: {exc}\n",
+            )
+>>>>>>> c234b8f94a (feat: add DrapeQuality metrics, CalculiX quad elements, and QualityPass)
 
     def _find_switch(self, node):
         """Find the Switch child inside the given Coin3D node (recursive).
@@ -1355,6 +1414,7 @@ class ViewProviderCompositeShell:
 
     def update_visibility(self, vobj):
         visible = vobj.Visibility
+<<<<<<< HEAD
         # Drape geometry visibility follows the shell
         drape_host = getattr(self, "drape_host", None)
         if drape_host is not None:
@@ -1374,6 +1434,15 @@ class ViewProviderCompositeShell:
             vobj.Transparency = 50 if has_drape else 0
         except Exception:
             pass
+=======
+        if vobj.DisplayMode not in self.getDisplayModes(vobj):
+            visible = False
+        mesh_vobj = getattr(self.Object, "Mesh", None)
+        if mesh_vobj is not None:
+            mesh_vobj.Visibility = visible
+        if self.Object.LocalCoordinateSystem:
+            self.Object.LocalCoordinateSystem.Visibility = visible
+>>>>>>> c234b8f94a (feat: add DrapeQuality metrics, CalculiX quad elements, and QualityPass)
 
     def update_mesh_material(self, vobj):
         # Strain coloring previously targeted the DrapeMesh Material
