@@ -34,6 +34,7 @@ __url__ = "https://www.freecad.org"
 
 from FreeCAD import Base
 from . import femutils
+from . import fem_extension_registry
 
 
 def get_member(analysis, t):
@@ -263,6 +264,9 @@ class AnalysisMember:
         self.geos_beamrotation = self.get_several_member("Fem::ElementRotation1D")
         self.geos_fluidsection = self.get_several_member("Fem::ElementFluid1D")
         self.geos_shellthickness = self.get_several_member("Fem::ElementGeometry2D")
+
+        # indirect materials
+        self.mats_laminate = fem_extension_registry.get_indirect_materials(self.geos_shellthickness)
 
         # constraints
         self.cons_centrif = self.get_several_member("Fem::ConstraintCentrif")
