@@ -730,69 +730,45 @@ class CompositeShellFP(CompositeBaseFP):
 
         # Store mesh in backend for ViewProvider shader attachment
         backend._mesh = drapecd_mesh
-        backend._mesh_feat = fp.Mesh
 
-        # Create/update DrapeMesh feature
-        if not hasattr(fp, "Mesh") or fp.Mesh is None:
-            fp.Mesh = fp.Document.addObject(
-                "Mesh::Feature",
-                "DrapeMesh",
-            )
-            fp.setPropertyStatus("Mesh", "LockDynamic")
-            fp.setPropertyStatus("Mesh", "ReadOnly")
-
-        # drapecd_mesh is now a (coin_separator, mesh_proxy) tuple
-        drapecd_coin, mesh_proxy = drapecd_mesh
-        fp.Mesh.Mesh = mesh_proxy  # Minimal proxy for Mesh::Feature compat
+        # drapecd_mesh is a (coin_separator, mesh_proxy) tuple.
+        # We only need the Coin3D separator; the mesh_proxy was only
+        # needed for the now-removed DrapeMesh object.
+        drapecd_coin, _mesh_proxy = drapecd_mesh
 
         # Defer geometry injection + shader load to the next event-loop
-        # iteration.  Setting fp.Mesh.Mesh triggers an asynchronous
-        # RootNode rebuild inside FreeCAD; if we inject geometry and
-        # attach the shader synchronously, the rebuild wipes them out.
+        # iteration so the Part ViewProvider has settled.
         vp = getattr(fp, "ViewObject", None)
         coin_to_inject = drapecd_coin
         cut_edges = result.get("cut_edges")
-        if vp:
+        if vp and hasattr(vp, "Proxy"):
+            drape_host = getattr(vp.Proxy, "drape_host", None)
             try:
                 from PySide6 import QtCore
 
                 def _deferred():
                     try:
-                        mesh_vobj = getattr(fp.Mesh, "ViewObject", None)
-                        if mesh_vobj and hasattr(mesh_vobj, "RootNode"):
-                            root = mesh_vobj.RootNode
-                            self._remove_existing_coin_geometry(root)
-                            self._inject_coin_geometry(root, coin_to_inject)
-                            self._remove_cut_edges(root)
-                            self._inject_cut_edges(root, cut_edges)
-                        if hasattr(vp, "Proxy"):
-                            vp.Proxy.reload_shader()
-                            vp.Proxy._set_shell_transparency(vp)
+                        if drape_host is not None:
+                            self._remove_existing_coin_geometry(drape_host)
+                            self._inject_coin_geometry(drape_host, coin_to_inject)
+                            self._remove_cut_edges(drape_host)
+                            self._inject_cut_edges(drape_host, cut_edges)
+                        vp.Proxy.reload_shader()
+                        vp.Proxy._set_shell_transparency(vp)
                     except Exception:
                         pass
 
                 QtCore.QTimer.singleShot(0, _deferred)
             except Exception:
-                # Fallback: synchronous injection
-                mesh_vobj = getattr(fp.Mesh, "ViewObject", None)
-                if mesh_vobj and hasattr(mesh_vobj, "RootNode"):
-                    root = mesh_vobj.RootNode
-                    self._remove_existing_coin_geometry(root)
-                    self._inject_coin_geometry(root, drapecd_coin)
-                    self._remove_cut_edges(root)
-                    self._inject_cut_edges(root, result.get("cut_edges"))
-                if vp and hasattr(vp, "Proxy"):
-                    try:
-                        vp.Proxy.reload_shader()
-                    except Exception:
-                        pass
-
-        # Make shell semi-transparent so drape mesh shows through
-        if vp:
-            try:
-                vp.Proxy._set_shell_transparency(vp)
-            except Exception:
-                pass
+                if drape_host is not None:
+                    self._remove_existing_coin_geometry(drape_host)
+                    self._inject_coin_geometry(drape_host, drapecd_coin)
+                    self._remove_cut_edges(drape_host)
+                    self._inject_cut_edges(drape_host, cut_edges)
+                try:
+                    vp.Proxy.reload_shader()
+                except Exception:
+                    pass
 
         # Update the view
         view_object = getattr(fp, "ViewObject", None)
@@ -1058,52 +1034,36 @@ class CompositeShellFP(CompositeBaseFP):
         solve_result = self._backend._run_solve()
         node_positions = solve_result.get("node_positions", [])
         quads = solve_result.get("quads", [])
-        drapecd_coin, mesh_proxy = _build_drapecd_mesh(node_positions, quads)
-
-        # Ensure DrapeMesh feature exists
-        if not hasattr(fp, "Mesh") or fp.Mesh is None:
-            fp.Mesh = fp.Document.addObject(
-                "Mesh::Feature",
-                "DrapeMesh",
-            )
-            fp.setPropertyStatus("Mesh", "LockDynamic")
-            fp.setPropertyStatus("Mesh", "ReadOnly")
-
-        fp.Mesh.Mesh = mesh_proxy  # Minimal proxy for Mesh::Feature compat
+        drapecd_coin, _mesh_proxy = _build_drapecd_mesh(node_positions, quads)
 
         # Defer geometry injection + shader load to the next event-loop
         # iteration (same reason as _complete_drape).
         vp = getattr(fp, "ViewObject", None)
         coin_to_inject = drapecd_coin
-        if vp:
+        if vp and hasattr(vp, "Proxy"):
+            drape_host = getattr(vp.Proxy, "drape_host", None)
             try:
                 from PySide6 import QtCore
 
                 def _deferred():
                     try:
-                        mesh_vobj = getattr(fp.Mesh, "ViewObject", None)
-                        if mesh_vobj and hasattr(mesh_vobj, "RootNode"):
-                            root = mesh_vobj.RootNode
-                            self._remove_existing_coin_geometry(root)
-                            self._inject_coin_geometry(root, coin_to_inject)
-                        if hasattr(vp, "Proxy"):
-                            vp.Proxy.reload_shader()
-                            vp.Proxy._set_shell_transparency(vp)
+                        if drape_host is not None:
+                            self._remove_existing_coin_geometry(drape_host)
+                            self._inject_coin_geometry(drape_host, coin_to_inject)
+                        vp.Proxy.reload_shader()
+                        vp.Proxy._set_shell_transparency(vp)
                     except Exception:
                         pass
 
                 QtCore.QTimer.singleShot(0, _deferred)
             except Exception:
-                mesh_vobj = getattr(fp.Mesh, "ViewObject", None)
-                if mesh_vobj and hasattr(mesh_vobj, "RootNode"):
-                    root = mesh_vobj.RootNode
-                    self._remove_existing_coin_geometry(root)
-                    self._inject_coin_geometry(root, drapecd_coin)
-                if vp and hasattr(vp, "Proxy"):
-                    try:
-                        vp.Proxy.reload_shader()
-                    except Exception:
-                        pass
+                if drape_host is not None:
+                    self._remove_existing_coin_geometry(drape_host)
+                    self._inject_coin_geometry(drape_host, drapecd_coin)
+                try:
+                    vp.Proxy.reload_shader()
+                except Exception:
+                    pass
 
         # Human-readable quality status (from rehydrated solve result)
         qual = solve_result.get("quality", {})
@@ -1309,8 +1269,6 @@ class ViewProviderCompositeShell:
 
     def claimChildren(self):
         children = []
-        if hasattr(self.Object, "Mesh") and self.Object.Mesh:
-            children.append(self.Object.Mesh)
         if hasattr(self.Object, "LocalCoordinateSystem") and self.Object.LocalCoordinateSystem:
             children.append(self.Object.LocalCoordinateSystem)
         return children
@@ -1326,8 +1284,16 @@ class ViewProviderCompositeShell:
             from ..shaders.MeshGridShader import MeshGridShader
             self.grid_shader = MeshGridShader()
 
-        # Shader is attached directly to the DrapeMesh RootNode in load_shader().
-        # No dedicated "Grid" display mode node is needed.
+        # Shader is attached to a dedicated drape_host separator on
+        # this ViewProvider's RootNode, not a separate DrapeMesh object.
+        from pivy import coin
+        self.drape_host = coin.SoSwitch()
+        self.drape_host.setName("DrapeHost")
+        self.drape_host.whichChild = coin.SO_SWITCH_ALL
+        try:
+            obj.RootNode.addChild(self.drape_host)
+        except AttributeError:
+            pass  # RootNode not available in non-GUI / test environments
 
         # Always hide the native LCS symbology (planes + 3D arrows);
         # the rosette disk+arrows provide the same orientation info
@@ -1389,90 +1355,31 @@ class ViewProviderCompositeShell:
 
     def update_visibility(self, vobj):
         visible = vobj.Visibility
-        mesh_vobj = getattr(self.Object, "Mesh", None)
-        if mesh_vobj is not None:
-            mesh_vobj.Visibility = visible
+        # Drape geometry visibility follows the shell
+        drape_host = getattr(self, "drape_host", None)
+        if drape_host is not None:
+            try:
+                from pivy import coin
+                drape_host.whichChild = coin.SO_SWITCH_ALL if visible else coin.SO_SWITCH_NONE
+            except Exception:
+                pass
         self._set_shell_transparency(vobj)
         if self.Object.Support:
             self.Object.Support.Visibility = visible
 
     def _set_shell_transparency(self, vobj):
-        """Make the shell semi-transparent when a drape mesh is visible."""
-        mesh = getattr(self.Object, "Mesh", None)
-        has_mesh = mesh is not None and getattr(mesh, "ViewObject", None) and mesh.ViewObject.Visibility
+        """Make the shell semi-transparent when drape geometry is present."""
+        has_drape = getattr(self, "drape_host", None) is not None and self.drape_host.getNumChildren() > 0
         try:
-            vobj.Transparency = 50 if has_mesh else 0
+            vobj.Transparency = 50 if has_drape else 0
         except Exception:
             pass
 
     def update_mesh_material(self, vobj):
-        # use draper to determine distortion for coloring
-        mesh = vobj.Object.Mesh
-        if mesh is None:
-            return
-        n = mesh.Mesh.CountFacets
-        if "Material" not in mesh.PropertiesList:
-            mesh.addProperty("Mesh::PropertyMaterial", "Material")
-        try:
-            strains = vobj.Object.Proxy.get_strains()
-        except Exception:
-            strains = None
-        if strains is not None:
-            import MeshEnums
-
-            # Backward-safe shape handling:
-            # - legacy nextdrape persisted data: (N,) shear only
-            # - newer format: (N,3) [warp, weft, shear]
-            strains_arr = np.asarray(strains)
-            if strains_arr.ndim == 1:
-                nrows = len(strains_arr)
-                strains_arr = np.column_stack([
-                    np.zeros(nrows),
-                    np.zeros(nrows),
-                    strains_arr,
-                ])
-            elif strains_arr.ndim != 2 or strains_arr.shape[1] < 3:
-                self.update_visibility(vobj)
-                return
-
-            material = {
-                "binding": MeshEnums.Binding.PER_FACE,
-                "transparency": [0.0] * n,
-                "ambientColor": [(0.5, 0.5, 0.5)] * n,
-                "diffuseColor": [(0.5, 0.5, 0.5)] * n,
-                "shininess": [0.0] * n,
-            }
-            cont = getCompositesContainer()
-            limit_pos = cont.MaxStrainTension
-            limit_neg = cont.MaxStrainCompression
-            match vobj.DisplayMode:
-                case "Strain XX":
-                    index = 0
-                case "Strain YY":
-                    index = 1
-                case "Strain XY":
-                    index = 2
-                    limit_pos = cont.MaxStrainShear
-                    limit_neg = cont.MaxStrainShear
-                case _:
-                    index = -1
-            if index >= 0:
-                s = strains_arr[:, index]
-
-                def map_val(x):
-                    if x > 0:
-                        ratio = x / limit_pos if limit_pos != 0 else 0.0
-                        s = min(1.0, (1.0 + ratio) / 2)
-                    elif x < 0:
-                        ratio = x / limit_neg if limit_neg != 0 else 0.0
-                        s = max(0.0, (1.0 + ratio) / 2)
-                    else:
-                        s = 0.5
-                    return roma_map(s)[0:3]
-
-                material["diffuseColor"] = [map_val(x) for x in s]
-            mesh.Material = material
-            mesh.ViewObject.Coloring = True
+        # Strain coloring previously targeted the DrapeMesh Material
+        # property.  With DrapeMesh removed, the drape geometry lives
+        # inside the shader_state group.  Strain coloring will be wired
+        # to the shader's Material node in a follow-up.
         self.update_visibility(vobj)
 
     def updateData(self, fp, prop):
@@ -1584,12 +1491,9 @@ class ViewProviderCompositeShell:
             if not hasattr(obj, "_backend") or obj._backend is None:
                 return
 
-            mesh_feat = getattr(vobj, "Mesh", None)
-            if mesh_feat is None or mesh_feat.Mesh is None:
-                return
-
-            mesh_data = mesh_feat.Mesh
-            if mesh_data.CountFacets == 0:
+            # Use the drape_host separator on this ViewProvider's RootNode
+            drape_host = getattr(self, "drape_host", None)
+            if drape_host is None:
                 return
 
             # Get texture coordinates from the backend.
@@ -1606,8 +1510,7 @@ class ViewProviderCompositeShell:
                 self.grid_shader = MeshGridShader()
             if self.grid_shader:
                 self.grid_shader.attach(
-                    vobj,  # ViewObject (used to get the document)
-                    mesh_feat,  # DrapeMesh feature (provides RootNode)
+                    drape_host,
                     tex_coords,
                     offset_angle_deg,
                 )
@@ -1624,11 +1527,9 @@ class ViewProviderCompositeShell:
     def remove_shader(self):
         if not self.Active:
             return
-        vobj = self.Object
-        mesh_feat = getattr(vobj, "Mesh", None)
-        if mesh_feat is not None and hasattr(self, "grid_shader"):
+        if hasattr(self, "grid_shader"):
             try:
-                self.grid_shader.detach(vobj)
+                self.grid_shader.detach()
             except Exception:
                 pass
         self.Active = False

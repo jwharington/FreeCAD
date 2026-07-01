@@ -197,12 +197,11 @@ class MeshGridShader:
 
     def attach(
         self,
-        obj: Any,
-        child: Any,
+        root_node: Any,
         tex_coords: list | None = None,
         offset_angle_deg: float = 0.0,
     ) -> None:
-        """Attach the shader to the DrapeMesh's native geometry.
+        """Attach the shader to geometry inside the given root node.
 
         If already attached, reuses the existing scene-graph group
         (clears and repopulates) to avoid structural scene-graph edits
@@ -231,8 +230,7 @@ class MeshGridShader:
                 0, 0, 0, 1,
             )
 
-        # Get the DrapeMesh root node
-        self.root = child.ViewObject.RootNode
+        self.root = root_node
 
         # Find the Coin3D geometry (SoSeparator with Coordinate3 + IndexedFaceSet)
         # that was injected by _build_drapecd_mesh.
@@ -244,7 +242,7 @@ class MeshGridShader:
         else:
             self.grp = coin.SoGroup()
             self.grp.setName("shader_state")
-            self._insert_into_scene()
+            self.root.addChild(self.grp)
 
         # Rebuild shader state children
         self.grp.addChild(self.transparency_type)
@@ -269,20 +267,6 @@ class MeshGridShader:
             self._remove_node_from_parent(coin_geo, self.root)
 
         self._attached = True
-
-    def _insert_into_scene(self) -> None:
-        """Insert self.grp into the Switch's children inside root."""
-        switch_idx = self._find_switch_index()
-        if switch_idx >= 0:
-            switch_node = self.root.getChild(switch_idx)
-            if switch_node and "Switch" in str(switch_node.getTypeId().getName()):
-                n_children = int(switch_node.getNumChildren())
-                for ci in range(n_children):
-                    child = switch_node.getChild(ci)
-                    if child and hasattr(child, 'addChild'):
-                        child.addChild(self.grp)
-                return
-        self.root.addChild(self.grp)
 
     def _find_switch_index(self) -> int:
         """Find the index of the Switch child inside the root."""
