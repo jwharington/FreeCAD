@@ -98,6 +98,7 @@ SET(FemExamples_SRCS
     femexamples/constraint_transform_torque.py
     femexamples/examplesgui.py
     femexamples/elmer_nonguitutorial01_eigenvalue_of_elastic_beam.py
+    femexamples/failure_stress_exposure_factor_demo.py
     femexamples/equation_deformation_spring_elmer.py
     femexamples/equation_electrostatics_capacitance_two_balls.py
     femexamples/equation_electrostatics_capacitance_two_balls_ccx.py
@@ -117,6 +118,7 @@ SET(FemExamples_SRCS
     femexamples/material_multiple_bendingbeam_fivefaces.py
     femexamples/material_multiple_tensionrod_twoboxes.py
     femexamples/material_nl_platewithhole.py
+    femexamples/material_orthotropic_shell_lcs.py
     femexamples/mystran_plate.py
     femexamples/rc_wall_2d.py
     femexamples/spark_gap.py
