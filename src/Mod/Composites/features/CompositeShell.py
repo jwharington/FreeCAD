@@ -579,6 +579,14 @@ class CompositeShellFP(CompositeBaseFP):
         )
 
         obj.addProperty(
+            type="App::PropertyString",
+            name="_DrapeCutsFingerprint",
+            group="Draping",
+            doc="Cached fingerprint of DrapeCuts for persisted solve data",
+            hidden=True,
+        )
+
+        obj.addProperty(
             type="App::PropertyLinkGlobal",
             name="Mesh",
             group="Orthographic",
@@ -614,6 +622,8 @@ class CompositeShellFP(CompositeBaseFP):
             fp._LastDrapePitch = float(fp.DrapePitch)
         if not hasattr(fp, "_LastRosetteAngle") or fp._LastRosetteAngle is None:
             fp._LastRosetteAngle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
+        if not hasattr(fp, "_DrapeCutsFingerprint") or not fp._DrapeCutsFingerprint:
+            fp._DrapeCutsFingerprint = self._drape_cuts_fingerprint(fp)
         if not hasattr(fp, "ShapeFingerprint") or not fp.ShapeFingerprint:
             try:
                 fp.ShapeFingerprint = self._shape_fingerprint(fp.Support.Shape)

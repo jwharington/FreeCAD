@@ -49,9 +49,22 @@ if(COMPOSITES_BUILD_CPP)
     SET_PYTHON_PREFIX_SUFFIX(Composites_drape)
     
     set_target_properties(Composites_drape PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Mod/Composites
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Mod/Composites/ext/_native
     )
-    
+
+    add_custom_command(TARGET Composites_drape POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            ${CMAKE_BINARY_DIR}/Mod/Composites/ext/_native
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:Composites_drape>
+            ${CMAKE_BINARY_DIR}/Mod/Composites/ext/_native/$<TARGET_FILE_NAME:Composites_drape>
+        VERBATIM
+    )
+
+    install(TARGETS Composites_drape
+        LIBRARY DESTINATION Mod/Composites/ext/_native
+    )
+
     message(STATUS "Composites: C++ extension configured")
 endif()
 
