@@ -44,7 +44,9 @@ class DrapeGridOverlay:
         self._weft_material = coin.SoMaterial()
         self._weft_material.diffuseColor = self.weft_color
 
-        # Group that holds the complete overlay (added to display mode)
+        # Group that holds the complete overlay (added as display mode).
+        # Must be SoSeparator so all children render together when used
+        # as a Coin3D display mode (SoSwitch whichChild=0 only shows child 0).
         self.root = coin.SoSeparator()
         self.root.setName("DrapeGridOverlay")
         self.root.addChild(self._draw_style)
@@ -109,14 +111,8 @@ class DrapeGridOverlay:
         wl2.numVertices.setValues(0, len(weft_idx), weft_idx)
         self._weft_sep.addChild(wl2)
 
-        # Insert overlay into the DrapeMesh root if not already there
-        if not self._attached:
-            try:
-                root = mesh_feat.ViewObject.RootNode
-                root.addChild(self.root)
-                self._attached = True
-            except Exception:
-                pass
+        # Attach is handled externally by the CompositeShell ViewProvider
+        # via addDisplayMode — do NOT attach to the DrapeMesh RootNode here.
 
     # ------------------------------------------------------------------
     def _build_segments(
@@ -215,3 +211,4 @@ class DrapeGridOverlay:
         self._attached = False
         self._warp_sep.removeAllChildren()
         self._weft_sep.removeAllChildren()
+

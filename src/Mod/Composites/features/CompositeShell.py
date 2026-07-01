@@ -18,55 +18,22 @@ from ..tools.drape_backend_nextdrape import NextDrapeBackend
 
 
 def _build_drapecd_mesh(node_positions, quads):
-    """Build Coin3D geometry from draper node_positions and quads.
+    """Build a Mesh.Mesh from draper node_positions and quads.
 
-    Preserves 1:1 mapping: vertex i = node_positions[i].
-    No deduplication — matches old working version behavior.
-
-    Returns a tuple of (coin_separator, mesh_proxy) where:
-    - coin_separator: SoSeparator with SoCoordinate3 + SoIndexedFaceSet
-    - mesh_proxy: Minimal Mesh.Mesh for FreeCAD Mesh::Feature compatibility
+    Converts quad indices to triangular facets (two triangles per quad)
+    so the resulting mesh matches the draper's texture coordinate layout.
     """
-    from pivy import coin
-
-    # Coordinate3: one point per draper node (no dedup)
-    coords = coin.SoCoordinate3()
-    pts = [coin.SbVec3f(float(p[0]), float(p[1]), float(p[2])) for p in node_positions]
-    coords.point.setValues(0, len(pts), pts)
-
-    # IndexedFaceSet: triangulated quads with node indices.
-    # Keep an explicit face→quad mapping so colors can be assigned per quad
-    # without ambiguity: each quad contributes two triangles.
-    face_set = coin.SoIndexedFaceSet()
-    indices = []
-    material_indices = []
-    for quad_idx, q in enumerate(quads):
-        i0, i1, i2, i3 = [int(idx) for idx in q]
-        # Two triangles per quad, separated by -1.
-        indices.extend([i0, i1, i2, -1])
-        indices.extend([i0, i2, i3, -1])
-        # Explicitly map both triangles back to the originating quad.
-        material_indices.extend([quad_idx, -1, quad_idx, -1])
-    indices.append(-1)  # End of all faces
-    material_indices.append(-1)
-    face_set.coordIndex.setValues(0, len(indices), indices)
-    face_set.materialIndex.setValues(0, len(material_indices), material_indices)
-
-    # Build a simple SoSeparator with coords + face_set
-    sep = coin.SoSeparator()
-    sep.addChild(coords)
-    sep.addChild(face_set)
-
-    # Minimal mesh proxy for FreeCAD Mesh::Feature compatibility
     import Mesh
     import FreeCAD
-    mesh_proxy = Mesh.Mesh()
-    v1 = FreeCAD.Vector(0, 0, 0)
-    v2 = FreeCAD.Vector(0.001, 0, 0)
-    v3 = FreeCAD.Vector(0, 0.001, 0)
-    mesh_proxy.addFacets([(v1, v2, v3)])
 
-    return sep, mesh_proxy
+    vertices = [FreeCAD.Vector(float(p[0]), float(p[1]), float(p[2])) for p in node_positions]
+    mesh = Mesh.Mesh()
+    for q in quads:
+        i0, i1, i2, i3 = [int(idx) for idx in q]
+        # Split quad into two triangles
+        mesh.addFacet(vertices[i0], vertices[i1], vertices[i2])
+        mesh.addFacet(vertices[i0], vertices[i2], vertices[i3])
+    return mesh
 
 
 class _RehydratedBackend:
@@ -88,10 +55,8 @@ class _RehydratedBackend:
         Quad connectivity as lists of four vertex indices.
     _tex_coords : ndarray (N, 2)
         Texture (UV) coordinates per node.
-    _strains : ndarray
-        Persisted per-quad strain payload:
-        - legacy: (M,) shear angles only
-        - current: (M,3) [warp_strain, weft_strain, shear_angle]
+    _strains : ndarray (M,)
+        Per-quad shear angles in degrees.
     _status : str
         Solve status from the original solve ("valid" or "failed").
     _failure_reason : str or None
@@ -389,25 +354,13 @@ class _RehydratedBackend:
 
     def _run_solve(self) -> dict:
         """Return cached solve result dict (no actual solve performed)."""
-        strains = np.asarray(self._strains)
-        if strains.ndim == 2 and strains.shape[1] >= 3:
-            warp = strains[:, 0].tolist()
-            weft = strains[:, 1].tolist()
-            shear = strains[:, 2].tolist()
-        else:
-            warp = []
-            weft = []
-            shear = strains.tolist()
-
         return {
             "success": self._status == "valid",
             "error": self._failure_reason,
             "node_positions": self._node_positions.tolist(),
             "quads": self._quads,
             "tex_coords": self._tex_coords.tolist(),
-            "warp_strain": warp,
-            "weft_strain": weft,
-            "shear_angle": shear,
+            "shear_angle": self._strains.tolist(),
             "quality": self._quality,
         }
 
@@ -473,11 +426,12 @@ class CompositeShellFP(CompositeBaseFP):
 
         obj.addProperty(
             type="App::PropertyFloat",
-            name="DrapePitch",
+            name="MaxLength",
             group="Draping",
-            doc="Drape mesh pitch (node spacing) in mm",
+            doc="Max length of draping mesh",
         )
-        obj.DrapePitch = 5.0
+
+
 
         obj.addProperty(
             type="App::PropertyString",
@@ -564,14 +518,6 @@ class CompositeShellFP(CompositeBaseFP):
         )
 
         obj.addProperty(
-            type="App::PropertyFloat",
-            name="_LastDrapePitch",
-            group="Draping",
-            doc="Cached drape pitch for detecting pitch changes",
-            hidden=True,
-        )
-
-        obj.addProperty(
             type="App::PropertyLinkGlobal",
             name="Mesh",
             group="Orthographic",
@@ -579,6 +525,7 @@ class CompositeShellFP(CompositeBaseFP):
             hidden=True,
         )
 
+        obj.MaxLength = 1.25
         obj.DrapeDiagnostics = ""
         obj.LocalCoordinateSystem = lcs
         obj.Rosette = rosette
@@ -591,24 +538,7 @@ class CompositeShellFP(CompositeBaseFP):
         super().__init__(obj)
         self._initializing = False
 
-    def onDocumentRestored(self, fp):
-        """Initialize tracking fields for documents saved before they existed."""
-        if not hasattr(fp, "_LastDrapePitch") or fp._LastDrapePitch is None:
-            fp._LastDrapePitch = float(fp.DrapePitch)
-        if not hasattr(fp, "_LastRosetteAngle") or fp._LastRosetteAngle is None:
-            fp._LastRosetteAngle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
-        if not hasattr(fp, "ShapeFingerprint") or not fp.ShapeFingerprint:
-            try:
-                fp.ShapeFingerprint = self._shape_fingerprint(fp.Support.Shape)
-            except Exception:
-                pass
-        super().onDocumentRestored(fp)
-
     def execute(self, fp):
-        # Always hide the native LCS symbology so only the rosette
-        # disk+arrows are visible in the 3D view.
-        self._hide_lcs_view(fp)
-
         if (not fp.Support) or (not fp.Laminate):
             return
 
@@ -622,171 +552,149 @@ class CompositeShellFP(CompositeBaseFP):
         self._rosette_angle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
 
         # ── Try to rehydrate from persisted data ───────────────────
+        # If the support shape is unchanged and we have persisted solve
+        # data, skip the expensive mesh generation and C++ solve.
         if self._can_use_persisted(fp):
             try:
                 self._rehydrate(fp)
                 return
             except Exception:
+                # Corrupted persisted data — fall through to full solve
                 pass
 
-        # ── Full solve — run synchronously ─────────────────────────
+        # ── Full solve path ────────────────────────────────────────
         fp.Shape = fp.Support.Shape
-        result = self._run_drape_sync(fp, get_lcs())
-        if isinstance(result, Exception):
-            self._mark_failed(fp, str(result))
-        else:
-            self._complete_drape(fp, result)
 
-    def _run_drape_sync(self, fp, lcs):
-        """Run the draper solve synchronously and return the result dict."""
-        from ..compositetools.drape_task import run_drape_task
+        try:
+            import os
 
-        return run_drape_task(
-            fp,
-            lcs,
-            fp.Support.Shape,
-        )
-
-    def _complete_drape(self, fp, result):
-        """Update FreeCAD properties and load shader (main thread)."""
-        import json
-
-        backend = result["backend"]
-        drapecd_mesh = result["drapecd_mesh"]
-        solve_result = result["solve_result"]
-        diag = result["diag"]
-        valid = result["valid"]
-        quality_pass = result["quality_pass"]
-        tex_coords = result["tex_coords"]
-
-        # Diagnostics
-        self._set_drape_diagnostics(
-            fp,
-            backend=diag.get("backend", "nextdrape"),
-            status=diag.get("status", "invalid"),
-            failure_reason=diag.get("failure_reason"),
-            extras={
-                k: v for k, v in diag.items()
-                if k not in {"backend", "status", "failure_reason"}
-            },
-        )
-
-        fp.DrapeValid = valid
-        fp.QualityPass = quality_pass
-
-        qual = solve_result.get("quality", {})
-        fp.DrapeQuality = repr(qual)
-
-        if tex_coords is not None:
-            fp.TexCoordsJSON = json.dumps(tex_coords)
-        else:
-            fp.TexCoordsJSON = ""
-
-        # Persist solve data for rehydration
-        self._persist_solve_data(fp, solve_result)
-
-        # Store mesh in backend for ViewProvider shader attachment
-        backend._mesh = drapecd_mesh
-        backend._mesh_feat = fp.Mesh
-
-        # Create/update DrapeMesh feature
-        if not hasattr(fp, "Mesh") or fp.Mesh is None:
-            fp.Mesh = fp.Document.addObject(
-                "Mesh::Feature",
-                "DrapeMesh",
+            debug_file = "/tmp/nextdrape_debug.txt"
+            with open(debug_file, "w") as f:
+                f.write(f"[execute] START\n")
+                f.flush()
+            mesh = mesh_util.shape2Mesh(fp.Shape, fp.MaxLength)
+            with open(debug_file, "a", encoding="utf-8") as f:
+                f.write(f"[execute] mesh created, facets={mesh.CountFacets}\n")
+                f.flush()
+            self._backend = self._make_backend(
+                mesh,
+                get_lcs(),
+                fp.Shape,
             )
-            fp.setPropertyStatus("Mesh", "LockDynamic")
-            fp.setPropertyStatus("Mesh", "ReadOnly")
 
-        # drapecd_mesh is now a (coin_separator, mesh_proxy) tuple
-        drapecd_coin, mesh_proxy = drapecd_mesh
-        fp.Mesh.Mesh = mesh_proxy  # Minimal proxy for Mesh::Feature compat
+            diag = self._backend.diagnostics()
+            self._set_drape_diagnostics(
+                fp,
+                backend=diag.get("backend", "nextdrape"),
+                status=diag.get("status", "invalid"),
+                failure_reason=diag.get("failure_reason"),
+                extras={
+                    k: v for k, v in diag.items()
+                    if k not in {"backend", "status", "failure_reason"}
+                },
+            )
 
-        # Inject Coin3D geometry into the DrapeMesh ViewObject's RootNode.
-        # Remove any previously injected Coin3D geometry first to avoid duplicates.
-        mesh_vobj = getattr(fp.Mesh, "ViewObject", None)
-        if mesh_vobj and hasattr(mesh_vobj, "RootNode"):
-            root = mesh_vobj.RootNode
-            self._remove_existing_coin_geometry(root)
-            self._inject_coin_geometry(root, drapecd_coin)
+            # The draper must always be valid after execute — if it isn't,
+            # that is a bug in the draping pipeline, not a recoverable state.
+            assert self._backend.is_valid(), (
+                "Draper invalid after mesh generation – "
+                f"status={diag.get('status')} reason={diag.get('failure_reason')}"
+            )
 
-        # Load the shader
-        vp = getattr(fp, "ViewObject", None)
-        if vp and hasattr(vp, "Proxy"):
-            try:
-                vp.Proxy.load_shader()
-            except Exception:
-                pass
+            # Only run fibre analysis if the drape actually succeeded.
+            # Stale cached boundaries from a prior solve cause
+            # Part.makePolygon failures when the current solve failed.
+            if diag.get("status") != "failed":
+                self.fibre_analysis(fp)
 
-        # Update the view
-        view_object = getattr(fp, "ViewObject", None)
-        if view_object:
-            view_object.update()
+            # Build the actual draped mesh from node_positions + quads.
+            # This ensures the DrapeMesh topology matches the draper's
+            # texture coordinate layout (10,383 vertices, ~10k triangles).
+            solve_result = self._backend._run_solve()
+            node_positions = solve_result.get("node_positions", [])
+            quads = solve_result.get("quads", [])
+            drapecd_mesh = _build_drapecd_mesh(node_positions, quads)
 
-    def _find_switch(self, node):
-        """Find the Switch child inside the given Coin3D node (recursive).
+            # Create the DrapeMesh FeaturePython object for shader attachment.
+            if not hasattr(fp, "Mesh") or fp.Mesh is None:
+                fp.Mesh = fp.Document.addObject(
+                    "Mesh::Feature",
+                    "DrapeMesh",
+                )
+                fp.setPropertyStatus("Mesh", "LockDynamic")
+                fp.setPropertyStatus("Mesh", "ReadOnly")
 
-        Returns the Switch node itself, or None if not found.
-        """
-        children = node.getChildren()
-        if children is None:
-            return None
-        for i in range(int(children.getLength())):
-            c = children[i]
-            if c and "Switch" in str(c.getTypeId().getName()):
-                return c
-        return None
+            # Persist the drape solve state so that the backend survives
+            # recompute cycles.  The mesh lives in the DrapeMesh feature;
+            # the validity flag and texture coordinates are stored as
+            # FreeCAD properties on the shell itself.
+            fp.DrapeValid = self._backend.is_valid()
+            fp.QualityPass = self._backend.quality_pass()
 
-    def _remove_existing_coin_geometry(self, root):
-        """Remove any previously injected Coin3D geometry from root."""
-        children = root.getChildren()
-        if children is None:
-            return
-        for i in range(int(children.getLength()) - 1, -1, -1):
-            c = children[i]
-            if c is None:
-                continue
-            tname = str(c.getTypeId().getName())
-            if "Separator" in tname and "Switch" not in tname:
-                # Check if this separator has Coordinate3 + IndexedFaceSet
-                sub = c.getChildren()
-                has_coord = has_face = False
-                if sub:
-                    for j in range(int(sub.getLength())):
-                        sc = sub[j]
-                        if sc is None:
-                            continue
-                        st = str(sc.getTypeId().getName())
-                        if st == "Coordinate3":
-                            has_coord = True
-                        elif "IndexedFaceSet" in st and "SoFC" not in st:
-                            has_face = True
-                if has_coord and has_face:
-                    root.removeChild(c)
+            # Human-readable quality status (from already-computed solve result)
+            qual = solve_result.get("quality", {})
+            if not fp.DrapeValid:
+                fp.DrapeQuality = repr(qual)
+            else:
+                fp.DrapeQuality = repr(qual)
+            tc = self._backend.get_tex_coords()
+            if tc is not None:
+                fp.TexCoordsJSON = json.dumps(tc)
+            else:
+                fp.TexCoordsJSON = ""
 
-    def _inject_coin_geometry(self, root, coin_geo):
-        """Inject Coin3D geometry as a child of root."""
-        root.addChild(coin_geo)
+            # Persist additional solve data for rehydration on future
+            # recompute cycles (when the support shape is unchanged).
+            self._persist_solve_data(fp, solve_result)
 
-    def _mark_failed(self, fp, error_msg):
-        """Mark the shell as failed (main thread)."""
-        import json
+            # Store mesh in backend for ViewProvider shader attachment
+            self._backend._mesh = drapecd_mesh
+            self._backend._mesh_feat = fp.Mesh  # persist Mesh feature ref for shader
+            fp.Mesh.Mesh = drapecd_mesh
 
-        self._backend = None
-        fp.DrapeValid = False
-        fp.QualityPass = False
-        fp.DrapeQuality = "error: " + error_msg[:200]
-        fp.TexCoordsJSON = ""
-        fp.NodePositionsJSON = ""
-        fp.QuadsJSON = ""
-        fp.StrainsJSON = ""
-        self._set_drape_diagnostics(
-            fp,
-            backend="nextdrape",
-            status="error",
-            failure_reason="solver_unsolved",
-        )
-        Console.PrintWarning(f"CompositeShell drape setup failed: {error_msg}\n")
+            # Hide the DrapeMesh — the DrapeGridOverlay renders the draped
+            # quad edges as lines so the filled mesh is unnecessary.
+            mesh_vo = getattr(fp.Mesh, "ViewObject", None)
+            if mesh_vo is not None:
+                mesh_vo.Visibility = False
+
+            # Load the shader directly here while _backend is still valid.
+            # The _backend attribute is not persisted across recompute cycles,
+            # so we must load the shader synchronously before execute() returns.
+            vp = getattr(fp, "ViewObject", None)
+            if vp and hasattr(vp, "Proxy"):
+                try:
+                    vp.Proxy.load_shader()
+                except Exception:
+                    pass
+        except Exception as exc:
+            import traceback
+
+            debug_file = "/tmp/nextdrape_debug.txt"
+            with open(debug_file, "a", encoding="utf-8") as f:
+                f.write(f"[execute] EXCEPTION: {exc}\n")
+                f.write(traceback.format_exc())
+                f.flush()
+            Console.PrintMessage(f"DEBUG execute exception: {exc}\n")
+            Console.PrintMessage(traceback.format_exc())
+            self._backend = None
+            fp.DrapeValid = False
+            fp.QualityPass = False
+            fp.DrapeQuality = "error: " + str(exc)[:200]
+            fp.TexCoordsJSON = ""
+            fp.NodePositionsJSON = ""
+            fp.QuadsJSON = ""
+            fp.StrainsJSON = ""
+            self._set_drape_diagnostics(
+                fp,
+                backend="nextdrape",
+                status="error",
+                failure_reason="solver_unsolved",
+            )
+            Console.PrintWarning(
+                f"CompositeShell drape setup failed: {exc}\n",
+            )
+
         view_object = getattr(fp, "ViewObject", None)
         if view_object:
             view_object.update()
@@ -857,19 +765,6 @@ class CompositeShellFP(CompositeBaseFP):
                 return False
         except Exception:
             return False
-        # Drape pitch affects the drape solve result.
-        # If the pitch changed, persisted node positions/quads are stale.
-        try:
-            current_pitch = float(fp.DrapePitch)
-            stored_pitch = getattr(fp, "_LastDrapePitch", None)
-            # If _LastDrapePitch was never recorded (e.g. data saved before
-            # this check existed), distrust the persisted payload.
-            if stored_pitch is None:
-                return False
-            if abs(current_pitch - stored_pitch) > 0.001:
-                return False
-        except Exception:
-            return False
         return True
 
     def _rehydrate(self, fp) -> None:
@@ -905,7 +800,7 @@ class CompositeShellFP(CompositeBaseFP):
         solve_result = self._backend._run_solve()
         node_positions = solve_result.get("node_positions", [])
         quads = solve_result.get("quads", [])
-        drapecd_coin, mesh_proxy = _build_drapecd_mesh(node_positions, quads)
+        drapecd_mesh = _build_drapecd_mesh(node_positions, quads)
 
         # Ensure DrapeMesh feature exists
         if not hasattr(fp, "Mesh") or fp.Mesh is None:
@@ -916,19 +811,17 @@ class CompositeShellFP(CompositeBaseFP):
             fp.setPropertyStatus("Mesh", "LockDynamic")
             fp.setPropertyStatus("Mesh", "ReadOnly")
 
-        fp.Mesh.Mesh = mesh_proxy  # Minimal proxy for Mesh::Feature compat
-
-        # Inject Coin3D geometry into the DrapeMesh ViewObject's RootNode.
-        # Remove any previously injected Coin3D geometry first to avoid duplicates.
-        mesh_vobj = getattr(fp.Mesh, "ViewObject", None)
-        if mesh_vobj and hasattr(mesh_vobj, "RootNode"):
-            root = mesh_vobj.RootNode
-            self._remove_existing_coin_geometry(root)
-            self._inject_coin_geometry(root, drapecd_coin)
+        fp.Mesh.Mesh = drapecd_mesh
 
         # Human-readable quality status (from rehydrated solve result)
         qual = solve_result.get("quality", {})
         fp.DrapeQuality = repr(qual) if diag.get("status") != "failed" else "invalid"
+
+        # Hide the DrapeMesh — the DrapeGridOverlay renders the draped
+        # quad edges as lines so the filled mesh is unnecessary.
+        mesh_vo = getattr(fp.Mesh, "ViewObject", None)
+        if mesh_vo is not None:
+            mesh_vo.Visibility = False
 
         # Load the shader (same as full solve path)
         vp = getattr(fp, "ViewObject", None)
@@ -946,22 +839,9 @@ class CompositeShellFP(CompositeBaseFP):
         fp.QuadsJSON = json.dumps(
             solve_result.get("quads", [])
         )
-        shear = np.asarray(solve_result.get("shear_angle", []), dtype=float)
-        warp = np.asarray(solve_result.get("warp_strain", []), dtype=float)
-        weft = np.asarray(solve_result.get("weft_strain", []), dtype=float)
-        if (
-            shear.ndim == 1
-            and warp.ndim == 1
-            and weft.ndim == 1
-            and len(shear)
-            and len(warp) == len(shear)
-            and len(weft) == len(shear)
-        ):
-            strains_payload = np.column_stack([warp, weft, shear]).tolist()
-        else:
-            # Backward compatibility: persist shear-only if full tensor is absent.
-            strains_payload = shear.tolist()
-        fp.StrainsJSON = json.dumps(strains_payload)
+        fp.StrainsJSON = json.dumps(
+            solve_result.get("shear_angle", []).tolist()
+        )
         fp.QualityJSON = json.dumps(
             solve_result.get("quality", {})
         )
@@ -969,8 +849,6 @@ class CompositeShellFP(CompositeBaseFP):
         fp.ShapeFingerprint = self._shape_fingerprint(fp.Support.Shape)
         # Cache the rosette angle so _can_use_persisted detects changes
         fp._LastRosetteAngle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
-        # Cache the drape pitch so _can_use_persisted detects changes
-        fp._LastDrapePitch = float(fp.DrapePitch)
 
     def fibre_analysis(self, fp):
         histograms_length = make_fibre_length_analysis(fp)
@@ -984,17 +862,6 @@ class CompositeShellFP(CompositeBaseFP):
 
     def _make_backend(self, mesh, lcs, shape):
         return NextDrapeBackend(mesh, lcs, shape)
-
-    def _hide_lcs_view(self, fp):
-        """Hide the native LCS symbology (planes + 3D arrows)."""
-        lcs = fp.LocalCoordinateSystem
-        if lcs is None and fp.Rosette:
-            lcs = fp.Rosette.LocalCoordinateSystem
-        if lcs is None:
-            return
-        lcs_vobj = getattr(lcs, "ViewObject", None)
-        if lcs_vobj is not None:
-            lcs_vobj.Visibility = False
 
     def _set_drape_diagnostics(
         self,
@@ -1025,8 +892,8 @@ class CompositeShellFP(CompositeBaseFP):
             case "LocalCoordinateSystem" | "Rosette":
                 fp.recompute()
             case (
-                "Support"
-                | "DrapePitch"
+                "MaxLength"
+                | "Support"
 
             ):
                 fp.recompute()
@@ -1071,9 +938,9 @@ class CompositeShellFP(CompositeBaseFP):
 class ViewProviderCompositeShell:
     def __init__(self, obj):
         # Lazy import to avoid GUI dependency in headless mode
-        from ..shaders.MeshGridShader import MeshGridShader
+        from ..shaders.DrapeGridOverlay import DrapeGridOverlay
 
-        self.grid_shader = MeshGridShader()
+        self.grid_shader = DrapeGridOverlay()
 
         obj.addProperty(
             "App::PropertyFloatConstraint",
@@ -1105,18 +972,7 @@ class ViewProviderCompositeShell:
         return mode
 
     def getDisplayModes(self, obj):
-        # Keep standard display modes and add strain overlays.
-        # The shader now attaches to the DrapeMesh RootNode directly, so a
-        # dedicated "Grid" display mode is no longer required.
-        return [
-            "Shaded",
-            "Wireframe",
-            "Flat Lines",
-            "Points",
-            "Strain XX",
-            "Strain YY",
-            "Strain XY",
-        ]
+        return ["Grid", "Strain XX", "Strain YY", "Strain XY"]
 
     def getDefaultDisplayMode(self):
         return "Shaded"
@@ -1138,18 +994,13 @@ class ViewProviderCompositeShell:
         self.ViewObject = obj
         self.Object = obj.Object
 
-        # Lazily create grid_shader if deserialized from file (__init__ skipped)
         if not hasattr(self, "grid_shader"):
-            from ..shaders.MeshGridShader import MeshGridShader
-            self.grid_shader = MeshGridShader()
+            from ..shaders.DrapeGridOverlay import DrapeGridOverlay
 
-        # Shader is attached directly to the DrapeMesh RootNode in load_shader().
-        # No dedicated "Grid" display mode node is needed.
+            self.grid_shader = DrapeGridOverlay()
 
-        # Always hide the native LCS symbology (planes + 3D arrows);
-        # the rosette disk+arrows provide the same orientation info
-        # without cluttering the view.
-        self._hide_lcs(obj.Object)
+        obj.addDisplayMode(self.grid_shader.root, "Grid")
+        # self.load_shader()
 
         # Add DisplayLayer property to ViewObject (enumeration for layer
         # selection dropdown). Must be added here because FreeCAD mirrors
@@ -1193,22 +1044,15 @@ class ViewProviderCompositeShell:
         if display_layer_opts:
             fp.ViewObject.DisplayLayer = display_layer_opts[0]
 
-    def _hide_lcs(self, fp):
-        """Always hide the native LCS symbology (planes + 3D arrows)."""
-        lcs = fp.LocalCoordinateSystem
-        if lcs is None and fp.Rosette:
-            lcs = fp.Rosette.LocalCoordinateSystem
-        if lcs is None:
-            return
-        lcs_vobj = getattr(lcs, "ViewObject", None)
-        if lcs_vobj is not None:
-            lcs_vobj.Visibility = False
-
     def update_visibility(self, vobj):
         visible = vobj.Visibility
+        if vobj.DisplayMode not in self.getDisplayModes(vobj):
+            visible = False
         mesh_vobj = getattr(self.Object, "Mesh", None)
         if mesh_vobj is not None:
             mesh_vobj.Visibility = visible
+        if self.Object.LocalCoordinateSystem:
+            self.Object.LocalCoordinateSystem.Visibility = visible
         if self.Object.Support:
             self.Object.Support.Visibility = visible
 
@@ -1226,21 +1070,6 @@ class ViewProviderCompositeShell:
             strains = None
         if strains is not None:
             import MeshEnums
-
-            # Backward-safe shape handling:
-            # - legacy nextdrape persisted data: (N,) shear only
-            # - newer format: (N,3) [warp, weft, shear]
-            strains_arr = np.asarray(strains)
-            if strains_arr.ndim == 1:
-                nrows = len(strains_arr)
-                strains_arr = np.column_stack([
-                    np.zeros(nrows),
-                    np.zeros(nrows),
-                    strains_arr,
-                ])
-            elif strains_arr.ndim != 2 or strains_arr.shape[1] < 3:
-                self.update_visibility(vobj)
-                return
 
             material = {
                 "binding": MeshEnums.Binding.PER_FACE,
@@ -1264,7 +1093,7 @@ class ViewProviderCompositeShell:
                 case _:
                     index = -1
             if index >= 0:
-                s = strains_arr[:, index]
+                s = strains[:, index]
 
                 def map_val(x):
                     if x > 0:
@@ -1339,9 +1168,9 @@ class ViewProviderCompositeShell:
             case "ShapeAppearance":
                 self.reload_shader()
             case "ShowRosette":
-                from pivy import coin
-
                 if hasattr(self, "rosette_switch"):
+                    from pivy import coin
+
                     self.rosette_switch.whichChild = (
                         0 if vobj.ShowRosette else coin.SO_SWITCH_NONE
                     )
@@ -1369,89 +1198,54 @@ class ViewProviderCompositeShell:
         return 0
 
     def load_shader(self):
-        try:
-            if self.Active:
-                return
-            # Skip if grid_shader doesn't exist yet
-            if not hasattr(self, "grid_shader") or not self.grid_shader:
-                pass  # Will create below
-            elif self.grid_shader._attached:
-                # Already attached — skip to avoid recreating scene-graph nodes
-                return
-            # Also skip if Coin3D geometry is already inside the shader group
-            # (indicates shader was attached in a previous recompute cycle)
-            if hasattr(self, "grid_shader") and self.grid_shader:
-                grp = getattr(self.grid_shader, 'grp', None)
-                if grp:
-                    has_coin = False
-                    for i in range(int(grp.getNumChildren())):
-                        c = grp.getChild(i)
-                        if c and "Coordinate3" in str(c.getTypeId().getName()):
-                            has_coin = True
-                            break
-                    if has_coin:
-                        return
-            # self.Object is the FeaturePython object, self.Object.Proxy is the FP proxy.
-            vobj = self.Object
-            obj = vobj.Proxy
+        if self.Active:
+            return
+        # self.Object is the FeaturePython object, self.Object.Proxy is the FP proxy.
+        vobj = self.Object
+        obj = vobj.Proxy
 
-            # Guard: _backend may not exist during document deserialization
-            if not hasattr(obj, "_backend") or obj._backend is None:
-                return
+        # Access the DrapeMesh feature directly from the shell feature.
+        mesh_feat = getattr(vobj, "Mesh", None)
+        if mesh_feat is None or mesh_feat.Mesh is None:
+            return
 
-            mesh_feat = getattr(vobj, "Mesh", None)
-            if mesh_feat is None or mesh_feat.Mesh is None:
-                return
+        # Verify the mesh has content (draping succeeded).
+        mesh_data = mesh_feat.Mesh
+        if mesh_data.CountFacets == 0:
+            return
 
-            mesh_data = mesh_feat.Mesh
-            if mesh_data.CountFacets == 0:
-                return
+        # Get node_positions and quads from the backend.
+        # The overlay draws warp/weft edges directly from the draper
+        # topology — no texture coordinates or GLSL shaders needed.
+        solve_result = obj._backend._run_solve()
+        node_positions = solve_result.get("node_positions", [])
+        quads = solve_result.get("quads", [])
+        if len(quads) == 0 or len(node_positions) == 0:
+            return
 
-            # Get texture coordinates from the backend.
-            # With Coin3D geometry (no deduplication), tex_coords[i]
-            # directly corresponds to vertex/coordinate index i.
-            tex_coords = obj._backend.get_tex_coords()
-            if tex_coords is None or len(tex_coords) == 0:
-                return
+        offset_angle_deg = self.get_offset_angle(vobj)
+        if self.grid_shader:
+            self.grid_shader.attach(
+                mesh_feat,
+                node_positions,
+                quads,
+                offset_angle_deg,
+            )
+            self.Active = True
+            import FreeCADGui
 
-            offset_angle_deg = self.get_offset_angle(vobj)
-            # Lazily create grid_shader if deserialized from file
-            if not hasattr(self, "grid_shader"):
-                from ..shaders.MeshGridShader import MeshGridShader
-                self.grid_shader = MeshGridShader()
-            if self.grid_shader:
-                self.grid_shader.attach(
-                    vobj,  # ViewObject (used to get the document)
-                    mesh_feat,  # DrapeMesh feature (provides RootNode)
-                    tex_coords,
-                    offset_angle_deg,
-                )
-                self.Active = True
-                import FreeCADGui
-
-                FreeCADGui.Selection.addObserver(self)
-        except Exception as e:
-            # Log errors during deserialization or other non-critical contexts
-            import traceback
-            print(f'load_shader ERROR: {e}')
-            traceback.print_exc()
+            FreeCADGui.Selection.addObserver(self)
 
     def remove_shader(self):
         if not self.Active:
             return
-        vobj = self.Object
-        mesh_feat = getattr(vobj, "Mesh", None)
-        if mesh_feat is not None and hasattr(self, "grid_shader"):
-            try:
-                self.grid_shader.detach(vobj)
-            except Exception:
-                pass
+        obj = self.Object
+        if hasattr(obj, "Mesh") and obj.Mesh:
+            self.grid_shader.detach(obj.Mesh)
         self.Active = False
-        try:
-            import FreeCADGui
-            FreeCADGui.Selection.removeObserver(self)
-        except Exception:
-            pass
+        import FreeCADGui
+
+        FreeCADGui.Selection.removeObserver(self)
 
     def __getstate__(self):
         return {}

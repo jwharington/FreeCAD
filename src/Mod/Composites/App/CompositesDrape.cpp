@@ -68,10 +68,6 @@ PYBIND11_MODULE(Composites_drape, m) {
         nextdrape::DrapeParams params;
         if (params_dict.contains("pitch"))
             params.pitch = params_dict["pitch"].cast<double>();
-        if (params_dict.contains("max_warp_steps"))
-            params.maxWarpSteps = params_dict["max_warp_steps"].cast<int>();
-        if (params_dict.contains("max_weft_steps"))
-            params.maxWeftSteps = params_dict["max_weft_steps"].cast<int>();
         if (params_dict.contains("shear_warn_deg"))
             params.shearWarnDeg = params_dict["shear_warn_deg"].cast<double>();
         if (params_dict.contains("shear_fail_deg"))
@@ -80,8 +76,8 @@ PYBIND11_MODULE(Composites_drape, m) {
             params.projectionTol = params_dict["projection_tol"].cast<double>();
         if (params_dict.contains("boundary_tol"))
             params.boundaryTol = params_dict["boundary_tol"].cast<double>();
-        if (params_dict.contains("use_geodesic"))
-            params.useGeodesicPlacement = params_dict["use_geodesic"].cast<bool>();
+        if (params_dict.contains("strain_fail"))
+            params.strainFail = params_dict["strain_fail"].cast<double>();
 
         nextdrape::SeedInput seed;
         if (seed_dict.contains("point")) {
@@ -111,14 +107,7 @@ PYBIND11_MODULE(Composites_drape, m) {
         }
 
         if (result.status != nextdrape::DrapeStatus::Ok) {
-            std::string status_str;
-            switch (result.status) {
-                case nextdrape::DrapeStatus::InvalidInput: status_str = "InvalidInput"; break;
-                case nextdrape::DrapeStatus::SolverFailure: status_str = "SolverFailure"; break;
-                case nextdrape::DrapeStatus::NonDrapable: status_str = "NonDrapable"; break;
-                case nextdrape::DrapeStatus::ShearLimitExceeded: status_str = "ShearLimitExceeded"; break;
-                default: status_str = "Unknown"; break;
-            }
+            std::string status_str = nextdrape::StatusToString(result.status);
             return py::dict(py::arg("success") = false,
                           py::arg("error") = std::string("Drape status: ") + status_str);
         }
@@ -188,9 +177,19 @@ PYBIND11_MODULE(Composites_drape, m) {
         diag["max_shear_deg"] = result.maxShearDeg;
         diag["max_strain"] = result.maxStrain;
         diag["solve_time_ms"] = result.solveTimeMs;
-        diag["accepted_nodes"] = result.constrainedAccepted + result.fallbackAccepted;
+        diag["accepted_nodes"] = static_cast<int>(result.nodes.size());
         diag["total_nodes"] = static_cast<int>(result.nodes.size());
         res["diagnostics"] = diag;
+
+        // Quality result — forward from C++ CheckQuality
+        py::dict qual;
+        qual["overall_pass"] = result.qualityResult.overallPass;
+        py::list qual_failures;
+        for (const auto& f : result.qualityResult.failures) {
+            qual_failures.append(f);
+        }
+        qual["failures"] = qual_failures;
+        res["quality"] = qual;
 
         return res;
     },
