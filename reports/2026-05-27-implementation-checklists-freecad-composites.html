@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Implementation Checklists — FreeCAD + CompositesWB (2026-05-27)</title>
+  <style>
+    :root { --bg:#0b1020; --panel:#121a2b; --panel2:#0f1626; --text:#e7eefc; --muted:#aebbd1; --border:#2a3550; --accent:#7dc4ff; }
+    body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Segoe UI,Arial,sans-serif;line-height:1.45}
+    .layout{display:grid;grid-template-columns:300px 1fr;min-height:100vh}
+    aside{position:sticky;top:0;height:100vh;overflow:auto;background:var(--panel2);border-right:1px solid var(--border);padding:18px}
+    aside h2{font-size:1rem;color:var(--accent);margin:0 0 10px}
+    aside a{display:block;color:var(--muted);text-decoration:none;padding:5px 8px;border-radius:6px}
+    aside a:hover{background:#1a2540;color:var(--text)}
+    aside .sub{padding-left:18px;font-size:.94rem}
+    main{padding:28px 34px;max-width:1200px}
+    h1{margin-top:0;font-size:1.7rem}
+    h2{color:var(--accent);border-top:1px solid var(--border);padding-top:10px;margin-top:30px}
+    h3{color:#d4e6ff;margin-top:20px}
+    .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin:10px 0}
+    table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--border);margin:10px 0 16px}
+    th,td{padding:8px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+    th{background:#16213a}
+    code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#0b1323;color:#d9e7ff}
+    code{padding:1px 5px;border-radius:4px}
+    pre{padding:10px;border:1px solid var(--border);border-radius:8px;overflow:auto}
+    ul{margin-top:6px}
+  </style>
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <h2>Table of Contents</h2>
+    <a href="#scope">1. Scope</a>
+    <a href="#freecad">2. ~/opt/FreeCAD Checklist</a>
+    <a class="sub" href="#fc1">FC-1 Registry API</a>
+    <a class="sub" href="#fc2">FC-2 Remove Composite Models</a>
+    <a class="sub" href="#fc3">FC-3 Provider-safe SEF</a>
+    <a class="sub" href="#fc4">FC-4 Core Tests</a>
+    <a href="#cwb">3. ~/opt/FreeCAD-CompositesWB Checklist</a>
+    <a class="sub" href="#cwb1">CWB-1 Provider Module</a>
+    <a class="sub" href="#cwb2">CWB-2 Registration</a>
+    <a class="sub" href="#cwb3">CWB-3 Allowables Adapter</a>
+    <a class="sub" href="#cwb4">CWB-4 Tests</a>
+    <a href="#integration">4. Cross-repo Integration</a>
+    <a href="#prs">5. Suggested PR Slices</a>
+    <a href="#commands">6. Immediate Commands</a>
+  </aside>
+  <main>
+    <h1>Implementation Checklists (Issue-Ready)</h1>
+    <p><strong>Date:</strong> 2026-05-27<br/>
+    <strong>Scope:</strong> keep general failure model framework in FEM core; move only composite-specific failure models to Composites WB.</p>
+
+    <h2 id="scope">1. Scope</h2>
+    <div class="card">This document is an execution checklist with commit-by-commit staging and acceptance criteria for both repositories.</div>
+
+    <h2 id="freecad">2. Checklist — <code>~/opt/FreeCAD</code></h2>
+    <p><strong>Branch:</strong> <code>fem-failure-registry-split</code></p>
+
+    <h3 id="fc1">FC-1: Introduce failure-model registry API in FEM core</h3>
+    <ul>
+      <li>Add in <code>src/Mod/Fem/femresult/failuremodels.py</code>:
+        <ul>
+          <li><code>register_failure_model(name, fn, metadata=None)</code></li>
+          <li><code>get_failure_model(name)</code></li>
+          <li><code>list_failure_models()</code></li>
+          <li>(optional) <code>unregister_failure_model(name)</code></li>
+        </ul>
+      </li>
+      <li>Built-ins: <code>maximum_strain</code>, <code>maximum_stress</code>.</li>
+    </ul>
+    <p><strong>Commit:</strong> <code>Fem: add failure model registry API with built-in generic models</code></p>
+    <p><strong>Acceptance:</strong> built-ins available by default, no Composites WB dependency.</p>
+
+    <h3 id="fc2">FC-2: Remove composite-specific criteria from FEM core</h3>
+    <ul>
+      <li>Remove/relocate:
+        <ul>
+          <li><code>calc_failure_tsai_wu</code></li>
+          <li><code>calc_failure_hashin</code></li>
+        </ul>
+      </li>
+      <li>Retain fail-soft behavior for unknown models.</li>
+    </ul>
+    <p><strong>Commit:</strong> <code>Fem: remove composite-specific criteria from core failuremodels</code></p>
+
+    <h3 id="fc3">FC-3: Make SEF post-processing provider-safe</h3>
+    <ul>
+      <li>Refactor <code>resulttools.add_stress_exposure_factor</code> to resolve model via registry.</li>
+      <li>Graceful fallback if model unavailable.</li>
+      <li>Keep SEF property/UI wiring unchanged.</li>
+    </ul>
+    <p><strong>Commit:</strong> <code>Fem: harden SEF post-processing for optional external failure-model providers</code></p>
+
+    <h3 id="fc4">FC-4: Add core tests</h3>
+    <ul>
+      <li>Add <code>src/Mod/Fem/femtest/app/test_failuremodels.py</code>:</li>
+      <li>deterministic checks for generic models + SEF monotonicity.</li>
+    </ul>
+    <p><strong>Commit:</strong> <code>Fem: add unit tests for generic failure models and SEF behavior</code></p>
+
+    <h2 id="cwb">3. Checklist — <code>~/opt/FreeCAD-CompositesWB</code></h2>
+    <p><strong>Branch:</strong> <code>composites-failure-provider</code></p>
+
+    <h3 id="cwb1">CWB-1: Add composite failure model provider</h3>
+    <ul>
+      <li>Create <code>freecad/Composites/fem/failure_models_composites.py</code>.</li>
+      <li>Implement Tsai-Wu + Hashin.</li>
+    </ul>
+    <p><strong>Commit:</strong> <code>Composites: add composite failure model provider (Tsai-Wu, Hashin)</code></p>
+
+    <h3 id="cwb2">CWB-2: Register models into FEM registry at startup</h3>
+    <ul>
+      <li>Safe import of FEM registry API.</li>
+      <li>Register <code>tsai_wu</code> and <code>hashin</code> (aliases optional).</li>
+      <li>Fail-soft warning on unavailable API.</li>
+    </ul>
+    <p><strong>Commit:</strong> <code>Composites: register composite failure models with FEM registry on startup</code></p>
+
+    <h3 id="cwb3">CWB-3: Add composite allowables adapter</h3>
+    <ul>
+      <li>Map laminate/material objects to model options dictionary.</li>
+    </ul>
+    <p><strong>Commit:</strong> <code>Composites: add laminate/material allowables adapter for failure models</code></p>
+
+    <h3 id="cwb4">CWB-4: Add tests and integration checks</h3>
+    <ul>
+      <li>Unit tests for Tsai-Wu/Hashin numeric outputs.</li>
+      <li>Integration test: models visible in FEM registry.</li>
+    </ul>
+    <p><strong>Commit:</strong> <code>Composites: add tests for failure model provider and FEM registry integration</code></p>
+
+    <h2 id="integration">4. Cross-repo integration checklist</h2>
+    <ul>
+      <li>Matrix A: FreeCAD only (no Composites WB loaded).</li>
+      <li>Matrix B: FreeCAD + Composites WB loaded.</li>
+      <li>Confirm no regressions in SEF UI and result import.</li>
+    </ul>
+
+    <h2 id="prs">5. Suggested PR slices</h2>
+    <ol>
+      <li>PR-FreeCAD-1: registry + generic models + SEF safe lookup + tests</li>
+      <li>PR-Composites-1: composite provider + registration + tests</li>
+      <li>PR-FreeCAD-2 (optional): diagnostics/model-selection UX</li>
+    </ol>
+
+    <h2 id="commands">6. Immediate commands</h2>
+    <pre># Repo 1
+cd ~/opt/FreeCAD
+git checkout -b fem-failure-registry-split
+
+# Repo 2
+cd ~/opt/FreeCAD-CompositesWB
+git checkout -b composites-failure-provider</pre>
+  </main>
+</div>
+</body>
+</html>
