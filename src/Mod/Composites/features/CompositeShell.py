@@ -477,7 +477,7 @@ class CompositeShellFP(CompositeBaseFP):
             group="Draping",
             doc="Drape mesh pitch (node spacing) in mm",
         )
-        obj.DrapePitch = 5.0
+        obj.DrapePitch = 20.0
 
         obj.addProperty(
             type="App::PropertyLinkList",
