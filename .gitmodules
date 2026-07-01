@@ -21,3 +21,6 @@
 [submodule "src/3rdParty/OndselMbD"]
 	path = src/3rdParty/OndselMbD
 	url = git@github.com:jwharington/OndselMbD.git
+[submodule "src/3rdParty/nextdrape"]
+	path = src/3rdParty/nextdrape
+	url = https://github.com/jwharington/nextdrape.git

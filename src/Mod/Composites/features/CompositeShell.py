@@ -1,0 +1,696 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2025 John Wharington jwharington@gmail.com
+
+import json
+from datetime import datetime, timezone
+
+import FreeCADGui
+import MeshEnums
+from FreeCAD import Console
+from pivy import coin
+
+from .. import (
+    COMPOSITE_SHELL_TOOL_ICON,
+    is_comp_type,
+    roma_map,
+)
+from ..shaders.MeshGridShader import MeshGridShader
+from ..tools.drape_backend_nextdrape import NextDrapeBackend
+from ..tools.fibre import (
+    make_fibre_length_analysis,
+    make_fibre_orientation_analysis,
+)
+from ..util import mesh_util
+from .Command import BaseCommand
+from .Container import getCompositesContainer
+from .Laminate import is_laminate
+from .Rosette import is_rosette
+from .RosetteSymbol import RosetteSymbol
+from .VPCompositeBase import CompositeBaseFP
+
+
+def is_composite_shell(obj):
+    return is_comp_type(
+        obj,
+        "Part::FeaturePython",
+        "Composite::Shell",
+    )
+
+
+class CompositeShellFP(CompositeBaseFP):
+    Type = "Composite::Shell"
+
+    def __init__(
+        self, obj, support=None, laminate=None, lcs=None, rosette=None
+    ):
+        self._initializing = True
+        obj.addProperty(
+            type="App::PropertyLinkGlobal",
+            name="Support",
+            group="References",
+            doc="Shell shape",
+        )
+
+        obj.setPropertyStatus("Support", "LockDynamic")
+        obj.setPropertyStatus("Support", "ReadOnly")
+
+        obj.addProperty(
+            type="App::PropertyLinkGlobal",
+            name="LocalCoordinateSystem",
+            group="Materials",
+            doc="Local coordinate system used for orthotropic materials",
+        )
+
+        obj.addProperty(
+            type="App::PropertyLinkGlobal",
+            name="Rosette",
+            group="Materials",
+            doc="Rosette defining the fibre orientation origin and angle",
+        )
+
+        obj.addProperty(
+            type="App::PropertyLinkGlobal",
+            name="Laminate",
+            group="Materials",
+            doc="Laminate material",
+        )
+        # section could be composite laminate, or homogeneous lamina
+
+        obj.addProperty(
+            type="App::PropertyFloat",
+            name="MaxLength",
+            group="Draping",
+            doc="Max length of draping mesh",
+        )
+
+        obj.addProperty(
+            type="App::PropertyBool",
+            name="SkipDraper",
+            group="Draping",
+            doc="Generate drape mesh but skip Draper strain/orientation solve",
+        )
+
+        obj.addProperty(
+            type="App::PropertyInteger",
+            name="DraperMaxFacets",
+            group="Draping",
+            doc="Maximum facet count allowed for Draper solve before fallback",
+        )
+
+        obj.addProperty(
+            type="App::PropertyEnumeration",
+            name="DrapeBackend",
+            group="Draping",
+            doc="Draping backend (nextdrape or legacy)",
+        )
+        obj.DrapeBackend = ["nextdrape", "legacy"]
+        obj.DrapeBackend = "nextdrape"
+
+        obj.addProperty(
+            type="App::PropertyString",
+            name="DrapeDiagnostics",
+            group="Draping",
+            doc="Read-only JSON diagnostics for drape backend status",
+        )
+        obj.setPropertyStatus("DrapeDiagnostics", "ReadOnly")
+
+        obj.addProperty(
+            type="App::PropertyLinkGlobal",
+            name="Mesh",
+            group="Orthographic",
+            doc="Mesh for orthotropic materials",
+            hidden=True,
+        )
+
+        obj.Mesh = obj.Document.addObject(
+            "Mesh::Feature",
+            "DrapeMesh",
+        )
+        obj.setPropertyStatus("Mesh", "LockDynamic")
+        obj.setPropertyStatus("Mesh", "ReadOnly")
+
+        obj.MaxLength = 1.25
+        obj.SkipDraper = False
+        obj.DraperMaxFacets = 3000
+        obj.DrapeDiagnostics = ""
+        obj.LocalCoordinateSystem = lcs
+        obj.Rosette = rosette
+        obj.Laminate = laminate
+        obj.Support = support
+
+        self._rosette_angle = 0.0
+        self._backend = None
+
+        super().__init__(obj)
+        self._initializing = False
+
+    def execute(self, fp):
+        if (not fp.Support) or (not fp.Laminate):
+            return
+
+        fp.Shape = fp.Support.Shape
+
+        def get_lcs():
+            if fp.Rosette:
+                return fp.Rosette.LocalCoordinateSystem
+            if fp.LocalCoordinateSystem:
+                return fp.LocalCoordinateSystem
+            return fp.Support
+
+        self._rosette_angle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
+
+        try:
+            mesh = mesh_util.shape2Mesh(fp.Shape, fp.MaxLength)
+            display_mesh = mesh
+            self._backend = None
+            self.draper = None
+
+            skip_draper = bool(
+                getattr(fp, "SkipDraper", False)
+                or getattr(self, "_force_skip_draper", False),
+            )
+            if skip_draper:
+                Console.PrintMessage(
+                    "CompositeShell skipping Draper (SkipDraper=True).\n",
+                )
+                self._set_drape_diagnostics(
+                    fp,
+                    backend=self._selected_backend_name(fp),
+                    status="skipped",
+                    failure_reason="solver_unsolved",
+                )
+            else:
+                backend_name = self._selected_backend_name(fp)
+                backend_mesh = mesh
+
+                if backend_name == "legacy":
+                    max_facets = int(
+                        getattr(fp, "DraperMaxFacets", 3000) or 3000
+                    )
+                    facet_count = int(
+                        getattr(backend_mesh, "CountFacets", 0)
+                    )
+                    if facet_count > max_facets:
+                        for seg in (20, 16, 12, 10, 8, 6):
+                            candidate = mesh_util.shape2MeshLegacy(
+                                fp.Shape,
+                                float(fp.MaxLength),
+                                seg_min=seg,
+                                seg_max=seg,
+                            )
+                            cfacets = int(
+                                getattr(candidate, "CountFacets", 0)
+                            )
+                            if cfacets <= max_facets:
+                                backend_mesh = candidate
+                                facet_count = cfacets
+                                break
+                        if facet_count > max_facets:
+                            Console.PrintWarning(
+                                "CompositeShell skipping Draper: mesh too dense "
+                                f"({facet_count} facets > {max_facets}).\n",
+                            )
+                            backend_mesh = None
+                            self._set_drape_diagnostics(
+                                fp,
+                                backend=backend_name,
+                                status="invalid",
+                                failure_reason="solver_unsolved",
+                            )
+
+                if backend_mesh is not None:
+                    display_mesh = backend_mesh
+                    self._backend = self._make_backend(
+                        backend_name,
+                        backend_mesh,
+                        get_lcs(),
+                        fp.Shape,
+                    )
+                    self.draper = getattr(
+                        self._backend, "draper", None
+                    )
+
+                    diag = self._backend.diagnostics()
+                    self._set_drape_diagnostics(
+                        fp,
+                        backend=diag.get("backend", backend_name),
+                        status=diag.get("status", "invalid"),
+                        failure_reason=diag.get("failure_reason"),
+                        extras={
+                            k: v
+                            for k, v in diag.items()
+                            if k
+                            not in {
+                                "backend",
+                                "status",
+                                "failure_reason",
+                            }
+                        },
+                    )
+
+                    if self.has_valid_draper():
+                        self.fibre_analysis(fp)
+                    else:
+                        Console.PrintWarning(
+                            "CompositeShell backend invalid after mesh generation.\n",
+                        )
+
+            # Publish the effective drape mesh used for orientation mapping.
+            fp.Mesh.Mesh = display_mesh
+        except Exception as exc:
+            self._backend = None
+            self.draper = None
+            self._set_drape_diagnostics(
+                fp,
+                backend=self._selected_backend_name(fp),
+                status="error",
+                failure_reason="solver_unsolved",
+            )
+            Console.PrintWarning(
+                f"CompositeShell drape setup failed: {exc}\n",
+            )
+
+        view_object = getattr(fp, "ViewObject", None)
+        if view_object:
+            view_object.update()
+
+    def fibre_analysis(self, fp):
+        histograms_length = make_fibre_length_analysis(fp)
+        Console.PrintMessage("Material fibre length analysis:")
+        for material, histogram in histograms_length.items():
+            Console.PrintMessage(f"  {material}: {histogram.average_length}")
+        orientation_fraction = make_fibre_orientation_analysis(fp)
+        Console.PrintMessage("Orientation fraction analysis:")
+        for orientation, fraction in orientation_fraction.items():
+            Console.PrintMessage(f"  {orientation}: {fraction:.2f}")
+
+    def _selected_backend_name(self, fp):
+        backend = (
+            str(getattr(fp, "DrapeBackend", "nextdrape") or "nextdrape").lower()
+        )
+        return backend if backend in {"nextdrape", "legacy"} else "nextdrape"
+
+    def _make_backend(self, backend_name, mesh, lcs, shape):
+        if backend_name == "legacy":
+            from ..tools.drape_backend_legacy import LegacyDrapeBackend
+
+            return LegacyDrapeBackend(mesh, lcs, shape)
+        return NextDrapeBackend(mesh, lcs, shape)
+
+    def _set_drape_diagnostics(
+        self,
+        fp,
+        *,
+        backend,
+        status,
+        failure_reason,
+        extras=None,
+    ):
+        payload = {
+            "schema_version": "1.0",
+            "backend": backend,
+            "status": status,
+            "failure_reason": failure_reason,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        if extras:
+            payload.update(extras)
+        fp.DrapeDiagnostics = json.dumps(payload, sort_keys=True)
+
+    def onChanged(self, fp, prop):
+        if getattr(self, "_initializing", False):
+            return
+        match prop:
+            case "Laminate":
+                fp.recompute()
+            case "LocalCoordinateSystem" | "Rosette":
+                fp.recompute()
+            case (
+                "MaxLength"
+                | "Support"
+                | "SkipDraper"
+                | "DraperMaxFacets"
+                | "DrapeBackend"
+            ):
+                fp.recompute()
+
+    def has_valid_draper(self):
+        if hasattr(self, "_backend") and self._backend:
+            return bool(self._backend.is_valid())
+        return bool(
+            hasattr(self, "draper")
+            and self.draper
+            and self.draper.isValid()
+        )
+
+    def get_tex_coords(self, offset_angle_deg):
+        if self.has_valid_draper():
+            if hasattr(self, "_backend") and self._backend:
+                return self._backend.get_tex_coords(
+                    offset_angle_deg=offset_angle_deg
+                    + getattr(self, "_rosette_angle", 0.0),
+                )
+            return self.draper.get_tex_coords(
+                offset_angle_deg=offset_angle_deg
+                + getattr(self, "_rosette_angle", 0.0),
+            )
+        return None
+
+    def get_draper(self):
+        if self.has_valid_draper() and getattr(
+            self._backend, "draper", None
+        ):
+            return self._backend.draper
+        raise ValueError("Draper invalid")
+
+    def get_drape_lcs(self, tris):
+        if self.has_valid_draper():
+            if hasattr(self, "_backend") and self._backend:
+                return self._backend.get_lcs(tris)
+            return self.draper.get_lcs(tris)
+        return None
+
+    def get_boundaries(self, offset_angle_deg):
+        if self.has_valid_draper():
+            if hasattr(self, "_backend") and self._backend:
+                return self._backend.get_boundaries(
+                    offset_angle_deg=offset_angle_deg
+                    + getattr(self, "_rosette_angle", 0.0),
+                )
+            return self.draper.get_boundaries(
+                offset_angle_deg=offset_angle_deg
+                + getattr(self, "_rosette_angle", 0.0),
+            )
+        return None
+
+    def get_strains(self):
+        if self.has_valid_draper():
+            if hasattr(self, "_backend") and self._backend:
+                return self._backend.strains
+            return self.draper.strains
+        return None
+
+    def get_stack_assembly(self, fp):
+        lam_obj = fp.Laminate
+        return lam_obj.Proxy.get_stack_assembly(lam_obj)
+
+
+class ViewProviderCompositeShell:
+    def __init__(self, obj):
+        self.grid_shader = MeshGridShader()
+
+        obj.addProperty(
+            "App::PropertyFloatConstraint",
+            "Darken",
+            "AnalysisOptions",
+            "Grid darkness",
+        )
+        obj.Darken = 0.5
+
+        obj.addProperty(
+            "App::PropertyEnumeration",
+            "DisplayLayer",
+            "AnalysisOptions",
+            "Select layer to display",
+        )
+        obj.DisplayLayer = ["0"]
+        obj.DisplayLayer = "0"
+
+        obj.addProperty(
+            "App::PropertyBool",
+            "ShowRosette",
+            "Rosette",
+            "Show fibre orientation rosette symbol in 3D view",
+        )
+        obj.ShowRosette = True
+
+        obj.addProperty(
+            "App::PropertyFloat",
+            "RosetteScale",
+            "Rosette",
+            "Radius of fibre orientation rosette symbol (mm)",
+        )
+        obj.RosetteScale = 20.0
+
+        obj.Proxy = self
+
+    def setDisplayMode(self, mode):
+        return mode
+
+    def getDisplayModes(self, obj):
+        return ["Grid", "Strain XX", "Strain YY", "Strain XY"]
+
+    def getDefaultDisplayMode(self):
+        return "Shaded"
+
+    def getIcon(self):
+        return COMPOSITE_SHELL_TOOL_ICON
+
+    def claimChildren(self):
+        return [
+            self.Object.Mesh,
+            self.Object.LocalCoordinateSystem,
+        ]
+
+    def attach(self, obj):
+        self.Active = False
+
+        self.ViewObject = obj
+        self.Object = obj.Object
+
+        if not hasattr(self, "grid_shader"):
+            self.grid_shader = MeshGridShader()
+
+        obj.addDisplayMode(self.grid_shader.grp, "Grid")
+        # self.load_shader()
+
+        # Fibre orientation rosette: always-visible overlay on the root node
+        self.rosette = RosetteSymbol()
+        self.rosette_switch = coin.SoSwitch()
+        self.rosette_switch.addChild(self.rosette.separator)
+        self.rosette_switch.whichChild = 0  # visible by default
+        try:
+            obj.RootNode.addChild(self.rosette_switch)
+        except AttributeError:
+            pass  # RootNode not available in non-GUI / test environments
+
+        # needed to trigger color update
+        self.onChanged(obj, "Color")
+
+    def update_display_layer(self, fp):
+        if not hasattr(fp.ViewObject, "DisplayLayer"):
+            return
+        display_layer_opts = list(fp.Laminate.StackOrientation.keys())
+        sel = fp.ViewObject.DisplayLayer
+        fp.ViewObject.DisplayLayer = display_layer_opts
+        if sel in display_layer_opts:
+            return
+        if display_layer_opts:
+            fp.ViewObject.DisplayLayer = display_layer_opts[0]
+
+    def update_visibility(self, vobj):
+        visible = vobj.Visibility
+        if vobj.DisplayMode not in self.getDisplayModes(vobj):
+            visible = False
+        self.Object.Mesh.Visibility = visible
+        if self.Object.LocalCoordinateSystem:
+            self.Object.LocalCoordinateSystem.Visibility = visible
+
+    def update_mesh_material(self, vobj):
+        # use draper to determine distortion for coloring
+        mesh = vobj.Object.Mesh
+        n = mesh.Mesh.CountFacets
+        if "Material" not in mesh.PropertiesList:
+            mesh.addProperty("Mesh::PropertyMaterial", "Material")
+        strains = vobj.Object.Proxy.get_strains()
+        if strains is not None:
+            material = {
+                "binding": MeshEnums.Binding.PER_FACE,
+                "transparency": [0.0] * n,
+                "ambientColor": [(0.5, 0.5, 0.5)] * n,
+                "diffuseColor": [(0.5, 0.5, 0.5)] * n,
+                "shininess": [0.0] * n,
+            }
+            cont = getCompositesContainer()
+            limit_pos = cont.MaxStrainTension
+            limit_neg = cont.MaxStrainCompression
+            match vobj.DisplayMode:
+                case "Strain XX":
+                    index = 0
+                case "Strain YY":
+                    index = 1
+                case "Strain XY":
+                    index = 2
+                    limit_pos = cont.MaxStrainShear
+                    limit_neg = cont.MaxStrainShear
+                case _:
+                    index = -1
+            if index >= 0:
+                s = strains[:, index]
+
+                def map_val(x):
+                    if x > 0:
+                        s = min(1.0, (1.0 + (x / limit_pos)) / 2)
+                    elif x < 0:
+                        s = max(0.0, (1.0 + (x / limit_neg)) / 2)
+                    else:
+                        s = 0.5
+                    return roma_map(s)[0:3]
+
+                material["diffuseColor"] = [map_val(x) for x in s]
+            mesh.Material = material
+            mesh.ViewObject.Coloring = True
+        self.update_visibility(vobj)
+
+    def updateData(self, fp, prop):
+        match prop:
+            case "LocalCoordinateSystem" | "Support" | "Rosette":
+                self.update_rosette(self.ViewObject)
+            case "Laminate":
+                if fp.Laminate:
+                    self.update_display_layer(fp)
+                self.update_rosette(self.ViewObject)
+            case _:
+                return
+        self.reload_shader()
+
+    def update_rosette(self, vobj):
+        """Rebuild the rosette symbol from the current laminate and LCS."""
+        if not hasattr(self, "rosette"):
+            return
+        obj = vobj.Object
+        laminate = obj.Laminate
+        if not laminate or not hasattr(laminate, "StackOrientation"):
+            return
+        stack_orientation = laminate.StackOrientation
+        if not hasattr(stack_orientation, "values"):
+            return
+        orientations = list(stack_orientation.values())
+        if not orientations:
+            return
+
+        lcs = None
+        if obj.Rosette:
+            lcs = obj.Rosette.LocalCoordinateSystem
+        elif obj.LocalCoordinateSystem:
+            lcs = obj.LocalCoordinateSystem
+
+        if lcs:
+            base = lcs.Placement.Base
+            position = (base.x, base.y, base.z)
+            q = lcs.Placement.Rotation.Q
+            rotation = (q[0], q[1], q[2], q[3])
+        else:
+            position = (0.0, 0.0, 0.0)
+            rotation = (0.0, 0.0, 0.0, 1.0)
+
+        scale = vobj.RosetteScale if hasattr(vobj, "RosetteScale") else 20.0
+        self.rosette.update(orientations, position, rotation, scale)
+
+    def onChanged(self, vobj, prop):
+        match prop:
+            case "Visibility":
+                self.update_visibility(vobj)
+            case "DisplayMode":
+                self.update_mesh_material(vobj)
+            case "Darken":
+                if self.grid_shader:
+                    self.grid_shader.Darken = vobj.Darken
+            case "DisplayLayer":
+                self.reload_shader()
+            case "ShapeAppearance":
+                self.reload_shader()
+            case "ShowRosette":
+                if hasattr(self, "rosette_switch"):
+                    self.rosette_switch.whichChild = (
+                        0 if vobj.ShowRosette else coin.SO_SWITCH_NONE
+                    )
+            case "RosetteScale":
+                self.update_rosette(vobj)
+            case _:
+                pass
+
+    def onDelete(self, vobj, sub):
+        self.remove_shader()
+        return True
+
+    def reload_shader(self):
+        self.remove_shader()
+        self.load_shader()
+
+    def get_offset_angle(self, vobj):
+        if not hasattr(vobj.ViewObject, "DisplayLayer"):
+            return 0
+        layer = vobj.ViewObject.DisplayLayer
+        if not vobj.Laminate:
+            return 0
+        if layer in vobj.Laminate.StackOrientation:
+            return int(vobj.Laminate.StackOrientation[layer])
+        return 0
+
+    def load_shader(self):
+        if self.Active:
+            return
+        vobj = self.Object
+        obj = vobj.Proxy
+        if not (hasattr(obj, "draper") or hasattr(obj, "_backend")):
+            return
+
+        aobj = vobj.Mesh
+        offset_angle_deg = self.get_offset_angle(vobj)
+        tex_coords = obj.get_tex_coords(offset_angle_deg=offset_angle_deg)
+        if tex_coords and self.grid_shader:
+            self.grid_shader.attach(vobj, aobj, tex_coords)
+            self.Active = True
+            FreeCADGui.Selection.addObserver(self)
+
+    def remove_shader(self):
+        if not self.Active:
+            return
+        aobj = self.Object.Mesh
+        self.grid_shader.detach(aobj)
+        self.Active = False
+        FreeCADGui.Selection.removeObserver(self)
+
+    def __getstate__(self):
+        return {}
+
+    def __setstate__(self, state):
+        return None
+
+
+class CompositeShellCommand(BaseCommand):
+    icon = COMPOSITE_SHELL_TOOL_ICON
+    menu_text = "Composite shell"
+    tool_tip = """Create composite shell.
+        Select support feature, laminate and local coordinate system or rosette."""
+    sel_args = [
+        {
+            "key": "support",
+            "type": "Part::Feature",
+        },
+        {
+            "key": "laminate",
+            "test": is_laminate,
+        },
+        {
+            "key": "rosette",
+            "test": is_rosette,
+            "optional": True,
+        },
+        {
+            "key": "lcs",
+            "type": "Part::LocalCoordinateSystem",
+            "optional": True,
+        },
+    ]
+    type_id = "Part::FeaturePython"
+    instance_name = "CompositeShell"
+    cls_fp = CompositeShellFP
+    cls_vp = ViewProviderCompositeShell
+
+
+FreeCADGui.addCommand(
+    "Composites_CompositeShell",
+    CompositeShellCommand(),
+)
