@@ -22,6 +22,7 @@
 // nextdrape
 #include <nextdrape/DrapeEngine.hpp>
 #include <nextdrape/Types.hpp>
+#include <nextdrape/Utilities.hpp>
 
 namespace py = pybind11;
 
@@ -160,17 +161,21 @@ PYBIND11_MODULE(Composites_drape, m) {
         }
         res["quads"] = quad_list;
 
-        ssize_t n_quads = static_cast<ssize_t>(result.quads.size());
-        py::array_t<double> warp_strain(n_quads);
-        py::array_t<double> weft_strain(n_quads);
-        py::array_t<double> shear_deg_arr(n_quads);
+        // Export strains only for the seed-connected quads (texturePlan.quads)
+        // so they align with the mesh geometry.
+        const auto& connected = nextdrape::SeedConnectedQuadIndices(result.quads);
+        ssize_t n_mesh_quads = static_cast<ssize_t>(connected.size());
+        py::array_t<double> warp_strain(n_mesh_quads);
+        py::array_t<double> weft_strain(n_mesh_quads);
+        py::array_t<double> shear_deg_arr(n_mesh_quads);
         auto ws = warp_strain.mutable_unchecked<1>();
         auto wf = weft_strain.mutable_unchecked<1>();
         auto sd = shear_deg_arr.mutable_unchecked<1>();
-        for (ssize_t i = 0; i < n_quads; ++i) {
-            ws(i) = result.quads[i].warpStrain;
-            wf(i) = result.quads[i].weftStrain;
-            sd(i) = result.quads[i].shearDeg;
+        for (ssize_t i = 0; i < n_mesh_quads; ++i) {
+            const auto& q = result.quads[connected[static_cast<std::size_t>(i)]];
+            ws(i) = q.warpStrain;
+            wf(i) = q.weftStrain;
+            sd(i) = q.shearDeg;
         }
         res["warp_strain"] = warp_strain;
         res["weft_strain"] = weft_strain;

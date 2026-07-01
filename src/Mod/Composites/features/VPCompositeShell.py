@@ -171,11 +171,33 @@ class ViewProviderCompositeShell:
             pass
 
     def update_mesh_material(self, vobj):
-        # Strain coloring previously targeted the DrapeMesh Material
-        # property.  With DrapeMesh removed, the drape geometry lives
-        # inside the shader_state group.  Strain coloring will be wired
-        # to the shader's Material node in a follow-up.
+        """Update strain visualization colors based on display mode."""
         self.update_visibility(vobj)
+        
+        # Get the current display mode and map to strain component
+        display_mode = getattr(vobj, "DisplayMode", "")
+        if display_mode not in ("Strain XX", "Strain YY", "Strain XY"):
+            return
+        
+        # Get strain data from the backend
+        obj = vobj.Object
+        if not hasattr(obj, "Proxy") or not hasattr(obj.Proxy, "_backend"):
+            return
+        backend = obj.Proxy._backend
+        if not backend or not backend.is_valid():
+            return
+        
+        strains = backend.strains
+        if strains is None or strains.size == 0:
+            return
+        
+        # Map display mode to strain component
+        mode_map = {"Strain XX": "XX", "Strain YY": "YY", "Strain XY": "XY"}
+        mode = mode_map.get(display_mode, "XX")
+        
+        # Apply strain colors to the shader
+        if hasattr(self, "grid_shader") and self.grid_shader:
+            self.grid_shader.set_strain_colors(strains, mode)
 
     def updateData(self, fp, prop):
         match prop:
