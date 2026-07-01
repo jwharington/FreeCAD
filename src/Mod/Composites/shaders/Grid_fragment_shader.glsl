@@ -1,5 +1,9 @@
 #version 130
-precision mediump float;
+// High precision required for large models (automotive panels, ship hulls)
+// where UV coordinates span tens of thousands of mm. Mediump (~7 digits)
+// causes grid line jitter and aliased mod() output. Highp (~15 digits)
+// matches the precision of double-precision input coordinates.
+precision highp float;
 
 uniform float darken = 0.5;
 uniform float x_scale = 16.0;
@@ -62,23 +66,16 @@ float mixcol(float col, float amount) {
 }
 
 void main() {
-  // Hardcoded color (replaces old gl_Color from per-vertex strain coloring)
-  vec4 baseColor = vec4(0.5, 0.5, 0.5, 0.2);
   float pixel_width = 1.0;
-  float feather = 0.0;
-  vec3 coord = vec3(x_scale * gl_TexCoord[0].s,
+  highp vec3 coord = vec3(x_scale * gl_TexCoord[0].s,
                     y_scale * gl_TexCoord[0].t,
                     z_scale * gl_TexCoord[0].r);
-  vec3 grid = vec3(gridFactor(coord.x, pixel_width, feather),
-                   gridFactor(coord.y, pixel_width, feather),
-                   gridFactor(coord.z, pixel_width, feather));
-  float gridMax = max(grid.x, max(grid.y, grid.z));
-  // gridFactor returns 0 at grid lines, 1 between them.
-  // We want lines opaque (a=1) and background transparent (a=0),
-  // so invert: alpha is high where gridMax is low.
-  float a = mix(1.0, baseColor.a, gridMax);
+  vec3 grid = vec3(gridFactor(coord.x, pixel_width),
+                   gridFactor(coord.y, pixel_width),
+                   gridFactor(coord.z, pixel_width));
+  vec3 baseColor = vec3(0.92, 0.92, 0.92);
   gl_FragColor = vec4(mixcol(baseColor.r, grid.x),
                       mixcol(baseColor.g, grid.y),
                       mixcol(baseColor.b, grid.z),
-                      a);
+                      1.0);
 }
