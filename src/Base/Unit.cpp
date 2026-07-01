@@ -64,6 +64,7 @@ constexpr auto unitSpecs = std::to_array<UnitSpec>({
     { "Area"                                  , {  2                             } },
     { "CurrentDensity"                        , { -2,  0,  0,  1                 } },
     { "Density"                               , { -3,  1                         } },
+    { "ArealMass"                             , { -2,  1                         } },
     { "DissipationRate"                       , {  2,  0, -3                     } },
     { "DynamicViscosity"                      , { -1,  1, -1                     } },
     { "ElectricalCapacitance"                 , { -2, -1,  4,  2                 } },
@@ -332,6 +333,7 @@ constexpr Unit Unit::Area                                  = make("Area"        
 constexpr Unit Unit::Concentration                         = make("Concentration"               );
 constexpr Unit Unit::CompressiveStrength                   = make("Pressure"                    );
 constexpr Unit Unit::CurrentDensity                        = make("CurrentDensity"              );
+constexpr Unit Unit::ArealMass                             = make("ArealMass"                   );
 constexpr Unit Unit::Density                               = make("Density"                     );
 constexpr Unit Unit::DissipationRate                       = make("DissipationRate"             );
 constexpr Unit Unit::DynamicViscosity                      = make("DynamicViscosity"            );

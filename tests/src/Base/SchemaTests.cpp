@@ -624,6 +624,7 @@ TEST_F(SchemaTest, round_trip_test)
         Unit::Acceleration,
         Unit::Temperature,
         Unit::CurrentDensity,
+        Unit::ArealMass,
         Unit::ElectricCurrent,
         Unit::ElectricPotential,
         Unit::ElectricCharge,

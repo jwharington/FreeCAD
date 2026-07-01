@@ -2233,6 +2233,7 @@ void Application::initTypes()
     App::PropertyAmountOfSubstance          ::init();
     App::PropertyAngle                      ::init();
     App::PropertyArea                       ::init();
+    App::PropertyArealMass                  ::init();
     App::PropertyCompressiveStrength        ::init();
     App::PropertyCurrentDensity             ::init();
     App::PropertyDensity                    ::init();
