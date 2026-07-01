@@ -52,7 +52,7 @@ def write_step_output(f, ccxwriter):
     else:
         f.write("U\n")
     if not ccxwriter.member.geos_fluidsection:
-        f.write("*EL FILE\n")
+        f.write("*EL FILE, GLOBAL=NO\n")
         variables = "S, E"
         if ccxwriter.analysis_type == "thermomech":
             variables += ", HFL"

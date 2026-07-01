@@ -463,7 +463,7 @@ Evolumes
 ** Outputs --> frd file
 *NODE FILE
 U
-*EL FILE
+*EL FILE, GLOBAL=NO
 S, E
 *OUTPUT, FREQUENCY=1
 ***********************************************************

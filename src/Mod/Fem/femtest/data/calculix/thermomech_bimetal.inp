@@ -7114,7 +7114,7 @@ TemperatureNormal,11,11,273.0
 ** Outputs --> frd file
 *NODE FILE
 U, NT
-*EL FILE
+*EL FILE, GLOBAL=NO
 S, E, HFL
 ** outputs --> dat file
 ** reaction forces for Constraint fixed
