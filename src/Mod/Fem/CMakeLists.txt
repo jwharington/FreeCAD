@@ -607,6 +607,7 @@ SET(FemTools_SRCS
     femtools/__init__.py
     femtools/ccxtools.py
     femtools/checksanalysis.py
+    femtools/checksmaterials.py
     femtools/constants.py
     femtools/distributions.py
     femtools/errors.py
