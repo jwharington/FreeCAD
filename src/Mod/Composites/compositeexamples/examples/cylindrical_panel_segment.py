@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
-"""Cylindrical shell panel example (open arc segment midsurface)."""
+"""Cylindrical shell panel segment example (curved midsurface)."""
 
 from ._shell_example_common import (
     create_composite_feature_stack,
@@ -16,14 +16,15 @@ from ._shell_example_common import (
 )
 
 GEOMETRY = {
-    "radius_mm": 500.0,
-    "length_mm": 800.0,
-    "arc_deg": 70.0,
+    "radius_mm": 100.0,
+    "height_mm": 200.0,
+    "arc_deg": 90.0,
+    "pitch_mm": 5.0,
 }
 
 BOUNDARY_CONDITIONS = {
     "support": "Constrain both straight longitudinal edges",
-    "load": "Apply uniform normal pressure on the curved panel face",
+    "load": "Apply uniform external pressure normal to the cylindrical midsurface",
 }
 
 
@@ -46,14 +47,14 @@ def build(doc=None, run_solver=False, debug_options=None):
     if doc is not None and FreeCAD is not None and Part is not None:
         axis_origin = FreeCAD.Vector(0.0, 0.0, 0.0)
         axis_dir = FreeCAD.Vector(0.0, 0.0, 1.0)
-        shell_like = Part.makeCylinder(
+        cyl = Part.makeCylinder(
             GEOMETRY["radius_mm"],
-            GEOMETRY["length_mm"],
+            GEOMETRY["height_mm"],
             axis_origin,
             axis_dir,
             GEOMETRY["arc_deg"],
         )
-        midsurface = largest_face(shell_like)
+        midsurface = largest_face(cyl)
         support = create_support_feature(doc, "CylindricalPanelSupport", midsurface)
     record_diagnostic_event(
         diagnostics,
@@ -64,7 +65,7 @@ def build(doc=None, run_solver=False, debug_options=None):
     feature_stack = create_composite_feature_stack(
         doc,
         support,
-        name_prefix="CylPanel",
+        name_prefix="CylindricalPanel",
         skip_recompute=bool(opts.get("skip_recompute", False)),
         skip_view_providers=bool(opts.get("skip_view_providers", False)),
         diagnostics=diagnostics,

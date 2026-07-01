@@ -126,6 +126,12 @@ class MeshGridShader:
         self.material = coin.SoMaterial()
         self.material.transparency = 0.5
 
+        # Strain color material — per-vertex diffuse colors for strain visualization
+        self.strain_material = coin.SoMaterial()
+        self.strain_material.diffuseColor.set1Value(0, 0.0, 0.0, 0.0)  # placeholder
+        self.strain_mat_binding = coin.SoMaterialBinding()
+        self.strain_mat_binding.value = coin.SoMaterialBinding.PER_VERTEX
+
         self.grp = coin.SoGroup()
         self.grp.setName("shader_state")
 
@@ -248,6 +254,8 @@ class MeshGridShader:
         self.grp.addChild(self.transparency_type)
         self.grp.addChild(self.material)
         self.grp.addChild(self.mat_binding)
+        self.grp.addChild(self.strain_mat_binding)
+        self.grp.addChild(self.strain_material)
         self.grp.addChild(self.dummy_texture)
         self.grp.addChild(self.coord_binding)
         self.grp.addChild(self.texcoords)
@@ -436,3 +444,46 @@ class MeshGridShader:
         except Exception:
             pass
         self._attached = False
+
+    def set_strain_colors(self, strains: np.ndarray, mode: str = "XX") -> None:
+        """Set per-vertex diffuse colors based on strain data.
+
+        Parameters
+        ----------
+        strains : np.ndarray
+            Per-quad strains of shape (N, 3) — [warp, weft, shear].
+        mode : str
+            Which strain component to visualize: "XX", "YY", or "XY".
+        """
+        if strains is None or strains.size == 0 or self.strain_material is None:
+            return
+
+        # Map component index
+        comp_map = {"XX": 0, "YY": 1, "XY": 2}
+        comp_idx = comp_map.get(mode, 0)
+
+        # Normalize strains to [0, 1] for color mapping
+        strain_vals = strains[:, comp_idx]
+        max_val = strain_vals.max()
+        min_val = strain_vals.min()
+        if max_val > min_val:
+            normalized = (strain_vals - min_val) / (max_val - min_val)
+        else:
+            normalized = np.zeros_like(strain_vals)
+
+        # Map normalized strains to colors (blue=low, red=high)
+        n_quads = len(strains)
+        # Each quad has 4 vertices, so we need 4 * n_quads colors
+        # For simplicity, assign the same color to all 4 vertices of each quad
+        n_vertices = 4 * n_quads
+        colors = np.zeros((n_vertices, 3))
+        for i in range(n_quads):
+            v = normalized[i]
+            # Blue (low) -> Red (high) gradient
+            colors[4 * i] = [v, 0.0, 1.0 - v]
+            colors[4 * i + 1] = [v, 0.0, 1.0 - v]
+            colors[4 * i + 2] = [v, 0.0, 1.0 - v]
+            colors[4 * i + 3] = [v, 0.0, 1.0 - v]
+
+        # Set the diffuse colors on the material node
+        self.strain_material.diffuseColor.setValues(0, n_vertices, colors)

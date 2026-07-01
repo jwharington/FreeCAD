@@ -22,6 +22,7 @@
 // nextdrape
 #include <nextdrape/DrapeEngine.hpp>
 #include <nextdrape/Types.hpp>
+#include <nextdrape/Utilities.hpp>
 
 namespace py = pybind11;
 
@@ -78,6 +79,24 @@ PYBIND11_MODULE(Composites_drape, m) {
             params.boundaryTol = params_dict["boundary_tol"].cast<double>();
         if (params_dict.contains("strain_fail"))
             params.strainFail = params_dict["strain_fail"].cast<double>();
+
+        // === CUT-WIRE CONFIG ===
+        params.cutWires.enabled = false;
+        if (params_dict.contains("cut_wires_enabled"))
+            params.cutWires.enabled = pybind11::cast<bool>(
+                params_dict["cut_wires_enabled"]);
+        if (params_dict.contains("cut_wires_proximity_tol"))
+            params.cutWires.proximityTol =
+                params_dict["cut_wires_proximity_tol"].cast<double>();
+        if (params_dict.contains("cut_wires_block_nodes"))
+            params.cutWires.blockNodesOnWire =
+                pybind11::cast<bool>(
+                    params_dict["cut_wires_block_nodes"]);
+        if (params_dict.contains(
+                "cut_wires_block_quads"))
+            params.cutWires.blockQuadsCrossingWire =
+                pybind11::cast<bool>(
+                    params_dict["cut_wires_block_quads"]);
 
         nextdrape::SeedInput seed;
         if (seed_dict.contains("point")) {
@@ -142,17 +161,21 @@ PYBIND11_MODULE(Composites_drape, m) {
         }
         res["quads"] = quad_list;
 
-        ssize_t n_quads = static_cast<ssize_t>(result.quads.size());
-        py::array_t<double> warp_strain(n_quads);
-        py::array_t<double> weft_strain(n_quads);
-        py::array_t<double> shear_deg_arr(n_quads);
+        // Export strains only for the seed-connected quads (texturePlan.quads)
+        // so they align with the mesh geometry.
+        const auto& connected = nextdrape::SeedConnectedQuadIndices(result.quads);
+        ssize_t n_mesh_quads = static_cast<ssize_t>(connected.size());
+        py::array_t<double> warp_strain(n_mesh_quads);
+        py::array_t<double> weft_strain(n_mesh_quads);
+        py::array_t<double> shear_deg_arr(n_mesh_quads);
         auto ws = warp_strain.mutable_unchecked<1>();
         auto wf = weft_strain.mutable_unchecked<1>();
         auto sd = shear_deg_arr.mutable_unchecked<1>();
-        for (ssize_t i = 0; i < n_quads; ++i) {
-            ws(i) = result.quads[i].warpStrain;
-            wf(i) = result.quads[i].weftStrain;
-            sd(i) = result.quads[i].shearDeg;
+        for (ssize_t i = 0; i < n_mesh_quads; ++i) {
+            const auto& q = result.quads[connected[static_cast<std::size_t>(i)]];
+            ws(i) = q.warpStrain;
+            wf(i) = q.weftStrain;
+            sd(i) = q.shearDeg;
         }
         res["warp_strain"] = warp_strain;
         res["weft_strain"] = weft_strain;
@@ -190,6 +213,18 @@ PYBIND11_MODULE(Composites_drape, m) {
         }
         qual["failures"] = qual_failures;
         res["quality"] = qual;
+
+        // === CUT-WIRE DIAGNOSTICS ===
+        py::dict cut_diag;
+        cut_diag["nodes_blocked"] = result.cutWireDiagnostics.nodesBlocked;
+        cut_diag["quads_blocked"] = result.cutWireDiagnostics.quadsBlocked;
+        cut_diag["edges_crossing_wire"] = result.cutWireDiagnostics.edgesDetectedCrossing;
+        py::list blocked_descs;
+        for (const auto& desc : result.cutWireDiagnostics.blockedWireDescriptions) {
+            blocked_descs.append(desc);
+        }
+        cut_diag["blocked_wire_descriptions"] = blocked_descs;
+        res["cut_wire_diagnostics"] = cut_diag;
 
         return res;
     },

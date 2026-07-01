@@ -1,13 +1,23 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
-import FreeCAD
+import os
+
+import FreeCAD as App
 import FreeCADGui as Gui
 
 
 class CompositesWorkbench(Gui.Workbench):
-    # Icon path defined inside class body to avoid exec() scoping issues
-    Icon = "/home/jmw/opt/FreeCAD/build/pixi-debug/Mod/Composites/resources/icons/CompositesWB.svg"
+    # Resolve from FreeCAD's install root because this workbench is installed
+    # under <prefix>/Mod/Composites, not under the shared resource tree.
+    Icon = os.path.join(
+        App.getHomePath(),
+        "Mod",
+        "Composites",
+        "resources",
+        "icons",
+        "CompositesWB.svg",
+    )
     MenuText = "Composites"
     ToolTip = "Tools for composite structures"
 
@@ -16,6 +26,16 @@ class CompositesWorkbench(Gui.Workbench):
         It is executed once in a FreeCAD session followed by the Activated
         function.
         """
+        # ── Load C++ draping solver immediately so failures are visible at
+        #    workbench activation, not deep inside a draping operation. ────
+        try:
+            from Composites.ext._native import solve  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                "Composites: failed to load C++ draping solver "
+                f"({exc}). Was FreeCAD built with BUILD_COMPOSITES=ON? "
+                "Or is there a shared-library loading conflict?"
+            )
 
         import Composites.features.CompositeShell  # noqa
         import Composites.features.TexturePlan  # noqa
