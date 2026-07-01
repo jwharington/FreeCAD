@@ -10,8 +10,9 @@ import unittest
 
 
 def _repo_root_from_here():
+    # Go up from compositestests/ to src/Mod/
     return os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
+        os.path.join(os.path.dirname(__file__), "..", "..")
     )
 
 
@@ -21,7 +22,7 @@ def main():
         if repo_root not in sys.path:
             sys.path.insert(0, repo_root)
 
-        import freecad.Composites.compositestests.test_integration_freecad as test_module
+        import Composites.compositestests.test_integration_freecad as test_module
 
         suite = unittest.defaultTestLoader.loadTestsFromModule(test_module)
         print(f"Loaded {suite.countTestCases()} integration test(s)")

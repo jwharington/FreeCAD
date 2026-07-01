@@ -65,7 +65,6 @@ def build(doc=None, run_solver=False, debug_options=None):
         doc,
         support,
         name_prefix="TubularShell",
-        skip_draper=bool(opts.get("skip_draper", False)),
         skip_recompute=bool(opts.get("skip_recompute", False)),
         skip_view_providers=bool(opts.get("skip_view_providers", False)),
         diagnostics=diagnostics,
@@ -80,6 +79,7 @@ def build(doc=None, run_solver=False, debug_options=None):
             case_id="tubular_shell",
             boundary_conditions=BOUNDARY_CONDITIONS,
             solve=not bool(opts.get("mesh_only", False)),
+            shell_obj=feature_stack.get("shell"),
         )
         record_diagnostic_event(diagnostics, "build.fem.done")
 

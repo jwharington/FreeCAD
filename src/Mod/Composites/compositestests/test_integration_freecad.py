@@ -6,7 +6,7 @@
 These tests intentionally avoid any FreeCAD mocks. Run them with:
 
     FreeCADCmd -P <repo-root>
-        freecad/Composites/compositestests/run_freecad_integration_tests.py
+        Composites/compositestests/run_freecad_integration_tests.py
 """
 
 import sys
@@ -17,13 +17,13 @@ import FreeCAD
 
 # Some existing modules import CompositesWB by name.
 if "CompositesWB" not in sys.modules:
-    import freecad.Composites as _composites_wb
+    import Composites as _composites_wb
 
     sys.modules["CompositesWB"] = _composites_wb
 
-import freecad.Composites as CompositesWB
-from freecad.Composites.compositeexamples import runner as example_runner
-from freecad.Composites.compositestests.example_materials import make_glass
+import Composites as CompositesWB
+from Composites.compositeexamples import runner as example_runner
+from Composites.compositestests.example_materials import make_glass
 
 
 class TestFreeCADIntegration(unittest.TestCase):
@@ -87,7 +87,7 @@ class TestFreeCADIntegration(unittest.TestCase):
         if not hasattr(FreeCADGui, "addCommand"):
             FreeCADGui.addCommand = lambda *args, **kwargs: None
 
-        from freecad.Composites.features.Rosette import (
+        from Composites.features.Rosette import (
             RosetteFP,
             is_rosette,
         )
@@ -121,7 +121,6 @@ class TestFreeCADIntegration(unittest.TestCase):
                 doc=None,
                 debug_options={
                     "mesh_only": True,
-                    "skip_draper": True,
                     "skip_view_providers": True,
                 },
             )
@@ -180,12 +179,12 @@ class TestFreeCADIntegration(unittest.TestCase):
             FreeCADGui.addCommand = lambda *args, **kwargs: None
 
         taskpanel_mod = types.ModuleType(
-            "freecad.Composites.taskpanels.task_fibre_composite_lamina"
+            "Composites.taskpanels.task_fibre_composite_lamina"
         )
         setattr(taskpanel_mod, "_TaskPanel", object)
         sys.modules[taskpanel_mod.__name__] = taskpanel_mod
 
-        from freecad.Composites.features.FibreCompositeLamina import (
+        from Composites.features.FibreCompositeLamina import (
             FibreCompositeLaminaFP,
         )
 

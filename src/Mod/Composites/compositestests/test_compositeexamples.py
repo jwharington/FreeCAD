@@ -15,7 +15,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
-# FreeCAD mock — must be installed before importing freecad.Composites.
+# FreeCAD mock — must be installed before importing Composites.
 # ---------------------------------------------------------------------------
 
 _freecad_mock = MagicMock()
@@ -41,8 +41,8 @@ _REPO_ROOT = os.path.abspath(
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from freecad.Composites.compositeexamples import registry, runner  # noqa: E402
-from freecad.Composites.compositeexamples.examples import (  # noqa: E402
+from Composites.compositeexamples import registry, runner  # noqa: E402
+from Composites.compositeexamples.examples import (  # noqa: E402
     _shell_example_common,
     tubular_shell,
 )
@@ -98,13 +98,11 @@ class TestCompositeExamplesRunner(unittest.TestCase):
                 "dummy",
                 run_solver=True,
                 doc=doc,
-                debug_options={"skip_draper": True},
             )
 
         module.build.assert_called_once_with(
             doc=doc,
             run_solver=True,
-            debug_options={"skip_draper": True},
         )
         self.assertIs(result, expected)
 

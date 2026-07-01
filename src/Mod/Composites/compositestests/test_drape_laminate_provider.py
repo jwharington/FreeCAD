@@ -6,7 +6,7 @@ import types
 import unittest
 from unittest.mock import MagicMock
 
-# FreeCAD mock must be present before importing freecad.Composites package.
+# FreeCAD mock must be present before importing Composites package.
 if "FreeCAD" not in sys.modules:
     freecad_mock = MagicMock()
     freecad_mock.__unit_test__ = []
@@ -19,7 +19,7 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from freecad.Composites.fem.drape_laminate_provider import (  # noqa: E402
+from Composites.fem.drape_laminate_provider import (  # noqa: E402
     register_drape_laminate_providers,
 )
 

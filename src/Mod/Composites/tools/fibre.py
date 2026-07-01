@@ -39,11 +39,44 @@ class FibreHistogram:
         self.average_length = np.dot(w_norm, np.array(self.samples))
 
 
-def get_surface(boundaries):
+def get_surface(boundaries, shape=None):
+    """Convert UV-boundary loops to a 3D surface face.
+
+    Boundaries from the draper are 2D (u,v) tuples.  Part.makePolygon
+    requires 3D FreeCAD.Vectors, so we project them onto the support
+    shape when available, otherwise fall back to the XY plane.
+    """
+    import FreeCAD
+
     wires = []
     for w in boundaries:
-        wires.append(Part.Wire(Part.makePolygon(w)))
-    # f = Part.makeCompound(shapes)
+        if len(w) < 2:
+            continue
+        # Convert 2D UV tuples to 3D FreeCAD.Vectors
+        pts = []
+        for uv in w:
+            if shape is not None:
+                # Project UV to 3D using the support shape's surface
+                try:
+                    u, v = float(uv[0]), float(uv[1])
+                    # Find the face whose UV bounds contain (u, v)
+                    for face in shape.Faces:
+                        try:
+                            bbox = face.UVBounds
+                            if bbox[0] <= u <= bbox[1] and bbox[2] <= v <= bbox[3]:
+                                pt = face.value(u, v)
+                                pts.append(pt)
+                                break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+            if len(pts) < len(w):  # fallback: XY plane
+                pts.append(FreeCAD.Vector(float(uv[0]), float(uv[1]), 0.0))
+        if len(pts) >= 2:
+            wires.append(Part.Wire(Part.makePolygon(pts)))
+    if not wires:
+        return None
     from BIM.ArchCommands import makeFace
 
     return makeFace(wires)
@@ -79,7 +112,7 @@ def make_fibre_length_analysis(composite_shell, n_strips: int = 20):
         boundaries = composite_shell.Proxy.get_boundaries(orientation)
         if not boundaries:
             continue
-        surface = get_surface(boundaries)
+        surface = get_surface(boundaries, composite_shell.Shape)
 
         # chop into pieces
         shape = make_strips(surface, n_strips)
