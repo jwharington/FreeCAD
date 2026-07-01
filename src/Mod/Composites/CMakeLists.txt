@@ -96,6 +96,7 @@ install(
         PATTERN "*.qrc"
         PATTERN "*.css"
         PATTERN "*.FCMat"
+        PATTERN "*.glsl"
     PATTERN "__pycache__" EXCLUDE
     PATTERN "*.pyc" EXCLUDE
     PATTERN ".git" EXCLUDE

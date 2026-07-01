@@ -654,19 +654,30 @@ class CompositeShellFP(CompositeBaseFP):
 
         # ── Try to rehydrate from persisted data ───────────────────
         if self._can_use_persisted(fp):
+            self._diag(fp, "rehydrating from persisted drape")
             try:
                 self._rehydrate(fp)
                 return
-            except Exception:
-                pass
+            except Exception as exc:
+                self._diag(fp, f"rehydrate failed: {exc}")
 
         # ── Full solve — run synchronously ─────────────────────────
+        self._diag(fp, "running drape solve")
         fp.Shape = fp.Support.Shape
         result = self._run_drape_sync(fp, get_lcs())
         if isinstance(result, Exception):
+            self._diag(fp, f"drape failed: {result}")
             self._mark_failed(fp, str(result))
         else:
+            self._diag(fp, "drape completed")
             self._complete_drape(fp, result)
+
+    def _diag(self, fp, message):
+        try:
+            name = getattr(fp, "Name", "<unnamed>")
+            Console.PrintMessage(f"[Composites][Drape] {name}: {message}\n")
+        except Exception:
+            pass
 
     def _run_drape_sync(self, fp, lcs):
         """Run the draper solve synchronously and return the result dict."""
@@ -810,10 +821,12 @@ class CompositeShellFP(CompositeBaseFP):
         """
         from pivy import coin
 
-        sep = coin.SoSeparator()
-        sep_copy: list[list[tuple[float, float, float]]] = cut_edges
+        if not cut_edges:
+            return
 
-        for walk in sep_copy:
+        sep = coin.SoSeparator()
+
+        for walk in cut_edges:
             pc = len(walk)
             if pc < 2:
                 continue
@@ -1400,9 +1413,11 @@ class ViewProviderCompositeShell:
 
                 def map_val(x):
                     if x > 0:
-                        s = min(1.0, (1.0 + (x / limit_pos)) / 2)
+                        ratio = x / limit_pos if limit_pos != 0 else 0.0
+                        s = min(1.0, (1.0 + ratio) / 2)
                     elif x < 0:
-                        s = max(0.0, (1.0 + (x / limit_neg)) / 2)
+                        ratio = x / limit_neg if limit_neg != 0 else 0.0
+                        s = max(0.0, (1.0 + ratio) / 2)
                     else:
                         s = 0.5
                     return roma_map(s)[0:3]
