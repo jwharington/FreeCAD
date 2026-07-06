@@ -69,6 +69,8 @@ class ViewProviderCompositeShell:
 
     def claimChildren(self):
         children = []
+        if hasattr(self.Object, "Rosette") and self.Object.Rosette:
+            children.append(self.Object.Rosette)
         if hasattr(self.Object, "LocalCoordinateSystem") and self.Object.LocalCoordinateSystem:
             children.append(self.Object.LocalCoordinateSystem)
         return children
