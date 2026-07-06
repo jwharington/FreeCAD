@@ -22,19 +22,15 @@ from .TransferLCS import (
 
 
 def _get_shell_lcs_base(shell):
-    """Return the base position of the composite shell's LCS.
+    """Return the base position of the shell's orientation LCS.
 
-    Prefers the Rosette's LCS when a Rosette is set on the shell, falls back
-    to the shell's plain LocalCoordinateSystem, and returns the zero vector
-    when neither is available.
+    The shell's reference frame comes from its Rosette; returns the zero
+    vector when no Rosette is set.
     """
-    lcs = None
-    if hasattr(shell, "Rosette") and shell.Rosette:
+    if getattr(shell, "Rosette", None):
         lcs = shell.Rosette.LocalCoordinateSystem
-    elif shell.LocalCoordinateSystem:
-        lcs = shell.LocalCoordinateSystem
-    if lcs:
-        return lcs.Placement.Base
+        if lcs:
+            return lcs.Placement.Base
     return FreeCAD.Vector(0.0, 0.0, 0.0)
 
 

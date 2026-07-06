@@ -1240,21 +1240,13 @@ class TestGetShellLcsBase(unittest.TestCase):
     def _make_shell_with_rosette(self, lcs):
         rosette = MagicMock()
         rosette.LocalCoordinateSystem = lcs
-        shell = MagicMock(spec=["Rosette", "LocalCoordinateSystem"])
+        shell = MagicMock(spec=["Rosette"])
         shell.Rosette = rosette
-        shell.LocalCoordinateSystem = None
         return shell
 
-    def _make_shell_with_lcs(self, lcs):
-        shell = MagicMock(spec=["Rosette", "LocalCoordinateSystem"])
+    def _make_shell_no_rosette(self):
+        shell = MagicMock(spec=["Rosette"])
         shell.Rosette = None
-        shell.LocalCoordinateSystem = lcs
-        return shell
-
-    def _make_shell_no_lcs(self):
-        shell = MagicMock(spec=["Rosette", "LocalCoordinateSystem"])
-        shell.Rosette = None
-        shell.LocalCoordinateSystem = None
         return shell
 
     def test_returns_rosette_lcs_base_when_rosette_set(self):
@@ -1263,36 +1255,11 @@ class TestGetShellLcsBase(unittest.TestCase):
         result = _get_shell_lcs_base(shell)
         self.assertIs(result, lcs.Placement.Base)
 
-    def test_returns_plain_lcs_base_when_no_rosette(self):
-        lcs = self._make_lcs_mock(x=1.0, y=2.0, z=3.0)
-        shell = self._make_shell_with_lcs(lcs)
-        result = _get_shell_lcs_base(shell)
-        self.assertIs(result, lcs.Placement.Base)
-
-    def test_returns_zero_vector_when_no_lcs(self):
-        shell = self._make_shell_no_lcs()
+    def test_returns_zero_vector_when_no_rosette(self):
+        shell = self._make_shell_no_rosette()
         result = _get_shell_lcs_base(shell)
         # FreeCAD.Vector is mocked; result should be a FreeCAD.Vector call result
         self.assertIsNotNone(result)
-
-    def test_rosette_lcs_takes_precedence_over_plain_lcs(self):
-        rosette_lcs = self._make_lcs_mock(x=10.0, y=20.0, z=30.0)
-        plain_lcs = self._make_lcs_mock(x=1.0, y=2.0, z=3.0)
-        rosette = MagicMock()
-        rosette.LocalCoordinateSystem = rosette_lcs
-        shell = MagicMock(spec=["Rosette", "LocalCoordinateSystem"])
-        shell.Rosette = rosette
-        shell.LocalCoordinateSystem = plain_lcs
-        result = _get_shell_lcs_base(shell)
-        self.assertIs(result, rosette_lcs.Placement.Base)
-
-    def test_no_rosette_attribute_falls_back_to_lcs(self):
-        # Shell without a Rosette attribute (older FP without Rosette property)
-        lcs = self._make_lcs_mock(x=7.0, y=8.0, z=9.0)
-        shell = MagicMock(spec=["LocalCoordinateSystem"])
-        shell.LocalCoordinateSystem = lcs
-        result = _get_shell_lcs_base(shell)
-        self.assertIs(result, lcs.Placement.Base)
 
 
 if __name__ == "__main__":

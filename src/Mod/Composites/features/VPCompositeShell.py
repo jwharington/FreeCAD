@@ -71,8 +71,6 @@ class ViewProviderCompositeShell:
         children = []
         if hasattr(self.Object, "Rosette") and self.Object.Rosette:
             children.append(self.Object.Rosette)
-        if hasattr(self.Object, "LocalCoordinateSystem") and self.Object.LocalCoordinateSystem:
-            children.append(self.Object.LocalCoordinateSystem)
         return children
 
     def attach(self, obj):
@@ -146,9 +144,7 @@ class ViewProviderCompositeShell:
 
     def _hide_lcs(self, fp):
         """Always hide the native LCS symbology (planes + 3D arrows)."""
-        lcs = fp.LocalCoordinateSystem
-        if lcs is None and fp.Rosette:
-            lcs = fp.Rosette.LocalCoordinateSystem
+        lcs = fp.Rosette.LocalCoordinateSystem if fp.Rosette else None
         if lcs is None:
             return
         lcs_vobj = getattr(lcs, "ViewObject", None)
@@ -206,7 +202,7 @@ class ViewProviderCompositeShell:
 
     def updateData(self, fp, prop):
         match prop:
-            case "LocalCoordinateSystem" | "Support" | "Rosette":
+            case "Support" | "Rosette":
                 self.update_rosette(self.ViewObject)
             case "Laminate":
                 if fp.Laminate:
@@ -239,8 +235,6 @@ class ViewProviderCompositeShell:
         lcs = None
         if obj.Rosette:
             lcs = obj.Rosette.LocalCoordinateSystem
-        elif obj.LocalCoordinateSystem:
-            lcs = obj.LocalCoordinateSystem
 
         if lcs:
             base = lcs.Placement.Base

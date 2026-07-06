@@ -178,40 +178,6 @@ def _to_length_mm(freecad_mod, value_mm):
     return value_mm
 
 
-def _configure_lcs_for_shell(freecad_mod, lcs_obj, support):
-    if lcs_obj is None or support is None:
-        return
-    if not hasattr(lcs_obj, "Placement"):
-        return
-
-    shape = getattr(support, "Shape", None)
-    bbox = getattr(shape, "BoundBox", None)
-    if bbox is None:
-        return
-
-    base = freecad_mod.Vector(
-        getattr(bbox, "XMax", 0.0),
-        0.0,
-        0.5 * (getattr(bbox, "ZMin", 0.0) + getattr(bbox, "ZMax", 0.0)),
-    )
-
-    # Project the LCS origin onto the support shell so the rosette is visibly
-    # on-surface (important for conical segments).
-    try:
-        import Part
-
-        vert = Part.Vertex(base.x, base.y, base.z)
-        _, points, _ = shape.distToShape(vert)
-        if points and points[0]:
-            base = points[0][0]
-    except Exception:
-        pass
-
-    # Keep local XY approximately tangent-friendly for draping.
-    rot = freecad_mod.Rotation(freecad_mod.Vector(0, 1, 0), -90)
-    lcs_obj.Placement = freecad_mod.Placement(base, rot)
-
-
 def _hide_support_shape(support):
     """Hide support geometry once the CompositeShell exists."""
 
@@ -388,18 +354,6 @@ def create_composite_feature_stack(
     laminate_obj.Symmetry = SymmetryType.Assymmetric.name
     record_diagnostic_event(diagnostics, "feature_stack.laminate.done")
 
-    lcs_obj = None
-    try:
-        lcs_obj = doc.addObject("Part::LocalCoordinateSystem", f"{name_prefix}LCS")
-        _configure_lcs_for_shell(FreeCAD, lcs_obj, support)
-    except Exception:
-        lcs_obj = None
-    record_diagnostic_event(
-        diagnostics,
-        "feature_stack.lcs.done",
-        has_lcs=lcs_obj is not None,
-    )
-
     # Rosette defines the fibre orientation reference frame. Its Support
     # references the midsurface face so the rosette origin sits on the
     # shell and its primary axis follows the face normal; Angle is the
@@ -443,7 +397,6 @@ def create_composite_feature_stack(
             shell_obj,
             support=support,
             laminate=laminate_obj,
-            lcs=lcs_obj,
             rosette=rosette_obj,
         )
         record_diagnostic_event(diagnostics, "feature_stack.shell.fp_ctor.done")
@@ -484,7 +437,7 @@ def create_composite_feature_stack(
     # Organize objects into groups for proper document hierarchy
     if doc is not None and shell_obj is not None:
         _organize_into_groups(
-            doc, support, laminae, laminate_obj, lcs_obj, shell_obj, rosette_obj,
+            doc, support, laminae, laminate_obj, shell_obj, rosette_obj,
         )
 
     return {
@@ -493,7 +446,6 @@ def create_composite_feature_stack(
         "gui_up": gui_up,
         "laminae": laminae,
         "laminate": laminate_obj,
-        "lcs": lcs_obj,
         "rosette": rosette_obj,
         "shell": shell_obj,
         "shell_error": shell_error,
@@ -996,18 +948,18 @@ def evaluate_failure_criteria(analysis, model_options=None, top_n=10):
     }
 
 
-def _organize_into_groups(doc, support, laminae, laminate, lcs, shell_obj, rosette=None):
+def _organize_into_groups(doc, support, laminae, laminate, shell_obj, rosette=None):
     """Organize composite objects into groups for proper document hierarchy."""
     try:
         import FreeCADGui
 
         # Create Geometry group
         geo_group = doc.addObject("App::DocumentObjectGroup", "Geometry")
-        geo_group.Group = [support, lcs] if lcs else [support]
+        geo_group.Group = [support]
 
         # Create Composite group
         comp_group = doc.addObject("App::DocumentObjectGroup", "Composite")
-        comp_items = [laminate, shell_obj] + ([lcs] if lcs else [])
+        comp_items = [laminate, shell_obj]
         if rosette is not None:
             comp_items.append(rosette)
         if laminae:

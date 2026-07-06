@@ -395,7 +395,7 @@ class CompositeShellFP(CompositeBaseFP):
     Type = "Composite::Shell"
 
     def __init__(
-        self, obj, support=None, laminate=None, lcs=None, rosette=None
+        self, obj, support=None, laminate=None, rosette=None
     ):
         self._initializing = True
         obj.addProperty(
@@ -407,13 +407,6 @@ class CompositeShellFP(CompositeBaseFP):
 
         obj.setPropertyStatus("Support", "LockDynamic")
         obj.setPropertyStatus("Support", "ReadOnly")
-
-        obj.addProperty(
-            type="App::PropertyLinkGlobal",
-            name="LocalCoordinateSystem",
-            group="Materials",
-            doc="Local coordinate system used for orthotropic materials",
-        )
 
         obj.addProperty(
             type="App::PropertyLinkGlobal",
@@ -554,7 +547,6 @@ class CompositeShellFP(CompositeBaseFP):
         )
 
         obj.DrapeDiagnostics = ""
-        obj.LocalCoordinateSystem = lcs
         obj.Rosette = rosette
         obj.Laminate = laminate
         obj.Support = support
@@ -605,8 +597,6 @@ class CompositeShellFP(CompositeBaseFP):
         def get_lcs():
             if fp.Rosette:
                 return fp.Rosette.LocalCoordinateSystem
-            if fp.LocalCoordinateSystem:
-                return fp.LocalCoordinateSystem
             return fp.Support
 
         self._rosette_angle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
@@ -947,9 +937,7 @@ class CompositeShellFP(CompositeBaseFP):
 
     def _hide_lcs_view(self, fp):
         """Hide the native LCS symbology (planes + 3D arrows)."""
-        lcs = fp.LocalCoordinateSystem
-        if lcs is None and fp.Rosette:
-            lcs = fp.Rosette.LocalCoordinateSystem
+        lcs = fp.Rosette.LocalCoordinateSystem if fp.Rosette else None
         if lcs is None:
             return
         lcs_vobj = getattr(lcs, "ViewObject", None)
@@ -982,7 +970,7 @@ class CompositeShellFP(CompositeBaseFP):
         match prop:
             case "Laminate":
                 fp.recompute()
-            case "LocalCoordinateSystem" | "Rosette":
+            case "Rosette":
                 fp.recompute()
             case "DrapePitch":
                 # Mark the shell as needing a recompute.  The actual
@@ -1053,11 +1041,6 @@ class CompositeShellCommand(BaseCommand):
         {
             "key": "rosette",
             "test": is_rosette,
-            "optional": True,
-        },
-        {
-            "key": "lcs",
-            "type": "Part::LocalCoordinateSystem",
             "optional": True,
         },
     ]
