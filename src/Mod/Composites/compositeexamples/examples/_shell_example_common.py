@@ -342,6 +342,10 @@ def create_composite_feature_stack(
             FibreCompositeLaminaFP,
             ViewProviderFibreCompositeLamina,
         )
+        from Composites.features.Rosette import (  # noqa: WPS433
+            RosetteFP,
+            ViewProviderRosette,
+        )
     except Exception as exc:
         return {
             "created": False,
@@ -396,6 +400,30 @@ def create_composite_feature_stack(
         has_lcs=lcs_obj is not None,
     )
 
+    # Rosette defines the fibre orientation reference frame. Its Support
+    # references the midsurface face so the rosette origin sits on the
+    # shell and its primary axis follows the face normal; Angle is the
+    # primary fibre orientation in degrees.
+    rosette_obj = None
+    try:
+        rosette_obj = doc.addObject(
+            "App::FeaturePython", f"{name_prefix}Rosette",
+        )
+        RosetteFP(
+            rosette_obj,
+            support=(support, ["Face1"]) if support is not None else None,
+        )
+        rosette_obj.Angle = 0.0
+        if attach_view_providers and getattr(rosette_obj, "ViewObject", None):
+            ViewProviderRosette(rosette_obj.ViewObject)
+    except Exception:
+        rosette_obj = None
+    record_diagnostic_event(
+        diagnostics,
+        "feature_stack.rosette.done",
+        has_rosette=rosette_obj is not None,
+    )
+
     shell_obj = None
     shell_error = None
     try:
@@ -416,6 +444,7 @@ def create_composite_feature_stack(
             support=support,
             laminate=laminate_obj,
             lcs=lcs_obj,
+            rosette=rosette_obj,
         )
         record_diagnostic_event(diagnostics, "feature_stack.shell.fp_ctor.done")
 
@@ -454,7 +483,9 @@ def create_composite_feature_stack(
 
     # Organize objects into groups for proper document hierarchy
     if doc is not None and shell_obj is not None:
-        _organize_into_groups(doc, support, laminae, laminate_obj, lcs_obj, shell_obj)
+        _organize_into_groups(
+            doc, support, laminae, laminate_obj, lcs_obj, shell_obj, rosette_obj,
+        )
 
     return {
         "created": True,
@@ -463,6 +494,7 @@ def create_composite_feature_stack(
         "laminae": laminae,
         "laminate": laminate_obj,
         "lcs": lcs_obj,
+        "rosette": rosette_obj,
         "shell": shell_obj,
         "shell_error": shell_error,
     }
@@ -964,7 +996,7 @@ def evaluate_failure_criteria(analysis, model_options=None, top_n=10):
     }
 
 
-def _organize_into_groups(doc, support, laminae, laminate, lcs, shell_obj):
+def _organize_into_groups(doc, support, laminae, laminate, lcs, shell_obj, rosette=None):
     """Organize composite objects into groups for proper document hierarchy."""
     try:
         import FreeCADGui
@@ -976,6 +1008,8 @@ def _organize_into_groups(doc, support, laminae, laminate, lcs, shell_obj):
         # Create Composite group
         comp_group = doc.addObject("App::DocumentObjectGroup", "Composite")
         comp_items = [laminate, shell_obj] + ([lcs] if lcs else [])
+        if rosette is not None:
+            comp_items.append(rosette)
         if laminae:
             comp_items = laminae + comp_items
         comp_group.Group = comp_items

@@ -69,7 +69,9 @@ if(COMPOSITES_BUILD_CPP)
 endif()
 
 # ── Python sources (collect recursively) ────────────────────────
-file(GLOB_RECURSE Composites_PY_SRCS_ALL
+# RELATIVE so fc_copy_sources builds dest paths as <build>/Mod/Composites/<rel>
+# instead of nesting the absolute source path under the dest.
+file(GLOB_RECURSE Composites_PY_SRCS_ALL RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     "*.py"
     "*.svg"
     "*.ui"
@@ -80,7 +82,16 @@ file(GLOB_RECURSE Composites_PY_SRCS_ALL
 )
 
 # ── Copy to build tree for development ──────────────────────────
-fc_copy_sources(Composites "${CMAKE_BINARY_DIR}/Mod/Composites" ${Composites_PY_SRCS_ALL})
+# FreeCAD loads Python from the build tree during development, so the
+# sources must be copied there whenever they change. fc_copy_sources ties
+# the copy commands to a target via add_file_dependencies; without an
+# actual target the commands are orphaned and never run, leaving the
+# build tree stale. Mirror the Fem convention (FemScriptsTarget) so
+# `cmake --build <build> --target CompositesScripts` syncs the tree.
+add_custom_target(CompositesScripts ALL
+    SOURCES ${Composites_PY_SRCS_ALL}
+)
+fc_copy_sources(CompositesScripts "${CMAKE_BINARY_DIR}/Mod/Composites" ${Composites_PY_SRCS_ALL})
 
 # ── Install like other workbenches ──────────────────────────────
 # Preserve the package layout so FreeCAD can import Composites from the
