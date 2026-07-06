@@ -120,12 +120,24 @@ class TransferRosetteFP(RosetteFP):
 
     def _solve(self, fp) -> None:
         """Iterate the attachment rosette Angle to match the master warp."""
+        master = fp.MasterShell
+        attachment = fp.AttachmentShell
+        # The two shells must share a topological boundary edge. If they don't
+        # (e.g. a glued assembly with no common edge), this is a misuse of
+        # the feature — raise a clear error rather than silently solving
+        # against a zero residual.
+        edge = self._shared_edge(master.Shape, attachment.Shape)
+        if edge is None:
+            raise ValueError(
+                "TransferRosette: master and attachment shells share no "
+                "boundary edge — cannot transfer warp orientation."
+            )
         error_fn = lambda _angle: self._edge_angle_error(fp)
         try:
             angle = solve_rosette_angle(fp.AttachmentShell, fp, error_fn)
         except RosetteSolveError:
             # Keep the feature recompute-safe when the solve cannot bracket
-            # (e.g. the two shells do not actually share a usable edge).
+            # (genuine non-convergence).
             return
         fp.Angle = angle
 

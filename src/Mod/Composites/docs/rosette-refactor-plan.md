@@ -351,9 +351,12 @@ All resolved with documented defaults during implementation:
 
 ### 10.1 TransferRosette shared-edge derivation
 **Resolved:** auto-derive via `master.Shape.section(attachment.Shape)`, pick
-the longest resulting edge. No picked-edge fallback implemented yet — if no
-topological boundary is shared, the feature raises. A separately-picked
-`BoundaryEdge` property is the natural follow-up if real assemblies need it.
+the longest resulting edge. **No picked-edge fallback — by design:** if the
+master & attachment faces share no topological boundary edge, the feature
+raises a clear `ValueError` ("master and attachment shells share no boundary
+edge — cannot transfer warp orientation") rather than silently producing a
+meaningless solve. A separately-picked `BoundaryEdge` property remains the
+natural extension if real glued assemblies need it.
 
 ### 10.2 AlignFibreRosette anchor
 **Resolved:** the `Support` (rosette origin) is the **Face** (origin at the
@@ -457,8 +460,9 @@ error is linear (`30° − angle`) and brackets cleanly. Lives in
 **Known follow-ups (not blocking):**
 - `FibreCompositeLamina.onDocumentRestored` raises `ArithmeticError: Not
   matching Unit!` during restore — pre-existing, unrelated to this refactor.
-- TransferRosette has no picked-edge fallback when master & attachment faces
-  share no topological boundary (§10.1).
+- TransferRosette raises a clear `ValueError` when master & attachment
+  faces share no topological boundary edge — by design (no picked-edge
+  fallback). See §10.1.
 - The `COMPOSITES_DRAPE_SO` env var is still documented in the loader but no
   longer needed for any supported run path.
 
