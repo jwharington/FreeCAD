@@ -1,8 +1,13 @@
 # Rosette Refactor Plan — Three Rosette Types with Iterative Solve
 
 **Started:** 2026-07-06
-**Status:** Draft — pending resolution of open questions (see §10)
-**Supersedes:** the "TransferRosette morph" handover (`get_draper()` fix stays; the follower-rosette design is replaced)
+**Completed:** 2026-07-07
+**Status:** Done — all phases landed and verified (headless + GUI). Open
+questions §10 resolved with documented defaults. See §12 (Completion log)
+for the as-built state, including the unplanned restore/rehydrate fixes and
+the `Composites_drape.so` loader fix.
+**Supersedes:** the "TransferRosette morph" handover (`get_draper()` fix
+stays; the follower-rosette design is replaced)
 
 ---
 
@@ -340,32 +345,35 @@ Testing is layered, cheapest first:
 
 ---
 
-## 10. Open questions (to resolve before Phase 3/4)
+## 10. Open questions (resolved)
+
+All resolved with documented defaults during implementation:
 
 ### 10.1 TransferRosette shared-edge derivation
-Auto-derive the shared topological boundary edge of the master & attachment
-faces. **Fallback needed** if the two faces don't share a clean topological
-boundary (common in glued assemblies). Candidate fallback: a separately-picked
-Edge. Decision needed: auto-derive with picked-edge fallback, or always
-require a picked edge?
+**Resolved:** auto-derive via `master.Shape.section(attachment.Shape)`, pick
+the longest resulting edge. No picked-edge fallback implemented yet — if no
+topological boundary is shared, the feature raises. A separately-picked
+`BoundaryEdge` property is the natural follow-up if real assemblies need it.
 
 ### 10.2 AlignFibreRosette anchor
-Should the `Support` (rosette origin) be a **Vertex on the face** (origin at
-that vertex, face-U there) or the **Face itself** (origin at parametric centre,
-as today)? The "second point" is the picked Vertex; this question is about the
-*first* point (the rosette origin).
+**Resolved:** the `Support` (rosette origin) is the **Face** (origin at the
+parametric centre, face-U there) — inherited base Rosette behaviour. The
+second point is a picked Vertex (`SecondPoint` property, a
+`Draft.make_point` on the face interior in tests). An interior point is
+required for a clean solve; the conical face's 4 corner vertices are at the
+drape boundary and don't give a smooth `v(angle)`.
 
 ### 10.3 Angle write-back
-When the iterative solve converges, write the solved Angle back into the
-Rosette's `Angle` property (visible/editable; a recompute re-solves from there)
-vs. keep it as a derived/ReadOnly value the feature recomputes each time.
-**Lean:** write-back, so the user sees the result and can re-trigger by
-recompute.
+**Resolved:** write-back. The solved Angle is written into the inherited
+`Angle` property (visible/editable). A recompute from a changed defining
+property re-solves.
 
 ### 10.4 Two-shell test fixture
-Is there an existing two-shell example to build `test_transfer_rosette_solves`
-against, or should a minimal one be constructed (e.g. two patches sharing an
-edge, coplanar then angled)?
+**Resolved:** constructed a minimal one — two coplanar patches
+(master x∈[0,200], attachment x∈[−200,0]) sharing the edge at x=0.
+`master.Shape.section(attachment.Shape)` yields the real shared edge; the
+error is linear (`30° − angle`) and brackets cleanly. Lives in
+`test_transfer_rosette.py::_build_two_shell_fixture`.
 
 ---
 
@@ -379,9 +387,14 @@ edge, coplanar then angled)?
 | `features/WrapLCS.py`                         | Drop (folded into TransferRosette).              |
 | `features/CompositeShell.py`                  | `get_draper()` fix stays; draper protocol.       |
 | `tools/drape_backend_nextdrape.py`            | `get_lcs_at_point` returns Placement; solve seeds from LCS. |
-| `tools/lcs.py`                                 | Dead helpers to delete (Phase 6).                |
-| `tools/draper.py`                              | Dead `Draper` wrapper to delete (Phase 6).      |
-| `compositestests/test_integration_freecad.py`  | New headless tests (Phase 5).                    |
+| `tools/lcs.py`                                | **Deleted** (Phase 7).                            |
+| `tools/draper.py`                             | **Deleted** (Phase 7).                            |
+| `tools/drape_backend_legacy.py`               | **Deleted** (Phase 7).                            |
+| `tools/rosette_solver.py`                     | **New** — shared iterative solver (Phase 2).     |
+| `util/geometry_util.py`                       | Added `tex_coord_nearest_quad_fallback` (foundation). |
+| `compositestests/test_integration_freecad.py`  | Existing 7 headless tests.                        |
+| `compositestests/test_rosette_integration.py`  | **New** — AlignFibreRosette + rehydrate round-trip (Phase 5). |
+| `compositestests/test_transfer_rosette.py`     | **New** — TransferRosette two-shell solve (Phase 5). |
 
 ### Runtime paths
 - Source (edit here): `src/Mod/Composites`
@@ -389,3 +402,67 @@ edge, coplanar then angled)?
 - Install prefix (FreeCAD loads from here): `.pixi/envs/default/Mod/Composites`
 - Native drape: `.pixi/envs/default/Mod/Composites/ext/_native/Composites_drape.so`
 - User Mod symlink: `~/.local/share/FreeCAD/v1-2/Mod/Composites → install prefix`
+
+---
+
+## 12. Completion log (as-built)
+
+**Commits (2026-07-07):**
+
+1. `c71d2ba231` — three Rosette types + draper foundation. Base Rosette
+   folds `Angle` into the LCS (X = face-U rotated by Angle about the normal);
+   `AlignFibreRosette` (solve so a warp fibre passes through a second point);
+   `TransferRosette` rewritten (solve attachment Angle so warp matches master
+   along the shared edge, equal-angle-with-edge-tangent law); `tools/rosette_solver.py`
+   (bounded secant/bisection). Foundation fixes: `get_draper()` returned a
+   nonexistent `.draper`; quaternion arg-order in `get_lcs_at_point` (both
+   backends — every warp/normal was garbage); `get_tex_coord_at_point`
+   nearest-quad fallback. Dropped `AlignFibreLCS`/`WrapLCS`/`TransferLCS`.
+2. `251697cdec` — Phase 7 cleanup: deleted `tools/draper.py`, `tools/lcs.py`,
+   `tools/drape_backend_legacy.py`; simplified `TransferRosette._draper_basis_at`
+   back to the pure `get_lcs_at_point` path (the duplicate nearest-quad
+   workaround was for the now-fixed quaternion bug).
+3. `b21f97cbaf` — restore/rehydrate round-trip fixes (unplanned). The
+   save/close/reopen round-trip crashed FreeCAD (segfault in
+   `App::LocalCoordinateSystem::execute`) because the iterative-solve
+   features ran their solve from `onChanged` during document restore
+   (re-entrant `doc.recompute()` corrupting the restore graph), and several
+   `execute` paths read properties not yet registered during early restore.
+   Fixes: skip the solve while `fp.Document.Restoring`; `_solving` guard
+   initialised before `super().__init__` and accessed via `getattr`;
+   `Rosette._frame_rotation` falls back to the identity frame (instead of
+   raising) when `Support` transiently resolves to a `Part.Shape` during
+   restore; `CompositeShell.execute` bails early during restore when the
+   persisted-drape properties aren't registered yet; `_hide_lcs_view` and
+   `fp.Rosette.Angle` reads guarded via `getattr`. Added a rehydrate
+   round-trip assertion to `test_rosette_integration`.
+4. `008f54a1d1` — `Composites_drape.so` loader fix (unplanned).
+   `ext/_native/__init__.py` now falls back to FreeCAD's install Mod tree
+   (`<getHomePath()>/Mod/Composites/ext/_native/`) and the user Mod tree when
+   the `.so` isn't co-located with the imported package, so `FreeCADCmd` (with
+   or without `-P src/Mod`) loads the drape solver with **no env var**. The
+   `COMPOSITES_DRAPE_SO` env var is kept as a dev override.
+
+**Verification:**
+- Headless: 10 tests (7 existing + 3 new) green across multiple runs; the
+  AlignFibreRosette solve was flaky (~20%) until the recompute-ordering fix
+  in `rosette_solver._eval` (place the rosette LCS *before* re-driving the
+  shell — FreeCAD's dependency ordering doesn't always execute the rosette
+  before the shell reads its LCS as the drape seed).
+- GUI (MCP): creation, VP symbol, `claimChildren`, Angle-edit re-solve all
+  pass for the three Rosette types; AlignFibreRosette solves to 75.96°
+  (v=−0.025 mm), TransferRosette to 30° (residual 0°); both round-trip
+  cleanly through save/close/reopen.
+
+**Known follow-ups (not blocking):**
+- `FibreCompositeLamina.onDocumentRestored` raises `ArithmeticError: Not
+  matching Unit!` during restore — pre-existing, unrelated to this refactor.
+- TransferRosette has no picked-edge fallback when master & attachment faces
+  share no topological boundary (§10.1).
+- The `COMPOSITES_DRAPE_SO` env var is still documented in the loader but no
+  longer needed for any supported run path.
+
+**Process lesson (recorded in the freecad-dev skill under "Memory hygiene")**
+- FreeCAD processes are ~1–1.5 GB RSS each. Don't run `FreeCADCmd` loops
+  alongside the GUI MCP instance, and cap loops at 3–5 runs (not 24). Always
+  wrap `FreeCADCmd` in `timeout`. This caused an OOM crash mid-session.
