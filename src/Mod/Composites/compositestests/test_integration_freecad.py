@@ -9,7 +9,9 @@ These tests intentionally avoid any FreeCAD mocks. Run them with:
         Composites/compositestests/run_freecad_integration_tests.py
 """
 
+import os
 import sys
+import tempfile
 import types
 import unittest
 
@@ -30,6 +32,30 @@ class TestFreeCADIntegration(unittest.TestCase):
     def _close_doc_if_exists(self, doc_name):
         if doc_name in FreeCAD.listDocuments():
             FreeCAD.closeDocument(doc_name)
+
+    def _make_fibre_lamina(self, doc):
+        import FreeCADGui
+
+        if not hasattr(FreeCADGui, "addCommand"):
+            FreeCADGui.addCommand = lambda *args, **kwargs: None
+
+        taskpanel_mod = types.ModuleType(
+            "Composites.taskpanels.task_fibre_composite_lamina"
+        )
+        setattr(taskpanel_mod, "_TaskPanel", object)
+        sys.modules[taskpanel_mod.__name__] = taskpanel_mod
+
+        from Composites.features.FibreCompositeLamina import (
+            FibreCompositeLaminaFP,
+        )
+
+        obj = doc.addObject("App::FeaturePython", "FibreLamina")
+        FibreCompositeLaminaFP(obj)
+        obj.FibreMaterial = make_glass()
+        obj.FibreVolumeFraction = 50
+        obj.Thickness = FreeCAD.Units.Quantity("0.5 mm")
+        doc.recompute()
+        return obj
 
     def test_workbench_module_imports(self):
         self.assertTrue(hasattr(CompositesWB, "is_comp_type"))
@@ -173,38 +199,56 @@ class TestFreeCADIntegration(unittest.TestCase):
         self._close_doc_if_exists(doc_name)
 
     def test_fibre_composite_lamina_areal_weight_updates(self):
-        import FreeCADGui
-
-        if not hasattr(FreeCADGui, "addCommand"):
-            FreeCADGui.addCommand = lambda *args, **kwargs: None
-
-        taskpanel_mod = types.ModuleType(
-            "Composites.taskpanels.task_fibre_composite_lamina"
-        )
-        setattr(taskpanel_mod, "_TaskPanel", object)
-        sys.modules[taskpanel_mod.__name__] = taskpanel_mod
-
-        from Composites.features.FibreCompositeLamina import (
-            FibreCompositeLaminaFP,
-        )
-
         doc_name = "CompositesFibreLaminaIntegrationTest"
 
         if doc_name in FreeCAD.listDocuments():
             FreeCAD.closeDocument(doc_name)
 
         doc = FreeCAD.newDocument(doc_name)
-        obj = doc.addObject("App::FeaturePython", "FibreLamina")
-        FibreCompositeLaminaFP(obj)
-        obj.FibreMaterial = make_glass()
-        obj.FibreVolumeFraction = 50
-        obj.Thickness = FreeCAD.Units.Quantity("0.5 mm")
-        doc.recompute()
+        obj = self._make_fibre_lamina(doc)
 
         areal_weight = obj.ArealWeight.getValueAs("g/m^2")
         self.assertAlmostEqual(areal_weight.Value, 645.0, places=8)
 
         FreeCAD.closeDocument(doc_name)
+
+    def test_fibre_composite_lamina_areal_weight_survives_restore(self):
+        doc_name = "CompositesFibreLaminaRestoreTest"
+        path = tempfile.mktemp(suffix=".FCStd")
+
+        if doc_name in FreeCAD.listDocuments():
+            FreeCAD.closeDocument(doc_name)
+
+        try:
+            doc = FreeCAD.newDocument(doc_name)
+            obj = self._make_fibre_lamina(doc)
+            expected = obj.ArealWeight.getValueAs("g/m^2").Value
+            lam_name = obj.Name
+            doc.saveAs(path)
+            FreeCAD.closeDocument(doc_name)
+
+            reopened = FreeCAD.openDocument(path)
+            try:
+                lam = reopened.getObject(lam_name)
+                # The ArealWeight unit must be mass/area (g/m^2) after
+                # restore, not dimensionless. A dimensionless signature
+                # would mean the unit was lost on save/reopen and the
+                # recompute in onDocumentRestored raised
+                # ArithmeticError ("Not matching Unit!").
+                self.assertEqual(
+                    lam.ArealWeight.Unit.Signature,
+                    (-2, 1, 0, 0, 0, 0, 0, 0),
+                )
+                self.assertAlmostEqual(
+                    lam.ArealWeight.getValueAs("g/m^2").Value,
+                    expected,
+                    places=8,
+                )
+            finally:
+                FreeCAD.closeDocument(reopened.Name)
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
 
 
 if __name__ == "__main__":
