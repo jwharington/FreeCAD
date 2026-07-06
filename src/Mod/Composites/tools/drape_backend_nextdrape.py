@@ -265,7 +265,7 @@ class NextDrapeBackend(DrapeBackend):
         # Convert to FreeCAD Placement
         quat = rotation.as_quat()  # SciPy returns [x, y, z, w]
         fc_placement = FreeCAD.Placement()
-        fc_placement.Rotation = FreeCAD.Rotation(quat[3], quat[0], quat[1], quat[2])
+        fc_placement.Rotation = FreeCAD.Rotation(quat[0], quat[1], quat[2], quat[3])
         fc_placement.Base = FreeCAD.Vector(centroid[0], centroid[1], centroid[2])
 
         return fc_placement
@@ -343,7 +343,7 @@ class NextDrapeBackend(DrapeBackend):
         quat = rotation.as_quat()  # SciPy returns [x, y, z, w]
 
         fc_placement = FreeCAD.Placement()
-        fc_placement.Rotation = FreeCAD.Rotation(quat[3], quat[0], quat[1], quat[2])
+        fc_placement.Rotation = FreeCAD.Rotation(quat[0], quat[1], quat[2], quat[3])
         fc_placement.Base = FreeCAD.Vector(centroid[0], centroid[1], centroid[2])
 
         return fc_placement
@@ -461,7 +461,12 @@ class NextDrapeBackend(DrapeBackend):
                         best_u, best_v = uv[0], uv[1]
 
         if best_quad is None:
-            return None
+            from ..util.geometry_util import (
+                tex_coord_nearest_quad_fallback,
+            )
+            return tex_coord_nearest_quad_fallback(
+                [px, py, pz], node_positions, quads, tex_coords
+            )
 
         # Apply offset angle rotation
         if offset_angle_deg:

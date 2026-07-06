@@ -20,10 +20,49 @@ def is_rosette(obj):
     return is_comp_type(obj, "App::FeaturePython", "Composite::Rosette")
 
 
-def _origin_from_support(fp):
-    """Return (position, rotation) from the Support property.
+def _frame_rotation(geom, angle_deg):
+    """Build the rosette LCS rotation for a support geometry.
 
-    Handles vertex, edge (midpoint), and face (parametric centre).
+    For a Face: X = the face's U-axis at the anchor, rotated by ``angle_deg``
+    about the face normal; Z = the face normal. The Angle is folded into the
+    LCS so that changing it re-seeds the drape solver (the warp direction is
+    the LCS X-axis).
+
+    For a Vertex/Edge (no face-U reference): X = world-X rotated by
+    ``angle_deg`` about world-Z, Z = world-Z.
+    """
+    match type(geom):
+        case Part.Vertex:
+            position = geom.Point
+            normal = FreeCAD.Vector(0.0, 0.0, 1.0)
+            u_axis = FreeCAD.Vector(1.0, 0.0, 0.0)
+        case Part.Edge:
+            t = geom.getParameterByLength(0.5 * geom.Length)
+            position = geom.valueAt(t)
+            normal = FreeCAD.Vector(0.0, 0.0, 1.0)
+            u_axis = FreeCAD.Vector(1.0, 0.0, 0.0)
+        case Part.Face:
+            u0, u1, v0, v1 = geom.ParameterRange
+            position = geom.valueAt((u0 + u1) / 2.0, (v0 + v1) / 2.0)
+            normal = geom.normalAt((u0 + u1) / 2.0, (v0 + v1) / 2.0)
+            u_axis = geom.Surface.tangent(
+                (u0 + u1) / 2.0, (v0 + v1) / 2.0
+            )[0]
+        case _:
+            raise ValueError(f"Unhandled Support type: {type(geom)}")
+
+    r_align = FreeCAD.Rotation(normal, float(angle_deg))
+    x_axis = r_align.multVec(u_axis)
+    y_axis = normal.cross(x_axis)
+    rotation = FreeCAD.Rotation(x_axis, y_axis, normal, "ZXY")
+    return position, rotation
+
+
+def _origin_from_support(fp):
+    """Return (position, rotation) from the Support and Angle properties.
+
+    The rotation folds the rosette ``Angle`` into the LCS frame so the X-axis
+    is the fibre 0\u00b0 direction (face-U rotated by Angle about the normal).
     Returns (FreeCAD.Vector(0,0,0), FreeCAD.Rotation()) when no support is set.
     """
     if not fp.Support:
@@ -35,23 +74,7 @@ def _origin_from_support(fp):
         raise ValueError("Support sub-object could not be resolved")
     geom = geom_list[0]
 
-    rotation = FreeCAD.Rotation()
-
-    match type(geom):
-        case Part.Vertex:
-            position = geom.Point
-        case Part.Edge:
-            t = geom.getParameterByLength(0.5 * geom.Length)
-            position = geom.valueAt(t)
-        case Part.Face:
-            u0, u1, v0, v1 = geom.ParameterRange
-            position = geom.valueAt((u0 + u1) / 2.0, (v0 + v1) / 2.0)
-            normal = geom.normalAt((u0 + u1) / 2.0, (v0 + v1) / 2.0)
-            rotation = FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), normal)
-        case _:
-            raise ValueError(f"Unhandled Support type: {type(geom)}")
-
-    return position, rotation
+    return _frame_rotation(geom, float(fp.Angle))
 
 
 class RosetteFP(CompositeBaseFP):
@@ -113,7 +136,7 @@ class RosetteFP(CompositeBaseFP):
 
     def onChanged(self, fp, prop):
         match prop:
-            case "Support":
+            case "Support" | "Angle":
                 fp.recompute()
 
 

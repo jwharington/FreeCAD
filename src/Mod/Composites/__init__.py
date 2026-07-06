@@ -38,9 +38,8 @@ FIBRE_COMPOSITE_LAMINA_TOOL_ICON = path.join(
     "FibreCompositeLamina.svg",
 )
 COMPOSITE_SHELL_TOOL_ICON = path.join(ICONPATH, "CompositeShell.svg")
-TRANSFER_LCS_TOOL_ICON = path.join(ICONPATH, "TransferLCS.svg")
-WRAP_LCS_TOOL_ICON = path.join(ICONPATH, "WrapLCS.svg")
-ALIGN_FIBRE_LCS_TOOL_ICON = path.join(ICONPATH, "AlignFibreLCS.svg")
+TRANSFER_ROSETTE_TOOL_ICON = path.join(ICONPATH, "TransferRosette.svg")
+ALIGN_FIBRE_ROSETTE_TOOL_ICON = path.join(ICONPATH, "AlignFibreRosette.svg")
 ROSETTE_TOOL_ICON = path.join(ICONPATH, "Rosette.svg")
 WB_ICON = path.join(ICONPATH, "CompositesWB.svg")
 

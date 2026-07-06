@@ -388,12 +388,8 @@ _composite_shell_feature_mod = _load_module(
     "Composites/features/CompositeShell.py",
 )
 _transfer_lcs_feature_mod = _load_module(
-    "Composites.features.TransferLCS",
-    "Composites/features/TransferLCS.py",
-)
-_align_fibre_lcs_feature_mod = _load_module(
-    "Composites.features.AlignFibreLCS",
-    "Composites/features/AlignFibreLCS.py",
+    "Composites.features.TransferRosette",
+    "Composites/features/TransferRosette.py",
 )
 
 # Short aliases for use in tests
@@ -404,8 +400,6 @@ CompositeLaminateFP = _comp_lam_feature_mod.CompositeLaminateFP
 RosetteFP = _rosette_feature_mod.RosetteFP
 is_rosette = _rosette_feature_mod.is_rosette
 CompositeShellFP = _composite_shell_feature_mod.CompositeShellFP
-AlignFibreLCSFP = _align_fibre_lcs_feature_mod.AlignFibreLCSFP
-_get_shell_lcs_base = _align_fibre_lcs_feature_mod._get_shell_lcs_base
 
 HomogeneousLamina = _homo_mod.HomogeneousLamina
 FibreCompositeLamina = _fcl_obj_mod.FibreCompositeLamina
@@ -1222,45 +1216,5 @@ class TestCompositeShellFPRosetteProperty(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Tests: _get_shell_lcs_base helper
-# ---------------------------------------------------------------------------
-
-
-class TestGetShellLcsBase(unittest.TestCase):
-    """Tests for features/AlignFibreLCS.py :: _get_shell_lcs_base()."""
-
-    def _make_lcs_mock(self, x=1.0, y=2.0, z=3.0):
-        lcs = MagicMock()
-        lcs.Placement.Base = MagicMock()
-        lcs.Placement.Base.x = x
-        lcs.Placement.Base.y = y
-        lcs.Placement.Base.z = z
-        return lcs
-
-    def _make_shell_with_rosette(self, lcs):
-        rosette = MagicMock()
-        rosette.LocalCoordinateSystem = lcs
-        shell = MagicMock(spec=["Rosette"])
-        shell.Rosette = rosette
-        return shell
-
-    def _make_shell_no_rosette(self):
-        shell = MagicMock(spec=["Rosette"])
-        shell.Rosette = None
-        return shell
-
-    def test_returns_rosette_lcs_base_when_rosette_set(self):
-        lcs = self._make_lcs_mock(x=5.0, y=6.0, z=7.0)
-        shell = self._make_shell_with_rosette(lcs)
-        result = _get_shell_lcs_base(shell)
-        self.assertIs(result, lcs.Placement.Base)
-
-    def test_returns_zero_vector_when_no_rosette(self):
-        shell = self._make_shell_no_rosette()
-        result = _get_shell_lcs_base(shell)
-        # FreeCAD.Vector is mocked; result should be a FreeCAD.Vector call result
-        self.assertIsNotNone(result)
-
-
 if __name__ == "__main__":
     unittest.main()

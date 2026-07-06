@@ -7,7 +7,7 @@
    viewBox="0 0 64.0 64.0"
    version="1.1"
    id="SVGRoot"
-   sodipodi:docname="WrapLCS.svg"
+   sodipodi:docname="TransferLCS.svg"
    inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
@@ -25,7 +25,7 @@
      inkscape:document-units="px"
      showgrid="true"
      inkscape:zoom="4.7572176"
-     inkscape:cx="22.912553"
+     inkscape:cx="22.80745"
      inkscape:cy="18.603311"
      inkscape:window-width="1536"
      inkscape:window-height="891"
@@ -38,17 +38,26 @@
        id="grid2501" />
   </sodipodi:namedview>
   <defs
-     id="defs2301" />
-  <g
-     inkscape:groupmode="layer"
-     id="layer2"
-     inkscape:label="Layer 2">
-    <path
-       style="fill:#8b7d75;fill-opacity:1;stroke:#000000;stroke-width:2.035;stroke-opacity:1"
-       d="M 25.725655,16.509851 28.110766,0.83220588 64.249035,13.271762 61.039652,41.961502 Z"
-       id="path5183"
-       sodipodi:nodetypes="ccccc" />
-  </g>
+     id="defs2301">
+    <marker
+       style="overflow:visible"
+       id="Arrow4"
+       refX="0"
+       refY="0"
+       orient="auto-start-reverse"
+       inkscape:stockid="Arrow4"
+       markerWidth="4"
+       markerHeight="4.8000002"
+       viewBox="0 0 5 6"
+       inkscape:isstock="true"
+       inkscape:collect="always"
+       preserveAspectRatio="xMidYMid">
+      <path
+         style="fill:context-stroke;fill-rule:evenodd;stroke:none"
+         d="m 1,0 -3,3 h -2 l 3,-3 -3,-3 h 2 z"
+         id="path1741" />
+    </marker>
+  </defs>
   <g
      inkscape:label="Layer 1"
      inkscape:groupmode="layer"
@@ -189,7 +198,7 @@
     </g>
     <g
        id="g2546"
-       transform="rotate(-7.6043479,157.29743,234.27151)">
+       transform="translate(0.20066151,0.86462731)">
       <path
          style="fill:#ff0000;stroke:#ff0000;stroke-width:2.7"
          d="M 39.035851,23.969637 56.725063,12.488072"
@@ -206,24 +215,10 @@
          id="path1264"
          sodipodi:nodetypes="cc" />
     </g>
-    <g
-       id="g2546-3"
-       transform="rotate(-53.477316,40.631429,22.288075)">
-      <path
-         style="fill:#ff0000;stroke:#ff0000;stroke-width:2.7"
-         d="M 39.035851,23.969637 56.725063,12.488072"
-         id="path1098-6"
-         sodipodi:nodetypes="cc" />
-      <path
-         style="fill:#00ff00;stroke:#00ff00;stroke-width:2.7"
-         d="M 39.023105,23.28164 58.312738,37.25587"
-         id="path1208-7"
-         sodipodi:nodetypes="cc" />
-      <path
-         style="fill:#0000ff;stroke:#0000ff;stroke-width:2.7"
-         d="M 38.648616,23.271248 44.290458,1.8280714"
-         id="path1264-5"
-         sodipodi:nodetypes="cc" />
-    </g>
+    <path
+       style="fill:none;fill-opacity:1;stroke:#1a1a1a;stroke-width:2.7;stroke-dasharray:2.70000005,2.70000005;stroke-dashoffset:0;marker-end:url(#Arrow4)"
+       d="M 14.34716,43.681173 C 18.799957,21.932148 39.725232,24.512392 39.725232,24.512392"
+       id="path1676"
+       sodipodi:nodetypes="cc" />
   </g>
 </svg>

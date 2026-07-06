@@ -1,7 +1,7 @@
 import FreeCADGui
 
 from . import (
-    AlignFibreLCS,  # noqa
+    AlignFibreRosette,  # noqa
     CompositeLaminate,  # noqa
     FibreCompositeLamina,  # noqa
     HomogeneousLamina,  # noqa
@@ -11,8 +11,7 @@ from . import (
     Rosette,  # noqa
     Seam,  # noqa
     Stiffener,  # noqa
-    TransferLCS,  # noqa
-    WrapLCS,  # noqa
+    TransferRosette,  # noqa
 )
 
 
@@ -87,9 +86,8 @@ FreeCADGui.addCommand(
     "Composites_LCSTools",
     CommandGroup(
         [
-            "Composites_TransferLCS",
-            "Composites_WrapLCS",
-            "Composites_AlignFibreLCS",
+            "Composites_TransferRosette",
+            "Composites_AlignFibreRosette",
             "Composites_Rosette",
         ],
         menu="Material LCS",

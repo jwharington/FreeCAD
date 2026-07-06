@@ -170,7 +170,7 @@ class _RehydratedBackend:
         quat = rotation.as_quat()
 
         fc_placement = FreeCAD.Placement()
-        fc_placement.Rotation = FreeCAD.Rotation(quat[3], quat[0], quat[1], quat[2])
+        fc_placement.Rotation = FreeCAD.Rotation(quat[0], quat[1], quat[2], quat[3])
         fc_placement.Base = FreeCAD.Vector(centroid[0], centroid[1], centroid[2])
         return fc_placement
 
@@ -232,7 +232,7 @@ class _RehydratedBackend:
         quat = rotation.as_quat()
 
         fc_placement = FreeCAD.Placement()
-        fc_placement.Rotation = FreeCAD.Rotation(quat[3], quat[0], quat[1], quat[2])
+        fc_placement.Rotation = FreeCAD.Rotation(quat[0], quat[1], quat[2], quat[3])
         fc_placement.Base = FreeCAD.Vector(centroid[0], centroid[1], centroid[2])
         return fc_placement
 
@@ -325,7 +325,12 @@ class _RehydratedBackend:
                         best_u, best_v = uv[0], uv[1]
 
         if best_quad is None:
-            return None
+            from ..util.geometry_util import (
+                tex_coord_nearest_quad_fallback,
+            )
+            return tex_coord_nearest_quad_fallback(
+                [px, py, pz], node_positions, quads, tex_coords
+            )
 
         if offset_angle_deg:
             import math
@@ -1002,7 +1007,11 @@ class CompositeShellFP(CompositeBaseFP):
 
     def get_draper(self):
         self._require_valid()
-        return self._backend.draper
+        # Both NextDrapeBackend and _RehydratedBackend implement the draper
+        # protocol (get_lcs_at_point, get_tex_coord_at_point, get_lcs, ...)
+        # directly; the legacy Draper wrapper is a thin delegator that adds
+        # nothing, so the backend itself is the draper.
+        return self._backend
 
     def get_drape_lcs(self, tris):
         self._require_valid()
