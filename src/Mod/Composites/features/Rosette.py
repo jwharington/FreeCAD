@@ -30,6 +30,12 @@ def _frame_rotation(geom, angle_deg):
 
     For a Vertex/Edge (no face-U reference): X = world-X rotated by
     ``angle_deg`` about world-Z, Z = world-Z.
+
+    During document restore the Support sub-object may transiently resolve to
+    a bare ``Part.Shape`` (before the subname remaps to the Face/Edge/Vertex),
+    or to an empty/None list. In that case fall back to the identity frame so
+    the recompute completes; a later recompute once the subname resolves will
+    place the LCS correctly.
     """
     match type(geom):
         case Part.Vertex:
@@ -49,7 +55,13 @@ def _frame_rotation(geom, angle_deg):
                 (u0 + u1) / 2.0, (v0 + v1) / 2.0
             )[0]
         case _:
-            raise ValueError(f"Unhandled Support type: {type(geom)}")
+            # Restore ordering: Support not yet resolved to a sub-shape.
+            # Place at the origin with the identity frame; a subsequent
+            # recompute (once the subname resolves) places the LCS correctly.
+            return (
+                FreeCAD.Vector(0.0, 0.0, 0.0),
+                FreeCAD.Rotation(),
+            )
 
     r_align = FreeCAD.Rotation(normal, float(angle_deg))
     x_axis = r_align.multVec(u_axis)
@@ -70,8 +82,9 @@ def _origin_from_support(fp):
 
     (sup, sub) = fp.Support
     geom_list = sup.getSubObject(sub)
-    if geom_list is None or len(geom_list) == 0:
-        raise ValueError("Support sub-object could not be resolved")
+    if not geom_list:
+        # Restore ordering: sub-object not yet resolved.
+        return FreeCAD.Vector(0.0, 0.0, 0.0), FreeCAD.Rotation()
     geom = geom_list[0]
 
     return _frame_rotation(geom, float(fp.Angle))

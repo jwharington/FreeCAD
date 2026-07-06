@@ -61,9 +61,10 @@ class TransferRosetteFP(RosetteFP):
     Type = "Composite::TransferRosette"
 
     def __init__(self, obj, support=None, master_shell=None, attachment_shell=None):
-        super().__init__(obj, support)
         # Suppress any solve while the defining references are being set up.
+        # Set before super().__init__ (which may trigger onChanged).
         self._solving = True
+        super().__init__(obj, support)
         obj.addProperty(
             type="App::PropertyLinkGlobal",
             name="MasterShell",
@@ -84,7 +85,11 @@ class TransferRosetteFP(RosetteFP):
         super().execute(fp)
 
     def onChanged(self, fp, prop):
-        if self._solving:
+        if getattr(self, "_solving", False):
+            return
+        # Don't run the iterative solve during document restore (see
+        # AlignFibreRosette for rationale).
+        if fp.Document.Restoring:
             return
         match prop:
             case "Support" | "MasterShell" | "AttachmentShell":

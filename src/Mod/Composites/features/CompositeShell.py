@@ -588,6 +588,23 @@ class CompositeShellFP(CompositeBaseFP):
         super().onDocumentRestored(fp)
 
     def execute(self, fp):
+        # During document restore, the FeaturePython's properties may not be
+        # registered yet (proxy __init__ hasn't run, properties are added
+        # incrementally). Bail out until they are; a later recompute once
+        # restore completes runs the real logic.
+        if not hasattr(fp, "Support") or not hasattr(fp, "Laminate"):
+            return
+        # If restoring and the persisted-drape properties aren't registered
+        # yet, don't attempt a fresh solve (it would write to properties that
+        # don't exist). The persisted Angle survives restore; a later recompute
+        # rehydrates from the persisted drape data.
+        if fp.Document.Restoring and not (
+            hasattr(fp, "NodePositionsJSON")
+            and hasattr(fp, "QuadsJSON")
+            and hasattr(fp, "TexCoordsJSON")
+        ):
+            return
+
         # Always hide the native LCS symbology so only the rosette
         # disk+arrows are visible in the 3D view.
         self._hide_lcs_view(fp)
@@ -600,11 +617,19 @@ class CompositeShellFP(CompositeBaseFP):
             return
 
         def get_lcs():
-            if fp.Rosette:
-                return fp.Rosette.LocalCoordinateSystem
+            rosette = fp.Rosette
+            if rosette:
+                lcs = getattr(rosette, "LocalCoordinateSystem", None)
+                if lcs:
+                    return lcs
             return fp.Support
 
-        self._rosette_angle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
+        # During document restore the rosette FeaturePython may not have its
+        # properties registered yet (proxy __init__ hasn't run). Fall back to
+        # 0.0 so the shell can still rehydrate from persisted drape data.
+        self._rosette_angle = float(
+            getattr(getattr(fp, "Rosette", None), "Angle", 0.0) or 0.0
+        )
 
         # ── Try to rehydrate from persisted data ───────────────────
         if self._can_use_persisted(fp):
@@ -796,6 +821,10 @@ class CompositeShellFP(CompositeBaseFP):
 
     def _can_use_persisted(self, fp) -> bool:
         """Return True if persisted solve data is still valid."""
+        # During restore the persisted-data properties may not be registered yet.
+        for prop in ("DrapeValid", "NodePositionsJSON", "QuadsJSON", "TexCoordsJSON"):
+            if not hasattr(fp, prop):
+                return False
         # Must have a valid prior solve
         if not fp.DrapeValid:
             return False
@@ -942,8 +971,13 @@ class CompositeShellFP(CompositeBaseFP):
 
     def _hide_lcs_view(self, fp):
         """Hide the native LCS symbology (planes + 3D arrows)."""
-        lcs = fp.Rosette.LocalCoordinateSystem if fp.Rosette else None
+        rosette = fp.Rosette
+        if not rosette:
+            return
+        lcs = getattr(rosette, "LocalCoordinateSystem", None)
         if lcs is None:
+            # Restore ordering: the rosette exists but its child LCS link
+            # has not been restored yet. No-op; a later recompute hides it.
             return
         lcs_vobj = getattr(lcs, "ViewObject", None)
         if lcs_vobj is not None:

@@ -70,6 +70,9 @@ class AlignFibreRosetteFP(RosetteFP):
     Type = "Composite::AlignFibreRosette"
 
     def __init__(self, obj, support=None, composite_shell=None, second_point=None):
+        # Suppress any solve while the defining references are being set up.
+        # Set before super().__init__ (which may trigger onChanged).
+        self._solving = False
         super().__init__(obj, support)  # adds Support, Angle, LocalCoordinateSystem
         obj.addProperty(
             "App::PropertyLinkGlobal",
@@ -94,6 +97,13 @@ class AlignFibreRosetteFP(RosetteFP):
 
     def onChanged(self, fp, prop):
         if getattr(self, "_solving", False):
+            return
+        # Don't run the iterative solve during document restore: the solve
+        # calls doc.recompute() re-entrantly, which corrupts the restore
+        # graph (and the draper/links may not be fully restored yet). The
+        # solved Angle is persisted, so it survives restore; a later user
+        # edit re-triggers the solve if needed.
+        if fp.Document.Restoring:
             return
         match prop:
             case "Support" | "CompositeShell" | "SecondPoint":

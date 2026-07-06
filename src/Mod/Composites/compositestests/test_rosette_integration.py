@@ -133,7 +133,50 @@ class TestRosetteIntegration(unittest.TestCase):
         self.assertLess(abs(solved_angle), 89.0)
         self.assertLess(abs(v_val), 0.5)
 
-        self._close_doc_if_exists(doc_name)
+        # ── Rehydrate round-trip: save/close/reopen/recompute ─────
+        # The solved Angle is persisted and must survive the round-trip,
+        # and the shell's draper must rehydrate valid. (This is the
+        # regression test for the restore crash where onChanged fired the
+        # iterative solve during document restore.)
+        path = os.path.join(
+            os.path.dirname(__file__), "_rosette_rehydrate_tmp.FCStd"
+        )
+        doc.saveAs(path)
+        align_name = align.Name
+        shell_name = shell.Name
+        point_name = point_obj.Name
+        actual_doc_name = doc.Name
+        FreeCAD.closeDocument(actual_doc_name)
+
+        doc2 = FreeCAD.openDocument(path)
+        doc2.recompute()
+
+        align2 = doc2.getObject(align_name)
+        shell2 = doc2.getObject(shell_name)
+        self.assertIsNotNone(align2)
+        self.assertIsNotNone(shell2)
+        self.assertAlmostEqual(
+            float(align2.Angle), solved_angle, places=4
+        )
+        self.assertTrue(shell2.Proxy.get_draper().is_valid())
+        point2 = doc2.getObject(point_name)
+        tc2 = shell2.Proxy.get_draper().get_tex_coord_at_point(
+            point2.Shape.Point, 0
+        )
+        self.assertLess(abs(float(tc2[1])), 0.5)
+
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        # FreeCAD also writes a timestamped .FCBak backup next to the save.
+        import glob
+        for bak in glob.glob(os.path.splitext(path)[0] + ".*.FCBak"):
+            try:
+                os.remove(bak)
+            except OSError:
+                pass
+        FreeCAD.closeDocument(doc2.Name)
 
 
 if __name__ == "__main__":
