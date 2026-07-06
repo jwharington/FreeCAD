@@ -102,6 +102,15 @@ class RosetteFP(CompositeBaseFP):
         lcs.Placement.Base = position
         lcs.Placement.Rotation = rotation
 
+        # The VP symbol is built in attach() before execute() runs, so
+        # it sits at the origin until a property change re-triggers it.
+        # Refresh it now that the LCS placement is known.
+        vp = getattr(fp, "ViewObject", None)
+        if vp is not None:
+            proxy = getattr(vp, "Proxy", None)
+            if proxy is not None and hasattr(proxy, "_update_symbol"):
+                proxy._update_symbol()
+
     def onChanged(self, fp, prop):
         match prop:
             case "Support":

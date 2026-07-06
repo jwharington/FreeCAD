@@ -648,6 +648,29 @@ class CompositeShellFP(CompositeBaseFP):
             fp.Support.Shape,
         )
 
+    def _inject_drape_geometry(self, fp, drapecd_coin, cut_edges=None) -> None:
+        """Inject draped mesh geometry into the view-provider scene graph.
+
+        Runs synchronously inside execute(). Errors are swallowed so a
+        GUI/scene-graph hiccup never aborts the drape solve or the
+        document recompute that called it.
+        """
+        vp = getattr(fp, "ViewObject", None)
+        if not (vp and hasattr(vp, "Proxy")):
+            return
+        drape_host = getattr(vp.Proxy, "drape_host", None)
+        try:
+            if drape_host is not None:
+                remove_existing_coin_geometry(drape_host)
+                inject_coin_geometry(drape_host, drapecd_coin)
+                if cut_edges is not None:
+                    remove_cut_edges(drape_host)
+                    inject_cut_edges(drape_host, cut_edges)
+            vp.Proxy.reload_shader()
+            vp.Proxy._set_shell_transparency(vp)
+        except Exception:
+            pass
+
     def _complete_drape(self, fp, result):
         """Update FreeCAD properties and load shader (main thread)."""
         import json
@@ -693,39 +716,9 @@ class CompositeShellFP(CompositeBaseFP):
         # drapecd_mesh is now just the Coin3D separator (build_drapecd_coin)
         drapecd_coin = drapecd_mesh
 
-        # Defer geometry injection + shader load to the next event-loop
-        # iteration so the Part ViewProvider has settled.
-        vp = getattr(fp, "ViewObject", None)
-        coin_to_inject = drapecd_coin
+        # Inject draped mesh geometry + reload shader synchronously.
         cut_edges = result.get("cut_edges")
-        if vp and hasattr(vp, "Proxy"):
-            drape_host = getattr(vp.Proxy, "drape_host", None)
-            try:
-                from PySide6 import QtCore
-
-                def _deferred():
-                    try:
-                        if drape_host is not None:
-                            remove_existing_coin_geometry(drape_host)
-                            inject_coin_geometry(drape_host, coin_to_inject)
-                            remove_cut_edges(drape_host)
-                            inject_cut_edges(drape_host, cut_edges)
-                        vp.Proxy.reload_shader()
-                        vp.Proxy._set_shell_transparency(vp)
-                    except Exception:
-                        pass
-
-                QtCore.QTimer.singleShot(0, _deferred)
-            except Exception:
-                if drape_host is not None:
-                    remove_existing_coin_geometry(drape_host)
-                    inject_coin_geometry(drape_host, drapecd_coin)
-                    remove_cut_edges(drape_host)
-                    inject_cut_edges(drape_host, cut_edges)
-                try:
-                    vp.Proxy.reload_shader()
-                except Exception:
-                    pass
+        self._inject_drape_geometry(fp, drapecd_coin, cut_edges)
 
         # Update the view
         view_object = getattr(fp, "ViewObject", None)
@@ -894,40 +887,14 @@ class CompositeShellFP(CompositeBaseFP):
         quads = solve_result.get("quads", [])
         drapecd_coin = build_drapecd_coin(node_positions, quads)
 
-        # Defer geometry injection + shader load to the next event-loop
-        # iteration (same reason as _complete_drape).
-        vp = getattr(fp, "ViewObject", None)
-        coin_to_inject = drapecd_coin
-        if vp and hasattr(vp, "Proxy"):
-            drape_host = getattr(vp.Proxy, "drape_host", None)
-            try:
-                from PySide6 import QtCore
-
-                def _deferred():
-                    try:
-                        if drape_host is not None:
-                            remove_existing_coin_geometry(drape_host)
-                            inject_coin_geometry(drape_host, coin_to_inject)
-                        vp.Proxy.reload_shader()
-                        vp.Proxy._set_shell_transparency(vp)
-                    except Exception:
-                        pass
-
-                QtCore.QTimer.singleShot(0, _deferred)
-            except Exception:
-                if drape_host is not None:
-                    remove_existing_coin_geometry(drape_host)
-                    inject_coin_geometry(drape_host, drapecd_coin)
-                try:
-                    vp.Proxy.reload_shader()
-                except Exception:
-                    pass
+        # Inject draped mesh geometry + reload shader synchronously.
+        self._inject_drape_geometry(fp, drapecd_coin)
 
         # Human-readable quality status (from rehydrated solve result)
         qual = solve_result.get("quality", {})
         fp.DrapeQuality = repr(qual) if diag.get("status") != "failed" else "invalid"
 
-        # Transparency is set by the deferred callback above
+        # Transparency is set by _inject_drape_geometry above
 
     def _persist_solve_data(self, fp, solve_result: dict) -> None:
         """Store solve result arrays as JSON properties for rehydration."""
