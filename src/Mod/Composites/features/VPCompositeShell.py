@@ -19,6 +19,7 @@ class ViewProviderCompositeShell:
         from ..shaders.MeshGridShader import MeshGridShader
 
         self.grid_shader = MeshGridShader()
+        self._last_offset_angle_deg = None
 
         obj.addProperty(
             "App::PropertyFloatConstraint",
@@ -82,6 +83,8 @@ class ViewProviderCompositeShell:
         if not hasattr(self, "grid_shader"):
             from ..shaders.MeshGridShader import MeshGridShader
             self.grid_shader = MeshGridShader()
+        if not hasattr(self, "_last_offset_angle_deg"):
+            self._last_offset_angle_deg = None
 
         # Drape geometry + shader live in a dedicated SoSwitch on this
         # ViewProvider's RootNode (Part ViewProvider only rebuilds the
@@ -209,6 +212,10 @@ class ViewProviderCompositeShell:
                 self.update_rosette(self.ViewObject)
             case _:
                 return
+
+        if prop == "Laminate" and self._apply_layer_orientation(fp):
+            return
+
         self.reload_shader()
 
     def update_rosette(self, vobj):
@@ -254,7 +261,9 @@ class ViewProviderCompositeShell:
             case "Darken":
                 pass
             case "DisplayLayer":
-                self.reload_shader()
+                feature_obj = getattr(vobj, "Object", None) or getattr(self, "Object", None)
+                if feature_obj is None or not self._apply_layer_orientation(feature_obj):
+                    self.reload_shader()
             case "ShapeAppearance":
                 self._set_shell_transparency(vobj)
             case "ShowRosette":
@@ -283,13 +292,54 @@ class ViewProviderCompositeShell:
 
     def get_offset_angle(self, vobj):
         if not hasattr(vobj.ViewObject, "DisplayLayer"):
-            return 0
-        layer = vobj.ViewObject.DisplayLayer
+            return 0.0
         if not vobj.Laminate:
-            return 0
-        if layer in vobj.Laminate.StackOrientation:
-            return int(vobj.Laminate.StackOrientation[layer])
-        return 0
+            return 0.0
+
+        layer = vobj.ViewObject.DisplayLayer
+        stack_orientation = getattr(vobj.Laminate, "StackOrientation", {}) or {}
+
+        key = None
+        if layer in stack_orientation:
+            key = layer
+        else:
+            layer_str = str(layer)
+            if layer_str in stack_orientation:
+                key = layer_str
+            else:
+                for existing_key in stack_orientation.keys():
+                    if str(existing_key) == layer_str:
+                        key = existing_key
+                        break
+
+        if key is None:
+            return 0.0
+
+        try:
+            return float(stack_orientation[key])
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _apply_layer_orientation(self, vobj):
+        """Update UV rotation in-place when shader is already attached."""
+        shader = getattr(self, "grid_shader", None)
+        if shader is None or not getattr(shader, "_attached", False):
+            return False
+
+        offset_angle_deg = self.get_offset_angle(vobj)
+        if self._last_offset_angle_deg is not None and abs(self._last_offset_angle_deg - offset_angle_deg) < 1e-9:
+            return True
+
+        shader.set_offset_angle(offset_angle_deg)
+        self._last_offset_angle_deg = offset_angle_deg
+
+        view_obj = getattr(vobj, "ViewObject", None)
+        if view_obj is not None:
+            try:
+                view_obj.update()
+            except Exception:
+                pass
+        return True
 
     def load_shader(self):
         try:
@@ -321,6 +371,7 @@ class ViewProviderCompositeShell:
                     tex_coords,
                     offset_angle_deg,
                 )
+                self._last_offset_angle_deg = offset_angle_deg
                 self.Active = True
                 import FreeCADGui
 
@@ -339,6 +390,7 @@ class ViewProviderCompositeShell:
             except Exception:
                 pass
         self.Active = False
+        self._last_offset_angle_deg = None
         try:
             import FreeCADGui
             FreeCADGui.Selection.removeObserver(self)

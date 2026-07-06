@@ -5,6 +5,7 @@ uniform float darken = 0.5;
 uniform float x_scale = 16.0;
 uniform float y_scale = 8.0;
 uniform float z_scale = 2.0;
+uniform float offset_angle = 0.0;  // rosette rotation, radians
 
 
 // https://github.com/rreusser/glsl-solid-wireframe?tab=readme-ov-file
@@ -66,8 +67,16 @@ void main() {
   vec4 baseColor = vec4(0.5, 0.5, 0.5, 0.2);
   float pixel_width = 1.0;
   float feather = 0.0;
-  vec3 coord = vec3(x_scale * gl_TexCoord[0].s,
-                    y_scale * gl_TexCoord[0].t,
+
+  // Rotate warp/weft grid by the rosette offset angle in the UV plane.
+  // The third component (r) is left unrotated — it tracks thickness drift.
+  float c = cos(offset_angle);
+  float s = sin(offset_angle);
+  vec2 uv = vec2(c * gl_TexCoord[0].s - s * gl_TexCoord[0].t,
+                s * gl_TexCoord[0].s + c * gl_TexCoord[0].t);
+
+  vec3 coord = vec3(x_scale * uv.x,
+                    y_scale * uv.y,
                     z_scale * gl_TexCoord[0].r);
   vec3 grid = vec3(gridFactor(coord.x, pixel_width, feather),
                    gridFactor(coord.y, pixel_width, feather),

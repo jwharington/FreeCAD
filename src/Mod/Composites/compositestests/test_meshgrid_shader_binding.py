@@ -19,6 +19,9 @@ class TestMeshGridShaderBinding(unittest.TestCase):
     def setUp(self):
         # Minimal pivy.coin mock for importing MeshGridShader in isolation
         coin = MagicMock()
+        # Each shader-parameter constructor must yield a distinct instance,
+        # otherwise assignments to .value on one clobber the others.
+        coin.SoShaderParameter1f.side_effect = lambda: MagicMock()
         pivy = types.ModuleType("pivy")
         pivy.coin = coin
         sys.modules["pivy"] = pivy
@@ -43,6 +46,17 @@ class TestMeshGridShaderBinding(unittest.TestCase):
             self.coin.SoTextureCoordinateBinding.PER_VERTEX_INDEXED,
             "SoIndexedFaceSet + textureCoordIndex requires PER_VERTEX_INDEXED",
         )
+
+    def test_offset_angle_uniform_exists_and_defaults_to_zero(self):
+        shader = self.mod.MeshGridShader()
+        self.assertEqual(shader.offset_angle.name, "offset_angle")
+        self.assertEqual(shader.offset_angle.value, 0.0)
+
+    def test_set_offset_angle_writes_radians_to_uniform(self):
+        import math
+        shader = self.mod.MeshGridShader()
+        shader.set_offset_angle(45.0)
+        self.assertAlmostEqual(shader.offset_angle.value, math.radians(45.0))
 
 
 if __name__ == "__main__":

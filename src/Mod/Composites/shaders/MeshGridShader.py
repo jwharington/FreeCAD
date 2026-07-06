@@ -53,6 +53,9 @@ class MeshGridShader:
         self.z_scale.name = "z_scale"
         self.darken = coin.SoShaderParameter1f()
         self.darken.name = "darken"
+        self.offset_angle = coin.SoShaderParameter1f()
+        self.offset_angle.name = "offset_angle"
+        self.offset_angle.value = 0.0
 
         self.Spacing = [20.0, 2.0, 10.0]
         self.Darken = 0.5
@@ -62,6 +65,7 @@ class MeshGridShader:
             self.y_scale,
             self.z_scale,
             self.darken,
+            self.offset_angle,
         ]
 
         self.fragmentShader = coin.SoFragmentShader()
@@ -81,14 +85,6 @@ class MeshGridShader:
         self.shaderProgram.shaderObject.set1Value(0, self.vertexShader)
         self.shaderProgram.shaderObject.set1Value(1, self.fragmentShader)
         self.shaderProgram.setName("my_shader")
-
-        self.tex_matrix_transform = coin.SoTextureMatrixTransform()
-        self.tex_matrix_transform.matrix.setValue(
-            1, 0, 0, 0,
-            0, 1, 0, 0,
-            0, 0, 1, 0,
-            0, 0, 0, 1,
-        )
 
         self.coord_binding = coin.SoTextureCoordinateBinding()
         # IndexedFaceSet uses coordIndex/textureCoordIndex, so binding must be indexed.
@@ -134,6 +130,11 @@ class MeshGridShader:
 
         self.grp = coin.SoGroup()
         self.grp.setName("shader_state")
+
+        # Reference to the Coin3D geometry node moved into grp by attach().
+        # Kept across re-attach so a reload does not lose the geometry
+        # (it was already removed from root, so a fresh search would miss it).
+        self._coin_geo = None
 
         # Root separator — used by addDisplayMode; replaced by DrapeMesh
         # RootNode in attach().
@@ -185,11 +186,20 @@ class MeshGridShader:
                     texture_coords.point.set1Value(idx, float(pt[0]), float(pt[1]), r)
         return texture_coords
 
+    def set_offset_angle(self, offset_angle_deg: float = 0.0) -> None:
+        """Apply rosette angle as a uniform rotation in the fragment shader."""
+        self.offset_angle.value = math.radians(offset_angle_deg)
+
     def detach(self, obj: Any | None = None) -> None:
         """Detach the shader by clearing group contents.
 
         The group stays in the scene graph (reused by next attach)
-        but its children are removed so nothing renders.
+        but its children are removed so nothing renders. The stolen
+        geometry reference is KEPT so a subsequent reload/attach can
+        re-insert the same node — the node was already removed from
+        root, so a fresh search would miss it and the grid would
+        disappear. The node itself survives because we hold a
+        reference to it.
         """
         self._clear_group()
         self._attached = False
@@ -209,41 +219,32 @@ class MeshGridShader:
     ) -> None:
         """Attach the shader to geometry inside the given root node.
 
-        If already attached, reuses the existing scene-graph group
-        (clears and repopulates) to avoid structural scene-graph edits
-        that can trigger reentrant callbacks and segfaults.
+        Reuses the existing scene-graph group across reloads to avoid
+        accumulating orphaned shader_state groups. The Coin3D geometry
+        node stolen on first attach is remembered in self._coin_geo so
+        a reload can re-insert it without re-searching root (it was
+        already removed from root, so a fresh search would miss it).
         """
         if tex_coords is None or len(tex_coords) == 0:
             return
 
         self.texcoords = self.get_texture_coords(tex_coords)
-
-        # Apply rosette angle as 2D rotation in UV plane
-        if offset_angle_deg:
-            ang = math.radians(-offset_angle_deg)
-            cos_a, sin_a = math.cos(ang), math.sin(ang)
-            self.tex_matrix_transform.matrix.setValue(
-                cos_a, -sin_a, 0, 0,
-                sin_a,  cos_a, 0, 0,
-                0,      0,     1, 0,
-                0,      0,     0, 1,
-            )
-        else:
-            self.tex_matrix_transform.matrix.setValue(
-                1, 0, 0, 0,
-                0, 1, 0, 0,
-                0, 0, 1, 0,
-                0, 0, 0, 1,
-            )
+        self.set_offset_angle(offset_angle_deg)
 
         self.root = root_node
 
-        # Find the Coin3D geometry (SoSeparator with Coordinate3 + IndexedFaceSet)
-        # that was injected by _build_drapecd_mesh.
+        # Prefer freshly injected geometry in root (execute() re-injects
+        # on a real drape change); fall back to the node we stole on a
+        # previous attach so a pure reload does not lose the grid.
         coin_geo = self._find_coin_geometry(self.root)
+        if coin_geo is None:
+            coin_geo = self._coin_geo
 
-        # Reuse existing group if already in scene, else create new
-        if self._attached and self.grp is not None:
+        # Reuse the existing group if it is still in the scene graph;
+        # otherwise create a fresh one. Reusing avoids orphaned
+        # shader_state groups piling up across reloads.
+        reuse = self.grp is not None and self._grp_in_scene(root_node)
+        if reuse:
             self._clear_group()
         else:
             self.grp = coin.SoGroup()
@@ -259,10 +260,9 @@ class MeshGridShader:
         self.grp.addChild(self.dummy_texture)
         self.grp.addChild(self.coord_binding)
         self.grp.addChild(self.texcoords)
-        self.grp.addChild(self.tex_matrix_transform)
         self.grp.addChild(self.shaderProgram)
 
-        if coin_geo:
+        if coin_geo is not None:
             face_set = self._find_face_set_in_root(coin_geo)
             if face_set:
                 coord_index = face_set.coordIndex.getValues()
@@ -272,9 +272,38 @@ class MeshGridShader:
                     coord_index,
                 )
             self.grp.addChild(coin_geo)
-            self._remove_node_from_parent(coin_geo, self.root)
+            # Only remove from root on the first steal; on re-attach the
+            # node was never in root (it lived in the previous grp).
+            if self._coin_geo is None:
+                self._remove_node_from_parent(coin_geo, self.root)
+            self._coin_geo = coin_geo
 
         self._attached = True
+
+    def _grp_in_scene(self, root_node: Any) -> bool:
+        """Return True if self.grp is a direct child of root_node."""
+        if self.grp is None:
+            return False
+        children = root_node.getChildren()
+        if children is None:
+            return False
+        target_name = ""
+        try:
+            target_name = self.grp.getName()
+        except AttributeError:
+            return False
+        if not target_name:
+            return False
+        for i in range(int(children.getLength())):
+            c = children[i]
+            if c is None:
+                continue
+            try:
+                if c.getName() == target_name:
+                    return True
+            except AttributeError:
+                continue
+        return False
 
     def _find_switch_index(self) -> int:
         """Find the index of the Switch child inside the root."""
@@ -323,48 +352,47 @@ class MeshGridShader:
         return None
 
     def _find_coin_geometry(self, node: Any) -> Any | None:
-        """Find the Coin3D geometry separator injected by _build_drapecd_mesh.
+        """Find injected Coin3D mesh container with Coordinate3 + IndexedFaceSet.
 
-        Looks for a SoSeparator named 'DrapedMeshGeometry' that contains
-        both SoCoordinate3 and SoIndexedFaceSet as children.
-        Skips the 'shader_state' group to avoid finding geometry that
-        was already moved there by a previous attach().
+        The injected node can appear as Separator or Group depending on
+        how FreeCAD wraps display-mode subgraphs. We therefore recurse into
+        any child container exposing getChildren(), skipping shader_state.
         """
         children = node.getChildren()
         if children is None or children.getLength() == 0:
             return None
+
         for i in range(int(children.getLength())):
             c = children[i]
             if c is None:
                 continue
-            # Skip our own shader_state group
+
             try:
                 if c.getName() == "shader_state":
                     continue
             except AttributeError:
                 pass
-            tname = str(c.getTypeId().getName())
-            if "Separator" in tname and "Switch" not in tname:
-                # Check if this separator has both Coordinate3 and IndexedFaceSet
-                has_coord = False
-                has_face = False
-                sub_children = c.getChildren()
-                if sub_children:
-                    for j in range(int(sub_children.getLength())):
-                        sc = sub_children[j]
-                        if sc is None:
-                            continue
-                        st = str(sc.getTypeId().getName())
-                        if st == "Coordinate3":
-                            has_coord = True
-                        elif "IndexedFaceSet" in st:
-                            has_face = True
+
+            sub_children = c.getChildren() if hasattr(c, "getChildren") else None
+            has_coord = False
+            has_face = False
+            if sub_children is not None:
+                for j in range(int(sub_children.getLength())):
+                    sc = sub_children[j]
+                    if sc is None:
+                        continue
+                    st = str(sc.getTypeId().getName())
+                    if st == "Coordinate3":
+                        has_coord = True
+                    elif "IndexedFaceSet" in st:
+                        has_face = True
                 if has_coord and has_face:
                     return c
-                # Recurse into separators/groups (but not shader_state)
+
                 res = self._find_coin_geometry(c)
                 if res is not None:
                     return res
+
         return None
 
     def _remove_node_from_parent(self, node: Any, parent: Any) -> bool:
