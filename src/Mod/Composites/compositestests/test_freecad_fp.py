@@ -106,10 +106,7 @@ sys.modules["Part"] = _part_mod
 # MeshEnums mock (required by CompositeShell.py)
 sys.modules["MeshEnums"] = MagicMock()
 
-# flatmesh mock (required by tools/draper.py which CompositeShell.py imports)
-sys.modules["flatmesh"] = MagicMock()
-
-# Mesh / MeshPart mocks (required by util/mesh_util.py via draper.py)
+# Mesh / MeshPart mocks (required by util/mesh_util.py)
 sys.modules["Mesh"] = MagicMock()
 sys.modules["MeshPart"] = MagicMock()
 
@@ -358,18 +355,6 @@ _mesh_util_mod = _load_module(
     "Composites.util.mesh_util",
     "Composites/util/mesh_util.py",
 )
-
-_draper_mod = _load_module(
-    "Composites.tools.draper",
-    "Composites/tools/draper.py",
-)
-_fake_tools_pkg.draper = _draper_mod
-
-_lcs_mod = _load_module(
-    "Composites.tools.lcs",
-    "Composites/tools/lcs.py",
-)
-_fake_tools_pkg.lcs = _lcs_mod
 
 _fibre_mod = _load_module(
     "Composites.tools.fibre",

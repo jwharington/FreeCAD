@@ -196,70 +196,16 @@ class TransferRosetteFP(RosetteFP):
     def _draper_basis_at(draper, point):
         """Return (warp, normal) unit vectors at *point* from the draper.
 
-        The documented path is ``draper.get_lcs_at_point(point).Rotation`` then
-        ``multVec`` for the X (warp) and Z (normal) axes. However, both draper
-        backends currently construct the FreeCAD rotation with the wrong
-        quaternion argument order — ``Rotation(quat[3], quat[0], quat[1],
-        quat[2])`` passes ``(w, x, y, z)`` while this build's constructor reads
-        ``(x, y, z, w)``, so the returned rotation is garbage even though the
-        underlying basis (warp_unit / normal_unit) is correct.
-
-        Until that one-line foundation bug is fixed in CompositeShell.py,
-        recompute the basis directly from the draper's persisted quad data
-        (the same data ``get_lcs_at_point`` uses internally). Falls back to the
-        documented Placement path when the quad attributes are unavailable.
+        Warp is the LCS X-axis in world; normal is the LCS Z-axis. Both come
+        from ``draper.get_lcs_at_point(point).Rotation``.
         """
-        node_positions = getattr(draper, "_node_positions", None)
-        quads = getattr(draper, "_quads", None)
-        if node_positions is None or not quads:
-            placement = draper.get_lcs_at_point(point)
-            if placement is None:
-                return None, None
-            rotation = placement.Rotation
-            warp = rotation.multVec(FreeCAD.Vector(1.0, 0.0, 0.0))
-            normal = rotation.multVec(FreeCAD.Vector(0.0, 0.0, 1.0))
-            return warp, normal
-
-        import numpy as _np
-        cp = _np.array([float(point[0]), float(point[1]), float(point[2])])
-        best_quad = None
-        best_dist = float("inf")
-        for q in quads:
-            i0, i1, i2, i3 = (int(idx) for idx in q)
-            centroid = (
-                node_positions[i0] + node_positions[i1]
-                + node_positions[i2] + node_positions[i3]
-            ) / 4.0
-            dist = float(_np.linalg.norm(cp - centroid))
-            if dist < best_dist:
-                best_dist = dist
-                best_quad = q
-        if best_quad is None:
+        placement = draper.get_lcs_at_point(point)
+        if placement is None:
             return None, None
-
-        i0, i1, i2, i3 = (int(idx) for idx in best_quad)
-        v0 = node_positions[i0]
-        v1 = node_positions[i1]
-        v3 = node_positions[i3]
-        warp = v1 - v0
-        warp_norm = float(_np.linalg.norm(warp))
-        if warp_norm < 1e-10:
-            return None, None
-        warp_unit = warp / warp_norm
-        weft_raw = v3 - v0
-        weft_unit = weft_raw - _np.dot(weft_raw, warp_unit) * warp_unit
-        weft_norm = float(_np.linalg.norm(weft_unit))
-        if weft_norm < 1e-10:
-            return None, None
-        weft_unit = weft_unit / weft_norm
-        normal = _np.cross(warp_unit, weft_unit)
-        normal_norm = float(_np.linalg.norm(normal))
-        if normal_norm < 1e-10:
-            return None, None
-        normal_unit = normal / normal_norm
-        warp_vec = FreeCAD.Vector(float(warp_unit[0]), float(warp_unit[1]), float(warp_unit[2]))
-        normal_vec = FreeCAD.Vector(float(normal_unit[0]), float(normal_unit[1]), float(normal_unit[2]))
-        return warp_vec, normal_vec
+        rotation = placement.Rotation
+        warp = rotation.multVec(FreeCAD.Vector(1.0, 0.0, 0.0))
+        normal = rotation.multVec(FreeCAD.Vector(0.0, 0.0, 1.0))
+        return warp, normal
 
     @staticmethod
     def _warp_angle_at(draper, point, tangent):

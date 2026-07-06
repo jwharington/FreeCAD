@@ -1009,8 +1009,7 @@ class CompositeShellFP(CompositeBaseFP):
         self._require_valid()
         # Both NextDrapeBackend and _RehydratedBackend implement the draper
         # protocol (get_lcs_at_point, get_tex_coord_at_point, get_lcs, ...)
-        # directly; the legacy Draper wrapper is a thin delegator that adds
-        # nothing, so the backend itself is the draper.
+        # directly, so the backend itself is the draper.
         return self._backend
 
     def get_drape_lcs(self, tris):
