@@ -2,19 +2,18 @@
 """Load the Composites C++ draping solver (``Composites_drape``).
 
 The solver is a standalone pybind11 Python extension (``Composites_drape.so``)
-built and installed next to the Composites package. It is searched in priority
-order:
+built and installed next to the Composites package. It is searched in
+priority order:
 
-1. ``COMPOSITES_DRAPE_SO`` env var — explicit forced path (dev override).
-2. The ``.so`` co-located with this package (the normal case when the
+1. The ``.so`` co-located with this package (the normal case when the
    Composites package itself was imported from the build/install tree).
-3. FreeCAD's install Mod tree —
+2. FreeCAD's install Mod tree —
    ``<FreeCAD.getHomePath()>/Mod/Composites/ext/_native/Composites_drape.so``.
    This handles the case where ``import Composites`` resolved to a source
    checkout (e.g. ``FreeCADCmd -P <src>/Mod`` for running tests against the
    source tree) whose ``ext/_native/`` has no built ``.so``.
-4. The user Mod tree (``~/.local/share/FreeCAD/v*/Mod/Composites/...``).
-5. A plain ``import Composites_drape`` (system-wide install on ``sys.path``).
+3. The user Mod tree (``~/.local/share/FreeCAD/v*/Mod/Composites/...``).
+4. A plain ``import Composites_drape`` (system-wide install on ``sys.path``).
 
 Only when none of these locate the solver does this raise ``ImportError``.
 """
@@ -39,10 +38,10 @@ def _load_from_path(so_path: str):
 
 def _candidate_so_paths():
     """Yield candidate ``Composites_drape.so`` paths in priority order."""
-    # 2. Co-located with this package.
+    # 1. Co-located with this package.
     yield Path(__file__).with_name("Composites_drape.so")
 
-    # 3. FreeCAD's install Mod tree (handles source-tree package imports).
+    # 2. FreeCAD's install Mod tree (handles source-tree package imports).
     try:
         import FreeCAD
 
@@ -53,7 +52,7 @@ def _candidate_so_paths():
     except Exception:
         pass
 
-    # 4. User Mod tree(s).
+    # 3. User Mod tree(s).
     user_data = os.path.expanduser("~/.local/share/FreeCAD")
     if user_data:
         yield from (
@@ -66,17 +65,12 @@ def _candidate_so_paths():
 
 
 def _load():
-    # 1. Forced path via env var.
-    forced = os.environ.get("COMPOSITES_DRAPE_SO")
-    if forced and Path(forced).exists():
-        return _load_from_path(forced)
-
-    # 2-4. Search candidate paths.
+    # 1-3. Search candidate paths.
     for candidate in _candidate_so_paths():
         if candidate.exists():
             return _load_from_path(str(candidate))
 
-    # 5. System-wide install.
+    # 4. System-wide install.
     try:
         import Composites_drape as mod  # noqa: F401
         return mod
@@ -85,8 +79,7 @@ def _load():
 
     raise ImportError(
         "No Composites_drape solver found. Rebuild FreeCAD with "
-        "BUILD_COMPOSITES=ON, or set the COMPOSITES_DRAPE_SO env var to the "
-        "path of Composites_drape.so."
+        "BUILD_COMPOSITES=ON."
     )
 
 

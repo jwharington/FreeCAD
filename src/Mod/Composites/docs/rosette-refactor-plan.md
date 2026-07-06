@@ -234,11 +234,9 @@ This engine backs both AlignFibreRosette and TransferRosette.
 - `test_transfer_rosette_solves` — two-shell setup; assert attachment rosette
   Angle minimises edge angle mismatch (θ_a ≈ θ_m within tolerance at sampled
   points).
-- Run via `FreeCADCmd -P src/Mod`. Headless env note: the source tree has no
-  `Composites_drape.so`; set
-  `COMPOSITES_DRAPE_SO=<install>/Mod/Composites/ext/_native/Composites_drape.so`
-  for standalone probes, or rely on the user Mod symlink (install tree) for the
-  integration suite. Each test ≈10–20s (real drape solves).
+- Run via `FreeCADCmd -P src/Mod`. The loader finds `Composites_drape.so`
+  via FreeCAD's install Mod tree (no env var needed). Each test ≈3–6s
+  (real drape solves).
 
 ### Phase 6 — GUI verification (after headless tests pass)
 
@@ -443,8 +441,7 @@ error is linear (`30° − angle`) and brackets cleanly. Lives in
    `ext/_native/__init__.py` now falls back to FreeCAD's install Mod tree
    (`<getHomePath()>/Mod/Composites/ext/_native/`) and the user Mod tree when
    the `.so` isn't co-located with the imported package, so `FreeCADCmd` (with
-   or without `-P src/Mod`) loads the drape solver with **no env var**. The
-   `COMPOSITES_DRAPE_SO` env var is kept as a dev override.
+   or without `-P src/Mod`) loads the drape solver with **no env var**.
 
 **Verification:**
 - Headless: 10 tests (7 existing + 3 new) green across multiple runs; the
@@ -463,8 +460,6 @@ error is linear (`30° − angle`) and brackets cleanly. Lives in
 - TransferRosette raises a clear `ValueError` when master & attachment
   faces share no topological boundary edge — by design (no picked-edge
   fallback). See §10.1.
-- The `COMPOSITES_DRAPE_SO` env var is still documented in the loader but no
-  longer needed for any supported run path.
 
 **Process lesson (recorded in the freecad-dev skill under "Memory hygiene")**
 - FreeCAD processes are ~1–1.5 GB RSS each. Don't run `FreeCADCmd` loops

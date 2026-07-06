@@ -18,14 +18,6 @@ import unittest
 
 import FreeCAD
 
-# The native drape .so lives in the install tree, not the source tree; point
-# the loader at it so headless runs against src/Mod can solve.
-os.environ.setdefault(
-    "COMPOSITES_DRAPE_SO",
-    "/home/jmw/opt/FreeCAD/.pixi/envs/default/Mod/Composites/ext/_native/"
-    "Composites_drape.so",
-)
-
 import FreeCADGui  # noqa: E402
 
 if not hasattr(FreeCADGui, "addCommand"):
