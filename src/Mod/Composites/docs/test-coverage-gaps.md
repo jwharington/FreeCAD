@@ -70,7 +70,6 @@ All "zero-coverage" verdicts in Section B were verified by grep spot-checks.
 | `PartPlane.py` | NO | NO |
 | `Seam.py` | NO | NO |
 | `Lamina.py` | partial (`test_freecad_fp.py` — `BaseLaminaFP` exercised via `HomogeneousLaminaFP`/`FibreCompositeLaminaFP` subclasses; `is_lamina` not exercised) | NO |
-| `Dart.py` | NO | NO |
 | `Command.py` | partial (`test_freecad_fp.py` — module loaded; `BaseCommand.check_sel`/`Activated` not exercised) | NO |
 | `Composite.py` | partial (`test_freecad_fp.py` — module loaded; `add_composite_props` runs transitively during FP construction, not directly called) | NO |
 
@@ -147,7 +146,7 @@ This ordering reflects user impact, coupling, and how central the feature is to 
 |---|---|---|
 | P0 | `MouldAnalysis`, `Mould`, `PartPlane` | Core split-mould workflow; these are now tightly coupled through parting-line / parting-surface / mould-half semantics. |
 | P1 | `TexturePlan`, `Stiffener` | User-facing geometry conveniences with direct manufacturing value and moderate coupling. |
-| P2 | `Seam`, `Dart` / `PlaceDart` | Important, but either more specialized or currently being redefined. |
+| P2 | `Seam`, `PlaceDart` | Important, but either more specialized or currently being redefined. |
 | P3 | `taskpanels/` package | Large GUI surface area; important, but can be tested after the core command flow is stabilized. |
 
 ### Notes on the priority bands
@@ -167,7 +166,6 @@ This ordering reflects user impact, coupling, and how central the feature is to 
 | `features/TexturePlan.py` | Unwraps composite shells to a flat texture plan | `Composites_TexturePlan` |
 | `features/Stiffener.py` | Projects a profile stiffener onto a plan | `Composites_StructureTools` |
 | `features/Seam.py` | Overlap seam between composite shells | `Composites_StructureTools` |
-| `features/Dart.py` | Planned PlaceDart cut-line placement for draping | `Composites_Dart` |
 
 ### GUI task panels (entire `taskpanels/` package untested)
 
@@ -180,7 +178,7 @@ This ordering reflects user impact, coupling, and how central the feature is to 
 ### Internal support modules (not GUI-wired, run only transitively)
 
 - `features/coin_geometry.py` — Coin3D scene-graph helpers for draped-mesh injection (consumed by `CompositeShell`).
-- `features/VPCompositePart.py` — base FP/VP for part-like composite features (base class for MouldAnalysis/Mould/PartPlane/Seam/Stiffener/TexturePlan/Dart).
+- `features/VPCompositePart.py` — base FP/VP for part-like composite features (base class for MouldAnalysis/Mould/PartPlane/Seam/Stiffener/TexturePlan).
 - `features/RosetteSymbol.py` — Coin3D X/Y rosette axis symbol (consumed by `VPCompositeShell`/`Rosette` view providers).
 - `compositetools/drape_task.py` — runs the C++ draping solve synchronously (invoked by `CompositeShell.execute`).
 - `util/selection_utils.py` — find first face in a `Gui.SelectionObject` (only a commented-out import in `Command.py`).
@@ -229,4 +227,4 @@ No source module is example-covered but test-uncovered.
 
 ## Bottom line
 
-The biggest practical exposure is the **seven GUI feature commands** (`MouldAnalysis`, `Mould`, `PartPlane`, `TexturePlan`, `Stiffener`, `Seam`, `Dart`) plus the **entire `taskpanels/` package** — all are user-facing, none has any test or example. The drape solver path (`CompositesDrape.cpp`, `drape_task.py`, `ext/`) is only indirectly exercised through integration draping and would benefit from a direct test.
+The biggest practical exposure is the **six GUI feature commands** (`MouldAnalysis`, `Mould`, `PartPlane`, `TexturePlan`, `Stiffener`, `Seam`) plus the **entire `taskpanels/` package** — all are user-facing, none has any test or example. The drape solver path (`CompositesDrape.cpp`, `drape_task.py`, `ext/`) is only indirectly exercised through integration draping and would benefit from a direct test.

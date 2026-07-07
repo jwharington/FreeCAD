@@ -4,9 +4,8 @@
 """Mesh utility functions for fibre analysis.
 
 Provides barycentric-coordinate helpers used by the fibre length and
-orientation analysis tools.  Mesh tessellation (shape2Mesh) was removed
-when NextDrape stopped requiring mesh input — see ``tools/dart.py``
-which still needs a rewrite to operate on OCCT geometry directly.
+orientation analysis tools. Mesh tessellation (shape2Mesh) was removed
+when NextDrape stopped requiring mesh input.
 """
 
 import numpy as np

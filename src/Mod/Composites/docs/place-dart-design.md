@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-07  
 **Status:** Draft  
-**Related:** `features/Dart.py`, `tools/dart.py`, `features/CompositeShell.py`
+**Related:** `features/CompositeShell.py`, future `PlaceDart` command
 
 ## Overview
 
@@ -10,11 +10,11 @@ PlaceDart is a GUI command that allows users to specify additional cut lines (da
 
 ## Problem Statement
 
-The current `Dart` command is broken and misaligned with the draping workflow:
-- Depends on removed `shape2Mesh()` function
-- Attempts mesh topology manipulation instead of parametric cuts
-- Does not integrate with the draping algorithm's cut system
-- Produces unpredictable results
+The legacy `Dart` command was broken and has been removed. Its issues were:
+- depended on removed `shape2Mesh()` function
+- attempted mesh topology manipulation instead of parametric cuts
+- did not integrate with the draping algorithm's cut system
+- produced unpredictable results
 
 ## Solution: PlaceDart
 
@@ -145,7 +145,7 @@ def solve(shape, laminates, dart_wires=[], ...):
 
 ### Related Files
 
-- `features/Dart.py` - To be replaced
+- legacy `Dart` implementation has been removed; replace with a new `PlaceDart` command
 - `features/CompositeShell.py` - Extension needed
 - `tools/drape_backend_nextdrape.py` - API integration
 - `shaders/MeshGridShader.py` - Visualization system
