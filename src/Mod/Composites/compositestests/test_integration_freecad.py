@@ -53,6 +53,73 @@ class TestFreeCADIntegration(unittest.TestCase):
             sketch.addGeometry(Part.LineSegment(start, end), False)
         return sketch
 
+    def test_seam_make_edge_seam_from_box_edge(self):
+        self._ensure_freecadgui()
+        from Composites.tools.seam import make_edge_seam
+
+        box = Part.makeBox(10.0, 10.0, 10.0)
+        seam = make_edge_seam(box, [box.Faces[5].Edges[0]], overlap=1.0)
+
+        self.assertFalse(seam.isNull())
+        self.assertEqual(seam.ShapeType, "Compound")
+
+    def test_seam_make_join_seam_from_adjacent_faces(self):
+        self._ensure_freecadgui()
+        from Composites.tools.seam import get_partner_edges, make_join_seam
+
+        box = Part.makeBox(10.0, 10.0, 10.0)
+        face1 = box.Faces[0]
+        face2 = box.Faces[4]
+
+        self.assertTrue(get_partner_edges(face1, face2))
+
+        seam = make_join_seam(face1, face2, overlap=1.0)
+
+        self.assertFalse(seam.isNull())
+        self.assertEqual(seam.ShapeType, "Compound")
+
+    def test_seam_featurepython_rejects_missing_edges(self):
+        self._ensure_freecadgui()
+        from Composites.features.Seam import SeamFP
+
+        doc_name = "CompositesSeamMissingEdgesTest"
+        if doc_name in FreeCAD.listDocuments():
+            FreeCAD.closeDocument(doc_name)
+
+        doc = FreeCAD.newDocument(doc_name)
+        try:
+            seam = doc.addObject("Part::FeaturePython", "Seam")
+            SeamFP(seam)
+
+            with self.assertRaises(ValueError):
+                seam.Proxy.execute(seam)
+        finally:
+            FreeCAD.closeDocument(doc_name)
+
+    def test_seam_featurepython_recomputes_from_box_face_edge(self):
+        self._ensure_freecadgui()
+        from Composites.features.Seam import SeamFP
+
+        doc_name = "CompositesSeamIntegrationTest"
+        if doc_name in FreeCAD.listDocuments():
+            FreeCAD.closeDocument(doc_name)
+
+        doc = FreeCAD.newDocument(doc_name)
+        try:
+            source = self._make_source_feature(
+                doc,
+                shape=Part.makeBox(10.0, 10.0, 10.0).Faces[5],
+            )
+            seam = doc.addObject("Part::FeaturePython", "Seam")
+            SeamFP(seam, edges=[(source, "Edge1")])
+            doc.recompute()
+
+            self.assertFalse(seam.Shape.isNull())
+            self.assertEqual(seam.Shape.ShapeType, "Face")
+            self.assertFalse(source.Visibility)
+        finally:
+            FreeCAD.closeDocument(doc_name)
+
     def _make_fibre_lamina(self, doc):
         import FreeCADGui
 

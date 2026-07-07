@@ -15,7 +15,10 @@ from .VPCompositePart import CompositePartFP, VPCompositePart
 
 
 class SeamFP(CompositePartFP):
-    def __init__(self, obj, edges=[]):
+    def __init__(self, obj, edges=None):
+        if edges is None:
+            edges = []
+
         obj.addProperty(
             "App::PropertyLinkSubList",
             "Edges",
@@ -35,16 +38,22 @@ class SeamFP(CompositePartFP):
         super().__init__(obj)
 
     def execute(self, fp):
-        edges = [e[0].getSubObject(e[1])[0] for e in fp.Edges]
-        source = fp.Edges[0][0]
-
-        if not edges:
+        if not fp.Edges:
             raise ValueError("missing edges")
+
+        def resolve_edge(ref):
+            edge = ref[0].getSubObject(ref[1])
+            if isinstance(edge, (list, tuple)):
+                return edge[0]
+            return edge
+
+        edges = [resolve_edge(e) for e in fp.Edges]
+        source = fp.Edges[0][0]
 
         shape = make_edge_seam(
             shape=source.Shape,
             edges=edges,
-            overlap=fp.Overlap,
+            overlap=float(fp.Overlap),
         )
         fp.Shape = shape
         source.Visibility = False
