@@ -425,6 +425,10 @@ _composite_shell_feature_mod = _load_module(
     "Composites.features.CompositeShell",
     "src/Mod/Composites/features/CompositeShell.py",
 )
+_place_dart_feature_mod = _load_module(
+    "Composites.features.PlaceDart",
+    "src/Mod/Composites/features/PlaceDart.py",
+)
 _texture_plan_feature_mod = _load_module(
     "Composites.features.TexturePlan",
     "src/Mod/Composites/features/TexturePlan.py",
@@ -445,6 +449,7 @@ LaminateFP = _laminate_feature_mod.LaminateFP
 CompositeLaminateFP = _comp_lam_feature_mod.CompositeLaminateFP
 RosetteFP = _rosette_feature_mod.RosetteFP
 is_rosette = _rosette_feature_mod.is_rosette
+PlaceDartCommand = _place_dart_feature_mod.PlaceDartCommand
 MouldAnalysisFP = _mould_analysis_feature_mod.MouldAnalysisFP
 MouldFP = _mould_feature_mod.MouldFP
 PartPlaneFP = _part_plane_feature_mod.PartPlaneFP
@@ -480,6 +485,7 @@ _PROP_DEFAULTS = {
     "App::PropertyMap": lambda: {},
     "App::PropertyEnumeration": lambda: "",
     "App::PropertyPercent": lambda: 0,
+    "App::PropertyLinkList": lambda: [],
     "App::PropertyLinkListGlobal": lambda: [],
     "App::PropertyFloatConstraint": lambda: 0.0,
 }
@@ -1629,6 +1635,57 @@ class TestCompositeShellFPRosetteProperty(unittest.TestCase):
 
     def test_type_attribute(self):
         self.assertEqual(CompositeShellFP.Type, "Composite::Shell")
+
+
+class TestPlaceDartCommand(unittest.TestCase):
+    def setUp(self):
+        self.command = PlaceDartCommand()
+
+    def _make_shell(self):
+        shell = _FakeFCObj("Shell")
+        shell.TypeId = "Part::FeaturePython"
+        shell.Proxy = types.SimpleNamespace(Type="Composite::Shell", _needs_recompute=False)
+        shell.DrapeCuts = []
+        shell.Document = MagicMock()
+        return shell
+
+    def _make_wire(self, name="Wire"):
+        wire = _FakeFCObj(name)
+        wire.TypeId = "Part::Feature"
+        wire.Shape = types.SimpleNamespace(Edges=[object()])
+        return wire
+
+    def test_collects_shell_and_wire_sources(self):
+        shell = self._make_shell()
+        wire = self._make_wire()
+        selection = [
+            types.SimpleNamespace(Object=wire),
+            types.SimpleNamespace(Object=shell),
+        ]
+
+        self.assertEqual(self.command._collect_selection(selection), (shell, [wire]))
+
+    def test_activated_appends_shell_drape_cuts(self):
+        import FreeCADGui
+
+        shell = self._make_shell()
+        first_wire = self._make_wire("Wire1")
+        second_wire = self._make_wire("Wire2")
+        shell.DrapeCuts = [first_wire]
+        selection = [
+            types.SimpleNamespace(Object=first_wire),
+            types.SimpleNamespace(Object=second_wire),
+            types.SimpleNamespace(Object=shell),
+        ]
+        FreeCADGui.Selection.getSelectionEx.return_value = selection
+        FreeCADGui.Selection.clearSelection.reset_mock()
+
+        self.command.Activated()
+
+        self.assertEqual(shell.DrapeCuts, [first_wire, second_wire])
+        self.assertTrue(shell.Proxy._needs_recompute)
+        shell.Document.recompute.assert_called_once()
+        FreeCADGui.Selection.clearSelection.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

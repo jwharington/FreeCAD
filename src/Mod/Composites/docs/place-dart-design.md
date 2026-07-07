@@ -6,7 +6,7 @@
 
 ## Overview
 
-PlaceDart is a GUI command that allows users to specify additional cut lines (darts) on a draped composite shell. Unlike the current broken implementation that manipulates mesh topology, PlaceDart integrates with the draping algorithm's native cut line system to create precise, parametric darts.
+PlaceDart is a GUI command that records additional cut lines (darts) on a draped composite shell. Unlike the removed legacy implementation that manipulated mesh topology, PlaceDart uses the shell's native `DrapeCuts` property so the draping algorithm can consume cut lines directly.
 
 ## Problem Statement
 
@@ -106,9 +106,9 @@ def solve(shape, laminates, dart_wires=[], ...):
 ### Implementation Phases
 
 #### Phase 1: Foundation
-- [ ] Add DartWires property to CompositeShell
+- [x] Reuse the shell's existing `DrapeCuts` property
 - [ ] Implement wire projection onto support faces
-- [ ] Integrate with draping algorithm's cut line API
+- [x] Integrate with the draping algorithm's cut line API
 
 #### Phase 2: Visualization
 - [ ] Extend ViewProviderCompositeShell with dart overlay
@@ -116,14 +116,14 @@ def solve(shape, laminates, dart_wires=[], ...):
 - [ ] Wire up to existing shader/rendering system
 
 #### Phase 3: GUI Command
-- [ ] Create PlaceDart command (replacing Dart)
-- [ ] Implement selection handling for wires + shell
-- [ ] Add proper resource definitions
+- [x] Create PlaceDart command (replacing Dart)
+- [x] Implement selection handling for wires + shell
+- [x] Add proper resource definitions
 
 #### Phase 4: Testing
 - [ ] Unit tests for wire projection
 - [ ] Integration tests for draping with cut lines
-- [ ] GUI tests for command activation
+- [x] GUI tests for command activation
 - [ ] Visualization tests for dart overlay
 
 ### Success Criteria

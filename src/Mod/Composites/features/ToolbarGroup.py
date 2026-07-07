@@ -9,6 +9,7 @@ from . import (
     Mould,  # noqa
     MouldAnalysis,  # noqa
     PartPlane,  # noqa
+    PlaceDart,  # noqa
     Rosette,  # noqa
     Seam,  # noqa
     Stiffener,  # noqa
@@ -64,6 +65,7 @@ FreeCADGui.addCommand(
     CommandGroup(
         [
             "Composites_Seam",
+            "Composites_PlaceDart",
             "Composites_Stiffener",
         ],
         menu="Structure",
