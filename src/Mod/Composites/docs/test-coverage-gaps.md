@@ -55,7 +55,6 @@ All "zero-coverage" verdicts in Section B were verified by grep spot-checks.
 | `FibreCompositeLamina.py` | YES (`test_freecad_fp.py`, `test_integration_freecad.py` — `FibreCompositeLaminaFP`) | YES (`_shell_example_common.py`) |
 | `Container.py` | partial (`test_freecad_fp.py` — module loaded; `CompositesContainerFP`/`getCompositesContainer` not called) | NO |
 | `VPCompositePart.py` | NO (not loaded by any test) | NO |
-| `RunCompositeExample.py` | NO | NO |
 | `Mould.py` | NO | NO |
 | `MouldAnalysis.py` | NO | NO |
 | `CompositeShell.py` | YES (`test_freecad_fp.py` TestCompositeShellFPRosetteProperty; integration in `test_rosette_integration.py`/`test_transfer_rosette.py`/`test_integration_freecad.py`) | YES (`_shell_example_common.py`) |
@@ -148,7 +147,7 @@ This ordering reflects user impact, coupling, and how central the feature is to 
 |---|---|---|
 | P0 | `MouldAnalysis`, `Mould`, `PartPlane` | Core split-mould workflow; these are now tightly coupled through parting-line / parting-surface / mould-half semantics. |
 | P1 | `TexturePlan`, `Stiffener` | User-facing geometry conveniences with direct manufacturing value and moderate coupling. |
-| P2 | `Seam`, `Dart` / `PlaceDart`, `RunCompositeExample` | Important, but either more specialized, currently being redefined, or simpler wrapper behavior. |
+| P2 | `Seam`, `Dart` / `PlaceDart` | Important, but either more specialized or currently being redefined. |
 | P3 | `taskpanels/` package | Large GUI surface area; important, but can be tested after the core command flow is stabilized. |
 
 ### Notes on the priority bands
@@ -162,7 +161,6 @@ This ordering reflects user impact, coupling, and how central the feature is to 
 
 | Feature | Purpose | Toolbar group |
 |---|---|---|
-| `features/RunCompositeExample.py` | Runs the default `ud_plate_basic` example | `Composites_RunCompositeExample` |
 | `features/MouldAnalysis.py` | Proposes a split direction, parting surface, and mould halves | `Composites_MouldTools` |
 | `features/Mould.py` | Builds a split mould stock / toolpath volume from a source | `Composites_MouldTools` |
 | `features/PartPlane.py` | Parting surface from a source shape | `Composites_MouldTools` |
@@ -231,4 +229,4 @@ No source module is example-covered but test-uncovered.
 
 ## Bottom line
 
-The biggest practical exposure is the **eight GUI feature commands** (`MouldAnalysis`, `Mould`, `PartPlane`, `TexturePlan`, `Stiffener`, `Seam`, `Dart`, `RunCompositeExample`) plus the **entire `taskpanels/` package** — all are user-facing, none has any test or example. The drape solver path (`CompositesDrape.cpp`, `drape_task.py`, `ext/`) is only indirectly exercised through integration draping and would benefit from a direct test.
+The biggest practical exposure is the **seven GUI feature commands** (`MouldAnalysis`, `Mould`, `PartPlane`, `TexturePlan`, `Stiffener`, `Seam`, `Dart`) plus the **entire `taskpanels/` package** — all are user-facing, none has any test or example. The drape solver path (`CompositesDrape.cpp`, `drape_task.py`, `ext/`) is only indirectly exercised through integration draping and would benefit from a direct test.

@@ -42,12 +42,10 @@ class CompositesWorkbench(Gui.Workbench):
         import Composites.features.TexturePlan  # noqa
         import Composites.features.ToolbarGroup  # noqa
         import Composites.features.Dart  # noqa
-        import Composites.features.RunCompositeExample  # noqa
 
         cmds_section = [
             "Composites_LaminaTools",
             "Composites_LaminateTools",
-            "Composites_RunCompositeExample",
         ]
         cmds_structure = [
             "Composites_CompositeShell",
