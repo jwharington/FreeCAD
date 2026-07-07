@@ -110,15 +110,22 @@ sys.modules["MeshEnums"] = MagicMock()
 sys.modules["Mesh"] = MagicMock()
 sys.modules["MeshPart"] = MagicMock()
 
+# TechDraw / CAM mocks (required by tools.part_plane.py)
+sys.modules["TechDraw"] = MagicMock()
+_cam_mod = types.ModuleType("CAM")
+_cam_mod.Path = MagicMock()
+sys.modules["CAM"] = _cam_mod
+
 # ---------------------------------------------------------------------------
 # Ensure repo root is on sys.path so package imports work
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..")
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 )
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
+_MODULE_ROOT = os.path.join(_REPO_ROOT, "src", "Mod")
+if _MODULE_ROOT not in sys.path:
+    sys.path.insert(0, _MODULE_ROOT)
 
 # ---------------------------------------------------------------------------
 # Helpers to load individual .py files as named modules
@@ -149,19 +156,19 @@ def _make_package_stub(dotted_name: str, abs_dir: str):
 # (mirrors the setup in test_mechanics.py)
 # ---------------------------------------------------------------------------
 
-_objects_dir = os.path.join(_REPO_ROOT, "freecad", "Composites", "objects")
-_mechanics_dir = os.path.join(_REPO_ROOT, "freecad", "Composites", "mechanics")
-_util_dir = os.path.join(_REPO_ROOT, "freecad", "Composites", "util")
-_features_dir = os.path.join(_REPO_ROOT, "freecad", "Composites", "features")
+_objects_dir = os.path.join(_REPO_ROOT, "src", "Mod", "Composites", "objects")
+_mechanics_dir = os.path.join(_REPO_ROOT, "src", "Mod", "Composites", "mechanics")
+_util_dir = os.path.join(_REPO_ROOT, "src", "Mod", "Composites", "util")
+_features_dir = os.path.join(_REPO_ROOT, "src", "Mod", "Composites", "features")
 
 # Leaf enums
 _sym_mod = _load_module(
     "Composites.objects.symmetry_type",
-    "Composites/objects/symmetry_type.py",
+    "src/Mod/Composites/objects/symmetry_type.py",
 )
 _weave_mod = _load_module(
     "Composites.objects.weave_type",
-    "Composites/objects/weave_type.py",
+    "src/Mod/Composites/objects/weave_type.py",
 )
 
 # Stub objects package (exposes only already-loaded symbols to avoid
@@ -175,7 +182,7 @@ _fake_objects_pkg.WeaveType = _weave_mod.WeaveType
 # Load mechanics.stack_model_type (no deps)
 _smt_mod = _load_module(
     "Composites.mechanics.stack_model_type",
-    "Composites/mechanics/stack_model_type.py",
+    "src/Mod/Composites/mechanics/stack_model_type.py",
 )
 
 # Stub mechanics package
@@ -195,11 +202,11 @@ from Composites.util.geometry_util import (  # noqa: E402
 # Leaf object modules
 _lamina_mod = _load_module(
     "Composites.objects.lamina",
-    "Composites/objects/lamina.py",
+    "src/Mod/Composites/objects/lamina.py",
 )
 _ply_mod = _load_module(
     "Composites.objects.ply",
-    "Composites/objects/ply.py",
+    "src/Mod/Composites/objects/ply.py",
 )
 
 # Mechanics modules
@@ -213,39 +220,39 @@ from Composites.mechanics.shell_model import (  # noqa: E402
 
 _homo_mod = _load_module(
     "Composites.objects.homogeneous_lamina",
-    "Composites/objects/homogeneous_lamina.py",
+    "src/Mod/Composites/objects/homogeneous_lamina.py",
 )
 _comp_lamina_mod = _load_module(
     "Composites.objects.composite_lamina",
-    "Composites/objects/composite_lamina.py",
+    "src/Mod/Composites/objects/composite_lamina.py",
 )
 _fabric_mod = _load_module(
     "Composites.objects.fabric",
-    "Composites/objects/fabric.py",
+    "src/Mod/Composites/objects/fabric.py",
 )
 _sf_mod = _load_module(
     "Composites.objects.simple_fabric",
-    "Composites/objects/simple_fabric.py",
+    "src/Mod/Composites/objects/simple_fabric.py",
 )
 _stack_model_mod = _load_module(
     "Composites.mechanics.stack_model",
-    "Composites/mechanics/stack_model.py",
+    "src/Mod/Composites/mechanics/stack_model.py",
 )
 _stack_exp_mod = _load_module(
     "Composites.mechanics.stack_expansion",
-    "Composites/mechanics/stack_expansion.py",
+    "src/Mod/Composites/mechanics/stack_expansion.py",
 )
 _fcl_obj_mod = _load_module(
     "Composites.objects.fibre_composite_lamina",
-    "Composites/objects/fibre_composite_lamina.py",
+    "src/Mod/Composites/objects/fibre_composite_lamina.py",
 )
 _laminate_obj_mod = _load_module(
     "Composites.objects.laminate",
-    "Composites/objects/laminate.py",
+    "src/Mod/Composites/objects/laminate.py",
 )
 _comp_lam_obj_mod = _load_module(
     "Composites.objects.composite_laminate",
-    "Composites/objects/composite_laminate.py",
+    "src/Mod/Composites/objects/composite_laminate.py",
 )
 
 # Populate objects package stub with all symbols
@@ -265,18 +272,18 @@ _fake_mech_pkg.StackModelType = _smt_mod.StackModelType
 # Util modules
 _fem_util_mod = _load_module(
     "Composites.util.fem_util",
-    "Composites/util/fem_util.py",
+    "src/Mod/Composites/util/fem_util.py",
 )
 _bom_util_mod = _load_module(
     "Composites.util.bom_util",
-    "Composites/util/bom_util.py",
+    "src/Mod/Composites/util/bom_util.py",
 )
 
 # Stub taskpanels package — feature files import task panel modules but
 # we have no Qt, so just mock the whole sub-package.
 _fake_taskpanels = _make_package_stub(
     "Composites.taskpanels",
-    os.path.join(_REPO_ROOT, "freecad", "Composites", "taskpanels"),
+    os.path.join(_REPO_ROOT, "src", "Mod", "Composites", "taskpanels"),
 )
 for _tp in (
     "task_homogeneous_lamina",
@@ -288,6 +295,31 @@ for _tp in (
     sys.modules[f"Composites.taskpanels.{_tp}"] = _tp_mod
     setattr(_fake_taskpanels, _tp, _tp_mod)
 
+# Tool package stub (needed by MouldAnalysis/Mould/PartPlane feature imports)
+_tools_dir = os.path.join(_REPO_ROOT, "src", "Mod", "Composites", "tools")
+_fake_tools_pkg = _make_package_stub("Composites.tools", _tools_dir)
+_fibre_mod = _load_module(
+    "Composites.tools.fibre",
+    "src/Mod/Composites/tools/fibre.py",
+)
+_fake_tools_pkg.fibre = _fibre_mod
+_fake_tools_pkg.splitAPI = MagicMock()
+_part_plane_tool_mod = _load_module(
+    "Composites.tools.part_plane",
+    "src/Mod/Composites/tools/part_plane.py",
+)
+_mould_tool_mod = _load_module(
+    "Composites.tools.mould",
+    "src/Mod/Composites/tools/mould.py",
+)
+_mould_analysis_tool_mod = _load_module(
+    "Composites.tools.mould_analysis",
+    "src/Mod/Composites/tools/mould_analysis.py",
+)
+_fake_tools_pkg.part_plane = _part_plane_tool_mod
+_fake_tools_pkg.mould = _mould_tool_mod
+_fake_tools_pkg.mould_analysis = _mould_analysis_tool_mod
+
 # ---------------------------------------------------------------------------
 # Load feature modules in dependency order
 # ---------------------------------------------------------------------------
@@ -298,83 +330,87 @@ _fake_features_pkg = _make_package_stub(
 
 _vpbase_mod = _load_module(
     "Composites.features.VPCompositeBase",
-    "Composites/features/VPCompositeBase.py",
+    "src/Mod/Composites/features/VPCompositeBase.py",
 )
 _container_mod = _load_module(
     "Composites.features.Container",
-    "Composites/features/Container.py",
+    "src/Mod/Composites/features/Container.py",
 )
 _command_mod = _load_module(
     "Composites.features.Command",
-    "Composites/features/Command.py",
+    "src/Mod/Composites/features/Command.py",
 )
 _composite_mod = _load_module(
     "Composites.features.Composite",
-    "Composites/features/Composite.py",
+    "src/Mod/Composites/features/Composite.py",
 )
 _lamina_feature_mod = _load_module(
     "Composites.features.Lamina",
-    "Composites/features/Lamina.py",
+    "src/Mod/Composites/features/Lamina.py",
 )
 _homo_feature_mod = _load_module(
     "Composites.features.HomogeneousLamina",
-    "Composites/features/HomogeneousLamina.py",
+    "src/Mod/Composites/features/HomogeneousLamina.py",
 )
 _fcl_feature_mod = _load_module(
     "Composites.features.FibreCompositeLamina",
-    "Composites/features/FibreCompositeLamina.py",
+    "src/Mod/Composites/features/FibreCompositeLamina.py",
 )
 _laminate_feature_mod = _load_module(
     "Composites.features.Laminate",
-    "Composites/features/Laminate.py",
+    "src/Mod/Composites/features/Laminate.py",
 )
 _comp_lam_feature_mod = _load_module(
     "Composites.features.CompositeLaminate",
-    "Composites/features/CompositeLaminate.py",
+    "src/Mod/Composites/features/CompositeLaminate.py",
 )
 _rosette_feature_mod = _load_module(
     "Composites.features.Rosette",
-    "Composites/features/Rosette.py",
+    "src/Mod/Composites/features/Rosette.py",
+)
+_mould_analysis_feature_mod = _load_module(
+    "Composites.features.MouldAnalysis",
+    "src/Mod/Composites/features/MouldAnalysis.py",
+)
+_mould_feature_mod = _load_module(
+    "Composites.features.Mould",
+    "src/Mod/Composites/features/Mould.py",
+)
+_part_plane_feature_mod = _load_module(
+    "Composites.features.PartPlane",
+    "src/Mod/Composites/features/PartPlane.py",
 )
 
-# Load tools and shaders stubs needed by CompositeShell.py
-_tools_dir = os.path.join(_REPO_ROOT, "freecad", "Composites", "tools")
-_shaders_dir = os.path.join(_REPO_ROOT, "freecad", "Composites", "shaders")
+# Shader stubs needed by CompositeShell.py
+_shaders_dir = os.path.join(_REPO_ROOT, "src", "Mod", "Composites", "shaders")
 
-_fake_tools_pkg = _make_package_stub("Composites.tools", _tools_dir)
 _fake_shaders_pkg = _make_package_stub(
     "Composites.shaders", _shaders_dir
 )
 
 _geom_util_mod = _load_module(
     "Composites.util.geometry_util",
-    "Composites/util/geometry_util.py",
+    "src/Mod/Composites/util/geometry_util.py",
 )
 
 _mesh_util_mod = _load_module(
     "Composites.util.mesh_util",
-    "Composites/util/mesh_util.py",
+    "src/Mod/Composites/util/mesh_util.py",
 )
-
-_fibre_mod = _load_module(
-    "Composites.tools.fibre",
-    "Composites/tools/fibre.py",
-)
-_fake_tools_pkg.fibre = _fibre_mod
 
 _mesh_grid_shader_mod = _load_module(
     "Composites.shaders.MeshGridShader",
-    "Composites/shaders/MeshGridShader.py",
+    "src/Mod/Composites/shaders/MeshGridShader.py",
 )
 _fake_shaders_pkg.MeshGridShader = _mesh_grid_shader_mod
 
 _composite_shell_feature_mod = _load_module(
     "Composites.features.CompositeShell",
-    "Composites/features/CompositeShell.py",
+    "src/Mod/Composites/features/CompositeShell.py",
 )
 _transfer_lcs_feature_mod = _load_module(
     "Composites.features.TransferRosette",
-    "Composites/features/TransferRosette.py",
+    "src/Mod/Composites/features/TransferRosette.py",
 )
 
 # Short aliases for use in tests
@@ -384,6 +420,13 @@ LaminateFP = _laminate_feature_mod.LaminateFP
 CompositeLaminateFP = _comp_lam_feature_mod.CompositeLaminateFP
 RosetteFP = _rosette_feature_mod.RosetteFP
 is_rosette = _rosette_feature_mod.is_rosette
+MouldAnalysisFP = _mould_analysis_feature_mod.MouldAnalysisFP
+MouldFP = _mould_feature_mod.MouldFP
+PartPlaneFP = _part_plane_feature_mod.PartPlaneFP
+is_mould_analysis = _mould_analysis_feature_mod.is_mould_analysis
+ViewProviderMouldAnalysis = _mould_analysis_feature_mod.ViewProviderMouldAnalysis
+ViewProviderMould = _mould_feature_mod.ViewProviderMould
+ViewProviderPartPlane = _part_plane_feature_mod.ViewProviderPartPlane
 CompositeShellFP = _composite_shell_feature_mod.CompositeShellFP
 
 HomogeneousLamina = _homo_mod.HomogeneousLamina
@@ -486,11 +529,13 @@ class _FakeFCObj:
                 "App::PropertyLength",
                 "App::PropertyArealMass",
             ):
-                # Coerce scalars/booleans to _Quantity so callers can use .Value
+                # Coerce scalars to _Quantity so callers can use .Value
                 if isinstance(value, _Quantity):
                     props[name] = value
-                else:
+                elif isinstance(value, bool):
                     props[name] = _Quantity(str(float(value)))
+                else:
+                    props[name] = _Quantity(str(value))
             else:
                 props[name] = value
         else:
@@ -965,6 +1010,245 @@ class TestCompositeLaminateFP(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Tests: MouldAnalysis / Mould / PartPlane
+# ---------------------------------------------------------------------------
+
+
+class TestIsMouldAnalysis(unittest.TestCase):
+    """Tests for features/MouldAnalysis.py :: is_mould_analysis()."""
+
+    def _make_mould_analysis_mock(self):
+        obj = MagicMock()
+        obj.TypeId = "App::FeaturePython"
+        obj.Proxy = MagicMock()
+        obj.Proxy.Type = "Composite::MouldAnalysis"
+        return obj
+
+    def test_returns_true_for_mould_analysis(self):
+        obj = self._make_mould_analysis_mock()
+        obj.TypeId = "Part::FeaturePython"
+        self.assertTrue(is_mould_analysis(obj))
+
+    def test_returns_false_for_other_proxy_type(self):
+        obj = self._make_mould_analysis_mock()
+        obj.Proxy.Type = "Composite::Shell"
+        self.assertFalse(is_mould_analysis(obj))
+
+
+class TestMouldAnalysisFP(unittest.TestCase):
+    """Tests for features/MouldAnalysis.py :: MouldAnalysisFP."""
+
+    def setUp(self):
+        self.source = MagicMock(name="source")
+        self.source_shape = MagicMock(name="source_shape")
+        self.source.Shape = self.source_shape
+
+        self.parting_surface = MagicMock(name="parting_surface")
+        self.mould_half_a = MagicMock(name="mould_half_a")
+        self.mould_half_b = MagicMock(name="mould_half_b")
+
+        self.obj = _FakeFCObj("MouldAnalysis")
+        self.obj.Document = MagicMock()
+        self.obj.Document.addObject.side_effect = [
+            self.parting_surface,
+            self.mould_half_a,
+            self.mould_half_b,
+        ]
+        self.fp = MouldAnalysisFP(self.obj, self.source)
+
+    def test_init_sets_proxy(self):
+        self.assertIs(self.obj.Proxy, self.fp)
+
+    def test_init_sets_source_link(self):
+        self.assertIs(self.obj.Source, self.source)
+
+    def test_init_creates_preview_objects(self):
+        self.assertIs(self.obj.PartingSurface, self.parting_surface)
+        self.assertIs(self.obj.MouldHalfA, self.mould_half_a)
+        self.assertIs(self.obj.MouldHalfB, self.mould_half_b)
+
+    def test_claim_children_returns_preview_objects(self):
+        vp = ViewProviderMouldAnalysis.__new__(ViewProviderMouldAnalysis)
+        vp.Object = self.obj
+        children = vp.claimChildren()
+        self.assertEqual(children, [self.parting_surface, self.mould_half_a, self.mould_half_b])
+
+    def test_execute_updates_analysis_summary(self):
+        result = {
+            "status": "Ready",
+            "draw_direction_score": 88.5,
+            "best_draw_direction": MagicMock(name="best_draw_direction"),
+            "draw_direction_ranking": "1. (0,0,1)",
+            "undercut_count": 2,
+            "undercut_summary": "2 undercuts",
+            "undercut_regions": ["u1"],
+            "draft_violation_count": 1,
+            "draft_violation_summary": "1 draft violation",
+            "draft_violation_regions": ["d1"],
+            "parting_surface_status": "Ready",
+            "parting_surface_normal": MagicMock(name="parting_surface_normal"),
+            "parting_surface_offset": 3.5,
+            "parting_surface_area": 42.0,
+            "parting_surface_summary": "parting surface ready",
+            "parting_surface_shape": MagicMock(name="parting_surface_shape"),
+            "mould_halves_status": "Ready",
+            "mould_halves_summary": "mould halves ready",
+            "mould_half_a_shape": MagicMock(name="mould_half_a_shape"),
+            "mould_half_b_shape": MagicMock(name="mould_half_b_shape"),
+            "validation_status": "Pass",
+            "validation_summary": "validation passed",
+            "validation_checks": ["check 1"],
+            "summary": "analysis summary",
+            "shape": MagicMock(name="analysis_shape"),
+        }
+        with unittest.mock.patch.object(
+            _mould_analysis_feature_mod,
+            "analyze_source_shape",
+            return_value=result,
+        ):
+            self.fp.execute(self.obj)
+
+        self.assertEqual(self.obj.AnalysisStatus, "Ready")
+        self.assertEqual(self.obj.AnalysisSummary, "analysis summary")
+        self.assertIs(self.obj.Shape, result["shape"])
+
+    def test_execute_updates_preview_shapes(self):
+        result = {
+            "status": "Ready",
+            "draw_direction_score": 88.5,
+            "best_draw_direction": MagicMock(name="best_draw_direction"),
+            "draw_direction_ranking": "1. (0,0,1)",
+            "undercut_count": 0,
+            "undercut_summary": "none",
+            "undercut_regions": [],
+            "draft_violation_count": 0,
+            "draft_violation_summary": "none",
+            "draft_violation_regions": [],
+            "parting_surface_status": "Ready",
+            "parting_surface_normal": MagicMock(name="parting_surface_normal"),
+            "parting_surface_offset": 0.0,
+            "parting_surface_area": 1.0,
+            "parting_surface_summary": "parting surface ready",
+            "parting_surface_shape": MagicMock(name="parting_surface_shape"),
+            "mould_halves_status": "Ready",
+            "mould_halves_summary": "mould halves ready",
+            "mould_half_a_shape": MagicMock(name="mould_half_a_shape"),
+            "mould_half_b_shape": MagicMock(name="mould_half_b_shape"),
+            "validation_status": "Pass",
+            "validation_summary": "validation passed",
+            "validation_checks": [],
+            "summary": "analysis summary",
+            "shape": MagicMock(name="analysis_shape"),
+        }
+        with unittest.mock.patch.object(
+            _mould_analysis_feature_mod,
+            "analyze_source_shape",
+            return_value=result,
+        ):
+            self.fp.execute(self.obj)
+
+        self.assertIs(self.parting_surface.Shape, result["parting_surface_shape"])
+        self.assertIs(self.mould_half_a.Shape, result["mould_half_a_shape"])
+        self.assertIs(self.mould_half_b.Shape, result["mould_half_b_shape"])
+
+    def test_on_changed_source_triggers_recompute(self):
+        self.obj.recompute = MagicMock()
+        self.fp.onChanged(self.obj, "Source")
+        self.obj.recompute.assert_called_once()
+
+    def test_on_changed_unrelated_property_is_noop(self):
+        self.obj.recompute = MagicMock()
+        self.fp.onChanged(self.obj, "Name")
+        self.obj.recompute.assert_not_called()
+
+
+class TestMouldFP(unittest.TestCase):
+    """Tests for features/Mould.py :: MouldFP."""
+
+    def setUp(self):
+        self.source = MagicMock(name="source")
+        self.source.Shape = MagicMock(name="source_shape")
+        self.obj = _FakeFCObj("Mould")
+        self.fp = MouldFP(self.obj, self.source)
+
+    def test_init_sets_proxy(self):
+        self.assertIs(self.obj.Proxy, self.fp)
+
+    def test_init_adds_overhang_properties(self):
+        self.assertAlmostEqual(self.obj.XOverhang.Value, 30.0)
+        self.assertAlmostEqual(self.obj.YOverhang.Value, 30.0)
+        self.assertAlmostEqual(self.obj.ZOverhang.Value, 5.0)
+
+    def test_init_adds_generation_status(self):
+        self.assertEqual(self.obj.GenerationStatus, "pending")
+
+    def test_execute_updates_shape_and_summary(self):
+        result_shape = MagicMock(name="mould_shape")
+        with unittest.mock.patch.object(
+            _mould_feature_mod,
+            "make_moulds_with_diagnostics",
+            return_value={
+                "shape": result_shape,
+                "status": "ok",
+                "summary": "cavity boolean cut succeeded.",
+            },
+        ):
+            self.fp.execute(self.obj)
+
+        self.assertIs(self.obj.Shape, result_shape)
+        self.assertEqual(self.obj.GenerationStatus, "ok")
+        self.assertEqual(self.obj.GenerationSummary, "cavity boolean cut succeeded.")
+
+    def test_execute_warns_when_generation_fails(self):
+        _mould_feature_mod.FreeCAD.Console.PrintWarning.reset_mock()
+        with unittest.mock.patch.object(
+            _mould_feature_mod,
+            "make_moulds_with_diagnostics",
+            return_value={
+                "shape": MagicMock(name="failed_shape"),
+                "status": "fail_closed",
+                "summary": "failed to generate cavity",
+            },
+        ):
+            self.fp.execute(self.obj)
+
+        _mould_feature_mod.FreeCAD.Console.PrintWarning.assert_called_once()
+
+
+class TestPartPlaneFP(unittest.TestCase):
+    """Tests for features/PartPlane.py :: PartPlaneFP."""
+
+    def setUp(self):
+        self.source = MagicMock(name="source")
+        self.source.Shape = MagicMock(name="source_shape")
+        self.obj = _FakeFCObj("PartPlane")
+        self.fp = PartPlaneFP(self.obj, self.source)
+
+    def test_init_sets_proxy(self):
+        self.assertIs(self.obj.Proxy, self.fp)
+
+    def test_init_adds_surface_properties(self):
+        self.assertAlmostEqual(self.obj.Inset.Value, 0.01)
+        self.assertTrue(self.obj.Ruled)
+        self.assertIsNotNone(self.obj.ViewDir)
+
+    def test_execute_sets_shape_from_tool(self):
+        result_shape = MagicMock(name="parting_surface")
+        with unittest.mock.patch.object(
+            _part_plane_feature_mod,
+            "make_parting_surface3",
+            return_value=result_shape,
+        ):
+            self.fp.execute(self.obj)
+
+        self.assertIs(self.obj.Shape, result_shape)
+
+    def test_view_provider_icon(self):
+        vp = ViewProviderPartPlane.__new__(ViewProviderPartPlane)
+        self.assertEqual(vp.getIcon(), _part_plane_feature_mod.PART_PLANE_TOOL_ICON)
+
+
+# ---------------------------------------------------------------------------
 # Tests: RosetteFP
 # ---------------------------------------------------------------------------
 
@@ -1079,6 +1363,8 @@ class TestRosetteFP(unittest.TestCase):
         face.ParameterRange = (0.0, 2.0, 0.0, 4.0)
         face.valueAt = MagicMock(return_value=expected_centre)
         face.normalAt = MagicMock(return_value=MagicMock(name="normal"))
+        face.Surface = MagicMock()
+        face.Surface.tangent.return_value = (MagicMock(name="u_axis"),)
         self.obj.Support = self._make_fake_support(face)
         self.fp.execute(self.obj)
         # valueAt should be called at the parametric centre (u=1.0, v=2.0)
@@ -1091,28 +1377,30 @@ class TestRosetteFP(unittest.TestCase):
         face.ParameterRange = (0.0, 1.0, 0.0, 1.0)
         face.valueAt = MagicMock(return_value=MagicMock())
         face.normalAt = MagicMock(return_value=MagicMock())
+        face.Surface = MagicMock()
+        face.Surface.tangent.return_value = (MagicMock(name="u_axis"),)
         self.obj.Support = self._make_fake_support(face)
         self.fp.execute(self.obj)
 
     # -- execute() with unknown support type ---------------------------------
 
-    def test_execute_unknown_support_type_raises(self):
+    def test_execute_unknown_support_type_uses_identity_frame(self):
         class _UnknownShape:
             pass
 
         unknown = _UnknownShape()
         self.obj.Support = self._make_fake_support(unknown)
-        with self.assertRaises(ValueError):
-            self.fp.execute(self.obj)
+        self.fp.execute(self.obj)
+        self.assertIsNotNone(self.obj.LocalCoordinateSystem.Placement.Base)
 
     # -- execute() with empty getSubObject result ----------------------------
 
-    def test_execute_empty_geom_list_raises(self):
+    def test_execute_empty_geom_list_uses_identity_frame(self):
         sup = MagicMock()
         sup.getSubObject.return_value = []
         self.obj.Support = (sup, "Sub1")
-        with self.assertRaises(ValueError):
-            self.fp.execute(self.obj)
+        self.fp.execute(self.obj)
+        self.assertIsNotNone(self.obj.LocalCoordinateSystem.Placement.Base)
 
     # -- onChanged() ---------------------------------------------------------
 
