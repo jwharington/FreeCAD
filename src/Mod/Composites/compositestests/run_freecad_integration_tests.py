@@ -22,9 +22,17 @@ def main():
         if repo_root not in sys.path:
             sys.path.insert(0, repo_root)
 
-        import Composites.compositestests.test_integration_freecad as test_module
+        from Composites.compositestests import test_integration_freecad
+        from Composites.compositestests import test_rosette_integration
+        from Composites.compositestests import test_transfer_rosette
 
-        suite = unittest.defaultTestLoader.loadTestsFromModule(test_module)
+        suite = unittest.TestSuite()
+        for test_module in (
+            test_integration_freecad,
+            test_rosette_integration,
+            test_transfer_rosette,
+        ):
+            suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(test_module))
         print(f"Loaded {suite.countTestCases()} integration test(s)")
         result = unittest.TextTestRunner(verbosity=2, stream=sys.stdout).run(
             suite
