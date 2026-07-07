@@ -122,6 +122,24 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertEqual(len(seam_forward.Edges), len(seam_reverse.Edges))
         self.assertAlmostEqual(seam_forward.Area, seam_reverse.Area, places=8)
 
+    def test_seam_make_edge_seam_handles_disconnected_edges(self):
+        self._ensure_freecadgui()
+        from Composites.tools.seam import make_edge_seam
+
+        box = Part.makeBox(10.0, 10.0, 10.0)
+        face = box.Faces[5]
+        seam = make_edge_seam(
+            face,
+            [face.Edges[0], face.Edges[2]],
+            overlap=1.0,
+        )
+
+        self.assertFalse(seam.isNull())
+        self.assertEqual(seam.ShapeType, "Compound")
+        self.assertEqual(len(seam.Faces), 2)
+        self.assertEqual(len(seam.Edges), 7)
+        self.assertAlmostEqual(seam.Area, face.Area, places=8)
+
     def test_seam_make_edge_seam_on_curved_surface(self):
         self._ensure_freecadgui()
         from Composites.tools.seam import make_edge_seam
@@ -133,6 +151,45 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertEqual(seam.ShapeType, "Compound")
         self.assertGreater(seam.Area, cylinder.Area)
         self.assertEqual(len(seam.Faces), 6)
+
+    def test_seam_make_edge_seam_on_annulus(self):
+        self._ensure_freecadgui()
+        from Composites.tools.seam import make_edge_seam
+
+        torus = Part.makeTorus(20.0, 5.0)
+        seam = make_edge_seam(torus, [torus.Edges[0], torus.Edges[1]], overlap=1.0)
+
+        self.assertFalse(seam.isNull())
+        self.assertEqual(seam.ShapeType, "Solid")
+        self.assertEqual(len(seam.Faces), 3)
+        self.assertEqual(len(seam.Edges), 6)
+        self.assertAlmostEqual(seam.Area, torus.Area, places=8)
+
+    def test_seam_make_edge_seam_on_tapered_surface(self):
+        self._ensure_freecadgui()
+        from Composites.tools.seam import make_edge_seam
+
+        cone = Part.makeCone(10.0, 5.0, 20.0)
+        seam = make_edge_seam(cone, [cone.Faces[0].Edges[0]], overlap=1.0)
+
+        self.assertFalse(seam.isNull())
+        self.assertEqual(seam.ShapeType, "Compound")
+        self.assertEqual(len(seam.Faces), 6)
+        self.assertEqual(len(seam.Edges), 9)
+        self.assertGreater(seam.Area, cone.Faces[0].Area)
+
+    def test_seam_make_edge_seam_handles_thin_geometry(self):
+        self._ensure_freecadgui()
+        from Composites.tools.seam import make_edge_seam
+
+        box = Part.makeBox(0.001, 0.001, 0.001)
+        seam = make_edge_seam(box.Faces[5], [box.Faces[5].Edges[0]], overlap=0.001)
+
+        self.assertFalse(seam.isNull())
+        self.assertEqual(seam.ShapeType, "Face")
+        self.assertEqual(len(seam.Faces), 1)
+        self.assertEqual(len(seam.Edges), 4)
+        self.assertAlmostEqual(seam.Area, box.Faces[5].Area, places=12)
 
     def test_seam_make_join_seam_on_angled_cylinder_faces(self):
         self._ensure_freecadgui()
@@ -151,6 +208,38 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertEqual(len(seam.Faces), 2)
         self.assertEqual(len(seam.Edges), 5)
         self.assertAlmostEqual(seam.Area, side_face.Area, places=8)
+
+    def test_seam_make_join_seam_handles_partial_overlap(self):
+        self._ensure_freecadgui()
+        from Composites.tools.seam import get_partner_edges, make_join_seam
+
+        master = Part.makePlane(20.0, 10.0)
+        attached = Part.makePlane(10.0, 10.0, FreeCAD.Vector(5.0, 0.0, 0.0))
+
+        self.assertFalse(get_partner_edges(master, attached))
+
+        seam = make_join_seam(master, attached, overlap=1.0)
+
+        self.assertFalse(seam.isNull())
+        self.assertEqual(seam.ShapeType, "Compound")
+        self.assertEqual(len(seam.Faces), 5)
+        self.assertEqual(len(seam.Edges), 16)
+        self.assertAlmostEqual(seam.Area, master.Area, places=8)
+
+    def test_seam_make_join_seam_is_sensitive_to_face_order(self):
+        self._ensure_freecadgui()
+        from Composites.tools.seam import make_join_seam
+
+        master = Part.makePlane(20.0, 10.0)
+        attached = Part.makePlane(10.0, 10.0, FreeCAD.Vector(5.0, 0.0, 0.0))
+
+        seam = make_join_seam(attached, master, overlap=1.0)
+
+        self.assertFalse(seam.isNull())
+        self.assertEqual(seam.ShapeType, "Compound")
+        self.assertEqual(len(seam.Faces), 3)
+        self.assertEqual(len(seam.Edges), 10)
+        self.assertAlmostEqual(seam.Area, attached.Area, places=8)
 
     def test_seam_make_join_seam_without_partner_edges_raises(self):
         self._ensure_freecadgui()

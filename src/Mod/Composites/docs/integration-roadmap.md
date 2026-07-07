@@ -170,6 +170,8 @@ For each seam case, verify:
 | Self-intersection risk | Geometry could cause the split volume to intersect itself | failure is explicit, not silent |
 | Thin or sliver geometry | Very small features or near-zero widths | robustness against CAD precision limits |
 
+Current integration coverage already exercises the practical seam cases above: single-edge baseline, connected and disconnected multi-edge inputs, edge-order independence, partial-overlap face joins in both orders, angled cylinder joins, annulus/toroidal seams, tapered cone seams, and thin-geometry seams, plus explicit empty-input and no-partner failures.
+
 ## Suggested Next Slice
 
 Start with `Seam`:
