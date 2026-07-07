@@ -57,6 +57,7 @@ All "zero-coverage" verdicts in Section B were verified by grep spot-checks.
 | `VPCompositePart.py` | NO (not loaded by any test) | NO |
 | `RunCompositeExample.py` | NO | NO |
 | `Mould.py` | NO | NO |
+| `MouldAnalysis.py` | NO | NO |
 | `CompositeShell.py` | YES (`test_freecad_fp.py` TestCompositeShellFPRosetteProperty; integration in `test_rosette_integration.py`/`test_transfer_rosette.py`/`test_integration_freecad.py`) | YES (`_shell_example_common.py`) |
 | `ToolbarGroup.py` | NO | NO |
 | `VPCompositeBase.py` | partial (`test_freecad_fp.py` — module loaded; `CompositeBaseFP` exercised transitively via FP subclasses; `VPCompositeBase` view-provider untested) | NO |
@@ -144,12 +145,13 @@ GUI-wired = user-facing command wired in `InitGui.py`/`features/ToolbarGroup.py`
 | Feature | Purpose | Toolbar group |
 |---|---|---|
 | `features/RunCompositeExample.py` | Runs the default `ud_plate_basic` example | `Composites_RunCompositeExample` |
-| `features/Mould.py` | Builds a mould shape from a source | `Composites_MouldTools` |
-| `features/PartPlane.py` | Planar section from a source shape | `Composites_MouldTools` |
+| `features/MouldAnalysis.py` | Proposes a split direction, parting surface, and mould halves | `Composites_MouldTools` |
+| `features/Mould.py` | Builds a split mould stock / toolpath volume from a source | `Composites_MouldTools` |
+| `features/PartPlane.py` | Parting surface from a source shape | `Composites_MouldTools` |
 | `features/TexturePlan.py` | Unwraps composite shells to a flat texture plan | `Composites_TexturePlan` |
 | `features/Stiffener.py` | Projects a profile stiffener onto a plan | `Composites_StructureTools` |
 | `features/Seam.py` | Overlap seam along edges | `Composites_StructureTools` |
-| `features/Dart.py` | Cut/dart in the drape mesh | `Composites_Dart` |
+| `features/Dart.py` | Planned PlaceDart cut-line placement for draping | `Composites_Dart` |
 
 ### GUI task panels (entire `taskpanels/` package untested)
 
@@ -162,7 +164,7 @@ GUI-wired = user-facing command wired in `InitGui.py`/`features/ToolbarGroup.py`
 ### Internal support modules (not GUI-wired, run only transitively)
 
 - `features/coin_geometry.py` — Coin3D scene-graph helpers for draped-mesh injection (consumed by `CompositeShell`).
-- `features/VPCompositePart.py` — base FP/VP for part-like composite features (base class for Mould/PartPlane/Seam/Stiffener/TexturePlan/Dart).
+- `features/VPCompositePart.py` — base FP/VP for part-like composite features (base class for MouldAnalysis/Mould/PartPlane/Seam/Stiffener/TexturePlan/Dart).
 - `features/RosetteSymbol.py` — Coin3D X/Y rosette axis symbol (consumed by `VPCompositeShell`/`Rosette` view providers).
 - `compositetools/drape_task.py` — runs the C++ draping solve synchronously (invoked by `CompositeShell.execute`).
 - `util/selection_utils.py` — find first face in a `Gui.SelectionObject` (only a commented-out import in `Command.py`).
@@ -211,4 +213,4 @@ No source module is example-covered but test-uncovered.
 
 ## Bottom line
 
-The biggest practical exposure is the **seven GUI feature commands** (`Mould`, `PartPlane`, `TexturePlan`, `Stiffener`, `Seam`, `Dart`, `RunCompositeExample`) plus the **entire `taskpanels/` package** — all are user-facing, none has any test or example. The drape solver path (`CompositesDrape.cpp`, `drape_task.py`, `ext/`) is only indirectly exercised through integration draping and would benefit from a direct test.
+The biggest practical exposure is the **eight GUI feature commands** (`MouldAnalysis`, `Mould`, `PartPlane`, `TexturePlan`, `Stiffener`, `Seam`, `Dart`, `RunCompositeExample`) plus the **entire `taskpanels/` package** — all are user-facing, none has any test or example. The drape solver path (`CompositesDrape.cpp`, `drape_task.py`, `ext/`) is only indirectly exercised through integration draping and would benefit from a direct test.
