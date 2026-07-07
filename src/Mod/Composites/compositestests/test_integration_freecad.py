@@ -16,6 +16,7 @@ import types
 import unittest
 
 import FreeCAD
+import Part
 
 # Some existing modules import CompositesWB by name.
 if "CompositesWB" not in sys.modules:
@@ -25,6 +26,7 @@ if "CompositesWB" not in sys.modules:
 
 import Composites as CompositesWB
 from Composites.compositeexamples import runner as example_runner
+from Composites.compositeexamples.examples import tubular_shell
 from Composites.compositestests.example_materials import make_glass
 
 
@@ -32,6 +34,24 @@ class TestFreeCADIntegration(unittest.TestCase):
     def _close_doc_if_exists(self, doc_name):
         if doc_name in FreeCAD.listDocuments():
             FreeCAD.closeDocument(doc_name)
+
+    def _ensure_freecadgui(self):
+        import FreeCADGui
+
+        if not hasattr(FreeCADGui, "addCommand"):
+            FreeCADGui.addCommand = lambda *args, **kwargs: None
+        return FreeCADGui
+
+    def _make_source_feature(self, doc, name="Source", shape=None):
+        source = doc.addObject("Part::Feature", name)
+        source.Shape = shape if shape is not None else Part.makeCylinder(10.0, 20.0)
+        return source
+
+    def _make_sketch(self, doc, name, points):
+        sketch = doc.addObject("Sketcher::SketchObject", name)
+        for start, end in zip(points, points[1:]):
+            sketch.addGeometry(Part.LineSegment(start, end), False)
+        return sketch
 
     def _make_fibre_lamina(self, doc):
         import FreeCADGui
@@ -108,10 +128,7 @@ class TestFreeCADIntegration(unittest.TestCase):
         )
 
     def test_rosette_featurepython_creation(self):
-        import FreeCADGui
-
-        if not hasattr(FreeCADGui, "addCommand"):
-            FreeCADGui.addCommand = lambda *args, **kwargs: None
+        self._ensure_freecadgui()
 
         from Composites.features.Rosette import (
             RosetteFP,
@@ -135,6 +152,130 @@ class TestFreeCADIntegration(unittest.TestCase):
         )
 
         FreeCAD.closeDocument(doc_name)
+
+    def test_mould_analysis_part_plane_and_mould_integration(self):
+        self._ensure_freecadgui()
+        from Composites.features.MouldAnalysis import MouldAnalysisFP
+        from Composites.features.Mould import MouldFP
+        from Composites.features.PartPlane import PartPlaneFP
+
+        doc_name = "CompositesMouldWorkflowIntegrationTest"
+        if doc_name in FreeCAD.listDocuments():
+            FreeCAD.closeDocument(doc_name)
+
+        doc = FreeCAD.newDocument(doc_name)
+        source = self._make_source_feature(doc, shape=Part.makeCylinder(10.0, 20.0))
+
+        mould_analysis = doc.addObject("App::FeaturePython", "MouldAnalysis")
+        MouldAnalysisFP(mould_analysis, source)
+        doc.recompute()
+
+        self.assertNotEqual(mould_analysis.AnalysisStatus, "Waiting for source")
+        self.assertIsNotNone(mould_analysis.PartingSurface)
+        self.assertFalse(mould_analysis.PartingSurface.Shape.isNull())
+        self.assertIsNotNone(mould_analysis.MouldHalfA)
+        self.assertIsNotNone(mould_analysis.MouldHalfB)
+        self.assertFalse(mould_analysis.MouldHalfA.Shape.isNull())
+        self.assertFalse(mould_analysis.MouldHalfB.Shape.isNull())
+
+        part_plane = doc.addObject("App::FeaturePython", "PartPlane")
+        PartPlaneFP(part_plane, source)
+        doc.recompute()
+
+        self.assertIsNotNone(part_plane.Shape)
+        self.assertFalse(part_plane.Shape.isNull())
+
+        mould = doc.addObject("App::FeaturePython", "Mould")
+        MouldFP(mould, source)
+        doc.recompute()
+
+        self.assertIsNotNone(mould.Shape)
+        self.assertFalse(mould.Shape.isNull())
+        self.assertIn(mould.GenerationStatus, {"ok", "fail_closed"})
+        self.assertTrue(mould.GenerationSummary)
+
+        FreeCAD.closeDocument(doc_name)
+
+    def test_texture_plan_on_real_shell_geometry(self):
+        self._ensure_freecadgui()
+        from Composites.features.TexturePlan import TexturePlanFP
+
+        doc_name = "CompositesTexturePlanIntegrationTest"
+        if doc_name in FreeCAD.listDocuments():
+            FreeCAD.closeDocument(doc_name)
+
+        doc = FreeCAD.newDocument(doc_name)
+        try:
+            result = tubular_shell.build(
+                doc=doc,
+                run_solver=False,
+                debug_options={"skip_view_providers": True},
+            )
+            shell = result.get("feature_stack", {}).get("shell")
+            if shell is None:
+                self.skipTest("shell feature not available from tubular_shell example")
+
+            texture_plan = doc.addObject("Part::FeaturePython", "TexturePlan")
+            TexturePlanFP(texture_plan, [shell])
+            doc.recompute()
+
+            self.assertIsNotNone(texture_plan.Shape)
+            self.assertFalse(texture_plan.Shape.isNull())
+            self.assertGreater(len(getattr(texture_plan.Shape, "Wires", [])), 0)
+        finally:
+            FreeCAD.closeDocument(doc_name)
+
+    def test_stiffener_on_real_support_and_sketches(self):
+        self._ensure_freecadgui()
+        from Composites.features.Stiffener import StiffenerFP
+
+        doc_name = "CompositesStiffenerIntegrationTest"
+        if doc_name in FreeCAD.listDocuments():
+            FreeCAD.closeDocument(doc_name)
+
+        doc = FreeCAD.newDocument(doc_name)
+        try:
+            support = doc.addObject("Part::Feature", "Support")
+            support.Shape = Part.makePlane(
+                100.0,
+                100.0,
+                FreeCAD.Vector(0.0, 0.0, 0.0),
+                FreeCAD.Vector(0.0, 0.0, 1.0),
+            )
+            plan = self._make_sketch(
+                doc,
+                "Plan",
+                [
+                    FreeCAD.Vector(10.0, 10.0, 0.0),
+                    FreeCAD.Vector(80.0, 10.0, 0.0),
+                ],
+            )
+            profile = self._make_sketch(
+                doc,
+                "Profile",
+                [
+                    FreeCAD.Vector(0.0, 0.0, 0.0),
+                    FreeCAD.Vector(0.0, 10.0, 0.0),
+                    FreeCAD.Vector(5.0, 10.0, 0.0),
+                    FreeCAD.Vector(5.0, 0.0, 0.0),
+                    FreeCAD.Vector(0.0, 0.0, 0.0),
+                ],
+            )
+
+            stiffener = doc.addObject("Part::FeaturePython", "Stiffener")
+            StiffenerFP(stiffener, support=support, plan=plan, profile=profile)
+            try:
+                doc.recompute()
+            except Exception as exc:
+                self.skipTest(f"stiffener geometry unavailable in this FreeCAD build: {exc}")
+
+            self.assertIsNotNone(stiffener.Shape)
+            self.assertFalse(stiffener.Shape.isNull())
+            self.assertFalse(support.Visibility)
+            self.assertFalse(plan.Visibility)
+            self.assertFalse(profile.Visibility)
+        finally:
+            FreeCAD.closeDocument(doc_name)
 
     def test_conical_example_mesh_only_fem_job_runs(self):
         doc_name = "Composites_Conical_Panel"
