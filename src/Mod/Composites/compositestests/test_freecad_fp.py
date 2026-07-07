@@ -98,9 +98,21 @@ class _FakeFaceShape:
     pass
 
 
+class _FakeWire:
+    pass
+
+
+class _FakeShape:
+    pass
+
+
 _part_mod.Vertex = _FakeVertex
 _part_mod.Edge = _FakeEdge
 _part_mod.Face = _FakeFaceShape
+_part_mod.Wire = _FakeWire
+_part_mod.Shape = _FakeShape
+_part_mod.makePolygon = MagicMock()
+_part_mod.makeCompound = MagicMock()
 sys.modules["Part"] = _part_mod
 
 # MeshEnums mock (required by CompositeShell.py)
@@ -316,9 +328,14 @@ _mould_analysis_tool_mod = _load_module(
     "Composites.tools.mould_analysis",
     "src/Mod/Composites/tools/mould_analysis.py",
 )
+_stiffener_tool_mod = _load_module(
+    "Composites.tools.stiffener",
+    "src/Mod/Composites/tools/stiffener.py",
+)
 _fake_tools_pkg.part_plane = _part_plane_tool_mod
 _fake_tools_pkg.mould = _mould_tool_mod
 _fake_tools_pkg.mould_analysis = _mould_analysis_tool_mod
+_fake_tools_pkg.stiffener = _stiffener_tool_mod
 
 # ---------------------------------------------------------------------------
 # Load feature modules in dependency order
@@ -408,6 +425,14 @@ _composite_shell_feature_mod = _load_module(
     "Composites.features.CompositeShell",
     "src/Mod/Composites/features/CompositeShell.py",
 )
+_texture_plan_feature_mod = _load_module(
+    "Composites.features.TexturePlan",
+    "src/Mod/Composites/features/TexturePlan.py",
+)
+_stiffener_feature_mod = _load_module(
+    "Composites.features.Stiffener",
+    "src/Mod/Composites/features/Stiffener.py",
+)
 _transfer_lcs_feature_mod = _load_module(
     "Composites.features.TransferRosette",
     "src/Mod/Composites/features/TransferRosette.py",
@@ -428,6 +453,10 @@ ViewProviderMouldAnalysis = _mould_analysis_feature_mod.ViewProviderMouldAnalysi
 ViewProviderMould = _mould_feature_mod.ViewProviderMould
 ViewProviderPartPlane = _part_plane_feature_mod.ViewProviderPartPlane
 CompositeShellFP = _composite_shell_feature_mod.CompositeShellFP
+TexturePlanFP = _texture_plan_feature_mod.TexturePlanFP
+ViewProviderTexturePlan = _texture_plan_feature_mod.ViewProviderTexturePlan
+StiffenerFP = _stiffener_feature_mod.StiffenerFP
+ViewProviderStiffener = _stiffener_feature_mod.ViewProviderStiffener
 
 HomogeneousLamina = _homo_mod.HomogeneousLamina
 FibreCompositeLamina = _fcl_obj_mod.FibreCompositeLamina
@@ -1246,6 +1275,120 @@ class TestPartPlaneFP(unittest.TestCase):
     def test_view_provider_icon(self):
         vp = ViewProviderPartPlane.__new__(ViewProviderPartPlane)
         self.assertEqual(vp.getIcon(), _part_plane_feature_mod.PART_PLANE_TOOL_ICON)
+
+
+# ---------------------------------------------------------------------------
+# Tests: TexturePlanFP / StiffenerFP
+# ---------------------------------------------------------------------------
+
+
+class TestTexturePlanFP(unittest.TestCase):
+    """Tests for features/TexturePlan.py :: TexturePlanFP."""
+
+    def setUp(self):
+        self.shell = MagicMock(name="shell")
+        self.shell.Name = "ShellA"
+        self.shell.Proxy = MagicMock()
+        self.shell.Proxy.Type = "Composite::Shell"
+        self.shell.Proxy.get_stack_assembly.return_value = {"layer_1": 45}
+        self.shell.Proxy.get_boundaries.return_value = [
+            [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 0.0)]
+        ]
+        self.shell.Support = MagicMock()
+        self.shell.Support.Shape = MagicMock()
+        self.face = MagicMock()
+        self.face.isInside.return_value = True
+        self.projected_point = MagicMock()
+        self.projected_point.isValid.return_value = True
+        self.face.value.return_value = self.projected_point
+        self.shell.Support.Shape.Faces = [self.face]
+
+        self.obj = _FakeFCObj("TexturePlan")
+        self.fp = TexturePlanFP(self.obj, [self.shell])
+
+    def test_init_sets_proxy(self):
+        self.assertIs(self.obj.Proxy, self.fp)
+
+    def test_execute_projects_shell_boundaries(self):
+        compound = MagicMock(name="compound")
+        wire = MagicMock(name="wire")
+        with unittest.mock.patch.object(
+            _part_mod,
+            "makePolygon",
+            return_value="polygon",
+        ), unittest.mock.patch.object(
+            _part_mod,
+            "Wire",
+            return_value=wire,
+        ), unittest.mock.patch.object(
+            _part_mod,
+            "makeCompound",
+            return_value=compound,
+        ):
+            self.fp.execute(self.obj)
+
+        self.assertIs(self.obj.Shape, compound)
+        self.shell.Proxy.get_stack_assembly.assert_called_once_with(self.shell)
+        self.shell.Proxy.get_boundaries.assert_called_once_with(offset_angle_deg=45)
+        self.face.value.assert_called()
+
+    def test_on_changed_composite_shell_triggers_recompute(self):
+        self.obj.recompute = MagicMock()
+        self.fp.onChanged(self.obj, "CompositeShell")
+        self.obj.recompute.assert_called_once()
+
+    def test_view_provider_defaults(self):
+        vp = ViewProviderTexturePlan.__new__(ViewProviderTexturePlan)
+        self.assertEqual(vp.getDefaultDisplayMode(), "Wireframe")
+
+
+class TestStiffenerFP(unittest.TestCase):
+    """Tests for features/Stiffener.py :: StiffenerFP."""
+
+    def setUp(self):
+        self.support = MagicMock(name="support")
+        self.support.Shape = MagicMock(name="support_shape")
+        self.support.Visibility = True
+        self.plan = MagicMock(name="plan")
+        self.plan.Visibility = True
+        self.profile = MagicMock(name="profile")
+        self.profile.Visibility = True
+        self.obj = _FakeFCObj("Stiffener")
+        self.fp = StiffenerFP(
+            self.obj,
+            support=self.support,
+            plan=self.plan,
+            profile=self.profile,
+        )
+
+    def test_init_sets_proxy(self):
+        self.assertIs(self.obj.Proxy, self.fp)
+
+    def test_init_adds_links_and_defaults(self):
+        self.assertIs(self.obj.Support, self.support)
+        self.assertIs(self.obj.Plan, self.plan)
+        self.assertIs(self.obj.Profile, self.profile)
+
+    def test_execute_sets_shape_and_hides_inputs(self):
+        shape = MagicMock(name="stiffener_shape")
+        tools = [MagicMock(name="tool_1")]
+        with unittest.mock.patch.object(
+            _stiffener_feature_mod,
+            "make_stiffener",
+            return_value=(shape, tools),
+        ):
+            self.fp.execute(self.obj)
+
+        self.assertIs(self.obj.Shape, shape)
+        self.assertIs(self.fp.tools, tools)
+        self.assertFalse(self.support.Visibility)
+        self.assertFalse(self.plan.Visibility)
+        self.assertFalse(self.profile.Visibility)
+
+    def test_view_provider_claim_children(self):
+        vp = ViewProviderStiffener.__new__(ViewProviderStiffener)
+        vp.Object = self.obj
+        self.assertEqual(vp.claimChildren(), [self.support, self.plan, self.profile])
 
 
 # ---------------------------------------------------------------------------
