@@ -140,6 +140,24 @@ All "zero-coverage" verdicts in Section B were verified by grep spot-checks.
 
 GUI-wired = user-facing command wired in `InitGui.py`/`features/ToolbarGroup.py`.
 
+### Recommended remediation order
+
+This ordering reflects user impact, coupling, and how central the feature is to the current mould workflow.
+
+| Priority | Scope | Why this comes first |
+|---|---|---|
+| P0 | `MouldAnalysis`, `Mould`, `PartPlane` | Core split-mould workflow; these are now tightly coupled through parting-line / parting-surface / mould-half semantics. |
+| P1 | `TexturePlan`, `Stiffener` | User-facing geometry conveniences with direct manufacturing value and moderate coupling. |
+| P2 | `Seam`, `Dart` / `PlaceDart`, `RunCompositeExample` | Important, but either more specialized, currently being redefined, or simpler wrapper behavior. |
+| P3 | `taskpanels/` package | Large GUI surface area; important, but can be tested after the core command flow is stabilized. |
+
+### Notes on the priority bands
+
+- **P0** should get the first integration tests because it defines the mould-analysis pipeline and the terminology the rest of the tooling depends on.
+- **P1** should follow once the core split workflow is stable.
+- **P2** contains useful but less central user actions, including the future `PlaceDart` workflow.
+- **P3** is broad GUI coverage that benefits from the core object model being stable first.
+
 ### GUI feature commands (highest priority — user-facing, untested, no example)
 
 | Feature | Purpose | Toolbar group |
@@ -150,7 +168,7 @@ GUI-wired = user-facing command wired in `InitGui.py`/`features/ToolbarGroup.py`
 | `features/PartPlane.py` | Parting surface from a source shape | `Composites_MouldTools` |
 | `features/TexturePlan.py` | Unwraps composite shells to a flat texture plan | `Composites_TexturePlan` |
 | `features/Stiffener.py` | Projects a profile stiffener onto a plan | `Composites_StructureTools` |
-| `features/Seam.py` | Overlap seam along edges | `Composites_StructureTools` |
+| `features/Seam.py` | Overlap seam between composite shells | `Composites_StructureTools` |
 | `features/Dart.py` | Planned PlaceDart cut-line placement for draping | `Composites_Dart` |
 
 ### GUI task panels (entire `taskpanels/` package untested)
