@@ -93,6 +93,60 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertFalse(seam.isNull())
         self.assertEqual(seam.ShapeType, "Compound")
 
+    def test_seam_make_edge_seam_is_order_independent(self):
+        self._ensure_freecadgui()
+        from Composites.tools.seam import make_edge_seam
+
+        box = Part.makeBox(10.0, 10.0, 10.0)
+        face = box.Faces[5]
+        seam_forward = make_edge_seam(
+            face,
+            [face.Edges[0], face.Edges[1]],
+            overlap=1.0,
+        )
+        seam_reverse = make_edge_seam(
+            face,
+            [face.Edges[1], face.Edges[0]],
+            overlap=1.0,
+        )
+
+        self.assertFalse(seam_forward.isNull())
+        self.assertFalse(seam_reverse.isNull())
+        self.assertEqual(seam_forward.ShapeType, seam_reverse.ShapeType)
+        self.assertEqual(len(seam_forward.Faces), len(seam_reverse.Faces))
+        self.assertEqual(len(seam_forward.Edges), len(seam_reverse.Edges))
+        self.assertAlmostEqual(seam_forward.Area, seam_reverse.Area, places=8)
+
+    def test_seam_make_edge_seam_on_curved_surface(self):
+        self._ensure_freecadgui()
+        from Composites.tools.seam import make_edge_seam
+
+        cylinder = Part.makeCylinder(10.0, 20.0)
+        seam = make_edge_seam(cylinder, [cylinder.Faces[0].Edges[0]], overlap=1.0)
+
+        self.assertFalse(seam.isNull())
+        self.assertEqual(seam.ShapeType, "Compound")
+        self.assertGreater(seam.Area, cylinder.Area)
+        self.assertEqual(len(seam.Faces), 6)
+
+    def test_seam_make_join_seam_on_angled_cylinder_faces(self):
+        self._ensure_freecadgui()
+        from Composites.tools.seam import get_partner_edges, make_join_seam
+
+        cylinder = Part.makeCylinder(10.0, 20.0)
+        side_face = cylinder.Faces[0]
+        cap_face = cylinder.Faces[1]
+
+        self.assertTrue(get_partner_edges(side_face, cap_face))
+
+        seam = make_join_seam(side_face, cap_face, overlap=1.0)
+
+        self.assertFalse(seam.isNull())
+        self.assertEqual(seam.ShapeType, "Compound")
+        self.assertEqual(len(seam.Faces), 2)
+        self.assertEqual(len(seam.Edges), 5)
+        self.assertAlmostEqual(seam.Area, side_face.Area, places=8)
+
     def test_seam_make_join_seam_without_partner_edges_raises(self):
         self._ensure_freecadgui()
         from Composites.tools.seam import make_join_seam

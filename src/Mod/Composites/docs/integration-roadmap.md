@@ -124,12 +124,58 @@ These items came from the coverage-gap audit and are still worth tracking, but t
 - `PlaceDart` is intentionally a replacement design, not a continuation of the removed legacy `Dart` path.
 - GUI-only polish and toolbar/button conveniences are not being prioritized here.
 
+## Seam Test Matrix
+
+The seam work should be tested by scenario rather than by one-off examples.
+
+### Core contract
+
+For each seam case, verify:
+
+- result is valid
+- result has the expected broad shape type
+- master area before/after is sensible
+- attached area before/after is sensible
+- overlap area is non-zero and bounded
+- overlap lies entirely on the attached surface
+- there is no overhang into free space
+- geometry failures raise exceptions rather than returning garbage
+
+### Primary scenarios
+
+| Scenario | Geometry idea | Main assertions |
+|---|---|---|
+| Single edge baseline | One edge on a simple planar master and matching attached edge | seam succeeds, shape type is stable, overlap is contained |
+| Multiple edges | Several connected edges in one call | edge ordering does not matter, result remains valid |
+| Long master / short attached | Master edge is longer than the attached edge | overlap is limited by the shorter attached side |
+| Short master / long attached | Attached edge is longer than the master edge | overlap still respects the master limitation |
+| Tapered master | Master expands or contracts along the seam path | overlap area changes smoothly, no detached fragments |
+| Angled master / attached | Faces are not coplanar | seam remains contained and does not leak into free space |
+| Looped seam / annulus | Closed seam path on a ring-like shape | cyclic topology stays closed and continuous |
+| No partner edges | Faces do not share matching edges | the join path raises an exception |
+| Bad edge input | Empty list or invalid subshape reference | the seam path raises an exception |
+
+### Secondary scenarios
+
+| Scenario | Geometry idea | Main assertions |
+|---|---|---|
+| Partial overlap only | Edges overlap only on part of their length | no assumption of full-length coincidence |
+| Reversed orientation | Same geometry with reversed edge direction | orientation normalization holds |
+| Nearly coincident edges | Edges are very close but not identical | tolerance handling stays stable |
+| Seam across a corner | Seam crosses a sharp kink or corner | continuity survives a normal discontinuity |
+| Hole-boundary seam | Seam follows an inner hole boundary | closed-loop topology remains valid |
+| Disconnected multi-edge input | Multiple edges are not mutually connected | input validation or predictable grouping |
+| Mixed curvature | One side flat, the other curved | containment and area checks still hold |
+| Boundary-adjacent seam | Seam sits close to the outer boundary | no overhang beyond the attached surface |
+| Self-intersection risk | Geometry could cause the split volume to intersect itself | failure is explicit, not silent |
+| Thin or sliver geometry | Very small features or near-zero widths | robustness against CAD precision limits |
+
 ## Suggested Next Slice
 
 Start with `Seam`:
 
-1. add direct tests for `make_edge_seam()` / `make_join_seam()`
-2. add a real integration test for `SeamFP`
-3. verify the command works with actual selected edges in FreeCADCmd
+1. add the highest-value scenario tests from the matrix above
+2. keep the direct tool tests and the `SeamFP` integration test aligned
+3. verify the command and tool behavior stay consistent under real FreeCAD recompute cycles
 
 After that, design and implement `PlaceDart`.
