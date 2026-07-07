@@ -187,7 +187,7 @@ class SeamShellFP(CompositeShellFP):
         if getattr(self, "_initializing", False):
             return
         if prop in {"Master", "Attachment", "LapSide", "Overlap"}:
-            fp.recompute()
+            self._sync_virtual_inputs(fp)
             return
         super().onChanged(fp, prop)
 
@@ -235,13 +235,13 @@ class SeamShellFP(CompositeShellFP):
         fp.Support = support
         fp.Laminate = laminate
         fp.Rosette = getattr(master, "Rosette", None) or getattr(attachment, "Rosette", None)
+        fp.Shape = shape
 
     def execute(self, fp):
         previous = getattr(self, "_initializing", False)
         self._initializing = True
         try:
             self._sync_virtual_inputs(fp)
-            super().execute(fp)
         finally:
             self._initializing = previous
 

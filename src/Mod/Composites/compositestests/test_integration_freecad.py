@@ -394,7 +394,6 @@ class TestFreeCADIntegration(unittest.TestCase):
             )
 
             seam.LapSide = "B+A"
-            doc.recompute()
 
             self.assertEqual(
                 seam.Laminate.Layers,
