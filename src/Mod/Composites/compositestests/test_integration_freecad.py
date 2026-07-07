@@ -78,6 +78,29 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertFalse(seam.isNull())
         self.assertEqual(seam.ShapeType, "Compound")
 
+    def test_seam_make_edge_seam_handles_multiple_edges(self):
+        self._ensure_freecadgui()
+        from Composites.tools.seam import make_edge_seam
+
+        box = Part.makeBox(10.0, 10.0, 10.0)
+        face = box.Faces[5]
+        seam = make_edge_seam(
+            face,
+            [face.Edges[0], face.Edges[1]],
+            overlap=1.0,
+        )
+
+        self.assertFalse(seam.isNull())
+        self.assertEqual(seam.ShapeType, "Compound")
+
+    def test_seam_make_join_seam_without_partner_edges_raises(self):
+        self._ensure_freecadgui()
+        from Composites.tools.seam import make_join_seam
+
+        box = Part.makeBox(10.0, 10.0, 10.0)
+        with self.assertRaises(ValueError):
+            make_join_seam(box.Faces[0], box.Faces[1], overlap=1.0)
+
     def test_seam_featurepython_rejects_missing_edges(self):
         self._ensure_freecadgui()
         from Composites.features.Seam import SeamFP
