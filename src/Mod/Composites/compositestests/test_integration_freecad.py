@@ -65,6 +65,25 @@ class TestFreeCADIntegration(unittest.TestCase):
         )
         return wire
 
+    def _make_composite_shell(self, doc, name_prefix, support_shape):
+        from Composites.compositeexamples.examples._shell_example_common import (
+            create_composite_feature_stack,
+            create_support_feature,
+        )
+
+        support = create_support_feature(doc, f"{name_prefix}Support", support_shape)
+        result = create_composite_feature_stack(
+            doc,
+            support,
+            name_prefix=name_prefix,
+            skip_recompute=False,
+            skip_view_providers=True,
+        )
+        shell = result["shell"]
+        if shell is None:
+            self.skipTest("composite shell build failed")
+        return result
+
     def test_seam_make_edge_seam_from_box_edge(self):
         self._ensure_freecadgui()
         from Composites.tools.seam import make_edge_seam
@@ -300,6 +319,87 @@ class TestFreeCADIntegration(unittest.TestCase):
             self.assertFalse(seam.Shape.isNull())
             self.assertEqual(seam.Shape.ShapeType, "Face")
             self.assertFalse(source.Visibility)
+        finally:
+            FreeCAD.closeDocument(doc_name)
+
+    def test_seam_featurepython_supports_master_attachment_faces(self):
+        self._ensure_freecadgui()
+        from Composites.features.Seam import SeamFP
+
+        doc_name = "CompositesSeamObjectModeTest"
+        if doc_name in FreeCAD.listDocuments():
+            FreeCAD.closeDocument(doc_name)
+
+        doc = FreeCAD.newDocument(doc_name)
+        try:
+            master = self._make_source_feature(
+                doc,
+                name="Master",
+                shape=Part.makePlane(20.0, 10.0),
+            )
+            attachment = self._make_source_feature(
+                doc,
+                name="Attachment",
+                shape=Part.makePlane(
+                    10.0,
+                    10.0,
+                    FreeCAD.Vector(5.0, 0.0, 0.0),
+                ),
+            )
+            seam = doc.addObject("Part::FeaturePython", "Seam")
+            SeamFP(seam)
+            seam.Master = master
+            seam.Attachment = attachment
+            doc.recompute()
+
+            self.assertFalse(seam.Shape.isNull())
+            self.assertEqual(seam.Shape.ShapeType, "Compound")
+        finally:
+            FreeCAD.closeDocument(doc_name)
+
+    def test_seam_shell_output_aggregates_laminates_by_lap_side(self):
+        self._ensure_freecadgui()
+        from Composites.features.Seam import SeamShellFP, is_composite_shell
+
+        doc_name = "CompositesSeamShellObjectModeTest"
+        if doc_name in FreeCAD.listDocuments():
+            FreeCAD.closeDocument(doc_name)
+
+        doc = FreeCAD.newDocument(doc_name)
+        try:
+            master = self._make_composite_shell(
+                doc,
+                "MasterShell",
+                Part.makePlane(20.0, 10.0),
+            )["shell"]
+            attachment = self._make_composite_shell(
+                doc,
+                "AttachmentShell",
+                Part.makePlane(
+                    10.0,
+                    10.0,
+                    FreeCAD.Vector(5.0, 0.0, 0.0),
+                ),
+            )["shell"]
+
+            seam = doc.addObject("Part::FeaturePython", "Seam")
+            SeamShellFP(seam, master, attachment, lap_side="A+B")
+            doc.recompute()
+
+            self.assertTrue(is_composite_shell(seam))
+            self.assertFalse(seam.Shape.isNull())
+            self.assertEqual(
+                seam.Laminate.Layers,
+                master.Laminate.Layers + attachment.Laminate.Layers,
+            )
+
+            seam.LapSide = "B+A"
+            doc.recompute()
+
+            self.assertEqual(
+                seam.Laminate.Layers,
+                attachment.Laminate.Layers + master.Laminate.Layers,
+            )
         finally:
             FreeCAD.closeDocument(doc_name)
 
