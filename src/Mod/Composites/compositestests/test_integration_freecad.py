@@ -93,22 +93,27 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertFalse(seam.isNull())
         self.assertEqual(seam.ShapeType, "Compound")
 
-    def test_seam_make_edge_seam_is_order_independent(self):
+    def test_seam_make_edge_seam_rejects_empty_edge_list(self):
+        self._ensure_freecadgui()
+        from Composites.tools.seam import make_edge_seam
+
+        box = Part.makeBox(10.0, 10.0, 10.0)
+
+        with self.assertRaises(ValueError):
+            make_edge_seam(box.Faces[5], [], overlap=1.0)
+
+    def test_seam_make_edge_seam_handles_reversed_edge_orientation(self):
         self._ensure_freecadgui()
         from Composites.tools.seam import make_edge_seam
 
         box = Part.makeBox(10.0, 10.0, 10.0)
         face = box.Faces[5]
-        seam_forward = make_edge_seam(
-            face,
-            [face.Edges[0], face.Edges[1]],
-            overlap=1.0,
-        )
-        seam_reverse = make_edge_seam(
-            face,
-            [face.Edges[1], face.Edges[0]],
-            overlap=1.0,
-        )
+        edge = face.Edges[0]
+        reversed_edge = edge.copy()
+        reversed_edge.reverse()
+
+        seam_forward = make_edge_seam(face, [edge], overlap=1.0)
+        seam_reverse = make_edge_seam(face, [reversed_edge], overlap=1.0)
 
         self.assertFalse(seam_forward.isNull())
         self.assertFalse(seam_reverse.isNull())
