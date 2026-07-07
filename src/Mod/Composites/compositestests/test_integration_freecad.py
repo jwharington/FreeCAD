@@ -53,6 +53,18 @@ class TestFreeCADIntegration(unittest.TestCase):
             sketch.addGeometry(Part.LineSegment(start, end), False)
         return sketch
 
+    def _make_cut_wire(self, doc, name="CutWire"):
+        wire = doc.addObject("Part::Feature", name)
+        wire.Shape = Part.makePolygon(
+            [
+                FreeCAD.Vector(0.0, 0.0, 0.0),
+                FreeCAD.Vector(20.0, 0.0, 0.0),
+                FreeCAD.Vector(20.0, 20.0, 0.0),
+                FreeCAD.Vector(0.0, 20.0, 0.0),
+            ]
+        )
+        return wire
+
     def test_seam_make_edge_seam_from_box_edge(self):
         self._ensure_freecadgui()
         from Composites.tools.seam import make_edge_seam
@@ -288,6 +300,59 @@ class TestFreeCADIntegration(unittest.TestCase):
             self.assertFalse(seam.Shape.isNull())
             self.assertEqual(seam.Shape.ShapeType, "Face")
             self.assertFalse(source.Visibility)
+        finally:
+            FreeCAD.closeDocument(doc_name)
+
+    def test_shell_drapecuts_invalidate_persisted_drape(self):
+        self._ensure_freecadgui()
+
+        doc_name = "CompositesDrapeCutsIntegrationTest"
+        if doc_name in FreeCAD.listDocuments():
+            FreeCAD.closeDocument(doc_name)
+
+        doc = FreeCAD.newDocument(doc_name)
+        try:
+            result = tubular_shell.build(
+                doc=doc,
+                run_solver=False,
+                debug_options={"skip_view_providers": True, "skip_recompute": False},
+            )
+            shell = result["feature_stack"]["shell"]
+            cut_wire = self._make_cut_wire(doc)
+
+            self.assertTrue(shell.Proxy._can_use_persisted(shell))
+
+            shell.DrapeCuts = [cut_wire]
+            self.assertTrue(shell.Proxy._needs_recompute)
+            self.assertFalse(shell.Proxy._can_use_persisted(shell))
+
+            doc.recompute()
+
+            self.assertTrue(shell.DrapeValid)
+            self.assertTrue(shell.Proxy._can_use_persisted(shell))
+        finally:
+            FreeCAD.closeDocument(doc_name)
+
+    def test_get_shape_for_solver_embeds_cut_wires(self):
+        self._ensure_freecadgui()
+        from Composites.compositetools.drape_task import _get_shape_for_solver
+
+        doc_name = "CompositesCutWireHelperTest"
+        if doc_name in FreeCAD.listDocuments():
+            FreeCAD.closeDocument(doc_name)
+
+        doc = FreeCAD.newDocument(doc_name)
+        try:
+            cut_wire = self._make_cut_wire(doc)
+            fp = types.SimpleNamespace(Document=doc, DrapeCuts=[cut_wire])
+            combined, uses_cut_shape = _get_shape_for_solver(
+                fp,
+                Part.makeBox(10.0, 10.0, 10.0),
+            )
+
+            self.assertTrue(uses_cut_shape)
+            self.assertEqual(combined.ShapeType, "Compound")
+            self.assertEqual(len(combined.Solids), 1)
         finally:
             FreeCAD.closeDocument(doc_name)
 

@@ -122,7 +122,7 @@ def solve(shape, laminates, dart_wires=[], ...):
 
 #### Phase 4: Testing
 - [ ] Unit tests for wire projection
-- [ ] Integration tests for draping with cut lines
+- [x] Integration tests for DrapeCuts invalidation and solver input shaping
 - [x] GUI tests for command activation
 - [ ] Visualization tests for dart overlay
 
