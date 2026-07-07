@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
+import FreeCAD
 import Part
 from FreeCAD import Vector
 
@@ -8,8 +9,14 @@ from .part_plane import part_plane
 
 default_mould_buffer = [30, 5, 30]
 
+MOULD_GENERATION_STATUS_OK = "ok"
+MOULD_GENERATION_STATUS_FAIL_CLOSED = "fail_closed"
+MOULD_GENERATION_REASON_OK = "ok"
+MOULD_GENERATION_REASON_CUT_EXCEPTION = "cut_exception"
+MOULD_GENERATION_REASON_CUT_INVALID_OR_NULL = "cut_invalid_or_null"
 
-def make_moulds(shape, buffer=default_mould_buffer):
+
+def _build_mould_blank(shape, buffer=default_mould_buffer):
     ll = Vector(
         shape.BoundBox.XMin - buffer[0],
         shape.BoundBox.YMin - buffer[1],
@@ -68,9 +75,64 @@ def make_moulds(shape, buffer=default_mould_buffer):
         if i + 1 == n:
             get_wire(ur.z)
 
-    part_plane_obj = Part.makeLoft(
+    return Part.makeLoft(
         wires,
         solid=solid,
         ruled=True,
     )
-    return part_plane_obj
+
+
+def _cut_source_from_blank(blank_shape, source_shape):
+    return blank_shape.cut(source_shape)
+
+
+def _mould_generation_result(shape, status, reason_code, summary):
+    return {
+        "shape": shape,
+        "status": status,
+        "reason_code": reason_code,
+        "summary": summary,
+    }
+
+
+def make_moulds_with_diagnostics(shape, buffer=default_mould_buffer):
+    blank_shape = _build_mould_blank(shape, buffer)
+
+    try:
+        cavity_shape = _cut_source_from_blank(blank_shape, shape)
+    except Exception:
+        summary = "cavity boolean cut failed; returning null shape."
+        FreeCAD.Console.PrintWarning(f"Composites Mould: {summary}\n")
+        return _mould_generation_result(
+            Part.Shape(),
+            MOULD_GENERATION_STATUS_FAIL_CLOSED,
+            MOULD_GENERATION_REASON_CUT_EXCEPTION,
+            summary,
+        )
+
+    if (
+        cavity_shape is None
+        or not hasattr(cavity_shape, "isNull")
+        or cavity_shape.isNull()
+        or not hasattr(cavity_shape, "isValid")
+        or not cavity_shape.isValid()
+    ):
+        summary = "cavity boolean cut produced invalid/null shape; returning null shape."
+        FreeCAD.Console.PrintWarning(f"Composites Mould: {summary}\n")
+        return _mould_generation_result(
+            Part.Shape(),
+            MOULD_GENERATION_STATUS_FAIL_CLOSED,
+            MOULD_GENERATION_REASON_CUT_INVALID_OR_NULL,
+            summary,
+        )
+
+    return _mould_generation_result(
+        cavity_shape,
+        MOULD_GENERATION_STATUS_OK,
+        MOULD_GENERATION_REASON_OK,
+        "cavity boolean cut succeeded.",
+    )
+
+
+def make_moulds(shape, buffer=default_mould_buffer):
+    return make_moulds_with_diagnostics(shape, buffer)["shape"]

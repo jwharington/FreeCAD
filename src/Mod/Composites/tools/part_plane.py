@@ -61,6 +61,12 @@ def faces_of_edge(shape, e):
 
 
 def part_plane(shape, zs=None, inset=0.01):
+    """Return sampled parting-line points for the source shape.
+
+    The returned value is a pair of point lists representing the two
+    sides of the theoretical parting curve used to build the split
+    parting surface.
+    """
     if not zs:
         zs = np.linspace(
             shape.BoundBox.ZMin + inset,
@@ -150,6 +156,7 @@ def make_part_plane3(shape):
 
 
 def make_part_plane(shape, zs=None, inset=0.01, ruled: bool = False):
+    """Build the split parting surface from sampled parting-line points."""
     points = part_plane(shape, zs=zs, inset=inset)
     wires = []
     for vertices in points:
@@ -164,3 +171,11 @@ def make_part_plane(shape, zs=None, inset=0.01, ruled: bool = False):
         solid=False,
         ruled=ruled,
     )
+
+
+# Terminology aliases: keep the existing API stable while making the
+# intent explicit in the mould/parting-surface workflow.
+part_line_points = part_plane
+make_parting_surface = make_part_plane
+make_parting_surface2 = make_part_plane2
+make_parting_surface3 = make_part_plane3

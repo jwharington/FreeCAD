@@ -15,7 +15,7 @@ The generated demos cover these features:
 - `HomogeneousLamina`
 - `CompositeLaminate`
 - `CompositeShell`
-- `PartPlane`
+- `PartPlane` (parting surface)
 - `Mould`
 
 The following features were intentionally excluded from the generated demos because they produced null or default geometry in the current headless FreeCAD MCP run:

@@ -38,6 +38,7 @@ class CompositesWorkbench(Gui.Workbench):
             )
 
         import Composites.features.CompositeShell  # noqa
+        import Composites.features.MouldAnalysis  # noqa
         import Composites.features.TexturePlan  # noqa
         import Composites.features.ToolbarGroup  # noqa
         import Composites.features.Dart  # noqa
@@ -57,6 +58,7 @@ class CompositesWorkbench(Gui.Workbench):
             "Composites_TexturePlan",
             "Composites_Dart",
             "Composites_MouldTools",
+            "Composites_MouldAnalysis",
         ]
         self.list = (
             cmds_section

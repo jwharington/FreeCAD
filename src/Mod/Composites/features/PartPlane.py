@@ -7,11 +7,7 @@ from FreeCAD import Vector
 from .. import (
     PART_PLANE_TOOL_ICON,
 )
-from ..tools.part_plane import (
-    # make_part_plane,
-    # make_part_plane2,
-    make_part_plane3,
-)
+from ..tools.part_plane import make_parting_surface3
 from .Command import BaseCommand
 from .VPCompositePart import (
     CompositePartFP,
@@ -25,7 +21,7 @@ class PartPlaneFP(CompositePartFP):
             "App::PropertyLink",
             "Source",
             "PartPlane",
-            "Link to the shape",
+            "Link to the source shape whose parting surface is being built",
             locked=True,
         ).Source = source
 
@@ -33,7 +29,7 @@ class PartPlaneFP(CompositePartFP):
             "App::PropertyLength",
             "Inset",
             "PartPlane",
-            "Inset length",
+            "Inset from the sampled parting line",
             locked=True,
         ).Inset = "0.01 mm"
 
@@ -41,7 +37,7 @@ class PartPlaneFP(CompositePartFP):
             "App::PropertyBool",
             "Ruled",
             "PartPlane",
-            "Ruled",
+            "Use a ruled parting surface",
             locked=True,
         ).Ruled = True
 
@@ -49,13 +45,13 @@ class PartPlaneFP(CompositePartFP):
             "App::PropertyVector",
             "ViewDir",
             "ReflectLines",
-            "View direction",
+            "View direction used to infer the parting line",
         ).ViewDir = Vector(0, 0, 1)
 
         super().__init__(obj)
 
     def execute(self, fp):
-        shape = make_part_plane3(
+        shape = make_parting_surface3(
             fp.Source.Shape,
         )
         fp.Shape = shape
@@ -68,8 +64,8 @@ class ViewProviderPartPlane(VPCompositePart):
 
 class CompositePartPlaneCommand(BaseCommand):
     icon = PART_PLANE_TOOL_ICON
-    menu_text = "Part plane"
-    tool_tip = """Generate two part mould plane.
+    menu_text = "Parting surface"
+    tool_tip = """Generate a parting surface from the sampled parting line.
         Select source feature.
         WORK-IN-PROGRESS"""
     sel_args = [

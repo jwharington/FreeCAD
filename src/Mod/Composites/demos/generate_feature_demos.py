@@ -182,15 +182,15 @@ def generate_manufacturing_demo(output_dir):
     scale.A33 = 0.6
     source.Shape = Part.makeSphere(70).transformGeometry(scale)
 
-    part_plane = doc.addObject("Part::FeaturePython", "PartPlane")
-    MODULES["PartPlaneFP"](part_plane, source)
+    parting_surface = doc.addObject("Part::FeaturePython", "PartPlane")
+    MODULES["PartPlaneFP"](parting_surface, source)
 
     mould = doc.addObject("Part::FeaturePython", "Mould")
     MODULES["MouldFP"](mould, source)
 
     doc.recompute()
-    if part_plane.Shape.isNull():
-        raise RuntimeError("Part plane demo did not generate a shape")
+    if parting_surface.Shape.isNull():
+        raise RuntimeError("Parting-surface demo did not generate a shape")
     if mould.Shape.isNull():
         raise RuntimeError("Mould demo did not generate a shape")
 
