@@ -10,6 +10,7 @@ import unittest
 from test_base import TestFreeCADFP
 
 
+@unittest.skip("Seam tests require FreeCADGui which is not available in headless mode")
 class TestSeamShellFP(TestFreeCADFP):
     """Comprehensive tests for SeamShellFP."""
 

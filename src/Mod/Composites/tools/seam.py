@@ -28,9 +28,37 @@ def make_edge_seam(
     edges: list[Part.Edge],
     overlap: float = 10,
 ):
-    sedges = Part.__sortEdges__(edges)
-    tools = [generate_seam_tube(Part.Wire(e), overlap) for e in sedges]
-    return splitAPI.slice(shape, tools, "Split", 1e-6)
+    if not edges:
+        raise ValueError("No edges provided for seam generation")
+    if shape.IsNull():
+        raise ValueError("Input shape is null")
+
+    # Validate edges
+    for i, e in enumerate(edges):
+        if e.isNull():
+            raise ValueError(f"Edge at index {i} is null")
+        if e.Length < 1e-9:
+            raise ValueError(f"Edge at index {i} has zero length")
+
+    try:
+        sedges = Part.__sortEdges__(edges)
+    except Exception as e:
+        raise ValueError(f"Failed to sort edges: {str(e)}")
+
+    tools = []
+    for i, e in enumerate(sedges):
+        try:
+            tube = generate_seam_tube(Part.Wire(e), overlap)
+            if tube.IsNull():
+                raise ValueError(f"Failed to generate pipe shell for edge {i}")
+            tools.append(tube)
+        except Exception as e:
+            raise ValueError(f"Error generating pipe shell for edge {i}: {str(e)}")
+
+    try:
+        return splitAPI.slice(shape, tools, "Split", 1e-6)
+    except Exception as e:
+        raise ValueError(f"Slice operation failed: {str(e)}")
 
 
 def get_partner_edges(
@@ -57,12 +85,30 @@ def make_join_seam(
     face2: Part.Face,
     overlap: float = 10,
 ):
+    # Validate inputs
+    if face1.isNull() or face2.isNull():
+        raise ValueError("One or both faces are null")
+    if not face1.isValid() or not face2.isValid():
+        raise ValueError("One or both faces are invalid")
+
     edges = get_partner_edges(face1, face2)
 
     if not edges:
+        # Try fallback with diagnostics
         edges = _fallback_join_edges(face1, face2)
-
-    if not edges:
-        raise ValueError("faces do not share a seam")
+        if not edges:
+            # Try intersection as last resort
+            try:
+                intersection = face1.intersect(face2)
+                if intersection and hasattr(intersection, "Edges") and intersection.Edges:
+                    edges = intersection.Edges
+            except Exception as e:
+                pass
+            if not edges:
+                raise ValueError(
+                    f"Faces do not share a seam. "
+                    f"Common edges: {len(edges)}. "
+                    f"Try ensuring faces properly overlap or touch."
+                )
 
     return make_edge_seam(face1, edges, overlap=overlap)
