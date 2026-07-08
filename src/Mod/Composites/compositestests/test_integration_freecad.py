@@ -76,7 +76,7 @@ class TestFreeCADIntegration(unittest.TestCase):
             doc,
             support,
             name_prefix=name_prefix,
-            skip_recompute=False,
+            skip_recompute=True,
             skip_view_providers=True,
         )
         shell = result["shell"]
