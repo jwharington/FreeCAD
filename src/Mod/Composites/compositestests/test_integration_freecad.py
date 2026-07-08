@@ -605,47 +605,6 @@ class TestFreeCADIntegration(unittest.TestCase):
 
         # tearDown will close
 
-    def test_mould_analysis_part_plane_and_mould_integration(self):
-        self._ensure_freecadgui()
-        from Composites.features.MouldAnalysis import MouldAnalysisFP
-        from Composites.features.Mould import MouldFP
-        from Composites.features.PartPlane import PartPlaneFP
-
-        doc_name = "CompositesMouldWorkflowIntegrationTest"
-
-        doc = FreeCAD.newDocument(doc_name)
-        source = self._make_source_feature(doc, shape=Part.makeCylinder(10.0, 20.0))
-
-        mould_analysis = doc.addObject("Part::FeaturePython", "MouldAnalysis")
-        MouldAnalysisFP(mould_analysis, source)
-        doc.recompute()
-
-        self.assertNotEqual(mould_analysis.AnalysisStatus, "Waiting for source")
-        self.assertIsNotNone(mould_analysis.PartingSurface)
-        self.assertFalse(mould_analysis.PartingSurface.Shape.isNull())
-        self.assertIsNotNone(mould_analysis.MouldHalfA)
-        self.assertIsNotNone(mould_analysis.MouldHalfB)
-        self.assertFalse(mould_analysis.MouldHalfA.Shape.isNull())
-        self.assertFalse(mould_analysis.MouldHalfB.Shape.isNull())
-
-        part_plane = doc.addObject("Part::FeaturePython", "PartPlane")
-        PartPlaneFP(part_plane, source)
-        doc.recompute()
-
-        self.assertIsNotNone(part_plane.Shape)
-        self.assertFalse(part_plane.Shape.isNull())
-
-        mould = doc.addObject("Part::FeaturePython", "Mould")
-        MouldFP(mould, source)
-        doc.recompute()
-
-        self.assertIsNotNone(mould.Shape)
-        self.assertFalse(mould.Shape.isNull())
-        self.assertIn(mould.GenerationStatus, {"ok", "fail_closed"})
-        self.assertTrue(mould.GenerationSummary)
-
-        # tearDown will close
-
     def test_texture_plan_on_real_shell_geometry(self):
         self._ensure_freecadgui()
         from Composites.features.TexturePlan import TexturePlanFP

@@ -47,6 +47,7 @@ def run_tests():
         'test_laminate': 'TestLaminateFP',
         'test_seam': 'TestSeamShellFP',
         'test_stiffener': 'TestStiffenerFP',
+        'test_mould': 'TestMouldFP',
         'test_place_dart': 'TestPlaceDartFP',
     }
 
