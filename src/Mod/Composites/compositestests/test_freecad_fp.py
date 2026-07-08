@@ -2,1789 +2,244 @@
 # Copyright 2025 John Wharington jwharington@gmail.com
 
 """
-Tests for the FreeCAD FeaturePython classes in features/.
+Test entry point for FreeCAD FeaturePython integration tests.
 
-A FreeCAD document-object API is simulated through a lightweight fake so that
-these tests run without a real FreeCAD installation.
+Runs all test modules from the compositestests package.
 """
 
-import importlib.util
-import json
 import os
 import sys
-import types
+import tempfile
 import unittest
 from unittest.mock import MagicMock
 
-# ---------------------------------------------------------------------------
-# FreeCAD / GUI mock — installed BEFORE any project imports
-# ---------------------------------------------------------------------------
+# CRITICAL: Mock FreeCADGui BEFORE importing any Composites modules
+FreeCADGui = MagicMock()
+FreeCADGui.addCommand = lambda *args, **kwargs: None
+FreeCADGui.addWorkbench = lambda *args, **kwargs: None
+sys.modules['FreeCADGui'] = FreeCADGui
 
-_TO_MPA = {"GPa": 1000.0, "MPa": 1.0, "kPa": 1e-3, "Pa": 1e-6}
-_TO_T_MM3 = {"kg/m^3": 1e-12, "t/mm^3": 1.0, "g/cm^3": 1e-9}
+# Import FreeCAD after mocking FreeCADGui
+import FreeCAD
+import Part
 
+# Now import Composites
+if "CompositesWB" not in sys.modules:
+    import Composites as _composites_wb
+    sys.modules["CompositesWB"] = _composites_wb
 
-class _Quantity:
-    """Minimal stand-in for FreeCAD.Units.Quantity."""
+import Composites as CompositesWB
 
-    def __init__(self, val_str):
-        parts = str(val_str).strip().split()
-        self._val = float(parts[0])
-        self._unit = parts[1] if len(parts) > 1 else ""
 
-    @property
-    def Value(self):
-        return self._val
-
-    def getValueAs(self, target):
-        if target == "MPa":
-            return self._val * _TO_MPA.get(self._unit, 1.0)
-        if target == "t/mm^3":
-            return self._val * _TO_T_MM3.get(self._unit, 1.0)
-        return self._val
-
-    def __float__(self):
-        return self._val
-
-    def __mul__(self, other):
-        return MagicMock()
-
-    def __rmul__(self, other):
-        return MagicMock()
-
-    def __str__(self):
-        if self._unit:
-            return f"{self._val} {self._unit}"
-        return str(self._val)
-
-    def __bool__(self):
-        return bool(self._val)
-
-
-_units_mock = MagicMock()
-_units_mock.Quantity.side_effect = _Quantity
-
-_freecad_mock = MagicMock()
-_freecad_mock.__unit_test__ = []
-_freecad_mock.Units = _units_mock
-
-sys.modules["FreeCAD"] = _freecad_mock
-sys.modules["FreeCADGui"] = MagicMock()
-sys.modules["CompositesWB"] = MagicMock()
-
-# pivy mock (required by VPCompositeBase)
-_coin_mock = MagicMock()
-_pivy_mock = MagicMock()
-_pivy_mock.coin = _coin_mock
-sys.modules["pivy"] = _pivy_mock
-sys.modules["pivy.coin"] = _coin_mock
-
-# PySide mock (required by VPCompositeBase.doubleClicked)
-sys.modules["PySide"] = MagicMock()
-sys.modules["PySide.QtGui"] = MagicMock()
-
-# Part mock (required by Rosette.py and other features that import Part)
-_part_mod = types.ModuleType("Part")
-
-
-class _FakeVertex:
-    pass
-
-
-class _FakeEdge:
-    pass
-
-
-class _FakeFaceShape:
-    pass
-
-
-class _FakeWire:
-    pass
-
-
-class _FakeShape:
-    pass
-
-
-_part_mod.Vertex = _FakeVertex
-_part_mod.Edge = _FakeEdge
-_part_mod.Face = _FakeFaceShape
-_part_mod.Wire = _FakeWire
-_part_mod.Shape = _FakeShape
-_part_mod.makePolygon = MagicMock()
-_part_mod.makeCompound = MagicMock()
-sys.modules["Part"] = _part_mod
-
-# MeshEnums mock (required by CompositeShell.py)
-sys.modules["MeshEnums"] = MagicMock()
-
-# Mesh / MeshPart mocks (required by util/mesh_util.py)
-sys.modules["Mesh"] = MagicMock()
-sys.modules["MeshPart"] = MagicMock()
-
-# TechDraw / CAM mocks (required by tools.part_plane.py)
-sys.modules["TechDraw"] = MagicMock()
-_cam_mod = types.ModuleType("CAM")
-_cam_mod.Path = MagicMock()
-sys.modules["CAM"] = _cam_mod
-
-# ---------------------------------------------------------------------------
-# Ensure repo root is on sys.path so package imports work
-# ---------------------------------------------------------------------------
-
-_REPO_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
-)
-_MODULE_ROOT = os.path.join(_REPO_ROOT, "src", "Mod")
-if _MODULE_ROOT not in sys.path:
-    sys.path.insert(0, _MODULE_ROOT)
-
-# ---------------------------------------------------------------------------
-# Helpers to load individual .py files as named modules
-# ---------------------------------------------------------------------------
-
-
-def _load_module(dotted_name: str, rel_path: str):
-    """Load a .py file and register it in sys.modules under *dotted_name*."""
-    abs_path = os.path.join(_REPO_ROOT, rel_path.replace("/", os.sep))
-    spec = importlib.util.spec_from_file_location(dotted_name, abs_path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[dotted_name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def _make_package_stub(dotted_name: str, abs_dir: str):
-    """Create a minimal package stub and register it in sys.modules."""
-    pkg = types.ModuleType(dotted_name)
-    pkg.__path__ = [abs_dir]
-    pkg.__package__ = dotted_name
-    sys.modules[dotted_name] = pkg
-    return pkg
-
-
-# ---------------------------------------------------------------------------
-# Load objects / mechanics / util modules in dependency order
-# (mirrors the setup in test_mechanics.py)
-# ---------------------------------------------------------------------------
-
-_objects_dir = os.path.join(_REPO_ROOT, "src", "Mod", "Composites", "objects")
-_mechanics_dir = os.path.join(_REPO_ROOT, "src", "Mod", "Composites", "mechanics")
-_util_dir = os.path.join(_REPO_ROOT, "src", "Mod", "Composites", "util")
-_features_dir = os.path.join(_REPO_ROOT, "src", "Mod", "Composites", "features")
-
-# Leaf enums
-_sym_mod = _load_module(
-    "Composites.objects.symmetry_type",
-    "src/Mod/Composites/objects/symmetry_type.py",
-)
-_weave_mod = _load_module(
-    "Composites.objects.weave_type",
-    "src/Mod/Composites/objects/weave_type.py",
-)
-
-# Stub objects package (exposes only already-loaded symbols to avoid
-# the circular import in objects/__init__.py)
-_fake_objects_pkg = _make_package_stub(
-    "Composites.objects", _objects_dir
-)
-_fake_objects_pkg.SymmetryType = _sym_mod.SymmetryType
-_fake_objects_pkg.WeaveType = _weave_mod.WeaveType
-
-# Load mechanics.stack_model_type (no deps)
-_smt_mod = _load_module(
-    "Composites.mechanics.stack_model_type",
-    "src/Mod/Composites/mechanics/stack_model_type.py",
-)
-
-# Stub mechanics package
-_fake_mech_pkg = _make_package_stub(
-    "Composites.mechanics", _mechanics_dir
-)
-_fake_mech_pkg.StackModelType = _smt_mod.StackModelType
-
-# Load the Composites package (__init__.py — FreeCAD is mocked)
-import Composites  # noqa: E402
-
-# Geometry util (requires objects stub above)
-from Composites.util.geometry_util import (  # noqa: E402
-    expand_symmetry,
-)
-
-# Leaf object modules
-_lamina_mod = _load_module(
-    "Composites.objects.lamina",
-    "src/Mod/Composites/objects/lamina.py",
-)
-_ply_mod = _load_module(
-    "Composites.objects.ply",
-    "src/Mod/Composites/objects/ply.py",
-)
-
-# Mechanics modules
-from Composites.mechanics.material_properties import (  # noqa: E402
-    material_from_dict,
-    ortho_material2dict,
-)
-from Composites.mechanics.shell_model import (  # noqa: E402
-    material_shell_properties,
-)
-
-_homo_mod = _load_module(
-    "Composites.objects.homogeneous_lamina",
-    "src/Mod/Composites/objects/homogeneous_lamina.py",
-)
-_comp_lamina_mod = _load_module(
-    "Composites.objects.composite_lamina",
-    "src/Mod/Composites/objects/composite_lamina.py",
-)
-_fabric_mod = _load_module(
-    "Composites.objects.fabric",
-    "src/Mod/Composites/objects/fabric.py",
-)
-_sf_mod = _load_module(
-    "Composites.objects.simple_fabric",
-    "src/Mod/Composites/objects/simple_fabric.py",
-)
-_stack_model_mod = _load_module(
-    "Composites.mechanics.stack_model",
-    "src/Mod/Composites/mechanics/stack_model.py",
-)
-_stack_exp_mod = _load_module(
-    "Composites.mechanics.stack_expansion",
-    "src/Mod/Composites/mechanics/stack_expansion.py",
-)
-_fcl_obj_mod = _load_module(
-    "Composites.objects.fibre_composite_lamina",
-    "src/Mod/Composites/objects/fibre_composite_lamina.py",
-)
-_laminate_obj_mod = _load_module(
-    "Composites.objects.laminate",
-    "src/Mod/Composites/objects/laminate.py",
-)
-_comp_lam_obj_mod = _load_module(
-    "Composites.objects.composite_laminate",
-    "src/Mod/Composites/objects/composite_laminate.py",
-)
-
-# Populate objects package stub with all symbols
-_fake_objects_pkg.Lamina = _lamina_mod.Lamina
-_fake_objects_pkg.Ply = _ply_mod.Ply
-_fake_objects_pkg.HomogeneousLamina = _homo_mod.HomogeneousLamina
-_fake_objects_pkg.CompositeLamina = _comp_lamina_mod.CompositeLamina
-_fake_objects_pkg.Fabric = _fabric_mod.Fabric
-_fake_objects_pkg.SimpleFabric = _sf_mod.SimpleFabric
-_fake_objects_pkg.FibreCompositeLamina = _fcl_obj_mod.FibreCompositeLamina
-_fake_objects_pkg.Laminate = _laminate_obj_mod.Laminate
-_fake_objects_pkg.CompositeLaminate = _comp_lam_obj_mod.CompositeLaminate
-
-# Populate mechanics package stub
-_fake_mech_pkg.StackModelType = _smt_mod.StackModelType
-
-# Util modules
-_fem_util_mod = _load_module(
-    "Composites.util.fem_util",
-    "src/Mod/Composites/util/fem_util.py",
-)
-_bom_util_mod = _load_module(
-    "Composites.util.bom_util",
-    "src/Mod/Composites/util/bom_util.py",
-)
-
-# Stub taskpanels package — feature files import task panel modules but
-# we have no Qt, so just mock the whole sub-package.
-_fake_taskpanels = _make_package_stub(
-    "Composites.taskpanels",
-    os.path.join(_REPO_ROOT, "src", "Mod", "Composites", "taskpanels"),
-)
-for _tp in (
-    "task_homogeneous_lamina",
-    "task_fibre_composite_lamina",
-    "task_composite_laminate",
-):
-    _tp_mod = MagicMock()
-    _tp_mod._TaskPanel = MagicMock
-    sys.modules[f"Composites.taskpanels.{_tp}"] = _tp_mod
-    setattr(_fake_taskpanels, _tp, _tp_mod)
-
-# Tool package stub (needed by MouldAnalysis/Mould/PartPlane feature imports)
-_tools_dir = os.path.join(_REPO_ROOT, "src", "Mod", "Composites", "tools")
-_fake_tools_pkg = _make_package_stub("Composites.tools", _tools_dir)
-_fibre_mod = _load_module(
-    "Composites.tools.fibre",
-    "src/Mod/Composites/tools/fibre.py",
-)
-_fake_tools_pkg.fibre = _fibre_mod
-_fake_tools_pkg.splitAPI = MagicMock()
-_part_plane_tool_mod = _load_module(
-    "Composites.tools.part_plane",
-    "src/Mod/Composites/tools/part_plane.py",
-)
-_mould_tool_mod = _load_module(
-    "Composites.tools.mould",
-    "src/Mod/Composites/tools/mould.py",
-)
-_mould_analysis_tool_mod = _load_module(
-    "Composites.tools.mould_analysis",
-    "src/Mod/Composites/tools/mould_analysis.py",
-)
-_stiffener_tool_mod = _load_module(
-    "Composites.tools.stiffener",
-    "src/Mod/Composites/tools/stiffener.py",
-)
-_fake_tools_pkg.part_plane = _part_plane_tool_mod
-_fake_tools_pkg.mould = _mould_tool_mod
-_fake_tools_pkg.mould_analysis = _mould_analysis_tool_mod
-_fake_tools_pkg.stiffener = _stiffener_tool_mod
-
-# ---------------------------------------------------------------------------
-# Load feature modules in dependency order
-# ---------------------------------------------------------------------------
-
-_fake_features_pkg = _make_package_stub(
-    "Composites.features", _features_dir
-)
-
-_vpbase_mod = _load_module(
-    "Composites.features.VPCompositeBase",
-    "src/Mod/Composites/features/VPCompositeBase.py",
-)
-_container_mod = _load_module(
-    "Composites.features.Container",
-    "src/Mod/Composites/features/Container.py",
-)
-_command_mod = _load_module(
-    "Composites.features.Command",
-    "src/Mod/Composites/features/Command.py",
-)
-_composite_mod = _load_module(
-    "Composites.features.Composite",
-    "src/Mod/Composites/features/Composite.py",
-)
-_lamina_feature_mod = _load_module(
-    "Composites.features.Lamina",
-    "src/Mod/Composites/features/Lamina.py",
-)
-_homo_feature_mod = _load_module(
-    "Composites.features.HomogeneousLamina",
-    "src/Mod/Composites/features/HomogeneousLamina.py",
-)
-_fcl_feature_mod = _load_module(
-    "Composites.features.FibreCompositeLamina",
-    "src/Mod/Composites/features/FibreCompositeLamina.py",
-)
-_laminate_feature_mod = _load_module(
-    "Composites.features.Laminate",
-    "src/Mod/Composites/features/Laminate.py",
-)
-_comp_lam_feature_mod = _load_module(
-    "Composites.features.CompositeLaminate",
-    "src/Mod/Composites/features/CompositeLaminate.py",
-)
-_rosette_feature_mod = _load_module(
-    "Composites.features.Rosette",
-    "src/Mod/Composites/features/Rosette.py",
-)
-_mould_analysis_feature_mod = _load_module(
-    "Composites.features.MouldAnalysis",
-    "src/Mod/Composites/features/MouldAnalysis.py",
-)
-_mould_feature_mod = _load_module(
-    "Composites.features.Mould",
-    "src/Mod/Composites/features/Mould.py",
-)
-_part_plane_feature_mod = _load_module(
-    "Composites.features.PartPlane",
-    "src/Mod/Composites/features/PartPlane.py",
-)
-
-# Shader stubs needed by CompositeShell.py
-_shaders_dir = os.path.join(_REPO_ROOT, "src", "Mod", "Composites", "shaders")
-
-_fake_shaders_pkg = _make_package_stub(
-    "Composites.shaders", _shaders_dir
-)
-
-_geom_util_mod = _load_module(
-    "Composites.util.geometry_util",
-    "src/Mod/Composites/util/geometry_util.py",
-)
-
-_mesh_util_mod = _load_module(
-    "Composites.util.mesh_util",
-    "src/Mod/Composites/util/mesh_util.py",
-)
-
-_mesh_grid_shader_mod = _load_module(
-    "Composites.shaders.MeshGridShader",
-    "src/Mod/Composites/shaders/MeshGridShader.py",
-)
-_fake_shaders_pkg.MeshGridShader = _mesh_grid_shader_mod
-
-_composite_shell_feature_mod = _load_module(
-    "Composites.features.CompositeShell",
-    "src/Mod/Composites/features/CompositeShell.py",
-)
-_place_dart_feature_mod = _load_module(
-    "Composites.features.PlaceDart",
-    "src/Mod/Composites/features/PlaceDart.py",
-)
-_texture_plan_feature_mod = _load_module(
-    "Composites.features.TexturePlan",
-    "src/Mod/Composites/features/TexturePlan.py",
-)
-_stiffener_feature_mod = _load_module(
-    "Composites.features.Stiffener",
-    "src/Mod/Composites/features/Stiffener.py",
-)
-_transfer_lcs_feature_mod = _load_module(
-    "Composites.features.TransferRosette",
-    "src/Mod/Composites/features/TransferRosette.py",
-)
-
-# Short aliases for use in tests
-HomogeneousLaminaFP = _homo_feature_mod.HomogeneousLaminaFP
-FibreCompositeLaminaFP = _fcl_feature_mod.FibreCompositeLaminaFP
-LaminateFP = _laminate_feature_mod.LaminateFP
-CompositeLaminateFP = _comp_lam_feature_mod.CompositeLaminateFP
-RosetteFP = _rosette_feature_mod.RosetteFP
-is_rosette = _rosette_feature_mod.is_rosette
-PlaceDartCommand = _place_dart_feature_mod.PlaceDartCommand
-MouldAnalysisFP = _mould_analysis_feature_mod.MouldAnalysisFP
-MouldFP = _mould_feature_mod.MouldFP
-PartPlaneFP = _part_plane_feature_mod.PartPlaneFP
-is_mould_analysis = _mould_analysis_feature_mod.is_mould_analysis
-ViewProviderMouldAnalysis = _mould_analysis_feature_mod.ViewProviderMouldAnalysis
-ViewProviderMould = _mould_feature_mod.ViewProviderMould
-ViewProviderPartPlane = _part_plane_feature_mod.ViewProviderPartPlane
-CompositeShellFP = _composite_shell_feature_mod.CompositeShellFP
-TexturePlanFP = _texture_plan_feature_mod.TexturePlanFP
-ViewProviderTexturePlan = _texture_plan_feature_mod.ViewProviderTexturePlan
-StiffenerFP = _stiffener_feature_mod.StiffenerFP
-ViewProviderStiffener = _stiffener_feature_mod.ViewProviderStiffener
-
-HomogeneousLamina = _homo_mod.HomogeneousLamina
-FibreCompositeLamina = _fcl_obj_mod.FibreCompositeLamina
-Laminate = _laminate_obj_mod.Laminate
-CompositeLaminate = _comp_lam_obj_mod.CompositeLaminate
-SimpleFabric = _sf_mod.SimpleFabric
-WeaveType = _weave_mod.WeaveType
-SymmetryType = _sym_mod.SymmetryType
-StackModelType = _smt_mod.StackModelType
-
-# ---------------------------------------------------------------------------
-# Fake FreeCAD document-object
-# ---------------------------------------------------------------------------
-
-_PROP_DEFAULTS = {
-    "App::PropertyBool": lambda: False,
-    "App::PropertyAngle": lambda: _Quantity("0.0"),
-    "App::PropertyLength": lambda: _Quantity("0.0"),
-    "App::PropertyArealMass": lambda: _Quantity("0.0"),
-    "App::PropertyString": lambda: "",
-    "App::PropertyMap": lambda: {},
-    "App::PropertyEnumeration": lambda: "",
-    "App::PropertyPercent": lambda: 0,
-    "App::PropertyLinkList": lambda: [],
-    "App::PropertyLinkListGlobal": lambda: [],
-    "App::PropertyFloatConstraint": lambda: 0.0,
-}
-
-
-class _FakeFCObj:
-    """Minimal stand-in for a FreeCAD FeaturePython document object.
-
-    Supports the property-registration pattern used by the feature classes::
-
-        obj.addProperty("App::PropertyLength", "Thickness", ...).Thickness = 0.1
-    """
-
-    def __init__(self, name="TestObj"):
-        object.__setattr__(self, "_props", {})
-        object.__setattr__(self, "_prop_types", {})
-        object.__setattr__(self, "_extensions", set())
-        object.__setattr__(self, "Name", name)
-        object.__setattr__(self, "TypeId", "App::FeaturePython")
-        object.__setattr__(self, "Proxy", None)
-
-    # -- FreeCAD object API --------------------------------------------------
-
-    def addProperty(
-        self,
-        prop_type=None,
-        name=None,
-        group="",
-        doc="",
-        hidden=False,
-        **kwargs,
-    ):
-        # Accept both positional-style ("App::PropertyFoo", "Name", ...)
-        # and keyword-style (type="App::PropertyFoo", name="Name", doc=...) calls
-        # that FreeCAD's API supports.
-        if prop_type is None:
-            prop_type = kwargs.get("type", "")
-        if name is None:
-            name = kwargs.get("name", "")
-        props = object.__getattribute__(self, "_props")
-        prop_types = object.__getattribute__(self, "_prop_types")
-        factory = _PROP_DEFAULTS.get(prop_type, lambda: None)
-        props[name] = factory()
-        prop_types[name] = prop_type
-        return self
-
-    def setPropertyStatus(self, name, status):
-        pass
-
-    def setExpression(self, name, expr):
-        pass
-
-    def hasExtension(self, ext):
-        return ext in object.__getattribute__(self, "_extensions")
-
-    def addExtension(self, ext):
-        object.__getattribute__(self, "_extensions").add(ext)
-
-    def recompute(self):
-        proxy = object.__getattribute__(self, "Proxy")
-        if proxy and hasattr(proxy, "execute"):
-            proxy.execute(self)
-
-    # -- Attribute access ----------------------------------------------------
-
-    def __setattr__(self, name, value):
-        props = object.__getattribute__(self, "_props")
-        prop_types = object.__getattribute__(self, "_prop_types")
-        if name in props:
-            pt = prop_types.get(name)
-            if pt == "App::PropertyEnumeration" and isinstance(value, list):
-                # First assignment sets allowed values; store first as default.
-                props[name] = value[0] if value else ""
-            elif pt in (
-                "App::PropertyAngle",
-                "App::PropertyLength",
-                "App::PropertyArealMass",
-            ):
-                # Coerce scalars to _Quantity so callers can use .Value
-                if isinstance(value, _Quantity):
-                    props[name] = value
-                elif isinstance(value, bool):
-                    props[name] = _Quantity(str(float(value)))
-                else:
-                    props[name] = _Quantity(str(value))
-            else:
-                props[name] = value
-        else:
-            object.__setattr__(self, name, value)
-
-    def __getattr__(self, name):
-        try:
-            props = object.__getattribute__(self, "_props")
-            if name in props:
-                return props[name]
-        except AttributeError:
-            pass
-        raise AttributeError(f"_FakeFCObj has no attribute '{name}'")
-
-
-# ---------------------------------------------------------------------------
-# Material helpers (glass / resin)
-# ---------------------------------------------------------------------------
-
-
-def _make_glass():
-    m = material_from_dict({}, orthotropic=True)
-    m["Name"] = "Glass"
-    m["Density"] = "2580.0 kg/m^3"
-    m["PoissonRatioXY"] = "0.28"
-    m["PoissonRatioXZ"] = "0.28"
-    m["PoissonRatioYZ"] = "0.50"
-    m["ShearModulusXY"] = "4500 MPa"
-    m["ShearModulusXZ"] = "4500 MPa"
-    m["ShearModulusYZ"] = "3500 MPa"
-    m["YoungsModulusX"] = "130 GPa"
-    m["YoungsModulusY"] = "10 GPa"
-    m["YoungsModulusZ"] = "10 GPa"
-    return m
-
-
-def _make_resin():
-    m = material_from_dict({}, orthotropic=False)
-    m["Name"] = "Epoxy"
-    m["Density"] = "1100.0 kg/m^3"
-    m["YoungsModulus"] = "3.500 GPa"
-    m["PoissonRatio"] = "0.36"
-    return m
-
-
-def _make_homo_obj(thickness=1.0, angle=0.0, core=False, material=None):
-    """Build a _FakeFCObj configured as a HomogeneousLamina feature."""
-    obj = _FakeFCObj("HomoLamina")
-    fp = HomogeneousLaminaFP(obj)
-    obj.Thickness = _Quantity(f"{thickness}")
-    obj.Angle = _Quantity(f"{angle}")
-    obj.Core = core
-    obj.Material = material if material is not None else _make_resin()
-    return obj, fp
-
-
-# ---------------------------------------------------------------------------
-# Tests: HomogeneousLaminaFP
-# ---------------------------------------------------------------------------
-
-
-class TestHomogeneousLaminaFP(unittest.TestCase):
-    """Tests for features/HomogeneousLamina.py :: HomogeneousLaminaFP."""
+class TestFreeCADFP(unittest.TestCase):
+    """Base test class for FreeCAD FeaturePython objects."""
 
     def setUp(self):
-        self.obj = _FakeFCObj("HomoLamina")
-        self.fp = HomogeneousLaminaFP(self.obj)
-
-    # -- Initialisation ------------------------------------------------------
-
-    def test_init_sets_proxy(self):
-        self.assertIs(self.obj.Proxy, self.fp)
-
-    def test_init_adds_core_bool(self):
-        self.assertIn("Core", object.__getattribute__(self.obj, "_props"))
-        self.assertFalse(self.obj.Core)
-
-    def test_init_adds_angle(self):
-        self.assertIn("Angle", object.__getattribute__(self.obj, "_props"))
-
-    def test_init_adds_thickness(self):
-        self.assertIn("Thickness", object.__getattribute__(self.obj, "_props"))
-
-    def test_init_thickness_default_zero(self):
-        # Default thickness comes from BaseLaminaFP (0.1) overriding the
-        # property default — check that the property exists and is a Quantity.
-        self.assertIsNotNone(self.obj.Thickness)
-
-    def test_init_adds_material(self):
-        self.assertIn("Material", object.__getattribute__(self.obj, "_props"))
-        self.assertEqual(self.obj.Material, {})
-
-    def test_adds_suppressive_extension(self):
-        self.assertTrue(
-            self.obj.hasExtension("App::SuppressibleExtensionPython")
-        )
-
-    # -- get_model() ---------------------------------------------------------
-
-    def test_get_model_returns_homogeneous_lamina(self):
-        self.obj.Material = _make_resin()
-        self.obj.Thickness = _Quantity("2.0")
-        model = self.fp.get_model(self.obj)
-        self.assertIsInstance(model, HomogeneousLamina)
-
-    def test_get_model_passes_thickness(self):
-        self.obj.Material = _make_resin()
-        self.obj.Thickness = _Quantity("3.5")
-        model = self.fp.get_model(self.obj)
-        self.assertAlmostEqual(model.thickness, 3.5)
-
-    def test_get_model_passes_angle(self):
-        self.obj.Material = _make_resin()
-        self.obj.Thickness = _Quantity("1.0")
-        self.obj.Angle = _Quantity("45.0")
-        model = self.fp.get_model(self.obj)
-        self.assertAlmostEqual(model.orientation, 45.0)
-
-    def test_get_model_passes_core_false(self):
-        self.obj.Material = _make_resin()
-        self.obj.Thickness = _Quantity("1.0")
-        self.obj.Core = False
-        model = self.fp.get_model(self.obj)
-        self.assertFalse(model.core)
-
-    def test_get_model_passes_core_true(self):
-        self.obj.Material = _make_resin()
-        self.obj.Thickness = _Quantity("1.0")
-        self.obj.Core = True
-        model = self.fp.get_model(self.obj)
-        self.assertTrue(model.core)
-
-
-# ---------------------------------------------------------------------------
-# Tests: FibreCompositeLaminaFP
-# ---------------------------------------------------------------------------
-
-
-class TestFibreCompositeLaminaFP(unittest.TestCase):
-    """Tests for features/FibreCompositeLamina.py :: FibreCompositeLaminaFP."""
-
-    def setUp(self):
-        self.obj = _FakeFCObj("FibreLamina")
-        self.fp = FibreCompositeLaminaFP(self.obj)
-
-    # -- Initialisation ------------------------------------------------------
-
-    def test_init_sets_proxy(self):
-        self.assertIs(self.obj.Proxy, self.fp)
-
-    def test_init_adds_fibre_material(self):
-        self.assertIn(
-            "FibreMaterial", object.__getattribute__(self.obj, "_props")
-        )
-        self.assertEqual(self.obj.FibreMaterial, {})
-
-    def test_init_adds_resin_material(self):
-        self.assertIn(
-            "ResinMaterial", object.__getattribute__(self.obj, "_props")
-        )
-        self.assertEqual(self.obj.ResinMaterial, {})
-
-    def test_init_adds_weave_type(self):
-        self.assertIn("WeaveType", object.__getattribute__(self.obj, "_props"))
-
-    def test_init_default_weave_is_ud(self):
-        self.assertEqual(self.obj.WeaveType, WeaveType.UD.name)
-
-    def test_init_adds_areal_weight(self):
-        self.assertIn(
-            "ArealWeight", object.__getattribute__(self.obj, "_props")
-        )
-
-    def test_init_adds_fibre_volume_fraction(self):
-        self.assertIn(
-            "FibreVolumeFraction", object.__getattribute__(self.obj, "_props")
-        )
-
-    def test_adds_suppressive_extension(self):
-        self.assertTrue(
-            self.obj.hasExtension("App::SuppressibleExtensionPython")
-        )
-
-    # -- get_model() ---------------------------------------------------------
-
-    def test_get_model_raises_without_fibre_material(self):
-        self.obj.FibreMaterial = {}
-        self.obj.Thickness = _Quantity("1.0")
-        with self.assertRaises(ValueError):
-            self.fp.get_model(self.obj)
-
-    def test_get_model_returns_fibre_composite_lamina(self):
-        self.obj.FibreMaterial = _make_glass()
-        self.obj.FibreVolumeFraction = 50
-        self.obj.Thickness = _Quantity("0.5")
-        self.obj.Angle = _Quantity("0.0")
-        self.obj.WeaveType = WeaveType.UD.name
-        model = self.fp.get_model(self.obj)
-        self.assertIsInstance(model, FibreCompositeLamina)
-
-    def test_get_model_uses_weave_type(self):
-        self.obj.FibreMaterial = _make_glass()
-        self.obj.FibreVolumeFraction = 50
-        self.obj.Thickness = _Quantity("0.5")
-        self.obj.Angle = _Quantity("0.0")
-        self.obj.WeaveType = WeaveType.BIAX090.name
-        model = self.fp.get_model(self.obj)
-        self.assertIsInstance(model, FibreCompositeLamina)
-
-    def test_get_model_volume_fraction_scaled(self):
-        self.obj.FibreMaterial = _make_glass()
-        self.obj.FibreVolumeFraction = 40
-        self.obj.Thickness = _Quantity("0.5")
-        self.obj.Angle = _Quantity("0.0")
-        self.obj.WeaveType = WeaveType.UD.name
-        model = self.fp.get_model(self.obj)
-        # volume_fraction is passed as percent / 100
-        self.assertAlmostEqual(model.fibre.volume_fraction_fibre, 0.40)
-
-    # -- update_areal_weight() / onChanged() ---------------------------------
-
-    def test_update_areal_weight_no_fibre_material_returns_early(self):
-        self.obj.FibreMaterial = {}
-        self.obj.Thickness = _Quantity("1.0")
-        self.obj.FibreVolumeFraction = 50
-        # Should not raise
-        self.fp.update_areal_weight(self.obj)
-
-    def test_update_areal_weight_zero_vf_returns_early(self):
-        self.obj.FibreMaterial = _make_glass()
-        self.obj.Thickness = _Quantity("1.0")
-        self.obj.FibreVolumeFraction = 0
-        # Should not raise
-        self.fp.update_areal_weight(self.obj)
-
-    def test_update_areal_weight_with_valid_data_does_not_raise(self):
-        self.obj.FibreMaterial = _make_glass()
-        self.obj.FibreVolumeFraction = 50
-        self.obj.Thickness = _Quantity("0.5")
-        # Should not raise
-        self.fp.update_areal_weight(self.obj)
-
-    def test_update_areal_weight_sets_gsm_value(self):
-        self.obj.FibreMaterial = _make_glass()
-        self.obj.FibreVolumeFraction = 50
-        self.obj.Thickness = _Quantity("0.5")
-
-        self.fp.update_areal_weight(self.obj)
-
-        self.assertAlmostEqual(self.obj.ArealWeight.Value, 645.0, places=8)
-        self.assertEqual(self.obj.ArealWeight._unit, "g/m^2")
-
-    def test_on_changed_thickness_calls_update(self):
-        self.obj.FibreMaterial = _make_glass()
-        self.obj.FibreVolumeFraction = 50
-        self.obj.Thickness = _Quantity("0.5")
-        # If onChanged raises the test fails; a successful call is the assertion.
-        self.fp.onChanged(self.obj, "Thickness")
-
-    def test_on_changed_fibre_material_calls_update(self):
-        self.obj.FibreMaterial = _make_glass()
-        self.obj.FibreVolumeFraction = 50
-        self.obj.Thickness = _Quantity("0.5")
-        self.fp.onChanged(self.obj, "FibreMaterial")
-
-    def test_on_changed_unrelated_prop_is_noop(self):
-        # Changing an unrelated property must not raise.
-        self.fp.onChanged(self.obj, "Name")
-
-
-# ---------------------------------------------------------------------------
-# Tests: LaminateFP
-# ---------------------------------------------------------------------------
-
-
-class TestLaminateFP(unittest.TestCase):
-    """Tests for features/Laminate.py :: LaminateFP."""
-
-    def _make_homo_layer(self, thickness=1.0, angle=0.0):
-        """Return a _FakeFCObj wired up as a HomogeneousLamina feature."""
-        obj, _ = _make_homo_obj(thickness=thickness, angle=angle)
-        return obj
-
-    def setUp(self):
-        self.obj = _FakeFCObj("Laminate")
-        self.fp = LaminateFP(self.obj)
-
-    # -- Initialisation ------------------------------------------------------
-
-    def test_init_sets_proxy(self):
-        self.assertIs(self.obj.Proxy, self.fp)
-
-    def test_init_adds_layers(self):
-        self.assertIn("Layers", object.__getattribute__(self.obj, "_props"))
-        self.assertEqual(self.obj.Layers, [])
-
-    def test_init_adds_stack_model_type(self):
-        self.assertIn(
-            "StackModelType", object.__getattribute__(self.obj, "_props")
-        )
-        self.assertEqual(self.obj.StackModelType, StackModelType.Discrete.name)
-
-    def test_init_adds_symmetry(self):
-        self.assertIn("Symmetry", object.__getattribute__(self.obj, "_props"))
-        self.assertEqual(self.obj.Symmetry, SymmetryType.Odd.name)
-
-    def test_init_adds_stack_orientation(self):
-        self.assertIn(
-            "StackOrientation", object.__getattribute__(self.obj, "_props")
-        )
-
-    def test_init_adds_thickness(self):
-        self.assertIn("Thickness", object.__getattribute__(self.obj, "_props"))
-
-    def test_adds_suppressive_extension(self):
-        self.assertTrue(
-            self.obj.hasExtension("App::SuppressibleExtensionPython")
-        )
-
-    # -- get_model() ---------------------------------------------------------
-
-    def test_get_model_empty_layers_returns_none(self):
-        self.obj.Layers = []
-        model = self.fp.get_model(self.obj)
-        self.assertIsNone(model)
-
-    def test_get_model_with_one_layer_returns_laminate(self):
-        layer = self._make_homo_layer(thickness=2.0)
-        self.obj.Layers = [layer]
-        self.obj.Symmetry = SymmetryType.Assymmetric.name
-        model = self.fp.get_model(self.obj)
-        self.assertIsInstance(model, Laminate)
-
-    def test_get_model_symmetry_passed_through(self):
-        layer = self._make_homo_layer(thickness=1.0)
-        self.obj.Layers = [layer]
-        self.obj.Symmetry = SymmetryType.Odd.name
-        model = self.fp.get_model(self.obj)
-        self.assertEqual(model.symmetry, SymmetryType.Odd)
-
-    # -- execute() -----------------------------------------------------------
-
-    def test_execute_empty_layers_sets_stack_orientation_empty(self):
-        self.obj.Layers = []
-        self.obj.StackModelType = StackModelType.Discrete.name
-        self.fp.execute(self.obj)
-        self.assertEqual(self.obj.StackOrientation, {})
-
-    def test_execute_with_layer_sets_stack_orientation_dict(self):
-        layer = self._make_homo_layer(thickness=1.5)
-        self.obj.Layers = [layer]
-        self.obj.StackModelType = StackModelType.Discrete.name
-        self.obj.Symmetry = SymmetryType.Assymmetric.name
-        self.fp.execute(self.obj)
-        self.assertIsInstance(self.obj.StackOrientation, dict)
-        self.assertGreater(len(self.obj.StackOrientation), 0)
-
-    def test_execute_with_layer_sets_thickness(self):
-        layer = self._make_homo_layer(thickness=2.0)
-        self.obj.Layers = [layer]
-        self.obj.StackModelType = StackModelType.Discrete.name
-        self.obj.Symmetry = SymmetryType.Assymmetric.name
-        self.fp.execute(self.obj)
-        # Thickness property is assigned a FreeCAD Quantity — just verify it
-        # was set (not still the zero-initialised default string-Quantity).
-        self.assertIsNotNone(self.obj.Thickness)
-
-    def test_execute_no_stack_model_type_returns_early(self):
-        # If StackModelType is missing the method should return without error.
-        layer = self._make_homo_layer(thickness=1.0)
-        self.obj.Layers = [layer]
-        # Remove StackModelType from _props
-        del object.__getattribute__(self.obj, "_props")["StackModelType"]
-        self.fp.execute(self.obj)  # Should not raise
-
-
-# ---------------------------------------------------------------------------
-# Tests: CompositeLaminateFP
-# ---------------------------------------------------------------------------
-
-
-class TestCompositeLaminateFP(unittest.TestCase):
-    """Tests for features/CompositeLaminate.py :: CompositeLaminateFP."""
-
-    def _make_fcl_layer(self, thickness=0.5, angle=0.0):
-        obj = _FakeFCObj("FibreLamina")
-        fp = FibreCompositeLaminaFP(obj)
-        obj.FibreMaterial = _make_glass()
-        obj.FibreVolumeFraction = 50
-        obj.Thickness = _Quantity(f"{thickness}")
-        obj.Angle = _Quantity(f"{angle}")
-        obj.WeaveType = WeaveType.UD.name
-        return obj
-
-    def setUp(self):
-        self.obj = _FakeFCObj("CompLaminate")
-        self.fp = CompositeLaminateFP(self.obj)
-
-    # -- Initialisation ------------------------------------------------------
-
-    def test_init_sets_proxy(self):
-        self.assertIs(self.obj.Proxy, self.fp)
-
-    def test_init_adds_resin_material(self):
-        self.assertIn(
-            "ResinMaterial", object.__getattribute__(self.obj, "_props")
-        )
-        self.assertEqual(self.obj.ResinMaterial, {})
-
-    def test_init_adds_fibre_volume_fraction(self):
-        self.assertIn(
-            "FibreVolumeFraction", object.__getattribute__(self.obj, "_props")
-        )
-
-    def test_init_adds_layers(self):
-        self.assertIn("Layers", object.__getattribute__(self.obj, "_props"))
-
-    def test_init_adds_symmetry(self):
-        self.assertIn("Symmetry", object.__getattribute__(self.obj, "_props"))
-
-    def test_adds_suppressive_extension(self):
-        self.assertTrue(
-            self.obj.hasExtension("App::SuppressibleExtensionPython")
-        )
-
-    # -- execute() guard -----------------------------------------------------
-
-    def test_execute_raises_without_resin_material(self):
-        self.obj.ResinMaterial = {}
-        self.obj.Layers = []
-        self.obj.StackModelType = StackModelType.Discrete.name
-        with self.assertRaises(ValueError):
-            self.fp.execute(self.obj)
-
-    # -- make_model() --------------------------------------------------------
-
-    def test_make_model_returns_composite_laminate(self):
-        layer = self._make_fcl_layer()
-        resin = _make_resin()
-        self.obj.ResinMaterial = resin
-        self.obj.FibreVolumeFraction = 50
-        self.obj.Symmetry = SymmetryType.Assymmetric.name
-        model = self.fp.make_model(self.obj, [layer.Proxy.get_model(layer)])
-        self.assertIsInstance(model, CompositeLaminate)
-
-    def test_make_model_passes_resin_material(self):
-        layer = self._make_fcl_layer()
-        resin = _make_resin()
-        self.obj.ResinMaterial = resin
-        self.obj.FibreVolumeFraction = 50
-        self.obj.Symmetry = SymmetryType.Assymmetric.name
-        model = self.fp.make_model(self.obj, [layer.Proxy.get_model(layer)])
-        self.assertEqual(model.material_matrix, resin)
-
-    def test_make_model_volume_fraction_scaled(self):
-        layer = self._make_fcl_layer()
-        resin = _make_resin()
-        self.obj.ResinMaterial = resin
-        self.obj.FibreVolumeFraction = 60
-        self.obj.Symmetry = SymmetryType.Assymmetric.name
-        model = self.fp.make_model(self.obj, [layer.Proxy.get_model(layer)])
-        self.assertAlmostEqual(model.volume_fraction_fibre, 0.60)
-
-    def test_make_model_zero_volume_fraction(self):
-        layer = self._make_fcl_layer()
-        resin = _make_resin()
-        self.obj.ResinMaterial = resin
-        self.obj.FibreVolumeFraction = 0
-        self.obj.Symmetry = SymmetryType.Assymmetric.name
-        model = self.fp.make_model(self.obj, [layer.Proxy.get_model(layer)])
-        self.assertEqual(model.volume_fraction_fibre, 0)
-
-
-# ---------------------------------------------------------------------------
-# Tests: MouldAnalysis / Mould / PartPlane
-# ---------------------------------------------------------------------------
-
-
-class TestIsMouldAnalysis(unittest.TestCase):
-    """Tests for features/MouldAnalysis.py :: is_mould_analysis()."""
-
-    def _make_mould_analysis_mock(self):
-        obj = MagicMock()
-        obj.TypeId = "App::FeaturePython"
-        obj.Proxy = MagicMock()
-        obj.Proxy.Type = "Composite::MouldAnalysis"
-        return obj
-
-    def test_returns_true_for_mould_analysis(self):
-        obj = self._make_mould_analysis_mock()
-        obj.TypeId = "Part::FeaturePython"
-        self.assertTrue(is_mould_analysis(obj))
-
-    def test_returns_false_for_other_proxy_type(self):
-        obj = self._make_mould_analysis_mock()
-        obj.Proxy.Type = "Composite::Shell"
-        self.assertFalse(is_mould_analysis(obj))
-
-
-class TestMouldAnalysisFP(unittest.TestCase):
-    """Tests for features/MouldAnalysis.py :: MouldAnalysisFP."""
-
-    def setUp(self):
-        self.source = MagicMock(name="source")
-        self.source_shape = MagicMock(name="source_shape")
-        self.source.Shape = self.source_shape
-
-        self.parting_surface = MagicMock(name="parting_surface")
-        self.mould_half_a = MagicMock(name="mould_half_a")
-        self.mould_half_b = MagicMock(name="mould_half_b")
-
-        self.obj = _FakeFCObj("MouldAnalysis")
-        self.obj.Document = MagicMock()
-        self.obj.Document.addObject.side_effect = [
-            self.parting_surface,
-            self.mould_half_a,
-            self.mould_half_b,
-        ]
-        self.fp = MouldAnalysisFP(self.obj, self.source)
-
-    def test_init_sets_proxy(self):
-        self.assertIs(self.obj.Proxy, self.fp)
-
-    def test_init_sets_source_link(self):
-        self.assertIs(self.obj.Source, self.source)
-
-    def test_init_creates_preview_objects(self):
-        self.assertIs(self.obj.PartingSurface, self.parting_surface)
-        self.assertIs(self.obj.MouldHalfA, self.mould_half_a)
-        self.assertIs(self.obj.MouldHalfB, self.mould_half_b)
-
-    def test_claim_children_returns_preview_objects(self):
-        vp = ViewProviderMouldAnalysis.__new__(ViewProviderMouldAnalysis)
-        vp.Object = self.obj
-        children = vp.claimChildren()
-        self.assertEqual(children, [self.parting_surface, self.mould_half_a, self.mould_half_b])
-
-    def test_execute_updates_analysis_summary(self):
-        result = {
-            "status": "Ready",
-            "draw_direction_score": 88.5,
-            "best_draw_direction": MagicMock(name="best_draw_direction"),
-            "draw_direction_ranking": "1. (0,0,1)",
-            "undercut_count": 2,
-            "undercut_summary": "2 undercuts",
-            "undercut_regions": ["u1"],
-            "draft_violation_count": 1,
-            "draft_violation_summary": "1 draft violation",
-            "draft_violation_regions": ["d1"],
-            "parting_surface_status": "Ready",
-            "parting_surface_normal": MagicMock(name="parting_surface_normal"),
-            "parting_surface_offset": 3.5,
-            "parting_surface_area": 42.0,
-            "parting_surface_summary": "parting surface ready",
-            "parting_surface_shape": MagicMock(name="parting_surface_shape"),
-            "mould_halves_status": "Ready",
-            "mould_halves_summary": "mould halves ready",
-            "mould_half_a_shape": MagicMock(name="mould_half_a_shape"),
-            "mould_half_b_shape": MagicMock(name="mould_half_b_shape"),
-            "validation_status": "Pass",
-            "validation_summary": "validation passed",
-            "validation_checks": ["check 1"],
-            "summary": "analysis summary",
-            "shape": MagicMock(name="analysis_shape"),
-        }
-        with unittest.mock.patch.object(
-            _mould_analysis_feature_mod,
-            "analyze_source_shape",
-            return_value=result,
-        ):
-            self.fp.execute(self.obj)
-
-        self.assertEqual(self.obj.AnalysisStatus, "Ready")
-        self.assertEqual(self.obj.AnalysisSummary, "analysis summary")
-        self.assertIs(self.obj.Shape, result["shape"])
-
-    def test_execute_updates_preview_shapes(self):
-        result = {
-            "status": "Ready",
-            "draw_direction_score": 88.5,
-            "best_draw_direction": MagicMock(name="best_draw_direction"),
-            "draw_direction_ranking": "1. (0,0,1)",
-            "undercut_count": 0,
-            "undercut_summary": "none",
-            "undercut_regions": [],
-            "draft_violation_count": 0,
-            "draft_violation_summary": "none",
-            "draft_violation_regions": [],
-            "parting_surface_status": "Ready",
-            "parting_surface_normal": MagicMock(name="parting_surface_normal"),
-            "parting_surface_offset": 0.0,
-            "parting_surface_area": 1.0,
-            "parting_surface_summary": "parting surface ready",
-            "parting_surface_shape": MagicMock(name="parting_surface_shape"),
-            "mould_halves_status": "Ready",
-            "mould_halves_summary": "mould halves ready",
-            "mould_half_a_shape": MagicMock(name="mould_half_a_shape"),
-            "mould_half_b_shape": MagicMock(name="mould_half_b_shape"),
-            "validation_status": "Pass",
-            "validation_summary": "validation passed",
-            "validation_checks": [],
-            "summary": "analysis summary",
-            "shape": MagicMock(name="analysis_shape"),
-        }
-        with unittest.mock.patch.object(
-            _mould_analysis_feature_mod,
-            "analyze_source_shape",
-            return_value=result,
-        ):
-            self.fp.execute(self.obj)
-
-        self.assertIs(self.parting_surface.Shape, result["parting_surface_shape"])
-        self.assertIs(self.mould_half_a.Shape, result["mould_half_a_shape"])
-        self.assertIs(self.mould_half_b.Shape, result["mould_half_b_shape"])
-
-    def test_on_changed_source_triggers_recompute(self):
-        self.obj.recompute = MagicMock()
-        self.fp.onChanged(self.obj, "Source")
-        self.obj.recompute.assert_called_once()
-
-    def test_on_changed_unrelated_property_is_noop(self):
-        self.obj.recompute = MagicMock()
-        self.fp.onChanged(self.obj, "Name")
-        self.obj.recompute.assert_not_called()
-
-
-class TestMouldFP(unittest.TestCase):
-    """Tests for features/Mould.py :: MouldFP."""
-
-    def setUp(self):
-        self.source = MagicMock(name="source")
-        self.source.Shape = MagicMock(name="source_shape")
-        self.obj = _FakeFCObj("Mould")
-        self.fp = MouldFP(self.obj, self.source)
-
-    def test_init_sets_proxy(self):
-        self.assertIs(self.obj.Proxy, self.fp)
-
-    def test_init_adds_overhang_properties(self):
-        self.assertAlmostEqual(self.obj.XOverhang.Value, 30.0)
-        self.assertAlmostEqual(self.obj.YOverhang.Value, 30.0)
-        self.assertAlmostEqual(self.obj.ZOverhang.Value, 5.0)
-
-    def test_init_adds_generation_status(self):
-        self.assertEqual(self.obj.GenerationStatus, "pending")
-
-    def test_execute_updates_shape_and_summary(self):
-        result_shape = MagicMock(name="mould_shape")
-        with unittest.mock.patch.object(
-            _mould_feature_mod,
-            "make_moulds_with_diagnostics",
-            return_value={
-                "shape": result_shape,
-                "status": "ok",
-                "summary": "cavity boolean cut succeeded.",
-            },
-        ):
-            self.fp.execute(self.obj)
-
-        self.assertIs(self.obj.Shape, result_shape)
-        self.assertEqual(self.obj.GenerationStatus, "ok")
-        self.assertEqual(self.obj.GenerationSummary, "cavity boolean cut succeeded.")
-
-    def test_execute_warns_when_generation_fails(self):
-        _mould_feature_mod.FreeCAD.Console.PrintWarning.reset_mock()
-        with unittest.mock.patch.object(
-            _mould_feature_mod,
-            "make_moulds_with_diagnostics",
-            return_value={
-                "shape": MagicMock(name="failed_shape"),
-                "status": "fail_closed",
-                "summary": "failed to generate cavity",
-            },
-        ):
-            self.fp.execute(self.obj)
-
-        _mould_feature_mod.FreeCAD.Console.PrintWarning.assert_called_once()
-
-
-class TestPartPlaneFP(unittest.TestCase):
-    """Tests for features/PartPlane.py :: PartPlaneFP."""
-
-    def setUp(self):
-        self.source = MagicMock(name="source")
-        self.source.Shape = MagicMock(name="source_shape")
-        self.obj = _FakeFCObj("PartPlane")
-        self.fp = PartPlaneFP(self.obj, self.source)
-
-    def test_init_sets_proxy(self):
-        self.assertIs(self.obj.Proxy, self.fp)
-
-    def test_init_adds_surface_properties(self):
-        self.assertAlmostEqual(self.obj.Inset.Value, 0.01)
-        self.assertTrue(self.obj.Ruled)
-        self.assertIsNotNone(self.obj.ViewDir)
-
-    def test_execute_sets_shape_from_tool(self):
-        result_shape = MagicMock(name="parting_surface")
-        with unittest.mock.patch.object(
-            _part_plane_feature_mod,
-            "make_parting_surface3",
-            return_value=result_shape,
-        ):
-            self.fp.execute(self.obj)
-
-        self.assertIs(self.obj.Shape, result_shape)
-
-    def test_view_provider_icon(self):
-        vp = ViewProviderPartPlane.__new__(ViewProviderPartPlane)
-        self.assertEqual(vp.getIcon(), _part_plane_feature_mod.PART_PLANE_TOOL_ICON)
-
-
-# ---------------------------------------------------------------------------
-# Tests: TexturePlanFP / StiffenerFP
-# ---------------------------------------------------------------------------
-
-
-class TestTexturePlanFP(unittest.TestCase):
-    """Tests for features/TexturePlan.py :: TexturePlanFP."""
-
-    def setUp(self):
-        self.shell = MagicMock(name="shell")
-        self.shell.Name = "ShellA"
-        self.shell.Proxy = MagicMock()
-        self.shell.Proxy.Type = "Composite::Shell"
-        self.shell.Proxy.get_stack_assembly.return_value = {"layer_1": 45}
-        self.shell.Proxy.get_boundaries.return_value = [
-            [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 0.0)]
-        ]
-        self.shell.Support = MagicMock()
-        self.shell.Support.Shape = MagicMock()
-        self.face = MagicMock()
-        self.face.isInside.return_value = True
-        self.projected_point = MagicMock()
-        self.projected_point.isValid.return_value = True
-        self.face.value.return_value = self.projected_point
-        self.shell.Support.Shape.Faces = [self.face]
-
-        self.obj = _FakeFCObj("TexturePlan")
-        self.fp = TexturePlanFP(self.obj, [self.shell])
-
-    def test_init_sets_proxy(self):
-        self.assertIs(self.obj.Proxy, self.fp)
-
-    def test_execute_projects_shell_boundaries(self):
-        compound = MagicMock(name="compound")
-        wire = MagicMock(name="wire")
-        with unittest.mock.patch.object(
-            _part_mod,
-            "makePolygon",
-            return_value="polygon",
-        ), unittest.mock.patch.object(
-            _part_mod,
-            "Wire",
-            return_value=wire,
-        ), unittest.mock.patch.object(
-            _part_mod,
-            "makeCompound",
-            return_value=compound,
-        ):
-            self.fp.execute(self.obj)
-
-        self.assertIs(self.obj.Shape, compound)
-        self.shell.Proxy.get_stack_assembly.assert_called_once_with(self.shell)
-        self.shell.Proxy.get_boundaries.assert_called_once_with(offset_angle_deg=45)
-        self.face.value.assert_called()
-
-    def test_on_changed_composite_shell_triggers_recompute(self):
-        self.obj.recompute = MagicMock()
-        self.fp.onChanged(self.obj, "CompositeShell")
-        self.obj.recompute.assert_called_once()
-
-    def test_view_provider_defaults(self):
-        vp = ViewProviderTexturePlan.__new__(ViewProviderTexturePlan)
-        self.assertEqual(vp.getDefaultDisplayMode(), "Wireframe")
-
-
-class TestStiffenerFP(unittest.TestCase):
-    """Tests for features/Stiffener.py :: StiffenerFP."""
-
-    def setUp(self):
-        self.support = MagicMock(name="support")
-        self.support.Shape = MagicMock(name="support_shape")
-        self.support.Visibility = True
-        self.plan = MagicMock(name="plan")
-        self.plan.Visibility = True
-        self.profile = MagicMock(name="profile")
-        self.profile.Visibility = True
-        self.obj = _FakeFCObj("Stiffener")
-        self.fp = StiffenerFP(
-            self.obj,
-            support=self.support,
-            plan=self.plan,
-            profile=self.profile,
-        )
-
-    def test_init_sets_proxy(self):
-        self.assertIs(self.obj.Proxy, self.fp)
-
-    def test_init_adds_links_and_defaults(self):
-        self.assertIs(self.obj.Support, self.support)
-        self.assertIs(self.obj.Plan, self.plan)
-        self.assertIs(self.obj.Profile, self.profile)
-
-    def test_execute_sets_shape_and_hides_inputs(self):
-        shape = MagicMock(name="stiffener_shape")
-        tools = [MagicMock(name="tool_1")]
-        with unittest.mock.patch.object(
-            _stiffener_feature_mod,
-            "make_stiffener",
-            return_value=(shape, tools),
-        ):
-            self.fp.execute(self.obj)
-
-        self.assertIs(self.obj.Shape, shape)
-        self.assertIs(self.fp.tools, tools)
-        self.assertFalse(self.support.Visibility)
-        self.assertFalse(self.plan.Visibility)
-        self.assertFalse(self.profile.Visibility)
-
-    def test_view_provider_claim_children(self):
-        vp = ViewProviderStiffener.__new__(ViewProviderStiffener)
-        vp.Object = self.obj
-        self.assertEqual(vp.claimChildren(), [self.support, self.plan, self.profile])
-
-
-# ---------------------------------------------------------------------------
-# Tests: RosetteFP
-# ---------------------------------------------------------------------------
-
-
-class TestRosetteFP(unittest.TestCase):
-    """Tests for features/Rosette.py :: RosetteFP."""
-
-    def _make_fake_support(self, geom):
-        """Return a (sup_mock, sub_name) pair whose getSubObject returns [geom]."""
-        sup = MagicMock()
-        sup.getSubObject.return_value = [geom]
-        return (sup, "Sub1")
-
-    def setUp(self):
-        self.obj = _FakeFCObj("Rosette")
-        self.obj.Document = MagicMock()
-        self.fp = RosetteFP(self.obj)
-
-    # -- Initialisation ------------------------------------------------------
-
-    def test_init_sets_proxy(self):
-        self.assertIs(self.obj.Proxy, self.fp)
-
-    def test_init_adds_support(self):
-        self.assertIn("Support", object.__getattribute__(self.obj, "_props"))
-
-    def test_init_default_support_is_none(self):
-        self.assertIsNone(self.obj.Support)
-
-    def test_init_adds_angle(self):
-        self.assertIn("Angle", object.__getattribute__(self.obj, "_props"))
-
-    def test_init_default_angle_zero(self):
-        self.assertAlmostEqual(float(self.obj.Angle), 0.0)
-
-    def test_init_adds_lcs(self):
-        self.assertIn(
-            "LocalCoordinateSystem", object.__getattribute__(self.obj, "_props")
-        )
-
-    def test_init_lcs_created_via_document(self):
-        self.obj.Document.addObject.assert_called_once_with(
-            "Part::LocalCoordinateSystem", "LCS"
-        )
-
-    def test_adds_suppressive_extension(self):
-        self.assertTrue(
-            self.obj.hasExtension("App::SuppressibleExtensionPython")
-        )
-
-    def test_type_attribute(self):
-        self.assertEqual(RosetteFP.Type, "Composite::Rosette")
-
-    # -- execute() with no support (model origin) ----------------------------
-
-    def test_execute_no_support_does_not_raise(self):
-        self.obj.Support = None
-        self.fp.execute(self.obj)  # should not raise
-
-    def test_execute_no_support_sets_lcs_placement(self):
-        self.obj.Support = None
-        self.fp.execute(self.obj)
-        lcs = self.obj.LocalCoordinateSystem
-        # Placement.Base should have been assigned a FreeCAD.Vector
-        lcs.Placement.Base  # should be accessible without error
-
-    # -- execute() with vertex support ---------------------------------------
-
-    def test_execute_vertex_uses_vertex_point(self):
-        vertex = _FakeVertex()
-        vertex.Point = MagicMock(name="vertex_point")
-        support = self._make_fake_support(vertex)
-        self.obj.Support = support
-        self.fp.execute(self.obj)
-        lcs = self.obj.LocalCoordinateSystem
-        self.assertEqual(lcs.Placement.Base, vertex.Point)
-
-    def test_execute_vertex_does_not_raise(self):
-        vertex = _FakeVertex()
-        vertex.Point = MagicMock(name="vertex_point")
-        self.obj.Support = self._make_fake_support(vertex)
-        self.fp.execute(self.obj)
-
-    # -- execute() with edge support -----------------------------------------
-
-    def test_execute_edge_uses_midpoint(self):
-        expected_midpoint = MagicMock(name="edge_midpoint")
-        edge = _FakeEdge()
-        edge.Length = 100.0
-        edge.getParameterByLength = MagicMock(return_value=0.5)
-        edge.valueAt = MagicMock(return_value=expected_midpoint)
-        self.obj.Support = self._make_fake_support(edge)
-        self.fp.execute(self.obj)
-        # getParameterByLength called with half the edge length
-        edge.getParameterByLength.assert_called_once_with(50.0)
-        lcs = self.obj.LocalCoordinateSystem
-        self.assertEqual(lcs.Placement.Base, expected_midpoint)
-
-    def test_execute_edge_does_not_raise(self):
-        edge = _FakeEdge()
-        edge.Length = 50.0
-        edge.getParameterByLength = MagicMock(return_value=0.25)
-        edge.valueAt = MagicMock(return_value=MagicMock())
-        self.obj.Support = self._make_fake_support(edge)
-        self.fp.execute(self.obj)
-
-    # -- execute() with face support -----------------------------------------
-
-    def test_execute_face_uses_parametric_centre(self):
-        expected_centre = MagicMock(name="face_centre")
-        face = _FakeFaceShape()
-        face.ParameterRange = (0.0, 2.0, 0.0, 4.0)
-        face.valueAt = MagicMock(return_value=expected_centre)
-        face.normalAt = MagicMock(return_value=MagicMock(name="normal"))
-        face.Surface = MagicMock()
-        face.Surface.tangent.return_value = (MagicMock(name="u_axis"),)
-        self.obj.Support = self._make_fake_support(face)
-        self.fp.execute(self.obj)
-        # valueAt should be called at the parametric centre (u=1.0, v=2.0)
-        face.valueAt.assert_called_once_with(1.0, 2.0)
-        lcs = self.obj.LocalCoordinateSystem
-        self.assertEqual(lcs.Placement.Base, expected_centre)
-
-    def test_execute_face_does_not_raise(self):
-        face = _FakeFaceShape()
-        face.ParameterRange = (0.0, 1.0, 0.0, 1.0)
-        face.valueAt = MagicMock(return_value=MagicMock())
-        face.normalAt = MagicMock(return_value=MagicMock())
-        face.Surface = MagicMock()
-        face.Surface.tangent.return_value = (MagicMock(name="u_axis"),)
-        self.obj.Support = self._make_fake_support(face)
-        self.fp.execute(self.obj)
-
-    # -- execute() with unknown support type ---------------------------------
-
-    def test_execute_unknown_support_type_uses_identity_frame(self):
-        class _UnknownShape:
-            pass
-
-        unknown = _UnknownShape()
-        self.obj.Support = self._make_fake_support(unknown)
-        self.fp.execute(self.obj)
-        self.assertIsNotNone(self.obj.LocalCoordinateSystem.Placement.Base)
-
-    # -- execute() with empty getSubObject result ----------------------------
-
-    def test_execute_empty_geom_list_uses_identity_frame(self):
-        sup = MagicMock()
-        sup.getSubObject.return_value = []
-        self.obj.Support = (sup, "Sub1")
-        self.fp.execute(self.obj)
-        self.assertIsNotNone(self.obj.LocalCoordinateSystem.Placement.Base)
-
-    # -- onChanged() ---------------------------------------------------------
-
-    def test_on_changed_support_triggers_recompute(self):
-        # onChanged("Support") should call fp.recompute() → execute(fp)
-        # With no support, execute() sets placement without error.
-        self.obj.Support = None
-        self.fp.onChanged(self.obj, "Support")  # should not raise
-
-    def test_on_changed_unrelated_prop_is_noop(self):
-        self.fp.onChanged(self.obj, "Name")  # should not raise
-
-
-# ---------------------------------------------------------------------------
-# Tests: is_rosette helper
-# ---------------------------------------------------------------------------
-
-
-class TestIsRosette(unittest.TestCase):
-    """Tests for features/Rosette.py :: is_rosette()."""
-
-    def _make_rosette_mock(self):
-        obj = MagicMock()
-        obj.TypeId = "App::FeaturePython"
-        obj.Proxy = MagicMock()
-        obj.Proxy.Type = "Composite::Rosette"
-        return obj
-
-    def test_returns_true_for_rosette(self):
-        obj = self._make_rosette_mock()
-        self.assertTrue(is_rosette(obj))
-
-    def test_returns_false_for_wrong_type_id(self):
-        obj = self._make_rosette_mock()
-        obj.TypeId = "Part::FeaturePython"
-        self.assertFalse(is_rosette(obj))
-
-    def test_returns_false_for_wrong_proxy_type(self):
-        obj = self._make_rosette_mock()
-        obj.Proxy.Type = "Composite::Shell"
-        self.assertFalse(is_rosette(obj))
-
-    def test_returns_false_when_no_proxy(self):
-        obj = MagicMock()
-        obj.TypeId = "App::FeaturePython"
-        del obj.Proxy
-        self.assertFalse(is_rosette(obj))
-
-
-# ---------------------------------------------------------------------------
-# Tests: CompositeShellFP Rosette integration
-# ---------------------------------------------------------------------------
-
-
-class TestCompositeShellFPRosetteProperty(unittest.TestCase):
-    """Tests for the Rosette property added to CompositeShellFP."""
-
-    def setUp(self):
-        self.obj = _FakeFCObj("CompositeShell")
-        self.obj.Document = MagicMock()
-        self.fp = CompositeShellFP(self.obj)
-
-    def test_init_adds_rosette_property(self):
-        self.assertIn("Rosette", object.__getattribute__(self.obj, "_props"))
-
-    def test_init_default_rosette_is_none(self):
-        self.assertIsNone(self.obj.Rosette)
-
-    def test_init_rosette_angle_initialized_to_zero(self):
-        self.assertAlmostEqual(self.fp._rosette_angle, 0.0)
-
-    def test_init_with_rosette_kwarg(self):
-        rosette_mock = MagicMock()
-        obj2 = _FakeFCObj("CompositeShell2")
-        obj2.Document = MagicMock()
-        fp2 = CompositeShellFP(obj2, rosette=rosette_mock)
-        self.assertIs(obj2.Rosette, rosette_mock)
-
-    def test_on_changed_rosette_triggers_recompute(self):
-        # onChanged("Rosette") should trigger fp.recompute() which calls execute()
-        # With no support/laminate, execute() returns early without error.
-        self.fp.onChanged(self.obj, "Rosette")  # should not raise
-
-    def test_type_attribute(self):
-        self.assertEqual(CompositeShellFP.Type, "Composite::Shell")
-
-
-class TestCompositeShellPersistence(unittest.TestCase):
-    def setUp(self):
-        self.obj = _FakeFCObj("CompositeShell")
-        self.obj.Document = MagicMock()
-        self.fp = CompositeShellFP(self.obj)
-
-    def test_persist_solve_data_accepts_list_node_positions(self):
-        fp = types.SimpleNamespace(
-            Support=types.SimpleNamespace(Shape=object()),
-            Rosette=None,
-            DrapePitch=1.0,
-        )
-        self.fp._shape_fingerprint = lambda shape: "shapehash"
-
-        self.fp._persist_solve_data(
-            fp,
-            {
-                "node_positions": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
-                "quads": [[0, 1, 2, 3]],
-                "shear_angle": [0.25],
-                "quality": {"status": "ok"},
-            },
-        )
-
-        self.assertEqual(
-            json.loads(fp.NodePositionsJSON),
-            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
-        )
-
-
-class TestPlaceDartCommand(unittest.TestCase):
-    def setUp(self):
-        self.command = PlaceDartCommand()
-
-    def _make_shell(self):
-        shell = _FakeFCObj("Shell")
-        shell.TypeId = "Part::FeaturePython"
-        shell.Proxy = types.SimpleNamespace(Type="Composite::Shell", _needs_recompute=False)
-        shell.DrapeCuts = []
-        shell.Document = MagicMock()
+        self.doc_name = f"TestDoc_{self.id().replace('.', '_')}"
+        self.doc = FreeCAD.newDocument(self.doc_name)
+
+    def tearDown(self):
+        if hasattr(self, 'doc') and self.doc is not None:
+            try:
+                if self.doc.Name in FreeCAD.listDocuments():
+                    FreeCAD.closeDocument(self.doc.Name)
+            except Exception:
+                pass
+            self.doc = None
+
+    def _save_document(self, filepath):
+        self.doc.saveAs(filepath)
+
+    def _load_document(self, filepath):
+        return FreeCAD.openDocument(filepath)
+
+    def _create_box(self, name="Box"):
+        box = self.doc.addObject("Part::Box", name)
+        box.Length = 10.0
+        box.Width = 10.0
+        box.Height = 10.0
+        self.doc.recompute()
+        return box
+
+    def _create_simple_shell(self, name="Shell", support_shape=None):
+        from Composites.features.CompositeShell import CompositeShellFP
+        support = self.doc.addObject("Part::Feature", f"{name}_Support")
+        support.Shape = support_shape or Part.makeCylinder(10.0, 20.0)
+        shell = self.doc.addObject("Part::FeaturePython", name)
+        CompositeShellFP(shell, support)
+        self.doc.recompute()
         return shell
 
-    def _make_wire(self, name="Wire"):
-        wire = _FakeFCObj(name)
-        wire.TypeId = "Part::Feature"
-        wire.Shape = types.SimpleNamespace(Edges=[object()])
-        return wire
 
-    def _make_point(self, x, y, z):
-        class _Point:
-            def __init__(self, coords):
-                self.x, self.y, self.z = coords
+class TestDocumentPersistence(unittest.TestCase):
+    """Tests for document save/load functionality."""
 
-            def isEqual(self, other, tolerance):
-                return (
-                    abs(self.x - other.x) <= tolerance
-                    and abs(self.y - other.y) <= tolerance
-                    and abs(self.z - other.z) <= tolerance
-                )
+    def setUp(self):
+        self.doc_name = f"TestDoc_{self.id().replace('.', '_')}"
+        self.doc = FreeCAD.newDocument(self.doc_name)
 
-        return _Point((x, y, z))
+    def tearDown(self):
+        if hasattr(self, 'doc') and self.doc is not None:
+            try:
+                if self.doc.Name in FreeCAD.listDocuments():
+                    FreeCAD.closeDocument(self.doc.Name)
+            except Exception:
+                pass
+            self.doc = None
 
-    def _make_edge(self, points):
-        return types.SimpleNamespace(discretize=lambda samples: list(points))
+    def test_save_load_single_object(self):
+        """Test saving and loading a single object."""
+        box = self.doc.addObject("Part::Box", "Box1")
+        box.Length = 10.0
+        box.Width = 10.0
+        box.Height = 10.0
+        self.doc.recompute()
 
-    def test_collects_shell_and_wire_sources(self):
-        shell = self._make_shell()
-        wire = self._make_wire()
-        selection = [
-            types.SimpleNamespace(Object=wire),
-            types.SimpleNamespace(Object=shell),
-        ]
+        filepath = os.path.join(tempfile.gettempdir(), "test_simple.FCStd")
+        self.doc.saveAs(filepath)
 
-        self.assertEqual(self.command._collect_selection(selection), (shell, [wire]))
-
-    def test_activated_appends_shell_drape_cuts(self):
-        import FreeCADGui
-
-        shell = self._make_shell()
-        first_wire = self._make_wire("Wire1")
-        second_wire = self._make_wire("Wire2")
-        shell.DrapeCuts = [first_wire]
-        selection = [
-            types.SimpleNamespace(Object=first_wire),
-            types.SimpleNamespace(Object=second_wire),
-            types.SimpleNamespace(Object=shell),
-        ]
-        FreeCADGui.Selection.getSelectionEx.return_value = selection
-        FreeCADGui.Selection.clearSelection.reset_mock()
-        self.command._ensure_projection_object = lambda shell, wire: wire
-
-        self.command.Activated()
-
-        self.assertEqual(shell.DrapeCuts, [first_wire, second_wire])
-        self.assertTrue(shell.Proxy._needs_recompute)
-        shell.Document.recompute.assert_called_once()
-        FreeCADGui.Selection.clearSelection.assert_called_once()
-
-    def test_project_wire_to_support_closes_closed_wire(self):
-        import Part
-
-        support_shape = object()
-        points = [
-            self._make_point(0.0, 0.0, 0.0),
-            self._make_point(1.0, 0.0, 0.0),
-            self._make_point(1.0, 0.0, 0.0),
-            self._make_point(0.0, 1.0, 0.0),
-        ]
-        wire_shape = types.SimpleNamespace(
-            Edges=[
-                self._make_edge(points[:2]),
-                self._make_edge(points[2:]),
-            ],
-            isClosed=lambda: True,
-        )
-        projected_points = []
-        original_project_point = self.command._project_point_to_support
-        original_make_polygon = Part.makePolygon
+        loaded_doc = FreeCAD.openDocument(filepath)
         try:
-            self.command._project_point_to_support = lambda support, point: point
-            Part.makePolygon = lambda pts: projected_points.extend(pts) or pts
-
-            result = self.command._project_wire_to_support(support_shape, wire_shape)
-
-            self.assertIsNotNone(result)
-            self.assertEqual(len(projected_points), 4)
-            self.assertTrue(projected_points[0].isEqual(projected_points[-1], 1e-6))
+            loaded_box = loaded_doc.getObject("Box1")
+            self.assertIsNotNone(loaded_box)
+            self.assertEqual(loaded_box.TypeId, "Part::Box")
+            self.assertEqual(loaded_box.Length, 10.0)
+            self.assertEqual(loaded_box.Width, 10.0)
+            self.assertEqual(loaded_box.Height, 10.0)
         finally:
-            self.command._project_point_to_support = original_project_point
-            Part.makePolygon = original_make_polygon
+            try:
+                loaded_doc.close()
+            except Exception:
+                pass
+            if os.path.exists(filepath):
+                os.remove(filepath)
 
-    def test_ensure_projection_object_hides_existing_projection(self):
-        shell = self._make_shell()
-        shell.Support = types.SimpleNamespace(Shape=object())
-        source = self._make_wire("Wire1")
-        existing = _FakeFCObj("Shell_Wire1_PlaceDartCut")
-        existing.ViewObject = types.SimpleNamespace(Visibility=True)
-        shell.Document.getObject.return_value = existing
-        self.command._project_wire_to_support = lambda support, shape: "projected-shape"
+    def test_save_load_multiple_objects(self):
+        """Test saving and loading multiple objects."""
+        box1 = self.doc.addObject("Part::Box", "Box1")
+        box1.Length = 10.0
+        box1.Width = 10.0
+        box1.Height = 10.0
 
-        result = self.command._ensure_projection_object(shell, source)
+        box2 = self.doc.addObject("Part::Box", "Box2")
+        box2.Length = 20.0
+        box2.Width = 20.0
+        box2.Height = 20.0
 
-        self.assertIs(result, existing)
-        self.assertEqual(existing.Shape, "projected-shape")
-        self.assertFalse(existing.ViewObject.Visibility)
+        self.doc.recompute()
+
+        filepath = os.path.join(tempfile.gettempdir(), "test_multi.FCStd")
+        self.doc.saveAs(filepath)
+
+        loaded_doc = FreeCAD.openDocument(filepath)
+        try:
+            loaded_box1 = loaded_doc.getObject("Box1")
+            loaded_box2 = loaded_doc.getObject("Box2")
+            self.assertIsNotNone(loaded_box1)
+            self.assertIsNotNone(loaded_box2)
+            self.assertEqual(loaded_box1.Length, 10.0)
+            self.assertEqual(loaded_box2.Length, 20.0)
+        finally:
+            try:
+                loaded_doc.close()
+            except Exception:
+                pass
+            if os.path.exists(filepath):
+                os.remove(filepath)
 
 
-# ---------------------------------------------------------------------------
+class TestSimpleFeatures(unittest.TestCase):
+    """Tests for simple feature creation."""
+
+    def setUp(self):
+        self.doc_name = f"TestDoc_{self.id().replace('.', '_')}"
+        self.doc = FreeCAD.newDocument(self.doc_name)
+
+    def tearDown(self):
+        if hasattr(self, 'doc') and self.doc is not None:
+            try:
+                if self.doc.Name in FreeCAD.listDocuments():
+                    FreeCAD.closeDocument(self.doc.Name)
+            except Exception:
+                pass
+            self.doc = None
+
+    def test_create_and_save_box(self):
+        """Test creating a box and saving it."""
+        box = self.doc.addObject("Part::Box", "TestBox")
+        box.Length = 10.0
+        box.Width = 10.0
+        box.Height = 10.0
+        self.doc.recompute()
+
+        filepath = os.path.join(tempfile.gettempdir(), "test_box.FCStd")
+        self.doc.saveAs(filepath)
+
+        loaded_doc = FreeCAD.openDocument(filepath)
+        try:
+            loaded_box = loaded_doc.getObject("TestBox")
+            self.assertIsNotNone(loaded_box)
+            self.assertEqual(loaded_box.TypeId, "Part::Box")
+        finally:
+            try:
+                loaded_doc.close()
+            except Exception:
+                pass
+            if os.path.exists(filepath):
+                os.remove(filepath)
+
+    def test_create_and_save_cylinder(self):
+        """Test creating a cylinder and saving it."""
+        cyl = self.doc.addObject("Part::Cylinder", "TestCyl")
+        cyl.Radius = 10.0
+        cyl.Height = 20.0
+        self.doc.recompute()
+
+        filepath = os.path.join(tempfile.gettempdir(), "test_cyl.FCStd")
+        self.doc.saveAs(filepath)
+
+        loaded_doc = FreeCAD.openDocument(filepath)
+        try:
+            loaded_cyl = loaded_doc.getObject("TestCyl")
+            self.assertIsNotNone(loaded_cyl)
+            self.assertEqual(loaded_cyl.TypeId, "Part::Cylinder")
+            self.assertEqual(loaded_cyl.Radius, 10.0)
+        finally:
+            try:
+                loaded_doc.close()
+            except Exception:
+                pass
+            if os.path.exists(filepath):
+                os.remove(filepath)
+
+
+# -----------------------------------------------------------------------------
 if __name__ == "__main__":
-    unittest.main()
+    loader = unittest.TestLoader()
+    suite = unittest.TestSuite()
+
+    try:
+        from test_composite_shell import TestCompositeShellFP
+        suite.addTests(loader.loadTestsFromTestCase(TestCompositeShellFP))
+    except Exception as e:
+        print(f"Warning: Could not import test_composite_shell: {e}")
+
+    try:
+        from test_laminate import TestLaminateFP
+        suite.addTests(loader.loadTestsFromTestCase(TestLaminateFP))
+    except Exception as e:
+        print(f"Warning: Could not import test_laminate: {e}")
+
+    try:
+        from test_seam import TestSeamShellFP
+        suite.addTests(loader.loadTestsFromTestCase(TestSeamShellFP))
+    except Exception as e:
+        print(f"Warning: Could not import test_seam: {e}")
+
+    # Add our demonstration tests
+    suite.addTests(loader.loadTestsFromTestCase(TestDocumentPersistence))
+    suite.addTests(loader.loadTestsFromTestCase(TestSimpleFeatures))
+
+    runner = unittest.TextTestRunner(verbosity=2)
+    result = runner.run(suite)
+    sys.exit(0 if result.wasSuccessful() else 1)

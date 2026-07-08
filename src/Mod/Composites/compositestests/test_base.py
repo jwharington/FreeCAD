@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2025 John Wharington jwharington@gmail.com
+
+"""Base test class and utilities for FreeCAD integration tests."""
+
+import os
+import sys
+import tempfile
+from unittest.mock import MagicMock
+
+import FreeCAD
+import Part
+
+# CRITICAL: Mock FreeCADGui BEFORE importing any Composites modules
+FreeCADGui = MagicMock()
+FreeCADGui.addCommand = lambda *args, **kwargs: None
+FreeCADGui.addWorkbench = lambda *args, **kwargs: None
+sys.modules['FreeCADGui'] = FreeCADGui
+
+# Import FreeCAD after mocking FreeCADGui
+import FreeCAD
+import Part
+
+# Now import Composites
+if "CompositesWB" not in sys.modules:
+    import Composites as _composites_wb
+    sys.modules["CompositesWB"] = _composites_wb
+
+import Composites as CompositesWB
+
+
+class TestFreeCADFP(unittest.TestCase):
+    """Base test class for FreeCAD FeaturePython objects."""
+
+    def setUp(self):
+        self.doc_name = f"TestDoc_{self.id().replace('.', '_')}"
+        self.doc = FreeCAD.newDocument(self.doc_name)
+
+    def tearDown(self):
+        if hasattr(self, 'doc') and self.doc is not None:
+            try:
+                if self.doc.Name in FreeCAD.listDocuments():
+                    FreeCAD.closeDocument(self.doc.Name)
+            except Exception:
+                pass
+            self.doc = None
+
+    def _save_document(self, filepath):
+        self.doc.saveAs(filepath)
+
+    def _load_document(self, filepath):
+        return FreeCAD.openDocument(filepath)
+
+    def _create_shell(self, name="Shell", support_shape=None):
+        from Composites.features.CompositeShell import CompositeShellFP
+        support = self.doc.addObject("Part::Feature", "Support")
+        support.Shape = support_shape or Part.makeCylinder(10.0, 20.0)
+        shell = self.doc.addObject("Part::FeaturePython", name)
+        CompositeShellFP(shell, support)
+        self.doc.recompute()
+        return shell
+
+    def _create_laminate(self, name="Laminate"):
+        from Composites.features.Laminate import LaminateFP
+        laminate = self.doc.addObject("Part::FeaturePython", name)
+        LaminateFP(laminate)
+        self.doc.recompute()
+        return laminate
+
+    def _create_box(self, name="Box"):
+        """Create a simple box."""
+        obj = self.doc.addObject("Part::Box", name)
+        obj.Length = 10.0
+        obj.Width = 10.0
+        obj.Height = 10.0
+        self.doc.recompute()
+        return obj

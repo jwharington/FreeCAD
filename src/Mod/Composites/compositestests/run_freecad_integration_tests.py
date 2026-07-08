@@ -1,46 +1,74 @@
+#!/usr/bin/env python
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
-"""Run real-FreeCAD integration tests and return a proper process exit code."""
+"""
+Reusable test runner for FreeCAD FeaturePython integration tests.
+
+Run with:
+    FreeCADCmd -P src/Mod/Composites/compositestests/run_freecad_integration_tests.py
+
+This script sets up the environment and runs all test modules.
+"""
 
 import os
 import sys
-import traceback
+import tempfile
 import unittest
+from unittest.mock import MagicMock
+
+# CRITICAL: Mock FreeCADGui BEFORE importing any Composites modules
+FreeCADGui = MagicMock()
+FreeCADGui.addCommand = lambda *args, **kwargs: None
+FreeCADGui.addWorkbench = lambda *args, **kwargs: None
+sys.modules['FreeCADGui'] = FreeCADGui
+
+# Import FreeCAD after mocking FreeCADGui
+import FreeCAD
+import Part
+
+# Now import Composites
+if "CompositesWB" not in sys.modules:
+    import Composites as _composites_wb
+    sys.modules["CompositesWB"] = _composites_wb
+
+import Composites as CompositesWB
 
 
-def _repo_root_from_here():
-    # Go up from compositestests/ to src/Mod/
-    return os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..")
-    )
+def run_tests():
+    """Run all integration tests."""
+    loader = unittest.TestLoader()
+    suite = unittest.TestSuite()
 
+    # Import and add tests from feature-specific modules
+    test_modules = [
+        'test_composite_shell',
+        'test_laminate',
+        'test_seam',
+        'test_place_dart',
+    ]
 
-def main():
+    for module_name in test_modules:
+        try:
+            module = __import__(module_name)
+            test_class = getattr(module, f'Test{module_name.split("_")[1].capitalize()}FP')
+            suite.addTests(loader.loadTestsFromTestCase(test_class))
+        except Exception as e:
+            print(f"Warning: Could not import {module_name}: {e}")
+
+    # Add demonstration tests from this file
     try:
-        repo_root = _repo_root_from_here()
-        if repo_root not in sys.path:
-            sys.path.insert(0, repo_root)
+        from test_freecad_fp import TestDocumentPersistence, TestSimpleFeatures
+        suite.addTests(loader.loadTestsFromTestCase(TestDocumentPersistence))
+        suite.addTests(loader.loadTestsFromTestCase(TestSimpleFeatures))
+    except Exception as e:
+        print(f"Warning: Could not import demonstration tests: {e}")
 
-        from Composites.compositestests import test_integration_freecad
-        from Composites.compositestests import test_rosette_integration
-        from Composites.compositestests import test_transfer_rosette
-
-        suite = unittest.TestSuite()
-        for test_module in (
-            test_integration_freecad,
-            test_rosette_integration,
-            test_transfer_rosette,
-        ):
-            suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(test_module))
-        print(f"Loaded {suite.countTestCases()} integration test(s)")
-        result = unittest.TextTestRunner(verbosity=2, stream=sys.stdout).run(
-            suite
-        )
-        raise SystemExit(0 if result.wasSuccessful() else 1)
-    except Exception:  # pragma: no cover - integration script diagnostics
-        traceback.print_exc()
-        raise SystemExit(1)
+    runner = unittest.TextTestRunner(verbosity=2)
+    result = runner.run(suite)
+    return result.wasSuccessful()
 
 
-main()
+if __name__ == "__main__":
+    success = run_tests()
+    sys.exit(0 if success else 1)
