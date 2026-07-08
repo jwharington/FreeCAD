@@ -297,6 +297,7 @@ class TransferRosetteCommand(BaseCommand):
         from .Container import getCompositesContainer
 
         getCompositesContainer().addObject(obj)
+        import FreeCADGui
         FreeCADGui.Selection.clearSelection()
         doc.recompute()
 

@@ -297,6 +297,7 @@ class CompositeSeamCommand(BaseCommand):
     def _create_shell_seam(self, doc, master, attachment):
         obj = doc.addObject(self.type_id, self.instance_name)
         SeamShellFP(obj, master, attachment, overlap=DEFAULT_OVERLAP)
+        import FreeCADGui
         if FreeCADGui.ActiveDocument and getattr(obj, "ViewObject", None):
             from .VPCompositeShell import ViewProviderCompositeShell
 
@@ -321,6 +322,7 @@ class CompositeSeamCommand(BaseCommand):
         from .Container import getCompositesContainer
 
         getCompositesContainer().addObject(obj)
+        import FreeCADGui
         FreeCADGui.Selection.clearSelection()
         doc.recompute()
 

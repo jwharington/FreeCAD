@@ -85,7 +85,7 @@ class BaseCommand:
                 sel.extend(neglected)
             return ok
 
-        from FreeCAD import Gui as FreeCADGui
+        import FreeCADGui
         sel = FreeCADGui.Selection.getSelectionEx()
         if debug or self.debug:
             sel_objs = [s.Object for s in sel]
@@ -123,7 +123,7 @@ class BaseCommand:
         cls = self.cls_fp
         cls(obj, **sel)
         if FreeCAD.GuiUp:
-            from FreeCAD import Gui as FreeCADGui
+            import FreeCADGui
             cls = self.cls_vp
             cls(obj.ViewObject)
             if hasattr(cls, "_taskPanel") and cls._taskPanel:

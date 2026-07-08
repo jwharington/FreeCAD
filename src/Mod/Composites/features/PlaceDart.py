@@ -51,6 +51,7 @@ class PlaceDartCommand(BaseCommand):
 
     def _collect_selection(self, selection_ex=None):
         if selection_ex is None:
+            import FreeCADGui
             selection_ex = FreeCADGui.Selection.getSelectionEx()
 
         shell = None
@@ -161,6 +162,7 @@ class PlaceDartCommand(BaseCommand):
         if doc is not None and hasattr(doc, "recompute"):
             doc.recompute()
 
+        import FreeCADGui
         FreeCADGui.Selection.clearSelection()
 
     def IsActive(self):
