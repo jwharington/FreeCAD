@@ -30,7 +30,7 @@ def make_edge_seam(
 ):
     if not edges:
         raise ValueError("No edges provided for seam generation")
-    if shape.IsNull():
+    if shape.isNull():
         raise ValueError("Input shape is null")
 
     # Validate edges
@@ -49,7 +49,7 @@ def make_edge_seam(
     for i, e in enumerate(sedges):
         try:
             tube = generate_seam_tube(Part.Wire(e), overlap)
-            if tube.IsNull():
+            if tube.isNull():
                 raise ValueError(f"Failed to generate pipe shell for edge {i}")
             tools.append(tube)
         except Exception as e:

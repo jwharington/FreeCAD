@@ -12,17 +12,18 @@ from unittest.mock import MagicMock
 import FreeCAD
 import Part
 
-# CRITICAL: Mock FreeCADGui BEFORE importing any Composites modules
-FreeCADGui = MagicMock()
-FreeCADGui.addCommand = lambda *args, **kwargs: None
-FreeCADGui.addWorkbench = lambda *args, **kwargs: None
-sys.modules['FreeCADGui'] = FreeCADGui
+# Minimal FreeCADGui mock for tests that need GUI access.
+# Features themselves no longer require FreeCADGui at import time.
+# This mock provides stubs for common GUI operations used in tests.
+_freeCADGui_mock = MagicMock()
+_freeCADGui_mock.addCommand = lambda *args, **kwargs: None
+_freeCADGui_mock.addWorkbench = lambda *args, **kwargs: None
+_freeCADGui_mock.Selection = MagicMock()
+_freeCADGui_mock.Selection.getSelectionEx = MagicMock(return_value=[])
+_freeCADGui_mock.Selection.clearSelection = MagicMock()
+sys.modules['FreeCADGui'] = _freeCADGui_mock
 
-# Import FreeCAD after mocking FreeCADGui
-import FreeCAD
-import Part
-
-# Now import Composites
+# Import Composites (now works without heavy mocking)
 if "CompositesWB" not in sys.modules:
     import Composites as _composites_wb
     sys.modules["CompositesWB"] = _composites_wb
