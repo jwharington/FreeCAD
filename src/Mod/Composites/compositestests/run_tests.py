@@ -57,6 +57,27 @@ def run_tests():
         except Exception as e:
             print(f"Warning: Could not import {module_name}.{class_name}: {e}")
 
+    # Also run integration tests (requires real FreeCAD)
+    try:
+        from test_integration_freecad import TestFreeCADIntegration
+        suite.addTests(loader.loadTestsFromTestCase(TestFreeCADIntegration))
+    except Exception as e:
+        print(f"Warning: Could not import integration tests: {e}")
+
+    # Run rosette integration tests
+    try:
+        from test_rosette_integration import TestRosetteIntegration
+        suite.addTests(loader.loadTestsFromTestCase(TestRosetteIntegration))
+    except Exception as e:
+        print(f"Warning: Could not import rosette integration tests: {e}")
+
+    # Run transfer rosette tests
+    try:
+        from test_transfer_rosette import TestTransferRosetteFP
+        suite.addTests(loader.loadTestsFromTestCase(TestTransferRosetteFP))
+    except Exception as e:
+        print(f"Warning: Could not import transfer rosette tests: {e}")
+
     # Add demonstration tests from test_freecad_fp
     try:
         from test_freecad_fp import TestDocumentPersistence, TestSimpleFeatures
