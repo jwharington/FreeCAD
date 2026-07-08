@@ -41,20 +41,21 @@ def run_tests():
     suite = unittest.TestSuite()
 
     # Import and add tests from feature-specific modules
-    test_modules = [
-        'test_composite_shell',
-        'test_laminate',
-        'test_seam',
-        'test_place_dart',
-    ]
+    # Map module names to their corresponding test class names
+    test_modules = {
+        'test_composite_shell': 'TestCompositeShellFP',
+        'test_laminate': 'TestLaminateFP',
+        'test_seam': 'TestSeamShellFP',
+        'test_place_dart': 'TestPlaceDartFP',
+    }
 
-    for module_name in test_modules:
+    for module_name, class_name in test_modules.items():
         try:
             module = __import__(module_name)
-            test_class = getattr(module, f'Test{module_name.split("_")[1].capitalize()}FP')
+            test_class = getattr(module, class_name)
             suite.addTests(loader.loadTestsFromTestCase(test_class))
         except Exception as e:
-            print(f"Warning: Could not import {module_name}: {e}")
+            print(f"Warning: Could not import {module_name}.{class_name}: {e}")
 
     # Add demonstration tests from test_freecad_fp
     try:
