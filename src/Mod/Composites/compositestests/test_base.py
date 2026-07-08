@@ -6,6 +6,7 @@
 import os
 import sys
 import tempfile
+import unittest
 from unittest.mock import MagicMock
 
 import FreeCAD
@@ -31,12 +32,27 @@ import Composites as CompositesWB
 
 class TestFreeCADFP(unittest.TestCase):
     """Base test class for FreeCAD FeaturePython objects."""
+    
+    # Set to True to save .FCStd files for each test
+    save_fcstd = True
 
     def setUp(self):
         self.doc_name = f"TestDoc_{self.id().replace('.', '_')}"
         self.doc = FreeCAD.newDocument(self.doc_name)
+        # Generate filename based on test name
+        test_name = f"{self.__class__.__name__}_{self._testMethodName}.FCStd"
+        self.fcstd_path = os.path.join(tempfile.gettempdir(), test_name)
 
     def tearDown(self):
+        # Save document before closing if enabled
+        if self.save_fcstd and hasattr(self, 'doc') and self.doc is not None:
+            try:
+                self.doc.saveAs(self.fcstd_path)
+                print(f"Saved: {self.fcstd_path}")
+            except Exception as e:
+                print(f"Error saving {self.fcstd_path}: {e}")
+        
+        # Close document
         if hasattr(self, 'doc') and self.doc is not None:
             try:
                 if self.doc.Name in FreeCAD.listDocuments():
