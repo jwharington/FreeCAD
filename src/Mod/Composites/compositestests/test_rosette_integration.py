@@ -14,6 +14,7 @@ so each test is ~10-30s.
 """
 
 import os
+import tempfile
 import unittest
 
 import FreeCAD
@@ -37,9 +38,30 @@ from Composites.features.CompositeShell import is_composite_shell  # noqa: E402
 class TestRosetteIntegration(unittest.TestCase):
     """Headless integration tests for the Rosette family."""
 
+    save_fcstd = True
+
     def _close_doc_if_exists(self, doc_name):
         if doc_name in FreeCAD.listDocuments():
             FreeCAD.closeDocument(doc_name)
+
+    def tearDown(self):
+        """Save .FCStd file after each test and close document."""
+        try:
+            if self.save_fcstd:
+                docs = FreeCAD.listDocuments()
+                if docs:
+                    doc_name = list(docs.keys())[0]
+                    filepath = os.path.join(tempfile.gettempdir(), f"{self.__class__.__name__}_{self._testMethodName}.FCStd")
+                    doc = docs[doc_name]
+                    doc.saveAs(filepath)
+                    print(f"Saved: {filepath}")
+            for doc_name in list(FreeCAD.listDocuments()):
+                try:
+                    FreeCAD.closeDocument(doc_name)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"Teardown error: {e}")
 
     def test_align_fibre_rosette_solves_warp_through_second_point(self):
         """AlignFibreRosette solves its Angle so a warp fibre (v=0) passes
@@ -168,7 +190,6 @@ class TestRosetteIntegration(unittest.TestCase):
                 os.remove(bak)
             except OSError:
                 pass
-        FreeCAD.closeDocument(doc2.Name)
 
 
 if __name__ == "__main__":

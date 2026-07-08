@@ -89,6 +89,18 @@ class TestFreeCADIntegration(unittest.TestCase):
         )
         return wire
 
+    def _persist_shape_document(self, *shapes, labels=None):
+        doc_name = f"{self.__class__.__name__}_{self._testMethodName}"
+        self._close_doc_if_exists(doc_name)
+        doc = FreeCAD.newDocument(doc_name)
+        if labels is None:
+            labels = [f"Shape{index + 1}" for index in range(len(shapes))]
+        for label, shape in zip(labels, shapes):
+            obj = doc.addObject("Part::Feature", label)
+            obj.Shape = shape
+        doc.recompute()
+        return doc
+
     def _make_composite_shell(self, doc, name_prefix, support_shape):
         from Composites.compositeexamples.examples._shell_example_common import (
             create_composite_feature_stack,
@@ -117,6 +129,7 @@ class TestFreeCADIntegration(unittest.TestCase):
 
         self.assertFalse(seam.isNull())
         self.assertEqual(seam.ShapeType, "Compound")
+        self._persist_shape_document(box, seam, labels=["Input", "Seam"])
 
     def test_seam_make_join_seam_from_adjacent_faces(self):
         self._ensure_freecadgui()
@@ -132,6 +145,7 @@ class TestFreeCADIntegration(unittest.TestCase):
 
         self.assertFalse(seam.isNull())
         self.assertEqual(seam.ShapeType, "Compound")
+        self._persist_shape_document(box, seam, labels=["Input", "Seam"])
 
     def test_seam_make_edge_seam_handles_multiple_edges(self):
         self._ensure_freecadgui()
@@ -147,12 +161,14 @@ class TestFreeCADIntegration(unittest.TestCase):
 
         self.assertFalse(seam.isNull())
         self.assertEqual(seam.ShapeType, "Compound")
+        self._persist_shape_document(box, seam, labels=["Input", "Seam"])
 
     def test_seam_make_edge_seam_rejects_empty_edge_list(self):
         self._ensure_freecadgui()
         from Composites.tools.seam import make_edge_seam
 
         box = Part.makeBox(10.0, 10.0, 10.0)
+        self._persist_shape_document(box.Faces[5], labels=["Input"])
 
         with self.assertRaises(ValueError):
             make_edge_seam(box.Faces[5], [], overlap=1.0)
@@ -176,6 +192,7 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertEqual(len(seam_forward.Faces), len(seam_reverse.Faces))
         self.assertEqual(len(seam_forward.Edges), len(seam_reverse.Edges))
         self.assertAlmostEqual(seam_forward.Area, seam_reverse.Area, places=8)
+        self._persist_shape_document(box, seam_forward, seam_reverse, labels=["Input", "Forward", "Reverse"])
 
     def test_seam_make_edge_seam_handles_disconnected_edges(self):
         self._ensure_freecadgui()
@@ -194,6 +211,7 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertEqual(len(seam.Faces), 2)
         self.assertEqual(len(seam.Edges), 7)
         self.assertAlmostEqual(seam.Area, face.Area, places=8)
+        self._persist_shape_document(box, seam, labels=["Input", "Seam"])
 
     def test_seam_make_edge_seam_on_curved_surface(self):
         self._ensure_freecadgui()
@@ -206,6 +224,7 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertEqual(seam.ShapeType, "Compound")
         self.assertGreater(seam.Area, cylinder.Area)
         self.assertEqual(len(seam.Faces), 6)
+        self._persist_shape_document(cylinder, seam, labels=["Input", "Seam"])
 
     def test_seam_make_edge_seam_on_annulus(self):
         self._ensure_freecadgui()
@@ -219,6 +238,7 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertEqual(len(seam.Faces), 3)
         self.assertEqual(len(seam.Edges), 6)
         self.assertAlmostEqual(seam.Area, torus.Area, places=8)
+        self._persist_shape_document(torus, seam, labels=["Input", "Seam"])
 
     def test_seam_make_edge_seam_on_tapered_surface(self):
         self._ensure_freecadgui()
@@ -232,6 +252,7 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertEqual(len(seam.Faces), 6)
         self.assertEqual(len(seam.Edges), 9)
         self.assertGreater(seam.Area, cone.Faces[0].Area)
+        self._persist_shape_document(cone, seam, labels=["Input", "Seam"])
 
     def test_seam_make_edge_seam_handles_thin_geometry(self):
         self._ensure_freecadgui()
@@ -245,6 +266,7 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertEqual(len(seam.Faces), 1)
         self.assertEqual(len(seam.Edges), 4)
         self.assertAlmostEqual(seam.Area, box.Faces[5].Area, places=12)
+        self._persist_shape_document(box, seam, labels=["Input", "Seam"])
 
     def test_seam_make_join_seam_on_angled_cylinder_faces(self):
         self._ensure_freecadgui()
@@ -263,6 +285,7 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertEqual(len(seam.Faces), 2)
         self.assertEqual(len(seam.Edges), 5)
         self.assertAlmostEqual(seam.Area, side_face.Area, places=8)
+        self._persist_shape_document(cylinder, seam, labels=["Input", "Seam"])
 
     def test_seam_make_join_seam_handles_partial_overlap(self):
         self._ensure_freecadgui()
@@ -280,6 +303,7 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertEqual(len(seam.Faces), 5)
         self.assertEqual(len(seam.Edges), 16)
         self.assertAlmostEqual(seam.Area, master.Area, places=8)
+        self._persist_shape_document(master, attached, seam, labels=["Master", "Attached", "Seam"])
 
     def test_seam_make_join_seam_is_sensitive_to_face_order(self):
         self._ensure_freecadgui()
@@ -295,12 +319,15 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertEqual(len(seam.Faces), 3)
         self.assertEqual(len(seam.Edges), 10)
         self.assertAlmostEqual(seam.Area, attached.Area, places=8)
+        self._persist_shape_document(master, attached, seam, labels=["Master", "Attached", "Seam"])
 
     def test_seam_make_join_seam_without_partner_edges_raises(self):
         self._ensure_freecadgui()
         from Composites.tools.seam import make_join_seam
 
         box = Part.makeBox(10.0, 10.0, 10.0)
+        self._persist_shape_document(box.Faces[0], box.Faces[1], labels=["Face1", "Face2"])
+
         with self.assertRaises(ValueError):
             make_join_seam(box.Faces[0], box.Faces[1], overlap=1.0)
 
@@ -519,9 +546,6 @@ class TestFreeCADIntegration(unittest.TestCase):
 
         doc = FreeCAD.newDocument(doc_name)
         self.assertEqual(doc.Name, doc_name)
-
-        # tearDown will close and save
-        self.assertNotIn(doc_name, FreeCAD.listDocuments())
 
     def test_is_comp_type_helper(self):
         obj_ok = types.SimpleNamespace(
@@ -742,8 +766,6 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertFalse(failure_report.get("available", True))
         self.assertIn("solve skipped", failure_report.get("reason", ""))
 
-        self._close_doc_if_exists(doc_name)
-
     def test_conical_example_full_solver_job_runs(self):
         doc_name = "Composites_Conical_Panel"
         self._close_doc_if_exists(doc_name)
@@ -762,7 +784,6 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertIn("failure_report", fem_job)
         self.assertIsInstance(fem_job.get("failure_report"), dict)
 
-        self._close_doc_if_exists(doc_name)
 
     def test_fibre_composite_lamina_areal_weight_updates(self):
         doc_name = "CompositesFibreLaminaIntegrationTest"
