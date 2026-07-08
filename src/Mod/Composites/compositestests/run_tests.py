@@ -49,6 +49,7 @@ def run_tests():
         'test_stiffener': 'TestStiffenerFP',
         'test_mould': 'TestMouldFP',
         'test_place_dart': 'TestPlaceDartFP',
+        'test_rosette_types': 'TestRosetteTypes',
     }
 
     for module_name, class_name in test_modules.items():
