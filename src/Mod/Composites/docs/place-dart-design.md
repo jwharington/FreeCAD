@@ -1,6 +1,6 @@
 # PlaceDart Feature Design
 
-**Date:** 2026-07-07  
+**Date:** 2026-07-08  
 **Status:** Active implementation slice  
 **Related:** `features/CompositeShell.py`, `features/PlaceDart.py`
 
@@ -43,10 +43,9 @@ The command currently uses a nearest-point projection approach onto the shell su
 
 The main remaining geometry work is to keep that projection behavior robust for more wire shapes and support geometries, especially:
 
-- closed wires
-- multi-edge wire sources
 - awkward support curvature
 - wires that only partially intersect the support region
+- higher-fidelity projection than the current nearest-point sampling approach
 
 ## Implementation Status
 
@@ -66,6 +65,7 @@ The main remaining geometry work is to keep that projection behavior robust for 
 
 - [x] Integration tests for `DrapeCuts` invalidation and solver input shaping
 - [x] Integration coverage for projected cut objects being merged into the shell cut set
+- [x] Closed-wire projection reuse and hidden-object behavior
 - [ ] Visualization tests for dart overlay
 - [ ] Broader geometry coverage for unusual wire/support combinations
 
@@ -87,6 +87,7 @@ The main remaining geometry work is to keep that projection behavior robust for 
 1. Should dart wires remain editable after placement?
 2. How should the command behave when a wire fails to project cleanly onto the support?
 3. Do we need a visible dart overlay, or is the stored cut geometry enough for now?
+4. Should the projection path evolve beyond nearest-point sampling if higher-fidelity placement becomes necessary?
 
 ## Related Files
 

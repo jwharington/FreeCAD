@@ -3,7 +3,6 @@
 
 
 import Part
-from FreeCAD import Console
 
 from . import splitAPI
 
@@ -41,6 +40,18 @@ def get_partner_edges(
     return [e2 for e2 in face2.Edges for e1 in face1.Edges if e2.isPartner(e1)]
 
 
+def _fallback_join_edges(face1: Part.Face, face2: Part.Face):
+    for candidate in (
+        face1.common(face2),
+        face1.section(face2),
+        face2.section(face1),
+    ):
+        edges = getattr(candidate, "Edges", None)
+        if edges:
+            return edges
+    return []
+
+
 def make_join_seam(
     face1: Part.Face,
     face2: Part.Face,
@@ -49,9 +60,9 @@ def make_join_seam(
     edges = get_partner_edges(face1, face2)
 
     if not edges:
-        Console.PrintWarning("TODO: handle non-common edge")
-        # fallback to calculating via intersection
-        # TODO: modify face2 to split
-        edges = face1.section(face2).Edges
+        edges = _fallback_join_edges(face1, face2)
+
+    if not edges:
+        raise ValueError("faces do not share a seam")
 
     return make_edge_seam(face1, edges, overlap=overlap)

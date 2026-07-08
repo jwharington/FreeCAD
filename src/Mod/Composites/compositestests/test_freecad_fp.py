@@ -9,6 +9,7 @@ these tests run without a real FreeCAD installation.
 """
 
 import importlib.util
+import json
 import os
 import sys
 import types
@@ -1637,6 +1638,36 @@ class TestCompositeShellFPRosetteProperty(unittest.TestCase):
         self.assertEqual(CompositeShellFP.Type, "Composite::Shell")
 
 
+class TestCompositeShellPersistence(unittest.TestCase):
+    def setUp(self):
+        self.obj = _FakeFCObj("CompositeShell")
+        self.obj.Document = MagicMock()
+        self.fp = CompositeShellFP(self.obj)
+
+    def test_persist_solve_data_accepts_list_node_positions(self):
+        fp = types.SimpleNamespace(
+            Support=types.SimpleNamespace(Shape=object()),
+            Rosette=None,
+            DrapePitch=1.0,
+        )
+        self.fp._shape_fingerprint = lambda shape: "shapehash"
+
+        self.fp._persist_solve_data(
+            fp,
+            {
+                "node_positions": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                "quads": [[0, 1, 2, 3]],
+                "shear_angle": [0.25],
+                "quality": {"status": "ok"},
+            },
+        )
+
+        self.assertEqual(
+            json.loads(fp.NodePositionsJSON),
+            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+        )
+
+
 class TestPlaceDartCommand(unittest.TestCase):
     def setUp(self):
         self.command = PlaceDartCommand()
@@ -1654,6 +1685,23 @@ class TestPlaceDartCommand(unittest.TestCase):
         wire.TypeId = "Part::Feature"
         wire.Shape = types.SimpleNamespace(Edges=[object()])
         return wire
+
+    def _make_point(self, x, y, z):
+        class _Point:
+            def __init__(self, coords):
+                self.x, self.y, self.z = coords
+
+            def isEqual(self, other, tolerance):
+                return (
+                    abs(self.x - other.x) <= tolerance
+                    and abs(self.y - other.y) <= tolerance
+                    and abs(self.z - other.z) <= tolerance
+                )
+
+        return _Point((x, y, z))
+
+    def _make_edge(self, points):
+        return types.SimpleNamespace(discretize=lambda samples: list(points))
 
     def test_collects_shell_and_wire_sources(self):
         shell = self._make_shell()
@@ -1679,6 +1727,7 @@ class TestPlaceDartCommand(unittest.TestCase):
         ]
         FreeCADGui.Selection.getSelectionEx.return_value = selection
         FreeCADGui.Selection.clearSelection.reset_mock()
+        self.command._ensure_projection_object = lambda shell, wire: wire
 
         self.command.Activated()
 
@@ -1686,6 +1735,54 @@ class TestPlaceDartCommand(unittest.TestCase):
         self.assertTrue(shell.Proxy._needs_recompute)
         shell.Document.recompute.assert_called_once()
         FreeCADGui.Selection.clearSelection.assert_called_once()
+
+    def test_project_wire_to_support_closes_closed_wire(self):
+        import Part
+
+        support_shape = object()
+        points = [
+            self._make_point(0.0, 0.0, 0.0),
+            self._make_point(1.0, 0.0, 0.0),
+            self._make_point(1.0, 0.0, 0.0),
+            self._make_point(0.0, 1.0, 0.0),
+        ]
+        wire_shape = types.SimpleNamespace(
+            Edges=[
+                self._make_edge(points[:2]),
+                self._make_edge(points[2:]),
+            ],
+            isClosed=lambda: True,
+        )
+        projected_points = []
+        original_project_point = self.command._project_point_to_support
+        original_make_polygon = Part.makePolygon
+        try:
+            self.command._project_point_to_support = lambda support, point: point
+            Part.makePolygon = lambda pts: projected_points.extend(pts) or pts
+
+            result = self.command._project_wire_to_support(support_shape, wire_shape)
+
+            self.assertIsNotNone(result)
+            self.assertEqual(len(projected_points), 4)
+            self.assertTrue(projected_points[0].isEqual(projected_points[-1], 1e-6))
+        finally:
+            self.command._project_point_to_support = original_project_point
+            Part.makePolygon = original_make_polygon
+
+    def test_ensure_projection_object_hides_existing_projection(self):
+        shell = self._make_shell()
+        shell.Support = types.SimpleNamespace(Shape=object())
+        source = self._make_wire("Wire1")
+        existing = _FakeFCObj("Shell_Wire1_PlaceDartCut")
+        existing.ViewObject = types.SimpleNamespace(Visibility=True)
+        shell.Document.getObject.return_value = existing
+        self.command._project_wire_to_support = lambda support, shape: "projected-shape"
+
+        result = self.command._ensure_projection_object(shell, source)
+
+        self.assertIs(result, existing)
+        self.assertEqual(existing.Shape, "projected-shape")
+        self.assertFalse(existing.ViewObject.Visibility)
 
 
 # ---------------------------------------------------------------------------

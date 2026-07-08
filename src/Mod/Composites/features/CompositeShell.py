@@ -776,12 +776,14 @@ class CompositeShellFP(CompositeBaseFP):
         Used in _can_use_persisted to detect when cut wires change.
         """
         import hashlib
+
         h = hashlib.sha256()
         h.update(b"dravecif:int")
         cuts = getattr(fp, "DrapeCuts", None) or []
         h.update(f"n{len(cuts)}".encode())
-        for label in cuts:
-            h.update(f"{label!s}".encode())
+        for cut in cuts:
+            name = getattr(cut, "Name", "") or getattr(cut, "Label", "") or str(cut)
+            h.update(name.encode())
         return h.hexdigest()[:16]
 
     def _shape_fingerprint(self, shape) -> str:
@@ -922,9 +924,12 @@ class CompositeShellFP(CompositeBaseFP):
 
     def _persist_solve_data(self, fp, solve_result: dict) -> None:
         """Store solve result arrays as JSON properties for rehydration."""
-        fp.NodePositionsJSON = json.dumps(
-            solve_result.get("node_positions", []).tolist()
-        )
+        node_positions = solve_result.get("node_positions")
+        if node_positions is None:
+            node_positions_payload = []
+        else:
+            node_positions_payload = np.asarray(node_positions).tolist()
+        fp.NodePositionsJSON = json.dumps(node_positions_payload)
         fp.QuadsJSON = json.dumps(
             solve_result.get("quads", [])
         )

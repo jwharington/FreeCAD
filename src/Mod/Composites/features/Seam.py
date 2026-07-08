@@ -198,6 +198,14 @@ class SeamShellFP(CompositeShellFP):
             return fp.Attachment, fp.Master
         return fp.Master, fp.Attachment
 
+    def _hide_object(self, obj):
+        try:
+            obj.Visibility = False
+        except Exception:
+            view_object = getattr(obj, "ViewObject", None)
+            if view_object is not None:
+                view_object.Visibility = False
+
     def _build_virtual_laminate(self, doc, fp, master, attachment):
         ordered_master, ordered_attachment = self._ordered_shells(fp)
         layers = list(getattr(ordered_master.Laminate, "Layers", []) or [])
@@ -212,30 +220,34 @@ class SeamShellFP(CompositeShellFP):
             laminate.Layers = layers
         if hasattr(laminate, "Symmetry"):
             laminate.Symmetry = SymmetryType.Assymmetric.name
+        self._hide_object(laminate)
         return laminate
 
     def _sync_virtual_inputs(self, fp):
         doc = getattr(fp, "Document", None) or FreeCAD.ActiveDocument
         if doc is None:
             return
-        master, attachment = self._ordered_shells(fp)
-        shape = make_shape_seam(master, attachment, overlap=float(fp.Overlap))
 
-        support_name = f"{fp.Name}_SeamSupport"
-        support = doc.getObject(support_name)
-        if support is None:
-            support = doc.addObject("Part::Feature", support_name)
-            try:
-                support.Visibility = False
-            except Exception:
-                pass
-        support.Shape = shape
+        previous = getattr(self, "_initializing", False)
+        self._initializing = True
+        try:
+            master, attachment = self._ordered_shells(fp)
+            shape = make_shape_seam(master, attachment, overlap=float(fp.Overlap))
 
-        laminate = self._build_virtual_laminate(doc, fp, master, attachment)
-        fp.Support = support
-        fp.Laminate = laminate
-        fp.Rosette = getattr(master, "Rosette", None) or getattr(attachment, "Rosette", None)
-        fp.Shape = shape
+            support_name = f"{fp.Name}_SeamSupport"
+            support = doc.getObject(support_name)
+            if support is None:
+                support = doc.addObject("Part::Feature", support_name)
+            self._hide_object(support)
+            support.Shape = shape
+
+            laminate = self._build_virtual_laminate(doc, fp, master, attachment)
+            fp.Support = support
+            fp.Laminate = laminate
+            fp.Rosette = getattr(master, "Rosette", None) or getattr(attachment, "Rosette", None)
+            fp.Shape = shape
+        finally:
+            self._initializing = previous
 
     def execute(self, fp):
         previous = getattr(self, "_initializing", False)

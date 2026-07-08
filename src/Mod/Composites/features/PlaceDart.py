@@ -133,6 +133,9 @@ class PlaceDartCommand(BaseCommand):
             except Exception:
                 pass
         projected_obj.Shape = projected_shape
+        view_object = getattr(projected_obj, "ViewObject", None)
+        if view_object is not None:
+            view_object.Visibility = False
         return projected_obj
 
     def Activated(self):

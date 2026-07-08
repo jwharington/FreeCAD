@@ -1,6 +1,6 @@
 # Seam Feature Design
 
-**Date:** 2026-07-07  
+**Date:** 2026-07-08  
 **Status:** Active implementation slice  
 **Related:** `features/Seam.py`, `tools/seam.py`, `features/CompositeShell.py`
 
@@ -77,7 +77,7 @@ The direct geometry helpers are intentionally kept independent of the GUI comman
 
 ### Current limitation
 
-`make_join_seam()` still needs a more complete fallback for faces that do not share a clean partner edge. That remains the main geometry-hardening gap for this feature.
+`make_join_seam()` now has a more complete fallback for faces that do not share a clean partner edge: it checks common geometry in both directions and raises an explicit error when no seam can be derived. The remaining work here is mainly edge-case validation rather than a known missing path.
 
 ## Testing Focus
 
@@ -99,6 +99,7 @@ The seam work is best tested by scenario rather than by a single happy-path exam
 - no-partner failure
 - missing-edge failure
 - CompositeShell seam output ordering
+- seam-shell helper visibility/stability
 
 ### Still worth keeping
 
@@ -111,7 +112,7 @@ The seam work is best tested by scenario rather than by a single happy-path exam
 
 ## Open Questions
 
-1. How aggressive should the non-common-edge fallback be when no partner edge exists?
+1. Are there still geometry cases where the explicit fallback should do more than section/common lookup before failing?
 2. Should part/shape seam and CompositeShell seam share more of their output-object setup?
 3. Should the seam shell eventually expose more of the virtual laminate aggregation to the UI?
 

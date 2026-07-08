@@ -386,15 +386,33 @@ class TestFreeCADIntegration(unittest.TestCase):
             SeamShellFP(seam, master, attachment, lap_side="A+B")
             doc.recompute()
 
+            support_name = f"{seam.Name}_SeamSupport"
+            laminate_name = f"{seam.Name}_VirtualLaminate"
+            support = doc.getObject(support_name)
+            laminate = doc.getObject(laminate_name)
+
             self.assertTrue(is_composite_shell(seam))
             self.assertFalse(seam.Shape.isNull())
+            self.assertIsNotNone(support)
+            self.assertIsNotNone(laminate)
+            self.assertFalse(support.ViewObject.Visibility)
+            self.assertFalse(laminate.ViewObject.Visibility)
             self.assertEqual(
                 seam.Laminate.Layers,
                 master.Laminate.Layers + attachment.Laminate.Layers,
             )
 
             seam.LapSide = "B+A"
+            doc.recompute()
 
+            support_after = doc.getObject(support_name)
+            laminate_after = doc.getObject(laminate_name)
+            self.assertIsNotNone(support_after)
+            self.assertIsNotNone(laminate_after)
+            self.assertEqual(support_after.Name, support_name)
+            self.assertEqual(laminate_after.Name, laminate_name)
+            self.assertFalse(support_after.ViewObject.Visibility)
+            self.assertFalse(laminate_after.ViewObject.Visibility)
             self.assertEqual(
                 seam.Laminate.Layers,
                 attachment.Laminate.Layers + master.Laminate.Layers,
