@@ -31,9 +31,33 @@ from Composites.compositestests.example_materials import make_glass
 
 
 class TestFreeCADIntegration(unittest.TestCase):
+    # Enable automatic .FCStd file generation
+    save_fcstd = True
+
     def _close_doc_if_exists(self, doc_name):
         if doc_name in FreeCAD.listDocuments():
             FreeCAD.closeDocument(doc_name)
+
+    def tearDown(self):
+        """Save .FCStd file after each test and close document."""
+        try:
+            # Save document if enabled
+            if self.save_fcstd:
+                docs = FreeCAD.listDocuments()
+                if docs:
+                    doc_name = list(docs.keys())[0]
+                    filepath = os.path.join(tempfile.gettempdir(), f"{self.__class__.__name__}_{self._testMethodName}.FCStd")
+                    doc = docs[doc_name]
+                    doc.saveAs(filepath)
+                    print(f"Saved: {filepath}")
+            # Close all documents
+            for doc_name in list(FreeCAD.listDocuments()):
+                try:
+                    FreeCAD.closeDocument(doc_name)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"Teardown error: {e}")
 
     def _ensure_freecadgui(self):
         import FreeCADGui
@@ -285,8 +309,6 @@ class TestFreeCADIntegration(unittest.TestCase):
         from Composites.features.Seam import SeamFP
 
         doc_name = "CompositesSeamMissingEdgesTest"
-        if doc_name in FreeCAD.listDocuments():
-            FreeCAD.closeDocument(doc_name)
 
         doc = FreeCAD.newDocument(doc_name)
         try:
@@ -296,15 +318,13 @@ class TestFreeCADIntegration(unittest.TestCase):
             with self.assertRaises(ValueError):
                 seam.Proxy.execute(seam)
         finally:
-            FreeCAD.closeDocument(doc_name)
+            pass
 
     def test_seam_featurepython_recomputes_from_box_face_edge(self):
         self._ensure_freecadgui()
         from Composites.features.Seam import SeamFP
 
         doc_name = "CompositesSeamIntegrationTest"
-        if doc_name in FreeCAD.listDocuments():
-            FreeCAD.closeDocument(doc_name)
 
         doc = FreeCAD.newDocument(doc_name)
         try:
@@ -320,15 +340,13 @@ class TestFreeCADIntegration(unittest.TestCase):
             self.assertEqual(seam.Shape.ShapeType, "Face")
             self.assertFalse(source.Visibility)
         finally:
-            FreeCAD.closeDocument(doc_name)
+            pass
 
     def test_seam_featurepython_supports_master_attachment_faces(self):
         self._ensure_freecadgui()
         from Composites.features.Seam import SeamFP
 
         doc_name = "CompositesSeamObjectModeTest"
-        if doc_name in FreeCAD.listDocuments():
-            FreeCAD.closeDocument(doc_name)
 
         doc = FreeCAD.newDocument(doc_name)
         try:
@@ -355,15 +373,13 @@ class TestFreeCADIntegration(unittest.TestCase):
             self.assertFalse(seam.Shape.isNull())
             self.assertEqual(seam.Shape.ShapeType, "Compound")
         finally:
-            FreeCAD.closeDocument(doc_name)
+            pass
 
     def test_seam_shell_output_aggregates_laminates_by_lap_side(self):
         self._ensure_freecadgui()
         from Composites.features.Seam import SeamShellFP, is_composite_shell
 
         doc_name = "CompositesSeamShellObjectModeTest"
-        if doc_name in FreeCAD.listDocuments():
-            FreeCAD.closeDocument(doc_name)
 
         doc = FreeCAD.newDocument(doc_name)
         try:
@@ -418,14 +434,12 @@ class TestFreeCADIntegration(unittest.TestCase):
                 attachment.Laminate.Layers + master.Laminate.Layers,
             )
         finally:
-            FreeCAD.closeDocument(doc_name)
+            pass
 
     def test_shell_drapecuts_invalidate_persisted_drape(self):
         self._ensure_freecadgui()
 
         doc_name = "CompositesDrapeCutsIntegrationTest"
-        if doc_name in FreeCAD.listDocuments():
-            FreeCAD.closeDocument(doc_name)
 
         doc = FreeCAD.newDocument(doc_name)
         try:
@@ -448,15 +462,13 @@ class TestFreeCADIntegration(unittest.TestCase):
             self.assertTrue(shell.DrapeValid)
             self.assertTrue(shell.Proxy._can_use_persisted(shell))
         finally:
-            FreeCAD.closeDocument(doc_name)
+            pass
 
     def test_get_shape_for_solver_embeds_cut_wires(self):
         self._ensure_freecadgui()
         from Composites.compositetools.drape_task import _get_shape_for_solver
 
         doc_name = "CompositesCutWireHelperTest"
-        if doc_name in FreeCAD.listDocuments():
-            FreeCAD.closeDocument(doc_name)
 
         doc = FreeCAD.newDocument(doc_name)
         try:
@@ -471,7 +483,7 @@ class TestFreeCADIntegration(unittest.TestCase):
             self.assertEqual(combined.ShapeType, "Compound")
             self.assertEqual(len(combined.Solids), 1)
         finally:
-            FreeCAD.closeDocument(doc_name)
+            pass
 
     def _make_fibre_lamina(self, doc):
         import FreeCADGui
@@ -504,13 +516,11 @@ class TestFreeCADIntegration(unittest.TestCase):
     def test_document_create_and_close(self):
         doc_name = "CompositesIntegrationTest"
 
-        if doc_name in FreeCAD.listDocuments():
-            FreeCAD.closeDocument(doc_name)
 
         doc = FreeCAD.newDocument(doc_name)
         self.assertEqual(doc.Name, doc_name)
 
-        FreeCAD.closeDocument(doc_name)
+        # tearDown will close and save
         self.assertNotIn(doc_name, FreeCAD.listDocuments())
 
     def test_is_comp_type_helper(self):
@@ -557,8 +567,6 @@ class TestFreeCADIntegration(unittest.TestCase):
 
         doc_name = "CompositesRosetteIntegrationTest"
 
-        if doc_name in FreeCAD.listDocuments():
-            FreeCAD.closeDocument(doc_name)
 
         doc = FreeCAD.newDocument(doc_name)
         obj = doc.addObject("App::FeaturePython", "Rosette")
@@ -571,7 +579,7 @@ class TestFreeCADIntegration(unittest.TestCase):
             obj.LocalCoordinateSystem.TypeId, "Part::LocalCoordinateSystem"
         )
 
-        FreeCAD.closeDocument(doc_name)
+        # tearDown will close
 
     def test_mould_analysis_part_plane_and_mould_integration(self):
         self._ensure_freecadgui()
@@ -580,8 +588,6 @@ class TestFreeCADIntegration(unittest.TestCase):
         from Composites.features.PartPlane import PartPlaneFP
 
         doc_name = "CompositesMouldWorkflowIntegrationTest"
-        if doc_name in FreeCAD.listDocuments():
-            FreeCAD.closeDocument(doc_name)
 
         doc = FreeCAD.newDocument(doc_name)
         source = self._make_source_feature(doc, shape=Part.makeCylinder(10.0, 20.0))
@@ -614,15 +620,13 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertIn(mould.GenerationStatus, {"ok", "fail_closed"})
         self.assertTrue(mould.GenerationSummary)
 
-        FreeCAD.closeDocument(doc_name)
+        # tearDown will close
 
     def test_texture_plan_on_real_shell_geometry(self):
         self._ensure_freecadgui()
         from Composites.features.TexturePlan import TexturePlanFP
 
         doc_name = "CompositesTexturePlanIntegrationTest"
-        if doc_name in FreeCAD.listDocuments():
-            FreeCAD.closeDocument(doc_name)
 
         doc = FreeCAD.newDocument(doc_name)
         try:
@@ -643,15 +647,13 @@ class TestFreeCADIntegration(unittest.TestCase):
             self.assertFalse(texture_plan.Shape.isNull())
             self.assertEqual(texture_plan.Shape.ShapeType, "Compound")
         finally:
-            FreeCAD.closeDocument(doc_name)
+            pass
 
     def test_stiffener_on_real_support_and_sketches(self):
         self._ensure_freecadgui()
         from Composites.features.Stiffener import StiffenerFP
 
         doc_name = "CompositesStiffenerIntegrationTest"
-        if doc_name in FreeCAD.listDocuments():
-            FreeCAD.closeDocument(doc_name)
 
         doc = FreeCAD.newDocument(doc_name)
         try:
@@ -698,7 +700,7 @@ class TestFreeCADIntegration(unittest.TestCase):
             self.assertFalse(plan.Visibility)
             self.assertFalse(profile.Visibility)
         finally:
-            FreeCAD.closeDocument(doc_name)
+            pass
 
     def test_conical_example_mesh_only_fem_job_runs(self):
         doc_name = "Composites_Conical_Panel"
@@ -765,8 +767,6 @@ class TestFreeCADIntegration(unittest.TestCase):
     def test_fibre_composite_lamina_areal_weight_updates(self):
         doc_name = "CompositesFibreLaminaIntegrationTest"
 
-        if doc_name in FreeCAD.listDocuments():
-            FreeCAD.closeDocument(doc_name)
 
         doc = FreeCAD.newDocument(doc_name)
         obj = self._make_fibre_lamina(doc)
@@ -774,14 +774,12 @@ class TestFreeCADIntegration(unittest.TestCase):
         areal_weight = obj.ArealWeight.getValueAs("g/m^2")
         self.assertAlmostEqual(areal_weight.Value, 645.0, places=8)
 
-        FreeCAD.closeDocument(doc_name)
+        # tearDown will close
 
     def test_fibre_composite_lamina_areal_weight_survives_restore(self):
         doc_name = "CompositesFibreLaminaRestoreTest"
         path = tempfile.mktemp(suffix=".FCStd")
 
-        if doc_name in FreeCAD.listDocuments():
-            FreeCAD.closeDocument(doc_name)
 
         try:
             doc = FreeCAD.newDocument(doc_name)
@@ -809,7 +807,7 @@ class TestFreeCADIntegration(unittest.TestCase):
                     places=8,
                 )
             finally:
-                FreeCAD.closeDocument(reopened.Name)
+                pass
         finally:
             if os.path.exists(path):
                 os.remove(path)
