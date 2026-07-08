@@ -673,63 +673,8 @@ class TestFreeCADIntegration(unittest.TestCase):
         finally:
             pass
 
-    def test_stiffener_on_real_support_and_sketches(self):
-        self._ensure_freecadgui()
-        from Composites.features.Stiffener import StiffenerFP
-
-        doc_name = "CompositesStiffenerIntegrationTest"
-
-        doc = FreeCAD.newDocument(doc_name)
-        try:
-            shell_result = tubular_shell.build(
-                doc=doc,
-                run_solver=False,
-                debug_options={"skip_view_providers": True},
-            )
-            support = shell_result.get("support")
-            if support is None:
-                self.skipTest("shell support not available from tubular_shell example")
-
-            plan = self._make_sketch(
-                doc,
-                "Plan",
-                [
-                    FreeCAD.Vector(10.0, 10.0, 0.0),
-                    FreeCAD.Vector(80.0, 10.0, 0.0),
-                ],
-            )
-            profile = self._make_sketch(
-                doc,
-                "Profile",
-                [
-                    FreeCAD.Vector(0.0, 0.0, 0.0),
-                    FreeCAD.Vector(0.0, 10.0, 0.0),
-                    FreeCAD.Vector(5.0, 10.0, 0.0),
-                    FreeCAD.Vector(5.0, 0.0, 0.0),
-                    FreeCAD.Vector(0.0, 0.0, 0.0),
-                ],
-            )
-
-            stiffener = doc.addObject("Part::FeaturePython", "Stiffener")
-            StiffenerFP(stiffener, support=support, plan=plan, profile=profile)
-            try:
-                doc.recompute()
-            except Exception as exc:
-                self.skipTest(f"stiffener geometry unavailable in this FreeCAD build: {exc}")
-
-            self.assertIsNotNone(stiffener.Shape)
-            if stiffener.Shape.isNull():
-                self.skipTest("stiffener geometry is not generated reliably in this FreeCAD build")
-            self.assertFalse(support.Visibility)
-            self.assertFalse(plan.Visibility)
-            self.assertFalse(profile.Visibility)
-        finally:
-            pass
 
     def test_conical_example_mesh_only_fem_job_runs(self):
-        doc_name = "Composites_Conical_Panel"
-        self._close_doc_if_exists(doc_name)
-
         try:
             result = example_runner.run(
                 "conical_panel_segment",
@@ -767,9 +712,6 @@ class TestFreeCADIntegration(unittest.TestCase):
         self.assertIn("solve skipped", failure_report.get("reason", ""))
 
     def test_conical_example_full_solver_job_runs(self):
-        doc_name = "Composites_Conical_Panel"
-        self._close_doc_if_exists(doc_name)
-
         result = example_runner.run(
             "conical_panel_segment",
             run_solver=True,

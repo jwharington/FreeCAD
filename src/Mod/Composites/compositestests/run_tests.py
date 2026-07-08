@@ -46,6 +46,7 @@ def run_tests():
         'test_composite_shell': 'TestCompositeShellFP',
         'test_laminate': 'TestLaminateFP',
         'test_seam': 'TestSeamShellFP',
+        'test_stiffener': 'TestStiffenerFP',
         'test_place_dart': 'TestPlaceDartFP',
     }
 

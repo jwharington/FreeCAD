@@ -13,6 +13,23 @@ from FreeCAD import Vector
 
 from . import splitAPI
 
+
+def _safe_normal(edge, tangent: Vector, preferred: Vector) -> Vector:
+    try:
+        normal = edge.normalAt(edge.FirstParameter)
+        if normal.Length > 1e-9:
+            return normal
+    except Exception:
+        pass
+
+    if abs(tangent.dot(preferred)) < 1.0 - 1e-9:
+        return preferred
+
+    fallback = Vector(0, 1, 0)
+    if abs(tangent.dot(fallback)) >= 1.0 - 1e-9:
+        fallback = Vector(1, 0, 0)
+    return fallback
+
 #
 #
 # class StiffenerSectionType(Enum):
@@ -57,7 +74,12 @@ class StiffenerAlignment:
         e0 = edge.Edges[0]
         x0 = e0.tangentAt(e0.FirstParameter)
         z0 = self.direction
-        y0 = x0.cross(z0).normalize()
+        y0 = x0.cross(z0)
+        if y0.Length < 1e-9:
+            y0 = x0.cross(Vector(0, 1, 0))
+            if y0.Length < 1e-9:
+                y0 = x0.cross(Vector(1, 0, 0))
+        y0 = y0.normalize()
         x1, y1, z1, o1 = get_axes(origin_wire, self)
         align = deepcopy(self)
         if (y0.dot(y1) < 0) == align.flip_x:
@@ -80,8 +102,13 @@ def get_axes(
     e0 = origin_wire.Edges[0]
     o = wire_first_point(origin_wire)
     x = e0.tangentAt(e0.FirstParameter)
-    z = e0.normalAt(e0.FirstParameter)
-    y = x.cross(z).normalize()
+    z = _safe_normal(e0, x, alignment.direction)
+    y = x.cross(z)
+    if y.Length < 1e-9:
+        y = x.cross(Vector(0, 1, 0))
+        if y.Length < 1e-9:
+            y = x.cross(Vector(1, 0, 0))
+    y = y.normalize()
     x, y, z = alignment.apply(x, y, z)
     return x, y, z, o
 
