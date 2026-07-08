@@ -2,7 +2,6 @@
 # Copyright 2025 John Wharington jwharington@gmail.com
 
 import FreeCAD
-import FreeCADGui
 import Part
 from .. import (
     ROSETTE_TOOL_ICON,
@@ -219,4 +218,4 @@ class RosetteCommand(BaseCommand):
     cls_vp = ViewProviderRosette
 
 
-FreeCADGui.addCommand("Composites_Rosette", RosetteCommand())
+# Command registration moved to InitGui.py to avoid FreeCADGui dependency

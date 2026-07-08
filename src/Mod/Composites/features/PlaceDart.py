@@ -11,7 +11,7 @@ lines.
 from __future__ import annotations
 
 import FreeCAD
-import FreeCADGui
+# FreeCADGui removed for decoupling
 import Part
 
 from .. import DART_TOOL_ICON, is_comp_type
@@ -167,4 +167,4 @@ class PlaceDartCommand(BaseCommand):
         return self._collect_selection() is not None
 
 
-FreeCADGui.addCommand("Composites_PlaceDart", PlaceDartCommand())
+# Command registration moved to InitGui.py to avoid FreeCADGui dependency

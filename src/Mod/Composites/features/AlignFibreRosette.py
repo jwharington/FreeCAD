@@ -21,7 +21,6 @@ swallowed. ``execute`` only places the LCS from the current ``Angle`` (no
 solve) — exactly the base Rosette behaviour.
 """
 
-import FreeCADGui
 import Part
 
 from .. import (
@@ -183,7 +182,4 @@ class AlignFibreRosetteCommand(BaseCommand):
     cls_vp = ViewProviderAlignFibreRosette
 
 
-FreeCADGui.addCommand(
-    "Composites_AlignFibreRosette",
-    AlignFibreRosetteCommand(),
-)
+# Command registration moved to InitGui.py to avoid FreeCADGui dependency

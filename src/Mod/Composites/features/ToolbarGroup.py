@@ -1,5 +1,3 @@
-import FreeCADGui
-
 from . import (
     AlignFibreRosette,  # noqa
     CompositeLaminate,  # noqa
@@ -36,65 +34,53 @@ class CommandGroup:
         return {"MenuText": self.menu, "ToolTip": self.tooltip}
 
 
-FreeCADGui.addCommand(
-    "Composites_LaminaTools",
-    CommandGroup(
-        [
-            "Composites_FibreCompositeLamina",
-            "Composites_HomogeneousLamina",
-        ],
-        menu="Lamina",
-        tooltip="Lamina construction tools",
-    ),
-)
+def get_command_groups():
+    """Return a list of (command_name, group_object) tuples for command registration."""
+    return [
+        ("Composites_LaminaTools", CommandGroup(
+            [
+                "Composites_FibreCompositeLamina",
+                "Composites_HomogeneousLamina",
+            ],
+            menu="Lamina",
+            tooltip="Lamina construction tools",
+        )),
+        ("Composites_LaminateTools", CommandGroup(
+            [
+                "Composites_Laminate",
+                "Composites_CompositeLaminate",
+            ],
+            menu="Laminate",
+            tooltip="Laminate construction tools",
+        )),
+        ("Composites_StructureTools", CommandGroup(
+            [
+                "Composites_Seam",
+                "Composites_PlaceDart",
+                "Composites_Stiffener",
+            ],
+            menu="Structure",
+            tooltip="Shell structure construction tools",
+        )),
+        ("Composites_MouldTools", CommandGroup(
+            [
+                "Composites_MouldAnalysis",
+                "Composites_PartPlane",
+                "Composites_Mould",
+            ],
+            menu="Mould",
+            tooltip="Mould construction tools",
+        )),
+        ("Composites_LCSTools", CommandGroup(
+            [
+                "Composites_TransferRosette",
+                "Composites_AlignFibreRosette",
+                "Composites_Rosette",
+            ],
+            menu="Material LCS",
+            tooltip="Material local coordinate system tools",
+        )),
+    ]
 
-FreeCADGui.addCommand(
-    "Composites_LaminateTools",
-    CommandGroup(
-        [
-            "Composites_Laminate",
-            "Composites_CompositeLaminate",
-        ],
-        menu="Laminate",
-        tooltip="Laminate construction tools",
-    ),
-)
 
-FreeCADGui.addCommand(
-    "Composites_StructureTools",
-    CommandGroup(
-        [
-            "Composites_Seam",
-            "Composites_PlaceDart",
-            "Composites_Stiffener",
-        ],
-        menu="Structure",
-        tooltip="Shell structure construction tools",
-    ),
-)
-
-FreeCADGui.addCommand(
-    "Composites_MouldTools",
-    CommandGroup(
-        [
-            "Composites_MouldAnalysis",
-            "Composites_PartPlane",
-            "Composites_Mould",
-        ],
-        menu="Mould",
-        tooltip="Mould construction tools",
-    ),
-)
-
-FreeCADGui.addCommand(
-    "Composites_LCSTools",
-    CommandGroup(
-        [
-            "Composites_TransferRosette",
-            "Composites_AlignFibreRosette",
-            "Composites_Rosette",
-        ],
-        menu="Material LCS",
-        tooltip="Material local coordinate system tools",
-    ),
-)
+# Command registration moved to InitGui.py to avoid FreeCADGui dependency

@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
-import FreeCADGui
-
 from .. import (
     HOMOGENEOUS_LAMINA_TOOL_ICON,
 )
@@ -63,7 +61,4 @@ class HomogeneousLaminaCommand(BaseCommand):
     cls_vp = ViewProviderHomogeneousLamina
 
 
-FreeCADGui.addCommand(
-    "Composites_HomogeneousLamina",
-    HomogeneousLaminaCommand(),
-)
+# Command registration moved to InitGui.py to avoid FreeCADGui dependency

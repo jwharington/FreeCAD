@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import FreeCAD
-import FreeCADGui
+# FreeCADGui removed for decoupling
 import Part
 
 from .. import SEAM_TOOL_ICON
@@ -325,4 +325,4 @@ class CompositeSeamCommand(BaseCommand):
         doc.recompute()
 
 
-FreeCADGui.addCommand("Composites_Seam", CompositeSeamCommand())
+# Command registration moved to InitGui.py to avoid FreeCADGui dependency

@@ -2,7 +2,7 @@
 # Copyright 2025 John Wharington jwharington@gmail.com
 
 import FreeCAD
-import FreeCADGui
+# FreeCADGui removed for decoupling
 
 from .. import (
     MOULD_TOOL_ICON,
@@ -105,4 +105,4 @@ class CompositeMouldCommand(BaseCommand):
     cls_vp = ViewProviderMould
 
 
-FreeCADGui.addCommand("Composites_Mould", CompositeMouldCommand())
+# Command registration moved to InitGui.py to avoid FreeCADGui dependency

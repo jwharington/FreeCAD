@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
-import FreeCADGui
+# FreeCADGui removed for decoupling
 from FreeCAD import Vector
 
 from .. import (
@@ -80,4 +80,4 @@ class CompositePartPlaneCommand(BaseCommand):
     cls_vp = ViewProviderPartPlane
 
 
-FreeCADGui.addCommand("Composites_PartPlane", CompositePartPlaneCommand())
+# Command registration moved to InitGui.py to avoid FreeCADGui dependency

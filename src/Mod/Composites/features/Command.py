@@ -4,7 +4,6 @@
 from typing import ClassVar
 
 import FreeCAD
-import FreeCADGui
 from FreeCAD import Console
 
 from .. import debug
@@ -86,6 +85,7 @@ class BaseCommand:
                 sel.extend(neglected)
             return ok
 
+        from FreeCAD import Gui as FreeCADGui
         sel = FreeCADGui.Selection.getSelectionEx()
         if debug or self.debug:
             sel_objs = [s.Object for s in sel]
@@ -123,12 +123,15 @@ class BaseCommand:
         cls = self.cls_fp
         cls(obj, **sel)
         if FreeCAD.GuiUp:
+            from FreeCAD import Gui as FreeCADGui
             cls = self.cls_vp
             cls(obj.ViewObject)
             if hasattr(cls, "_taskPanel") and cls._taskPanel:
                 FreeCADGui.ActiveDocument.setEdit(doc.ActiveObject)
-        getCompositesContainer().addObject(obj)
-        FreeCADGui.Selection.clearSelection()
+            getCompositesContainer().addObject(obj)
+            FreeCADGui.Selection.clearSelection()
+        else:
+            getCompositesContainer().addObject(obj)
         doc.recompute()
 
     def IsActive(self):

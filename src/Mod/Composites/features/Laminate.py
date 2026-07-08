@@ -2,7 +2,6 @@
 # Copyright 2025 John Wharington jwharington@gmail.com
 
 import FreeCAD
-import FreeCADGui
 
 from .. import (
     LAMINATE_TOOL_ICON,
@@ -187,4 +186,4 @@ class LaminateCommand(BaseCommand):
     ]
 
 
-FreeCADGui.addCommand("Composites_Laminate", LaminateCommand())
+# Command registration moved to InitGui.py to avoid FreeCADGui dependency

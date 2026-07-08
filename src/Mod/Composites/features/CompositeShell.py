@@ -1096,12 +1096,4 @@ class CompositeShellCommand(BaseCommand):
     cls_fp = CompositeShellFP
 cls_vp = ViewProviderCompositeShell
 
-try:
-    import FreeCADGui
-
-    FreeCADGui.addCommand(
-        "Composites_CompositeShell",
-        CompositeShellCommand(),
-    )
-except ImportError:
-    pass  # Headless mode - no GUI command registration
+# Command registration moved to InitGui.py to avoid FreeCADGui dependency

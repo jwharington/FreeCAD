@@ -2,7 +2,6 @@
 # Copyright 2025 John Wharington jwharington@gmail.com
 
 import FreeCAD
-import FreeCADGui
 
 from .. import (
     FIBRE_COMPOSITE_LAMINA_TOOL_ICON,
@@ -127,7 +126,4 @@ class FibreCompositeLaminaCommand(BaseCommand):
     cls_vp = ViewProviderFibreCompositeLamina
 
 
-FreeCADGui.addCommand(
-    "Composites_FibreCompositeLamina",
-    FibreCompositeLaminaCommand(),
-)
+# Command registration moved to InitGui.py to avoid FreeCADGui dependency

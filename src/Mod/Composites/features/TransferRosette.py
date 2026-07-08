@@ -19,7 +19,6 @@ import math
 from typing import List
 
 import FreeCAD
-import FreeCADGui
 import Part
 
 from .. import (
@@ -302,7 +301,4 @@ class TransferRosetteCommand(BaseCommand):
         doc.recompute()
 
 
-FreeCADGui.addCommand(
-    "Composites_TransferRosette",
-    TransferRosetteCommand(),
-)
+# Command registration moved to InitGui.py to avoid FreeCADGui dependency

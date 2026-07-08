@@ -37,11 +37,50 @@ class CompositesWorkbench(Gui.Workbench):
                 "Or is there a shared-library loading conflict?"
             )
 
-        import Composites.features.CompositeShell  # noqa
-        import Composites.features.MouldAnalysis  # noqa
-        import Composites.features.TexturePlan  # noqa
-        import Composites.features.ToolbarGroup  # noqa
+        # Import command classes and register them
+        from Composites.features.Stiffener import CompositeStiffenerCommand
+        from Composites.features.Laminate import LaminateCommand
+        from Composites.features.CompositeShell import CompositeShellCommand
+        from Composites.features.Mould import CompositeMouldCommand
+        from Composites.features.PlaceDart import PlaceDartCommand
+        from Composites.features.Seam import CompositeSeamCommand
+        from Composites.features.Rosette import RosetteCommand
+        from Composites.features.AlignFibreRosette import AlignFibreRosetteCommand
+        from Composites.features.TransferRosette import TransferRosetteCommand
+        from Composites.features.MouldAnalysis import CompositeMouldAnalysisCommand
+        from Composites.features.PartPlane import CompositePartPlaneCommand
+        from Composites.features.TexturePlan import TexturePlanCommand
+        from Composites.features.FibreCompositeLamina import FibreCompositeLaminaCommand
+        from Composites.features.HomogeneousLamina import HomogeneousLaminaCommand
+        from Composites.features.CompositeLaminate import CompositeLaminateCommand
+        from Composites.features.ToolbarGroup import get_command_groups
 
+        # Register each command with its proper name
+        commands = [
+            ("Composites_Stiffener", CompositeStiffenerCommand()),
+            ("Composites_Laminate", LaminateCommand()),
+            ("Composites_CompositeShell", CompositeShellCommand()),
+            ("Composites_Mould", CompositeMouldCommand()),
+            ("Composites_PlaceDart", PlaceDartCommand()),
+            ("Composites_Seam", CompositeSeamCommand()),
+            ("Composites_Rosette", RosetteCommand()),
+            ("Composites_AlignFibreRosette", AlignFibreRosetteCommand()),
+            ("Composites_TransferRosette", TransferRosetteCommand()),
+            ("Composites_MouldAnalysis", CompositeMouldAnalysisCommand()),
+            ("Composites_PartPlane", CompositePartPlaneCommand()),
+            ("Composites_TexturePlan", TexturePlanCommand()),
+            ("Composites_FibreCompositeLamina", FibreCompositeLaminaCommand()),
+            ("Composites_HomogeneousLamina", HomogeneousLaminaCommand()),
+            ("Composites_CompositeLaminate", CompositeLaminateCommand()),
+        ]
+        for name, cmd in commands:
+            FreeCADGui.addCommand(name, cmd)
+
+        # Get command groups from ToolbarGroup
+        for cmd_name, group in get_command_groups():
+            FreeCADGui.addCommand(cmd_name, group)
+
+        # Build menu/toolbar structure
         cmds_section = [
             "Composites_LaminaTools",
             "Composites_LaminateTools",

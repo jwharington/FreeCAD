@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
-import FreeCADGui
+# FreeCADGui removed for decoupling
 import Part
 from FreeCAD import Console
 
@@ -125,7 +125,4 @@ class TexturePlanCommand(BaseCommand):
     cls_vp = ViewProviderTexturePlan
 
 
-FreeCADGui.addCommand(
-    "Composites_TexturePlan",
-    TexturePlanCommand(),
-)
+# Command registration moved to InitGui.py to avoid FreeCADGui dependency

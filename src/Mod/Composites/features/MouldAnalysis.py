@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
-import FreeCADGui
 from FreeCAD import Vector
 
 from .. import MOULD_TOOL_ICON, is_comp_type
@@ -332,4 +331,4 @@ class CompositeMouldAnalysisCommand(BaseCommand):
     cls_vp = ViewProviderMouldAnalysis
 
 
-FreeCADGui.addCommand("Composites_MouldAnalysis", CompositeMouldAnalysisCommand())
+# Command registration moved to InitGui.py to avoid FreeCADGui dependency
