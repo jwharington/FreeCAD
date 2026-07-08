@@ -6,7 +6,7 @@
 
 ## Status Summary
 
-The core mould and rosette workflows now have real FreeCAD integration coverage. The legacy `RunCompositeExample` command has been removed, and the legacy `Dart` command has been removed as a broken path awaiting a future replacement.
+The core mould, rosette, seam, and PlaceDart workflows now have real FreeCAD integration coverage. The legacy `RunCompositeExample` command has been removed, and the legacy `Dart` command has been removed as a broken path awaiting its replacement workflow.
 
 Current integration coverage includes:
 
@@ -19,40 +19,42 @@ Current integration coverage includes:
 - `AlignFibreRosette`
 - `TransferRosette`
 - `CompositeShell` behavior through real example and rosette flows
+- seam geometry and seam-shell behavior
+- `PlaceDart` cut-wire plumbing through `CompositeShell.DrapeCuts`
 
 ## Current Priority Order
 
-### 1. Seam maturity
+### 1. Seam hardening
 
-`Seam` is the next highest-value user-facing workflow.
+`Seam` is the highest-value user-facing workflow that still has room to mature outside the taskpanel layer.
 
 Goals:
 
+- keep the part/shape seam path stable
+- keep the CompositeShell seam path stable
 - exercise `make_edge_seam()` and `make_join_seam()` with real geometry
-- cover the `SeamFP` command path with actual selected edges
-- verify recompute behavior in a real FreeCAD document
-- tighten edge-case behavior for:
+- harden edge-case behavior for:
   - missing edges
   - multiple edges
   - joined faces without partner edges
+  - partial overlap / near-match cases
 
 Why this comes first:
 
-- `Seam` is still a real feature with non-GUI helpers available
-- it is more important than taskpanels or the future `PlaceDart` workflow
-- it is a direct modeling operation, not just UI plumbing
+- it is a core modeling workflow
+- it already has real geometry tests, so the next gains are in robustness rather than UI plumbing
+- it is more important than taskpanels
 
-### 2. PlaceDart replacement
+### 2. PlaceDart projection polish
 
-The old `Dart` feature was removed because the implementation was broken and based on an obsolete mesh workflow.
+The new PlaceDart workflow is implemented at the integration level, but the projection pipeline can still be hardened.
 
-Goals for the replacement:
+Goals:
 
-- create a new `PlaceDart` command
-- attach dart cut-line data to `CompositeShell`
-- project wires onto the support surface
-- pass dart cut lines into the draping workflow
-- visualize dart boundaries on the draped result
+- tighten wire projection onto the support surface
+- verify closed wires and multi-edge wires behave consistently
+- add/keep integration tests for projection onto real shell geometry
+- ensure stored cut wires continue to invalidate drape correctly
 
 Why this comes next:
 
@@ -60,7 +62,38 @@ Why this comes next:
 - it belongs to the draping workflow itself
 - it is more important than taskpanels
 
-### 3. Taskpanel coverage
+### 3. Seam-shell stability cleanup
+
+The seam-shell path is working, but it should stay quiet and predictable as the seam implementation evolves.
+
+Goals:
+
+- keep helper objects stable and hidden
+- make `LapSide` updates deterministic
+- ensure seam support + virtual laminate stay in sync cleanly
+- avoid accidental recompute loops
+
+### 4. Drape cleanup, if needed
+
+This is separate from seam and PlaceDart, but worth a cleanup pass if it keeps surfacing during seam-shell work.
+
+Goals:
+
+- fix the `CompositeShell` persistence `tolist` issue
+- reduce unrelated recompute noise
+- keep this isolated from seam behavior changes
+
+### 5. Documentation refresh
+
+Only after the behavior is settled.
+
+Goals:
+
+- keep `seam-design.md` aligned with the real command behavior
+- keep `place-dart-design.md` aligned with the current cut-wire implementation
+- fold final decisions back into this roadmap
+
+### 6. Taskpanel coverage
 
 The `taskpanels/` package remains largely untested and unexercised in end-to-end use.
 
@@ -78,11 +111,11 @@ Why this comes last:
 
 ## Remaining Functional and Integration Gaps
 
-These items came from the coverage-gap audit and are still worth tracking, but they are lower priority than the three main items above.
+These items are lower priority than the main work above, but still worth tracking.
 
 ### Direct integration gaps
 
-- `compositetools/drape_task.py` is only exercised transitively through `CompositeShell.execute()`.
+- `compositetools/drape_task.py` is still only exercised transitively through `CompositeShell.execute()`.
 - `App/CompositesDrape.cpp` is only exercised indirectly through Python integration flows; it has no direct C++ unit test.
 - `fem/drape_laminate_provider.py` still lacks direct coverage of the provider functions (`get_compshell_obj`, `get_drape_lcs`, `get_laminate`, `get_laminate_materials`).
 
@@ -110,6 +143,8 @@ These items came from the coverage-gap audit and are still worth tracking, but t
 
 - real FreeCADCmd tests for the mould workflow
 - real FreeCADCmd tests for layout and rosette-related features
+- real FreeCADCmd tests for seam geometry and seam-shell output behavior
+- real FreeCADCmd tests for PlaceDart cut-wire invalidation and solver-input shaping
 - example runner support for multiple integration test modules
 
 ### Commands removed
@@ -119,9 +154,9 @@ These items came from the coverage-gap audit and are still worth tracking, but t
 
 ## Notes
 
-- The current `Seam` and `PlaceDart` priorities are about functionality, not just test coverage.
-- `Seam` has a real implementation and should be exercised with actual geometry.
-- `PlaceDart` is intentionally a replacement design, not a continuation of the removed legacy `Dart` path.
+- The current seam and PlaceDart priorities are about functionality and robustness, not just taskpanels.
+- Seam now has a real implementation and should continue to be exercised with actual geometry.
+- PlaceDart is intentionally a replacement design, not a continuation of the removed legacy `Dart` path.
 - GUI-only polish and toolbar/button conveniences are not being prioritized here.
 
 ## Seam Test Matrix
@@ -180,4 +215,4 @@ Start with `Seam`:
 2. keep the direct tool tests and the `SeamFP` integration test aligned
 3. verify the command and tool behavior stay consistent under real FreeCAD recompute cycles
 
-After that, design and implement `PlaceDart`.
+After that, continue with `PlaceDart` projection polish and then taskpanels.
