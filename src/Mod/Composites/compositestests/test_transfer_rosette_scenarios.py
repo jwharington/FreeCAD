@@ -96,7 +96,7 @@ class TestTransferRosetteScenarios(TestFreeCADFP):
                 reopened_tr = reopened.getObject(tr.Name)
                 self.assertIsNotNone(reopened_tr)
             finally:
-                reopened.close()
+                FreeCAD.closeDocument(reopened.Name)
         finally:
             if os.path.exists(filepath):
                 os.remove(filepath)
