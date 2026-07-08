@@ -50,6 +50,9 @@ def run_tests():
         'test_mould': 'TestMouldFP',
         'test_place_dart': 'TestPlaceDartFP',
         'test_rosette_types': 'TestRosetteTypes',
+        'test_rosette_scenarios': 'TestRosetteScenarios',
+        'test_align_fibre_scenarios': 'TestAlignFibreRosetteScenarios',
+        'test_transfer_rosette_scenarios': 'TestTransferRosetteScenarios',
     }
 
     for module_name, class_name in test_modules.items():
