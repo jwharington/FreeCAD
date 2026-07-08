@@ -209,10 +209,30 @@ Current integration coverage already exercises the practical seam cases above: s
 
 ## Suggested Next Slice
 
-Start with `Seam`:
+### Working checklist
 
-1. add the highest-value scenario tests from the matrix above
-2. keep the direct tool tests and the `SeamFP` integration test aligned
-3. verify the command and tool behavior stay consistent under real FreeCAD recompute cycles
+#### Seam hardening
 
-After that, continue with `PlaceDart` projection polish and then taskpanels.
+- [ ] add or refine the highest-value scenario tests from the matrix above
+- [ ] keep the direct tool tests and the `SeamFP` integration test aligned
+- [ ] confirm the command and tool behavior stay consistent under real FreeCAD recompute cycles
+- [ ] close the remaining non-common-edge fallback gap in `tools/seam.py`
+
+#### PlaceDart projection polish
+
+- [ ] tighten wire projection behavior for closed and multi-edge wires
+- [ ] keep the cut-wire invalidation tests aligned with the shell integration path
+- [ ] add any missing projection edge-case coverage on real shell geometry
+
+#### Seam-shell stability cleanup
+
+- [ ] keep helper objects hidden and stable
+- [ ] make `LapSide` updates deterministic
+- [ ] avoid accidental recompute loops
+
+#### Defer to taskpanels last
+
+- [ ] only after the geometry and command layers are stable
+- [ ] use the smallest GUI/taskpanel slices that still prove the workflow
+
+After that, move to taskpanels.
