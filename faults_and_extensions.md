@@ -20,5 +20,6 @@ represented as a stitched compound of sub-surfaces.
 ensure this function is directly accessible and tested.
   HANDOVER: plan written to docs/seam-freecad-integration-handover.md. Specifies SeamIntegrationResult struct (diagnosticsJson, seamGeometry, remainingAttachment), SolveWithIntegration() method, JSON serialization helper, and test. Not yet implemented.
 
-5. [ ] hole-adjacent-seam-overlaps-hole indicates shortcomings in the discretisation refinement
+5. [x] hole-adjacent-seam-overlaps-hole indicates shortcomings in the discretisation refinement
 - the refinement of subdivisions is only on one side of the hole
+  DONE: RefineStations was breaking after the first subdivision in each pass, exhausting its iteration budget on the approach side of the hole and leaving the exit side coarse. Removed the break — now subdivides ALL exceeding pairs in each pass, producing symmetric refinement on both sides of the hole (89 samples, was 21).
