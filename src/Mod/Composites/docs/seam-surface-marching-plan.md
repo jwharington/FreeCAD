@@ -94,6 +94,35 @@ The seam tests must exercise **pairs of shapes**, not single fixtures.  Each sce
 | Corner Crossing | `MakeJoinedRectanglesTwentyDegrees(...)` | `MakeRectangularPanel(...)` or another folded pair | Edge goes around a corner | Boundary propagation through changing edge direction |
 | Hole / Multi-wire | `MakeRectangularPanelWithRoundHole(...)` or `MakeDartPlate()` | `MakeRectangularPanel(...)` | Multiple wires / hole interaction | Trim interruption, multi-wire handling, local clipping |
 
+## Seam coverage completed
+
+The remaining shared-joint seam coverage now lives in the shared fixture matrix and test suite.
+
+For the failure modes that still need explicit detection or solver work, see:
+- `src/3rdParty/nextdrape/docs/seam-failure-detection-plan.md`
+
+Implemented scenarios:
+
+- Mirrored lateral offset rectangle
+- Trapezoidal / tapered panels, taper along seam direction
+- Trapezoidal / tapered panels, taper across seam direction
+- Rectangle → L-shaped joint
+- Hole-adjacent successful seam case
+- Non-symmetric doubly curved surfaces
+- Adaptive joint-edge sampling with bounded error rather than fixed 3-point sampling
+
+The broader seam matrix also continues to cover:
+
+- Flat → Flat
+- Folded Master → Flat
+- Flat → Folded Attachment
+- Curved → Curved
+- Corner Crossing
+- Hole / Multi-wire
+- Curvature aligned with seam direction
+- Curvature across seam direction
+- Mixed curvature master/attachment mismatch
+
 ## Suggested initial test set
 
 Start with these four scenarios first:
