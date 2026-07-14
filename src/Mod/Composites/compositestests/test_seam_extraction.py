@@ -76,7 +76,7 @@ class TestSeamGeometryFP(TestFreeCADFP):
         """SeamGeometryFP is created with correct properties."""
         from Composites.features.SeamExtraction import SeamGeometryFP
 
-        seam_shell = self.doc.addObject("Part::FeaturePython", "SeamShell")
+        seam_shell = self.doc.addObject("Part::FeaturePython", "Seam")
         SeamGeometryFP(seam_shell, FreeCAD.ActiveDocument)
 
         self.assertIsNotNone(seam_shell)
@@ -92,7 +92,7 @@ class TestSeamGeometryFP(TestFreeCADFP):
         box.Width = 50
         box.Height = 2
 
-        seam_shell = self.doc.addObject("Part::FeaturePython", "SeamShell")
+        seam_shell = self.doc.addObject("Part::FeaturePython", "Seam")
         SeamGeometryFP(seam_shell, FreeCAD.ActiveDocument)
         seam_shell.Proxy.update(seam_shell, box.Shape, None, None)
 
@@ -113,7 +113,7 @@ class TestSeamGeometryFP(TestFreeCADFP):
 
         lam = self._create_laminate()
 
-        seam_shell = self.doc.addObject("Part::FeaturePython", "SeamShell")
+        seam_shell = self.doc.addObject("Part::FeaturePython", "Seam")
         SeamGeometryFP(seam_shell, FreeCAD.ActiveDocument)
         seam_shell.Proxy.update(seam_shell, box.Shape, lam, None)
 
@@ -130,7 +130,7 @@ class TestSeamGeometryFP(TestFreeCADFP):
 
         rosette = self.doc.addObject("App::FeaturePython", "Rosette")
 
-        seam_shell = self.doc.addObject("Part::FeaturePython", "SeamShell")
+        seam_shell = self.doc.addObject("Part::FeaturePython", "Seam")
         SeamGeometryFP(seam_shell, FreeCAD.ActiveDocument)
         seam_shell.Proxy.update(seam_shell, box.Shape, None, rosette)
 
@@ -144,7 +144,7 @@ class TestSeamGeometryFP(TestFreeCADFP):
         box.Length = 100
         box.Width = 50
         box.Height = 2
-        seam_shell = self.doc.addObject("Part::FeaturePython", "SeamShell")
+        seam_shell = self.doc.addObject("Part::FeaturePython", "Seam")
         SeamGeometryFP(seam_shell, FreeCAD.ActiveDocument)
         seam_shell.Proxy.execute(seam_shell)
 
@@ -201,7 +201,7 @@ class TestSeamShellFP(TestFreeCADFP):
             "Seam should be set when extraction succeeds",
         )
         self.assertIn(
-            "SeamShell",
+            "Seam",
             ext.Seam.Name,
             "Seam should be a SeamGeometryFP child",
         )

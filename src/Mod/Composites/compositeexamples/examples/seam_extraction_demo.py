@@ -4,6 +4,7 @@ import FreeCAD
 import Part
 from Composites.features.CompositeShell import CompositeShellFP
 from Composites.features.Laminate import LaminateFP
+from Composites.features.Rosette import RosetteFP
 from Composites.features.SeamExtraction import SeamShellFP
 
 
@@ -38,9 +39,14 @@ def main():
     lam = doc.addObject("Part::FeaturePython", "Laminate")
     LaminateFP(lam)
 
+    # Rosette on master shell (45° fibre angle)
+    rosette = doc.addObject("Part::FeaturePython", "Rosette")
+    RosetteFP(rosette, support=master_sup)
+    rosette.Angle = 45.0
+
     # Shells
     ms = doc.addObject("Part::FeaturePython", "MasterShell")
-    CompositeShellFP(ms, support=master_sup, laminate=lam, rosette=None)
+    CompositeShellFP(ms, support=master_sup, laminate=lam, rosette=rosette)
 
     as_ = doc.addObject("Part::FeaturePython", "AttShell")
     CompositeShellFP(as_, support=att_sup, laminate=lam, rosette=None)

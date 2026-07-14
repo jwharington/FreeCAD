@@ -233,7 +233,7 @@ class SeamShellFP(CompositeShellFP):
 
     def _build_seam_shell(self, doc, fp, master, attachment, shape, remainder=None):
         """Create or update the SeamGeometryFP child object."""
-        name = f"{fp.Name}_SeamShell"
+        name = f"{fp.Name}_Seam"
         seam_shell = doc.getObject(name)
         if seam_shell is None:
             seam_shell = doc.addObject("Part::FeaturePython", name)
