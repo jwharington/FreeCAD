@@ -94,7 +94,10 @@ def make_strips(surface, n_strips: int):
 def get_composite_shell_plies(composite_shell):
     # TODO: make not depend on fp
     laminate_obj = composite_shell.Laminate
-    laminate = laminate_obj.Proxy.get_model(laminate_obj)
+    proxy = getattr(laminate_obj, "Proxy", None)
+    if proxy is None:
+        return {}
+    laminate = proxy.get_model(laminate_obj)
     return get_layers_fibre(laminate)
 
 
