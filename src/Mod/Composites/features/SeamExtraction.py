@@ -105,6 +105,38 @@ class SeamExtractionFP(FreeCAD.DocumentObject):
         fp.Remainder = rem_feat
 
 
+class SeamShellFP(CompositeShellFP):
+    """Composite shell holding seam geometry and laminate context.
+
+    Created by SeamExtractionShellFP as a child object.  execute()
+    is overridden to no-op so the shell never attempts a drape solve.
+    """
+
+    Type = "Composite::Shell"
+
+    def __init__(self, obj, doc):
+        super().__init__(obj, support=None, laminate=None, rosette=None)
+        # Create a hidden Part::Feature to hold the seam shape.
+        # Support property requires a DocumentObject link, not a raw shape.
+        self._shape_holder = doc.addObject(
+            "Part::Feature", f"_{obj.Name}_ShapeHolder"
+        )
+        self._shape_holder.Visibility = False
+        obj.Support = self._shape_holder
+
+    def execute(self, fp):
+        """Override to prevent drape solves on seam result shells."""
+        pass
+
+    def update(self, fp, shape, laminate, rosette):
+        """Update the seam shell with new geometry and material data."""
+        self._shape_holder.Shape = shape
+        self._shape_holder.Visibility = False
+        fp.Shape = shape
+        fp.Laminate = laminate
+        fp.Rosette = rosette
+
+
 class SeamExtractionShellFP(CompositeShellFP):
     """Seam extraction for CompositeShell inputs."""
 
@@ -141,6 +173,13 @@ class SeamExtractionShellFP(CompositeShellFP):
             locked=True,
         ).SeamWidth = seam_width
 
+        obj.addProperty(
+            "App::PropertyLink",
+            "Seam",
+            "Results",
+            "Extracted seam composite shell",
+        )
+
         previous = getattr(self, "_initializing", False)
         self._initializing = True
         try:
@@ -152,6 +191,9 @@ class SeamExtractionShellFP(CompositeShellFP):
         if getattr(self, "_initializing", False):
             return
         if prop in {"Master", "Attachment", "SeamWidth"}:
+            # Guard against being called before all properties are registered
+            if not all(hasattr(fp, p) for p in ("Master", "Attachment", "SeamWidth")):
+                return
             self._sync_virtual_inputs(fp)
             return
         super().onChanged(fp, prop)
@@ -163,6 +205,24 @@ class SeamExtractionShellFP(CompositeShellFP):
             view_object = getattr(obj, "ViewObject", None)
             if view_object is not None:
                 view_object.Visibility = False
+
+    def _build_seam_shell(self, doc, fp, master, attachment, shape):
+        """Create or update the SeamShellFP child object."""
+        name = f"{fp.Name}_SeamShell"
+        seam_shell = doc.getObject(name)
+        if seam_shell is None:
+            seam_shell = doc.addObject("Part::FeaturePython", name)
+            SeamShellFP(seam_shell, doc)
+            self._hide_object(seam_shell)
+
+        laminate = self._build_virtual_laminate(doc, fp, master, attachment)
+        rosette = getattr(master, "Rosette", None) or getattr(
+            attachment, "Rosette", None
+        )
+        seam_shell.Proxy.update(seam_shell, shape, laminate, rosette)
+
+        fp.Seam = seam_shell
+        return seam_shell
 
     def _build_virtual_laminate(self, doc, fp, master, attachment):
         layers = list(getattr(master.Laminate, "Layers", []) or [])
@@ -195,22 +255,7 @@ class SeamExtractionShellFP(CompositeShellFP):
                 return
 
             shape = result["seam"]
-
-            # Seam surface support
-            support_name = f"{fp.Name}_SeamSupport"
-            support = doc.getObject(support_name)
-            if support is None:
-                support = doc.addObject("Part::Feature", support_name)
-            self._hide_object(support)
-            support.Shape = shape
-
-            laminate = self._build_virtual_laminate(doc, fp, master, attachment)
-            fp.Support = support
-            fp.Laminate = laminate
-            fp.Rosette = getattr(master, "Rosette", None) or getattr(
-                attachment, "Rosette", None
-            )
-            fp.Shape = shape
+            self._build_seam_shell(doc, fp, master, attachment, shape)
         finally:
             self._initializing = previous
 
@@ -266,12 +311,6 @@ class CompositeSeamExtractionCommand(BaseCommand):
     def _create_shell_extraction(self, doc, master, attachment):
         obj = doc.addObject(self.type_id, self.instance_name)
         SeamExtractionShellFP(obj, master, attachment, seam_width=SEAM_WIDTH_DEFAULT)
-        import FreeCADGui
-
-        if FreeCADGui.ActiveDocument and getattr(obj, "ViewObject", None):
-            from .VPCompositeShell import ViewProviderCompositeShell
-
-            ViewProviderCompositeShell(obj.ViewObject)
         return obj
 
     def Activated(self):
@@ -286,8 +325,9 @@ class CompositeSeamExtractionCommand(BaseCommand):
             obj = self._create_shell_extraction(doc, master, attachment)
         else:
             obj = self._create_part_extraction(doc, master, attachment)
-            if getattr(obj, "ViewObject", None):
-                ViewProviderSeamExtraction(obj.ViewObject)
+
+        if getattr(obj, "ViewObject", None):
+            ViewProviderSeamExtraction(obj.ViewObject)
 
         from .Container import getCompositesContainer
 

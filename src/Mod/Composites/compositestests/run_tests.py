@@ -73,6 +73,14 @@ def run_tests():
     except Exception as e:
         print(f"Warning: Could not import integration tests: {e}")
 
+    # Run seam extraction tests
+    try:
+        from test_seam_extraction import TestSeamShellFP, TestSeamExtractionShellFP
+        suite.addTests(loader.loadTestsFromTestCase(TestSeamShellFP))
+        suite.addTests(loader.loadTestsFromTestCase(TestSeamExtractionShellFP))
+    except Exception as e:
+        print(f"Warning: Could not import seam extraction tests: {e}")
+
     # Run rosette integration tests
     try:
         from test_rosette_integration import TestRosetteIntegration
