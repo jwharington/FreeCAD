@@ -67,6 +67,14 @@ class SeamFP(CompositeBaseFP):
 
         obj.Proxy = self
 
+        # Attach ViewProvider so it persists in the saved document.
+        try:
+            vobj = obj.ViewObject
+            if vobj is not None:
+                vobj.Proxy = ViewProviderSeamExtraction(vobj)
+        except Exception:
+            pass
+
     def execute(self, fp):
         if fp.Master is None or fp.Attachment is None:
             return
@@ -115,33 +123,17 @@ class SeamGeometryFP(CompositeShellFP):
 
     def __init__(self, obj, doc):
         super().__init__(obj, support=None, laminate=None, rosette=None)
-        # Create a hidden Part::Feature to hold the seam shape.
-        # Support property requires a DocumentObject link, not a raw shape.
-        self._shape_holder = doc.addObject(
-            "Part::Feature", f"_{obj.Name}_ShapeHolder"
-        )
-        self._shape_holder.Visibility = False
-        obj.Support = self._shape_holder
 
     def execute(self, fp):
         """Override to prevent drape solves on seam result shells."""
         pass
 
     def onDocumentRestored(self, fp):
-        """Recreate the shape holder when the document is loaded from file."""
-        if not hasattr(self, "_shape_holder") or self._shape_holder is None:
-            doc = fp.Document
-            if doc is not None:
-                self._shape_holder = doc.addObject(
-                    "Part::Feature", f"_{fp.Name}_ShapeHolder"
-                )
-                self._shape_holder.Visibility = False
-                fp.Support = self._shape_holder
+        """Nothing to restore — shape lives on fp itself."""
+        pass
 
     def update(self, fp, shape, laminate, rosette):
         """Update the seam shell with new geometry and material data."""
-        self._shape_holder.Shape = shape
-        self._shape_holder.Visibility = False
         fp.Shape = shape
         fp.Laminate = laminate
         fp.Rosette = rosette
@@ -159,6 +151,14 @@ class SeamShellFP(CompositeShellFP):
     ):
         super().__init__(obj, support=None, laminate=None, rosette=None)
 
+        # Replace inherited ViewProviderCompositeShell with the seam-specific one.
+        try:
+            vobj = obj.ViewObject
+            if vobj is not None:
+                vobj.Proxy = ViewProviderSeamExtraction(vobj)
+        except Exception:
+            pass
+
         # Seam must be registered before any property that triggers
         # onChanged callbacks (Master / Attachment / Width), because
         # _sync_virtual_inputs assigns to fp.Seam during init.
@@ -167,6 +167,12 @@ class SeamShellFP(CompositeShellFP):
             "Seam",
             "Results",
             "Extracted seam composite shell",
+        )
+        obj.addProperty(
+            "App::PropertyLink",
+            "Remainder",
+            "Results",
+            "Remaining attachment geometry after seam extraction",
         )
 
         obj.addProperty(
@@ -200,6 +206,12 @@ class SeamShellFP(CompositeShellFP):
         finally:
             self._initializing = previous
 
+    def execute(self, fp):
+        """Run seam extraction when Master/Attachment change."""
+        if fp.Master is None or fp.Attachment is None:
+            return
+        self._sync_virtual_inputs(fp)
+
     def onChanged(self, fp, prop):
         if getattr(self, "_initializing", False):
             return
@@ -219,7 +231,7 @@ class SeamShellFP(CompositeShellFP):
             if view_object is not None:
                 view_object.Visibility = False
 
-    def _build_seam_shell(self, doc, fp, master, attachment, shape):
+    def _build_seam_shell(self, doc, fp, master, attachment, shape, remainder=None):
         """Create or update the SeamGeometryFP child object."""
         name = f"{fp.Name}_SeamShell"
         seam_shell = doc.getObject(name)
@@ -235,6 +247,19 @@ class SeamShellFP(CompositeShellFP):
         seam_shell.Proxy.update(seam_shell, shape, laminate, rosette)
 
         fp.Seam = seam_shell
+
+        # Remainder
+        if remainder is not None:
+            rem_name = f"{fp.Name}_Remainder"
+            rem_feat = doc.getObject(rem_name)
+            if rem_feat is None:
+                rem_feat = doc.addObject("Part::FeaturePython", rem_name)
+                SeamGeometryFP(rem_feat, doc)
+                self._hide_object(rem_feat)
+            att_rosette = getattr(attachment, "Rosette", None)
+            rem_feat.Proxy.update(rem_feat, remainder, laminate, att_rosette)
+            fp.Remainder = rem_feat
+
         return seam_shell
 
     def _build_virtual_laminate(self, doc, fp, master, attachment):
@@ -268,7 +293,8 @@ class SeamShellFP(CompositeShellFP):
                 return
 
             shape = result["seam"]
-            self._build_seam_shell(doc, fp, master, attachment, shape)
+            remainder = result.get("remainder")
+            self._build_seam_shell(doc, fp, master, attachment, shape, remainder)
         finally:
             self._initializing = previous
 
@@ -282,8 +308,25 @@ class SeamShellFP(CompositeShellFP):
 
 
 class ViewProviderSeamExtraction(VPCompositePart):
+    def __init__(self, vobj):
+        super().__init__(vobj)
+        self.attach(vobj)
+
     def claimChildren(self):
-        return []
+        children = []
+        fp = self.Object
+        seam = getattr(fp, "Seam", None)
+        if seam is not None:
+            children.append(seam)
+        remainder = getattr(fp, "Remainder", None)
+        if remainder is not None:
+            children.append(remainder)
+        virtual_lam = getattr(fp.Document, "getObject", lambda n: None)(
+            f"{fp.Name}_VirtualLaminate"
+        )
+        if virtual_lam is not None:
+            children.append(virtual_lam)
+        return children
 
     def getIcon(self):
         return SEAM_TOOL_ICON

@@ -45,8 +45,6 @@ class ViewProviderCompositeShell:
         )
         obj.RosetteScale = 20.0
 
-        obj.Proxy = self
-
     def setDisplayMode(self, mode):
         return mode
 
@@ -144,7 +142,8 @@ class ViewProviderCompositeShell:
 
     def _hide_lcs(self, fp):
         """Always hide the native LCS symbology (planes + 3D arrows)."""
-        lcs = fp.Rosette.LocalCoordinateSystem if fp.Rosette else None
+        rosette = getattr(fp, "Rosette", None)
+        lcs = rosette.LocalCoordinateSystem if rosette else None
         if lcs is None:
             return
         lcs_vobj = getattr(lcs, "ViewObject", None)
@@ -160,8 +159,9 @@ class ViewProviderCompositeShell:
             except Exception:
                 pass
         self._set_shell_transparency(vobj)
-        if self.Object.Support:
-            self.Object.Support.Visibility = visible
+        support = getattr(self.Object, "Support", None)
+        if support:
+            support.Visibility = visible
 
     def _set_shell_transparency(self, vobj):
         """Make the shell semi-transparent when drape geometry is present."""

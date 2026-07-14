@@ -93,6 +93,11 @@ class LaminateFP(CompositeBaseFP):
 
         super().__init__(obj)
 
+        # Attach ViewProvider so it persists in the saved document.
+        vobj = obj.ViewObject
+        if vobj is not None:
+            vobj.Proxy = ViewProviderLaminate(obj)
+
         # obj.addProperty(
         #     "App::PropertyPythonObject",
         #     "FEMLayers",

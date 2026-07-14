@@ -566,15 +566,22 @@ class CompositeShellFP(CompositeBaseFP):
         self._initializing = False
 
         # Attach ViewProvider so it persists in the saved document
+        vobj = obj.ViewObject
+        if vobj is not None:
+            vobj.Proxy = ViewProviderCompositeShell(obj)
+
+    def onDocumentRestored(self, fp):
+        """Restore ViewProvider and initialise tracking fields."""
+        # Re-attach ViewProvider: FreeCAD serialises Proxy as an int
+        # (memory address) on save, so on restore it is not a Python
+        # object any more.  Detect the corruption and re-attach.
         try:
-            vobj = obj.ViewObject
-            if vobj is not None:
-                vobj.Proxy = ViewProviderCompositeShell(self)
+            vobj = fp.ViewObject
+            if vobj is not None and isinstance(getattr(vobj, "Proxy", None), int):
+                vobj.Proxy = ViewProviderCompositeShell(fp)
         except Exception:
             pass
 
-    def onDocumentRestored(self, fp):
-        """Initialize tracking fields for documents saved before they existed."""
         # Ensure DrapeCuts property exists on older FCStd files
         # that were saved before this property was added.
         if not hasattr(fp, "DrapeCuts"):

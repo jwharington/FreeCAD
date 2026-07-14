@@ -80,7 +80,7 @@ class TestSeamGeometryFP(TestFreeCADFP):
         SeamGeometryFP(seam_shell, FreeCAD.ActiveDocument)
 
         self.assertIsNotNone(seam_shell)
-        self.assertIsNotNone(seam_shell.Support)
+        self.assertIsNone(seam_shell.Support)  # No intermediate _ShapeHolder
         self.assertEqual(seam_shell.TypeId, "Part::FeaturePython")
 
     def test_update_sets_shape(self):
