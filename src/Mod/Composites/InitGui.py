@@ -28,6 +28,11 @@ class CompositesWorkbench(Gui.Workbench):
         """
         # ── Load C++ draping solver immediately so failures are visible at
         #    workbench activation, not deep inside a draping operation. ────
+        # ARCHITECTURE: `import Composites_drape` is a standard Python import.
+        # The .so lives in FreeCAD's lib/ directory (installed via CMake
+        # DESTINATION ${CMAKE_INSTALL_LIBDIR}), which is on sys.path.
+        # DO NOT replace this with importlib.util.spec_from_file_location —
+        # that caused interpreter-shutdown crashes (see CMakeLists.txt).
         try:
             import Composites_drape  # noqa: F401
         except ImportError as exc:

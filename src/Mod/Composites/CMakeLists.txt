@@ -28,10 +28,11 @@ else()
 endif()
 
 # ── C++ extension ───────────────────────────────────────────────
-# Architecture: Composites_drape.so is a pybind11 Python extension that
-# provides the nextdrape draping solver and seam extraction. It is built
-# and installed following the standard FreeCAD pattern (same as Fem,
-# Part, Materials):
+# ARCHITECTURE NOTE — DO NOT REVERT TO CUSTOM LOADER
+#
+# Composites_drape.so is a pybind11 Python extension providing the
+# nextdrape draping solver and seam extraction. It follows the standard
+# FreeCAD pattern used by Fem, Part, and Materials:
 #
 #   1. SET_BIN_DIR places the .so in ${CMAKE_BINARY_DIR}/lib/ during
 #      build, which is on sys.path for FreeCADCmd.
@@ -40,11 +41,16 @@ endif()
 #   3. Python imports it via standard `import Composites_drape` — no
 #      custom loader, no spec_from_file_location, no nested subdirectory.
 #
-# DO NOT change the output directory to a nested path (e.g.
-# Mod/Composites/ext/_native/) or introduce a custom importlib loader.
-# The previous custom loader caused interpreter-shutdown crashes because
-# modules created via spec_from_file_location are not properly registered
-# in sys.modules, leading to double-free and cleanup-order issues.
+# PREVIOUS FAILURE: The old approach nested the .so in
+# Mod/Composites/ext/_native/ and used a custom importlib loader
+# (spec_from_file_location) in ext/_native/__init__.py. Modules created
+# via spec_from_file_location are not properly registered in sys.modules,
+# causing interpreter-shutdown crashes (double-free / cleanup-order bugs).
+# See commit history for the migration away from that pattern.
+#
+# If you change the output directory or introduce a custom loader again,
+# you will reproduce the shutdown crash. Use SET_BIN_DIR without a third
+# argument (defaults to lib/) and INSTALL to ${CMAKE_INSTALL_LIBDIR}.
 option(COMPOSITES_BUILD_CPP "Build C++ draping extension" ON)
 if(COMPOSITES_BUILD_CPP)
     set(Composites_CPP_SRCS

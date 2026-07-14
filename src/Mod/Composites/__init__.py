@@ -1,6 +1,21 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
+# ── ARCHITECTURE: C++ extension loading ─────────────────────────
+# The Composites_drape.so library (nextdrape solver + seam extraction)
+# is installed to FreeCAD's lib/ directory and loaded via standard
+# Python import (`import Composites_drape`). This matches the pattern
+# used by Fem, Part, and Materials workbenches.
+#
+# DO NOT use importlib.util.spec_from_file_location or nest the .so
+# in a subdirectory (e.g. ext/_native/). The old custom loader caused
+# interpreter-shutdown crashes because modules created via
+# spec_from_file_location are not properly registered in sys.modules,
+# leading to double-free and cleanup-order bugs.
+#
+# See CMakeLists.txt for build/install configuration and InitGui.py
+# for the workbench activation import.
+
 import os
 from os import path
 
