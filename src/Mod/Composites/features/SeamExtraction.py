@@ -11,6 +11,7 @@ from .. import SEAM_TOOL_ICON
 from ..tools.seam_extraction import extract_seam
 from .Command import BaseCommand
 from .CompositeShell import CompositeShellFP, is_composite_shell
+from .VPCompositeBase import CompositeBaseFP
 from .Laminate import LaminateFP
 from .VPCompositePart import VPCompositePart
 
@@ -23,7 +24,7 @@ class VirtualLaminateFP(LaminateFP):
         return
 
 
-class SeamFP(FreeCAD.DocumentObject):
+class SeamFP(CompositeBaseFP):
     """Document object holding seam extraction results for Part::Feature inputs."""
 
     def __init__(self, obj):
@@ -55,7 +56,6 @@ class SeamFP(FreeCAD.DocumentObject):
             "Seam",
             "Results",
             "Extracted seam surface (read-only)",
-            readonly=True,
         )
 
         obj.addProperty(
@@ -63,7 +63,6 @@ class SeamFP(FreeCAD.DocumentObject):
             "Remainder",
             "Results",
             "Remaining attachment geometry (read-only)",
-            readonly=True,
         )
 
         obj.Proxy = self
