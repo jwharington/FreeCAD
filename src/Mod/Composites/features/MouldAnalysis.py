@@ -257,7 +257,18 @@ class MouldAnalysisFP(CompositePartFP):
         ).AnalysisSummary = "Select a solid to begin mould analysis."
         obj.setPropertyStatus("AnalysisSummary", "ReadOnly")
 
-        super().__init__(obj)
+        super().__init__super().__init__(obj)
+
+        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
+        # This ensures the correct ViewProvider is saved with the document
+        if hasattr(FreeCADGui, "getDocument"):
+            try:
+                vobj = obj.ViewObject
+                if vobj is not None:
+                    vobj.Proxy = ViewProviderMouldAnalysis(self)
+            except Exception:
+                pass
+
 
     def execute(self, fp):
         source_shape = fp.Source.Shape if fp.Source else None

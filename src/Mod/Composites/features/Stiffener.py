@@ -63,7 +63,18 @@ class StiffenerFP(CompositePartFP):
             "Profile section of the stiffener",
         ).Profile = profile
 
-        super().__init__(obj)
+        super().__init__super().__init__(obj)
+
+        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
+        # This ensures the correct ViewProvider is saved with the document
+        if hasattr(FreeCADGui, "getDocument"):
+            try:
+                vobj = obj.ViewObject
+                if vobj is not None:
+                    vobj.Proxy = ViewProviderStiffener(self)
+            except Exception:
+                pass
+
 
     def execute(self, fp):
         print(f"DEBUG StiffenerFP.execute: MirrorX={fp.MirrorX}, MirrorY={fp.MirrorY}")

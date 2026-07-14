@@ -563,8 +563,27 @@ class CompositeShellFP(CompositeBaseFP):
         super().__init__(obj)
         self._initializing = False
 
+        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
+        # This ensures the correct ViewProvider is saved with the document
+        if hasattr(FreeCADGui, "getDocument"):
+            try:
+                vobj = obj.ViewObject
+                if vobj is not None:
+                    vobj.Proxy = ViewProviderCompositeShell(self)
+            except Exception:
+                pass
+
     def onDocumentRestored(self, fp):
         """Initialize tracking fields for documents saved before they existed."""
+        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
+        import FreeCADGui
+        if hasattr(FreeCADGui, "getDocument"):
+            try:
+                vobj = fp.ViewObject
+                if vobj is not None:
+                    vobj.Proxy = ViewProviderCompositeShell(self)
+            except Exception:
+                pass
         # Ensure DrapeCuts property exists on older FCStd files
         # that were saved before this property was added.
         if not hasattr(fp, "DrapeCuts"):

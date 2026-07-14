@@ -93,6 +93,16 @@ class LaminateFP(CompositeBaseFP):
 
         super().__init__(obj)
 
+        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
+        import FreeCADGui
+        if hasattr(FreeCADGui, "getDocument"):
+            try:
+                vobj = obj.ViewObject
+                if vobj is not None:
+                    vobj.Proxy = ViewProviderLaminate(self)
+            except Exception:
+                pass
+
         # obj.addProperty(
         #     "App::PropertyPythonObject",
         #     "FEMLayers",

@@ -30,6 +30,16 @@ class SeamFP(CompositeBaseFP):
     def __init__(self, obj):
         super().__init__(obj)
 
+        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
+        import FreeCADGui
+        if hasattr(FreeCADGui, "getDocument"):
+            try:
+                vobj = obj.ViewObject
+                if vobj is not None:
+                    vobj.Proxy = ViewProviderSeamExtraction(self)
+            except Exception:
+                pass
+
         obj.addProperty(
             "App::PropertyLinkGlobal",
             "Master",
@@ -129,6 +139,15 @@ class SeamGeometryFP(CompositeShellFP):
 
     def onDocumentRestored(self, fp):
         """Recreate the shape holder when the document is loaded from file."""
+        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
+        import FreeCADGui
+        if hasattr(FreeCADGui, "getDocument"):
+            try:
+                vobj = fp.ViewObject
+                if vobj is not None:
+                    vobj.Proxy = ViewProviderSeamExtraction(self)
+            except Exception:
+                pass
         if not hasattr(self, "_shape_holder") or self._shape_holder is None:
             doc = fp.Document
             if doc is not None:

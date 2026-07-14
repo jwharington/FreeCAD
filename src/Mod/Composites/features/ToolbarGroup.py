@@ -9,7 +9,7 @@ from . import (
     PartPlane,  # noqa
     PlaceDart,  # noqa
     Rosette,  # noqa
-    Seam,  # noqa
+    SeamExtraction,  # noqa
     Stiffener,  # noqa
     TransferRosette,  # noqa
 )
