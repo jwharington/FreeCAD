@@ -27,7 +27,7 @@ def main():
         FreeCAD.Vector(0, 25, 0),
     ])
 
-    att_sup = doc.addObject("Part::Feature", "AttSup")
+    att_sup = doc.addObject("Part::FeaturePython", "AttSup")
     att_sup.Shape = _face([
         FreeCAD.Vector(-50, -25, 0),
         FreeCAD.Vector(0, -25, 0),
