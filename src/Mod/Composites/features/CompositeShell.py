@@ -565,6 +565,14 @@ class CompositeShellFP(CompositeBaseFP):
         super().__init__(obj)
         self._initializing = False
 
+        # Attach ViewProvider so it persists in the saved document
+        try:
+            vobj = obj.ViewObject
+            if vobj is not None:
+                vobj.Proxy = ViewProviderCompositeShell(self)
+        except Exception:
+            pass
+
     def onDocumentRestored(self, fp):
         """Initialize tracking fields for documents saved before they existed."""
         # Ensure DrapeCuts property exists on older FCStd files

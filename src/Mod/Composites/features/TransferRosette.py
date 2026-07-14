@@ -287,8 +287,7 @@ class TransferRosetteCommand(BaseCommand):
         # the solve fires once the attachment shell actually points at this
         # rosette (avoids a premature solve with a stale attachment reference).
         self.cls_fp(obj, support=sel.get("support"))
-        if FreeCAD.GuiUp:
-            self.cls_vp(obj.ViewObject)
+        self.cls_vp(obj.ViewObject)
         attachment = sel.get("attachment_shell")
         if attachment is not None:
             attachment.Rosette = obj
