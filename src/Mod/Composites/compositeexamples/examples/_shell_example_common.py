@@ -296,7 +296,7 @@ def create_composite_feature_stack(
         }
 
     gui_up = bool(getattr(FreeCAD, "GuiUp", False))
-    attach_view_providers = gui_up and not skip_view_providers
+    attach_view_providers = not skip_view_providers
 
     try:
         _prepare_feature_import_environment()
