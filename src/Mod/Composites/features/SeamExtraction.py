@@ -159,6 +159,16 @@ class SeamShellFP(CompositeShellFP):
     ):
         super().__init__(obj, support=None, laminate=None, rosette=None)
 
+        # Seam must be registered before any property that triggers
+        # onChanged callbacks (Master / Attachment / Width), because
+        # _sync_virtual_inputs assigns to fp.Seam during init.
+        obj.addProperty(
+            "App::PropertyLink",
+            "Seam",
+            "Results",
+            "Extracted seam composite shell",
+        )
+
         obj.addProperty(
             "App::PropertyLinkGlobal",
             "Master",
@@ -182,13 +192,6 @@ class SeamShellFP(CompositeShellFP):
             "Desired seam width in mm",
             locked=True,
         ).Width = seam_width
-
-        obj.addProperty(
-            "App::PropertyLink",
-            "Seam",
-            "Results",
-            "Extracted seam composite shell",
-        )
 
         previous = getattr(self, "_initializing", False)
         self._initializing = True
