@@ -22,34 +22,50 @@ def _extractor_available():
 
 
 def _make_composite_shells(test_case):
-    """Create two composite shells from adjacent boxes sharing a face.
+    """Create two composite shells from adjacent planar faces sharing an edge.
 
-    Produces two boxes placed side-by-side so they share a common edge
-    that the seam extractor can find.
+    Produces two faces that share a common boundary edge so the seam
+    extractor can find a seam between them.
     """
     import Part
 
     from Composites.features.CompositeShell import CompositeShellFP
 
-    # Two boxes sharing a face at X=50
-    half_a = Part.makeBox(50, 50, 4)
-    half_b = Part.makeBox(50, 50, 4)
-    half_b.translate(FreeCAD.Vector(50, 0, 0))
+    def _face_from_pts(pts):
+        """Build a planar face from a closed polyline."""
+        wire = Part.makePolygon(pts + [pts[0]])
+        return Part.Face(wire)
 
-    # Wire the half-shapes into Part::Features
-    half_a_feat = test_case.doc.addObject("Part::Feature", "HalfA")
-    half_a_feat.Shape = half_a
+    # Two rectangular faces sharing the edge at x=0, lying in XY plane
+    master_face = _face_from_pts([
+        FreeCAD.Vector(0, -25, 0),
+        FreeCAD.Vector(50, -25, 0),
+        FreeCAD.Vector(50, 25, 0),
+        FreeCAD.Vector(0, 25, 0),
+    ])
+    att_face = _face_from_pts([
+        FreeCAD.Vector(-50, -25, 0),
+        FreeCAD.Vector(0, -25, 0),
+        FreeCAD.Vector(0, 25, 0),
+        FreeCAD.Vector(-50, 25, 0),
+    ])
 
-    half_b_feat = test_case.doc.addObject("Part::Feature", "HalfB")
-    half_b_feat.Shape = half_b
+    master_sup = test_case.doc.addObject("Part::Feature", "MasterSup")
+    master_sup.Shape = master_face
+
+    att_sup = test_case.doc.addObject("Part::Feature", "AttSup")
+    att_sup.Shape = att_face
 
     lam = test_case._create_laminate()
 
     ms = test_case.doc.addObject("Part::FeaturePython", "MasterShell")
-    CompositeShellFP(ms, support=half_a_feat, laminate=lam, rosette=None)
+    CompositeShellFP(ms, support=master_sup, laminate=lam, rosette=None)
 
     as_ = test_case.doc.addObject("Part::FeaturePython", "AttShell")
-    CompositeShellFP(as_, support=half_b_feat, laminate=lam, rosette=None)
+    CompositeShellFP(as_, support=att_sup, laminate=lam, rosette=None)
+
+    # Recompute so shell shapes are computed before extraction
+    test_case.doc.recompute()
 
     return ms, as_
 
@@ -177,8 +193,8 @@ class TestSeamShellFP(TestFreeCADFP):
         # Seam property must exist (even if None)
         self.assertTrue(hasattr(ext, "Seam"))
 
-    def test_seam_none_when_extraction_fails(self):
-        """When extraction fails, Seam is None (not a dangling reference)."""
+    def test_seam_shell_created_on_success(self):
+        """When extraction succeeds, Seam points to a SeamGeometryFP child."""
         from Composites.features.SeamExtraction import SeamShellFP
 
         master, att = _make_composite_shells(self)
@@ -186,10 +202,15 @@ class TestSeamShellFP(TestFreeCADFP):
         ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
         SeamShellFP(ext, master, att)
 
-        # With adjacent-box geometry the extractor fails
-        self.assertIsNone(
+        # With adjacent-face geometry the extractor should succeed
+        self.assertIsNotNone(
             ext.Seam,
-            "Seam should be None when extraction fails",
+            "Seam should be set when extraction succeeds",
+        )
+        self.assertIn(
+            "SeamShell",
+            ext.Seam.Name,
+            "Seam should be a SeamGeometryFP child",
         )
 
     def test_on_changed_triggers_sync(self):
