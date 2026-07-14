@@ -61,7 +61,7 @@ For plain `Part::Feature` inputs (faces, compounds without laminate data).
 |----------|------|-----------|-------------|
 | `Master` | `App::PropertyLinkGlobal` | Input | Master surface (face or compound) |
 | `Attachment` | `App::PropertyLinkGlobal` | Input | Attachment surface (face or compound) |
-| `SeamWidth` | `App::PropertyLength` | Input | Desired seam width (default "10.0 mm") |
+| `Width` | `App::PropertyLength` | Input | Desired seam width (default "10.0 mm") |
 | `Seam` | `App::PropertyLink` | Output | Extracted seam surface (read-only) |
 | `Remainder` | `App::PropertyLink` | Output | Remaining attachment geometry (read-only) |
 

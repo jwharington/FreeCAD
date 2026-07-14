@@ -22,10 +22,11 @@ class FibreCompositeLaminaFP(BaseLaminaFP):
     Type = "Fem::MaterialMechanicalLamina"
 
     def __init__(self, obj):
-        super().__init__super().__init__(obj)
+        super().__init__(obj)
 
         # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
         # This ensures the correct ViewProvider is saved with the document
+        import FreeCADGui
         if hasattr(FreeCADGui, "getDocument"):
             try:
                 vobj = obj.ViewObject

@@ -163,7 +163,7 @@ class TestSeamShellFP(TestFreeCADFP):
 
         self.assertIs(ext.Master, master)
         self.assertIs(ext.Attachment, att)
-        self.assertIsNotNone(ext.SeamWidth)
+        self.assertIsNotNone(ext.Width)
 
     def test_has_seam_property(self):
         """SeamShellFP has a Seam property (not scattered Support/Laminate)."""
@@ -262,11 +262,11 @@ class TestSeamFP(TestFreeCADFP):
         SeamFP(ext)
         ext.Master = master
         ext.Attachment = att
-        ext.SeamWidth = 10.0
+        ext.Width = 10.0
 
         self.assertIs(ext.Master, master)
         self.assertIs(ext.Attachment, att)
-        self.assertEqual(float(ext.SeamWidth), 10.0)
+        self.assertEqual(float(ext.Width), 10.0)
         self.assertTrue(hasattr(ext, "Seam"))
 
 

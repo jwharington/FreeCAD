@@ -19,10 +19,11 @@ from .Laminate import (
 
 class CompositeLaminateFP(LaminateFP):
     def __init__(self, obj, laminae=[]):
-        super().__init__super().__init__(obj, laminae=laminae)
+        super().__init__(obj, laminae=laminae)
 
         # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
         # This ensures the correct ViewProvider is saved with the document
+        import FreeCADGui
         if hasattr(FreeCADGui, "getDocument"):
             try:
                 vobj = obj.ViewObject

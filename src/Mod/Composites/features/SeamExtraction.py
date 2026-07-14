@@ -56,10 +56,10 @@ class SeamFP(CompositeBaseFP):
 
         obj.addProperty(
             "App::PropertyLength",
-            "SeamWidth",
+            "Width",
             "Dimension",
-            "Desired seam width in mm",
-        ).SeamWidth = SEAM_WIDTH_DEFAULT
+            "Desired seam width",
+        ).Width = SEAM_WIDTH_DEFAULT
 
         obj.addProperty(
             "App::PropertyLink",
@@ -82,7 +82,7 @@ class SeamFP(CompositeBaseFP):
             return
 
         try:
-            result = extract_seam(fp.Master, fp.Attachment, float(fp.SeamWidth))
+            result = extract_seam(fp.Master, fp.Attachment, float(fp.Width))
         except Exception as exc:
             FreeCAD.Console.PrintError(f"Seam extraction failed: {exc}\n")
             return
@@ -196,11 +196,11 @@ class SeamShellFP(CompositeShellFP):
 
         obj.addProperty(
             "App::PropertyLength",
-            "SeamWidth",
+            "Width",
             "Dimension",
-            "Desired seam width in mm",
+            "Desired seam width",
             locked=True,
-        ).SeamWidth = seam_width
+        ).Seam = seam_width
 
         obj.addProperty(
             "App::PropertyLink",
@@ -219,9 +219,9 @@ class SeamShellFP(CompositeShellFP):
     def onChanged(self, fp, prop):
         if getattr(self, "_initializing", False):
             return
-        if prop in {"Master", "Attachment", "SeamWidth"}:
+        if prop in {"Master", "Attachment", "Width"}:
             # Guard against being called before all properties are registered
-            if not all(hasattr(fp, p) for p in ("Master", "Attachment", "SeamWidth")):
+            if not all(hasattr(fp, p) for p in ("Master", "Attachment", "Width")):
                 return
             self._sync_virtual_inputs(fp)
             return
@@ -243,6 +243,13 @@ class SeamShellFP(CompositeShellFP):
             seam_shell = doc.addObject("Part::FeaturePython", name)
             SeamGeometryFP(seam_shell, doc)
             self._hide_object(seam_shell)
+            # Attach ViewProvider explicitly (mirrors drape example pattern)
+            import FreeCADGui
+            if hasattr(FreeCADGui, "getDocument"):
+                try:
+                    ViewProviderSeamExtraction(seam_shell.ViewObject)
+                except Exception:
+                    pass
 
         laminate = self._build_virtual_laminate(doc, fp, master, attachment)
         rosette = getattr(master, "Rosette", None) or getattr(
@@ -279,7 +286,7 @@ class SeamShellFP(CompositeShellFP):
             if not is_composite_shell(master) or not is_composite_shell(attachment):
                 return
 
-            result = extract_seam(master, attachment, float(fp.SeamWidth))
+            result = extract_seam(master, attachment, float(fp.Width))
             if not result.get("success"):
                 return
 
@@ -334,7 +341,7 @@ class CompositeSeamExtractionCommand(BaseCommand):
         SeamFP(obj)
         obj.Master = master
         obj.Attachment = attachment
-        obj.SeamWidth = SEAM_WIDTH_DEFAULT
+        obj.Width = SEAM_WIDTH_DEFAULT
         return obj
 
     def _create_shell_extraction(self, doc, master, attachment):
