@@ -28,6 +28,23 @@ else()
 endif()
 
 # ── C++ extension ───────────────────────────────────────────────
+# Architecture: Composites_drape.so is a pybind11 Python extension that
+# provides the nextdrape draping solver and seam extraction. It is built
+# and installed following the standard FreeCAD pattern (same as Fem,
+# Part, Materials):
+#
+#   1. SET_BIN_DIR places the .so in ${CMAKE_BINARY_DIR}/lib/ during
+#      build, which is on sys.path for FreeCADCmd.
+#   2. INSTALL places it in ${CMAKE_INSTALL_LIBDIR} (lib/) in the install
+#      prefix, also on sys.path for the GUI FreeCAD.
+#   3. Python imports it via standard `import Composites_drape` — no
+#      custom loader, no spec_from_file_location, no nested subdirectory.
+#
+# DO NOT change the output directory to a nested path (e.g.
+# Mod/Composites/ext/_native/) or introduce a custom importlib loader.
+# The previous custom loader caused interpreter-shutdown crashes because
+# modules created via spec_from_file_location are not properly registered
+# in sys.modules, leading to double-free and cleanup-order issues.
 option(COMPOSITES_BUILD_CPP "Build C++ draping extension" ON)
 if(COMPOSITES_BUILD_CPP)
     set(Composites_CPP_SRCS
@@ -46,23 +63,11 @@ if(COMPOSITES_BUILD_CPP)
     
     target_link_libraries(Composites_drape ${Composites_LIBS})
     
+    SET_BIN_DIR(Composites_drape Composites_drape)
     SET_PYTHON_PREFIX_SUFFIX(Composites_drape)
     
-    set_target_properties(Composites_drape PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Mod/Composites/ext/_native
-    )
-
-    add_custom_command(TARGET Composites_drape POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-            ${CMAKE_BINARY_DIR}/Mod/Composites/ext/_native
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:Composites_drape>
-            ${CMAKE_BINARY_DIR}/Mod/Composites/ext/_native/$<TARGET_FILE_NAME:Composites_drape>
-        VERBATIM
-    )
-
     install(TARGETS Composites_drape
-        LIBRARY DESTINATION Mod/Composites/ext/_native
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     )
 
     message(STATUS "Composites: C++ extension configured")

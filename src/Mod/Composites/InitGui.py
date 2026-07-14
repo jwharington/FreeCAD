@@ -29,7 +29,7 @@ class CompositesWorkbench(Gui.Workbench):
         # ── Load C++ draping solver immediately so failures are visible at
         #    workbench activation, not deep inside a draping operation. ────
         try:
-            from Composites.ext._native import solve  # noqa: F401
+            import Composites_drape  # noqa: F401
         except ImportError as exc:
             raise ImportError(
                 "Composites: failed to load C++ draping solver "
@@ -43,7 +43,9 @@ class CompositesWorkbench(Gui.Workbench):
         from Composites.features.CompositeShell import CompositeShellCommand
         from Composites.features.Mould import CompositeMouldCommand
         from Composites.features.PlaceDart import PlaceDartCommand
-        from Composites.features.Seam import CompositeSeamCommand
+        from Composites.features.SeamExtraction import (
+            CompositeSeamExtractionCommand,
+        )
         from Composites.features.Rosette import RosetteCommand
         from Composites.features.AlignFibreRosette import AlignFibreRosetteCommand
         from Composites.features.TransferRosette import TransferRosetteCommand
@@ -62,7 +64,7 @@ class CompositesWorkbench(Gui.Workbench):
             ("Composites_CompositeShell", CompositeShellCommand()),
             ("Composites_Mould", CompositeMouldCommand()),
             ("Composites_PlaceDart", PlaceDartCommand()),
-            ("Composites_Seam", CompositeSeamCommand()),
+            ("Composites_Seam", CompositeSeamExtractionCommand()),
             ("Composites_Rosette", RosetteCommand()),
             ("Composites_AlignFibreRosette", AlignFibreRosetteCommand()),
             ("Composites_TransferRosette", TransferRosetteCommand()),
@@ -87,6 +89,7 @@ class CompositesWorkbench(Gui.Workbench):
         ]
         cmds_structure = [
             "Composites_CompositeShell",
+            "Composites_Seam",
             "Composites_StructureTools",
             "Composites_LCSTools",
         ]

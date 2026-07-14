@@ -18,37 +18,9 @@ if TYPE_CHECKING:
 
 
 def _import_solver():
-    """Import the C++ nextdrape solver module.
-
-    Tries the FreeCAD-integrated build first (Composites.Composites_drape),
-    then falls back to the portable dev install (ext._native).
-    """
-    import os
-    import sys
-
-    # Ensure the FreeCAD build Mod dir is on sys.path so Composites_drape
-    # can be found.  This is needed when running FreeCADCmd outside of a
-    # full FreeCAD GUI session where the build dir is auto-registered.
-    _build_mod = os.environ.get("FREECAD_BUILD_MOD")
-    if _build_mod and _build_mod not in sys.path:
-        sys.path.insert(0, _build_mod)
-
-    try:
-        from Composites import Composites_drape as _nd
-        return _nd.solve
-    except ImportError:
-        pass
-    try:
-        from ..ext import _native
-        solver = getattr(_native, "solve", None)
-        if solver is None:
-            raise ImportError("_native.solve is None")
-        return solver
-    except ImportError:
-        raise RuntimeError(
-            "nextdrape C++ extension not available. "
-            "Build FreeCAD with BUILD_COMPOSITES=ON, or install the standalone .so."
-        )
+    """Import the C++ nextdrape solver module."""
+    import Composites_drape
+    return Composites_drape.solve
 
 
 class NextDrapeBackend(DrapeBackend):

@@ -10,19 +10,23 @@
 #include <pybind11/stl.h>
 #include <pybind11/numpy.h>
 
-// FreeCAD Part module — provides TopoShapePy and TopoShape
+// FreeCAD Part module — provides TopoShapePy, TopoShape, and FeaturePy
 #include <Mod/Part/App/TopoShapePy.h>
 #include <Mod/Part/App/TopoShape.h>
+#include <Mod/Part/App/PartFeaturePy.h>
 
 // OpenCASCADE
 #include <TopoDS_Shape.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Dir.hxx>
+#include <BRepTools.hxx>
+#include <sstream>
 
 // nextdrape
 #include <nextdrape/DrapeEngine.hpp>
 #include <nextdrape/Types.hpp>
 #include <nextdrape/Utilities.hpp>
+#include <nextdrape/SeamOverlapSolver.hpp>
 
 namespace py = pybind11;
 
@@ -230,4 +234,61 @@ PYBIND11_MODULE(Composites_drape, m) {
     },
     py::arg("shape"), py::arg("seed"), py::arg("params") = py::dict(),
     "Run nextdrape solver on a FreeCAD Part.Shape — zero-copy TopoDS_Shape access.");
+
+    // ── Seam extraction ──────────────────────────────────────────
+    m.def("extract_seam", [](py::object master_obj, py::object attachment_obj, double seam_width) {
+        TopoDS_Shape master_shape;
+        TopoDS_Shape attachment_shape;
+        try {
+            master_shape = extract_topods_shape(master_obj.ptr());
+            attachment_shape = extract_topods_shape(attachment_obj.ptr());
+        } catch (const std::exception& e) {
+            return py::dict(py::arg("success") = false,
+                          py::arg("error") = std::string(e.what()),
+                          py::arg("seam") = py::none(),
+                          py::arg("remainder") = py::none());
+        }
+
+        nextdrape::SeamOverlapSolver solver;
+        bool ok = false;
+        try {
+            ok = solver.Solve(master_shape, attachment_shape, seam_width);
+        } catch (const std::exception& e) {
+            return py::dict(py::arg("success") = false,
+                          py::arg("error") = std::string(e.what()),
+                          py::arg("seam") = py::none(),
+                          py::arg("remainder") = py::none());
+        }
+
+        if (!ok) {
+            return py::dict(py::arg("success") = false,
+                          py::arg("error") = std::string("SeamOverlapSolver::Solve returned false"),
+                          py::arg("seam") = py::none(),
+                          py::arg("remainder") = py::none());
+        }
+
+        const TopoDS_Shape& seam_shape = solver.Seam();
+        const TopoDS_Shape& remainder_shape = solver.AttachmentRemainder();
+
+        // Wrap TopoDS_Shape back into Part.Shape PyObjects.
+        // Serialize the TopoDS_Shape to BREP bytes via BRepTools, then
+        // let Python decode it via Part.readBytes(). This preserves the
+        // full BRep topology without lossy conversion.
+        auto wrap_shape = [](const TopoDS_Shape& occ_shape) -> py::object {
+            if (occ_shape.IsNull()) {
+                return py::none();
+            }
+            std::ostringstream stream;
+            BRepTools::Write(occ_shape, stream);
+            std::string brep_str = stream.str();
+            return py::bytes(brep_str);
+        };
+
+        return py::dict(py::arg("success") = true,
+                      py::arg("error") = std::string(""),
+                      py::arg("seam") = wrap_shape(seam_shape),
+                      py::arg("remainder") = wrap_shape(remainder_shape));
+    },
+    py::arg("master"), py::arg("attachment"), py::arg("seam_width") = 10.0,
+    "Extract seam geometry between master and attachment surfaces.");
 }

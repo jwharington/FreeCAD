@@ -1,87 +1,20 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
-"""Load the Composites C++ draping solver (``Composites_drape``).
+"""Compatibility shim for the Composites C++ draping solver.
 
-The solver is a standalone pybind11 Python extension (``Composites_drape.so``)
-built and installed next to the Composites package. It is searched in
-priority order:
+The solver (``Composites_drape.so``) is now installed to FreeCAD's
+``lib/`` directory and imported via the standard Python import
+mechanism (``import Composites_drape``), matching the pattern used
+by Fem, Part, and other workbenches.
 
-1. The ``.so`` co-located with this package (the normal case when the
-   Composites package itself was imported from the build/install tree).
-2. FreeCAD's install Mod tree —
-   ``<FreeCAD.getHomePath()>/Mod/Composites/ext/_native/Composites_drape.so``.
-   This handles the case where ``import Composites`` resolved to a source
-   checkout (e.g. ``FreeCADCmd -P <src>/Mod`` for running tests against the
-   source tree) whose ``ext/_native/`` has no built ``.so``.
-3. The user Mod tree (``~/.local/share/FreeCAD/v*/Mod/Composites/...``).
-4. A plain ``import Composites_drape`` (system-wide install on ``sys.path``).
-
-Only when none of these locate the solver does this raise ``ImportError``.
+This module re-exports the solver functions for backwards compatibility
+with code that imports from ``Composites.ext._native``.
 """
 
 from __future__ import annotations
 
-import glob
-import importlib.util
-import os
-from pathlib import Path
+import Composites_drape
 
-__all__ = ["solve"]
+__all__ = ["solve", "extract_seam"]
 
-
-def _load_from_path(so_path: str):
-    """Load ``Composites_drape`` from an explicit ``.so`` path."""
-    spec = importlib.util.spec_from_file_location("Composites_drape", so_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def _candidate_so_paths():
-    """Yield candidate ``Composites_drape.so`` paths in priority order."""
-    # 1. Co-located with this package.
-    yield Path(__file__).with_name("Composites_drape.so")
-
-    # 2. FreeCAD's install Mod tree (handles source-tree package imports).
-    try:
-        import FreeCAD
-
-        home = FreeCAD.getHomePath()
-        if home:
-            yield Path(home, "Mod", "Composites", "ext", "_native",
-                        "Composites_drape.so")
-    except Exception:
-        pass
-
-    # 3. User Mod tree(s).
-    user_data = os.path.expanduser("~/.local/share/FreeCAD")
-    if user_data:
-        yield from (
-            Path(p)
-            for p in glob.glob(
-                os.path.join(user_data, "v*", "Mod", "Composites",
-                             "ext", "_native", "Composites_drape.so")
-            )
-        )
-
-
-def _load():
-    # 1-3. Search candidate paths.
-    for candidate in _candidate_so_paths():
-        if candidate.exists():
-            return _load_from_path(str(candidate))
-
-    # 4. System-wide install.
-    try:
-        import Composites_drape as mod  # noqa: F401
-        return mod
-    except ImportError:
-        pass
-
-    raise ImportError(
-        "No Composites_drape solver found. Rebuild FreeCAD with "
-        "BUILD_COMPOSITES=ON."
-    )
-
-
-_mod = _load()
-solve = _mod.solve
+solve = Composites_drape.solve
+extract_seam = Composites_drape.extract_seam
