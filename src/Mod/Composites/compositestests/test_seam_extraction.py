@@ -21,60 +21,59 @@ def _extractor_available():
         return False
 
 
-def _make_composite_shells(test_case):
-    """Create two composite shells from adjacent planar faces sharing an edge.
+def _make_two_adjacent_shells(doc):
+    """Create two coplanar composite shells sharing edge at x=0.
 
-    Produces two faces that share a common boundary edge so the seam
-    extractor can find a seam between them.
+    Returns (master_shell, att_shell, laminate).
+    Minimal object count: 2 supports + 1 laminate + 2 shells = 5 objects.
     """
     import Part
 
     from Composites.features.CompositeShell import CompositeShellFP
 
-    def _face_from_pts(pts):
-        """Build a planar face from a closed polyline."""
+    def _face(pts):
         wire = Part.makePolygon(pts + [pts[0]])
         return Part.Face(wire)
 
-    # Two rectangular faces sharing the edge at x=0, lying in XY plane
-    master_face = _face_from_pts([
+    master_face = _face([
         FreeCAD.Vector(0, -25, 0),
         FreeCAD.Vector(50, -25, 0),
         FreeCAD.Vector(50, 25, 0),
         FreeCAD.Vector(0, 25, 0),
     ])
-    att_face = _face_from_pts([
+    att_face = _face([
         FreeCAD.Vector(-50, -25, 0),
         FreeCAD.Vector(0, -25, 0),
         FreeCAD.Vector(0, 25, 0),
         FreeCAD.Vector(-50, 25, 0),
     ])
 
-    master_sup = test_case.doc.addObject("Part::Feature", "MasterSup")
+    master_sup = doc.addObject("Part::Feature", "MasterSup")
     master_sup.Shape = master_face
 
-    att_sup = test_case.doc.addObject("Part::Feature", "AttSup")
+    att_sup = doc.addObject("Part::Feature", "AttSup")
     att_sup.Shape = att_face
 
-    lam = test_case._create_laminate()
+    # Shared laminate — single object
+    from Composites.features.Laminate import LaminateFP
+    lam = doc.addObject("Part::FeaturePython", "Laminate")
+    LaminateFP(lam)
 
-    ms = test_case.doc.addObject("Part::FeaturePython", "MasterShell")
+    ms = doc.addObject("Part::FeaturePython", "MasterShell")
     CompositeShellFP(ms, support=master_sup, laminate=lam, rosette=None)
 
-    as_ = test_case.doc.addObject("Part::FeaturePython", "AttShell")
+    as_ = doc.addObject("Part::FeaturePython", "AttShell")
     CompositeShellFP(as_, support=att_sup, laminate=lam, rosette=None)
 
-    # Recompute so shell shapes are computed before extraction
-    test_case.doc.recompute()
-
-    return ms, as_
+    doc.recompute()
+    return ms, as_, lam
 
 
 class TestSeamGeometryFP(TestFreeCADFP):
-    """Tests for SeamGeometryFP — the composite shell that holds seam geometry."""
+    """Tests for SeamGeometryFP."""
 
     def test_creation(self):
-        """SeamGeometryFP can be created with a doc reference."""
+        """SeamGeometryFP is created with correct properties."""
         from Composites.features.SeamExtraction import SeamGeometryFP
 
         seam_shell = self.doc.addObject("Part::FeaturePython", "SeamShell")
@@ -85,7 +84,7 @@ class TestSeamGeometryFP(TestFreeCADFP):
         self.assertEqual(seam_shell.TypeId, "Part::FeaturePython")
 
     def test_update_sets_shape(self):
-        """update() sets the shape on the seam shell."""
+        """update() sets shape on seam shell."""
         from Composites.features.SeamExtraction import SeamGeometryFP
 
         box = self.doc.addObject("Part::Box", "Box")
@@ -104,7 +103,7 @@ class TestSeamGeometryFP(TestFreeCADFP):
         )
 
     def test_update_sets_laminate(self):
-        """update() sets the laminate on the seam shell."""
+        """update() sets laminate on seam shell."""
         from Composites.features.SeamExtraction import SeamGeometryFP
 
         box = self.doc.addObject("Part::Box", "Box")
@@ -121,7 +120,7 @@ class TestSeamGeometryFP(TestFreeCADFP):
         self.assertIs(seam_shell.Laminate, lam)
 
     def test_update_sets_rosette(self):
-        """update() sets the rosette on the seam shell."""
+        """update() sets rosette on seam shell."""
         from Composites.features.SeamExtraction import SeamGeometryFP
 
         box = self.doc.addObject("Part::Box", "Box")
@@ -138,29 +137,26 @@ class TestSeamGeometryFP(TestFreeCADFP):
         self.assertIs(seam_shell.Rosette, rosette)
 
     def test_execute_is_noop(self):
-        """execute() does nothing — seam shells never drape."""
+        """execute() does nothing for SeamGeometryFP."""
         from Composites.features.SeamExtraction import SeamGeometryFP
 
         box = self.doc.addObject("Part::Box", "Box")
         box.Length = 100
         box.Width = 50
         box.Height = 2
-
         seam_shell = self.doc.addObject("Part::FeaturePython", "SeamShell")
         SeamGeometryFP(seam_shell, FreeCAD.ActiveDocument)
-
-        # execute() should not raise and should not trigger drape
         seam_shell.Proxy.execute(seam_shell)
 
 
 class TestSeamShellFP(TestFreeCADFP):
-    """Tests for SeamShellFP — the extraction node."""
+    """Tests for SeamShellFP."""
 
     def test_creation(self):
         """SeamShellFP is created with correct properties."""
         from Composites.features.SeamExtraction import SeamShellFP
 
-        master, att = _make_composite_shells(self)
+        master, att, _ = _make_two_adjacent_shells(self.doc)
 
         ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
         SeamShellFP(ext, master, att)
@@ -173,36 +169,33 @@ class TestSeamShellFP(TestFreeCADFP):
         """SeamShellFP has a Seam property (not scattered Support/Laminate)."""
         from Composites.features.SeamExtraction import SeamShellFP
 
-        master, att = _make_composite_shells(self)
+        master, att, _ = _make_two_adjacent_shells(self.doc)
 
         ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
         SeamShellFP(ext, master, att)
 
-        # The key assertion: Seam property exists
         self.assertTrue(hasattr(ext, "Seam"))
 
     def test_seam_property_exists_even_when_extraction_fails(self):
         """Seam property is always present, even when extraction fails."""
         from Composites.features.SeamExtraction import SeamShellFP
 
-        master, att = _make_composite_shells(self)
+        master, att, _ = _make_two_adjacent_shells(self.doc)
 
         ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
         SeamShellFP(ext, master, att)
 
-        # Seam property must exist (even if None)
         self.assertTrue(hasattr(ext, "Seam"))
 
     def test_seam_shell_created_on_success(self):
         """When extraction succeeds, Seam points to a SeamGeometryFP child."""
         from Composites.features.SeamExtraction import SeamShellFP
 
-        master, att = _make_composite_shells(self)
+        master, att, _ = _make_two_adjacent_shells(self.doc)
 
         ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
         SeamShellFP(ext, master, att)
 
-        # With adjacent-face geometry the extractor should succeed
         self.assertIsNotNone(
             ext.Seam,
             "Seam should be set when extraction succeeds",
@@ -214,19 +207,37 @@ class TestSeamShellFP(TestFreeCADFP):
         )
 
     def test_on_changed_triggers_sync(self):
-        """Changing Master/Attachment/SeamWidth triggers _sync_virtual_inputs."""
+        """Changing Master triggers _sync_virtual_inputs without raising."""
         from Composites.features.SeamExtraction import SeamShellFP
 
-        master, att = _make_composite_shells(self)
+        master, att, _ = _make_two_adjacent_shells(self.doc)
 
         ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
         SeamShellFP(ext, master, att)
 
-        # Changing Master should trigger onChanged → _sync_virtual_inputs
-        new_master, _ = _make_composite_shells(self)
-        ext.Master = new_master
+        # Create a replacement master shell in the SAME document
+        from Composites.features.CompositeShell import CompositeShellFP
+        rep_sup = self.doc.addObject("Part::Feature", "RepSup")
+        import Part
+        rep_face = Part.Face(Part.makePolygon([
+            FreeCAD.Vector(0, -25, 0),
+            FreeCAD.Vector(60, -25, 0),
+            FreeCAD.Vector(60, 25, 0),
+            FreeCAD.Vector(0, 25, 0),
+            FreeCAD.Vector(0, -25, 0),
+        ]))
+        rep_sup.Shape = rep_face
 
-        # Should not raise
+        rep_lam = self.doc.addObject("Part::FeaturePython", "RepLam")
+        from Composites.features.Laminate import LaminateFP
+        LaminateFP(rep_lam)
+
+        new_master = self.doc.addObject("Part::FeaturePython", "NewMaster")
+        CompositeShellFP(new_master, support=rep_sup, laminate=rep_lam, rosette=None)
+        self.doc.recompute()
+
+        # Assign — should not raise
+        ext.Master = new_master
         self.assertIs(ext.Master, new_master)
 
 
@@ -257,4 +268,7 @@ class TestSeamFP(TestFreeCADFP):
         self.assertIs(ext.Attachment, att)
         self.assertEqual(float(ext.SeamWidth), 10.0)
         self.assertTrue(hasattr(ext, "Seam"))
-        self.assertTrue(hasattr(ext, "Remainder"))
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

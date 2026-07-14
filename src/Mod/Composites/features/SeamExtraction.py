@@ -127,6 +127,17 @@ class SeamGeometryFP(CompositeShellFP):
         """Override to prevent drape solves on seam result shells."""
         pass
 
+    def onDocumentRestored(self, fp):
+        """Recreate the shape holder when the document is loaded from file."""
+        if not hasattr(self, "_shape_holder") or self._shape_holder is None:
+            doc = fp.Document
+            if doc is not None:
+                self._shape_holder = doc.addObject(
+                    "Part::Feature", f"_{fp.Name}_ShapeHolder"
+                )
+                self._shape_holder.Visibility = False
+                fp.Support = self._shape_holder
+
     def update(self, fp, shape, laminate, rosette):
         """Update the seam shell with new geometry and material data."""
         self._shape_holder.Shape = shape

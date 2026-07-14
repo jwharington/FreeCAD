@@ -939,6 +939,8 @@ class DarwinPlatform:
     def post(self) -> None:
         # add special path for MacOSX (bug #0000307): Where is this bug documented?
         sys.path.append(os.path.expanduser("~/Library/Application Support/FreeCAD/Mod"))
+        # Add Linux user Mod parent directory to sys.path so packages like Composites can be imported
+        sys.path.append(os.path.expanduser("~/.local/share/FreeCAD/v26-3/Mod"))
 
 
 class ModState(IntEnum):
@@ -1554,6 +1556,10 @@ class InitPipeline:
         """
         if macosx := DarwinPlatform():
             macosx.post()
+        # Add Linux user Mod parent directory to sys.path so packages like Composites can be imported
+        linux_mod = Path.home() / ".local/share/FreeCAD/v26-3/Mod"
+        if linux_mod.is_dir() and str(linux_mod) not in sys.path:
+            sys.path.insert(0, str(linux_mod))
 
     def setup_tty(self) -> None:
         # Note: just checking whether stdin is a TTY is not enough, as the GUI is set up only after this
