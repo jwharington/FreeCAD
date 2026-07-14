@@ -1,3 +1,8 @@
+## FreeCAD development workflow
+- For all FreeCAD development, testing, and debugging tasks in this repo, use the **freecad-dev** skill. It handles starting FreeCAD with MCP, syncing source to build, purging caches, building, and running tests.
+- Always edit source files under `src/Mod/Composites/…` — never edit build-tree files directly.
+- After editing Python files in `src/`, use `cmake --install build/debug` (NOT rsync) to sync to the build prefix. Then purge `.pyc` caches before testing.
+
 ## Testing discipline
 - NEVER relax, widen, or remove test thresholds/tolerances/assertions to make a failing test pass.
 - A failing test exposes a real bug in the code or the algorithm. Fix the code. If the algorithm is genuinely incapable of meeting the threshold, fix the algorithm — do not lower the bar.
