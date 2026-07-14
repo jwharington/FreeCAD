@@ -4,18 +4,11 @@ import os
 import sys
 import types
 import unittest
-from unittest.mock import MagicMock
 
-# FreeCAD mock must be present before importing Composites package.
-if "FreeCAD" not in sys.modules:
-    freecad_mock = MagicMock()
-    freecad_mock.__unit_test__ = []
-    freecad_mock.Base = MagicMock()
-    freecad_mock.ParamGet.return_value = MagicMock(SetString=lambda *args, **kwargs: None)
-    sys.modules["FreeCAD"] = freecad_mock
-
-
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+# Ensure repo root is on sys.path so package imports work.
+_REPO_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..")
+)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 

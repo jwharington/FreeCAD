@@ -4,49 +4,14 @@
 """
 Comprehensive tests for the mechanics and objects modules.
 
-FreeCAD is not required to run these tests – a minimal mock is
-installed in sys.modules before any project code is imported.
+Uses real FreeCAD objects — no mocks — consistent with the Composites
+testing philosophy.
 """
 
 import math
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock
-
-# ---------------------------------------------------------------------------
-# FreeCAD mock — must be installed before any project imports
-# ---------------------------------------------------------------------------
-
-_TO_MPA = {"GPa": 1000.0, "MPa": 1.0, "kPa": 1e-3, "Pa": 1e-6}
-_TO_T_MM3 = {"kg/m^3": 1e-12, "t/mm^3": 1.0, "g/cm^3": 1e-9}
-
-
-class _Quantity:
-    """Minimal stand-in for FreeCAD.Units.Quantity."""
-
-    def __init__(self, val_str):
-        parts = str(val_str).strip().split()
-        self._val = float(parts[0])
-        self._unit = parts[1] if len(parts) > 1 else ""
-
-    def getValueAs(self, target):
-        if target == "MPa":
-            return self._val * _TO_MPA.get(self._unit, 1.0)
-        if target == "t/mm^3":
-            return self._val * _TO_T_MM3.get(self._unit, 1.0)
-        return self._val
-
-
-_units_mock = MagicMock()
-_units_mock.Quantity.side_effect = _Quantity
-
-_freecad_mock = MagicMock()
-_freecad_mock.__unit_test__ = []
-_freecad_mock.Units = _units_mock
-
-sys.modules["FreeCAD"] = _freecad_mock
-sys.modules["CompositesWB"] = MagicMock()
 
 # ---------------------------------------------------------------------------
 # Ensure repo root is on sys.path so package imports work

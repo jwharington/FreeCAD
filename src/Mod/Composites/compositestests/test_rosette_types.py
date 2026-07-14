@@ -13,7 +13,7 @@ import tempfile
 import FreeCAD
 import Part
 
-from test_base import TestFreeCADFP
+from .test_base import TestFreeCADFP
 
 
 class TestRosetteTypes(TestFreeCADFP):

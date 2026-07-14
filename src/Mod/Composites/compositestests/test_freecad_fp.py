@@ -10,14 +10,15 @@ Runs all test modules from the compositestests package.
 import os
 import sys
 import tempfile
+import types
 import unittest
-from unittest.mock import MagicMock
 
-# CRITICAL: Mock FreeCADGui BEFORE importing any Composites modules
-FreeCADGui = MagicMock()
-FreeCADGui.addCommand = lambda *args, **kwargs: None
-FreeCADGui.addWorkbench = lambda *args, **kwargs: None
-sys.modules['FreeCADGui'] = FreeCADGui
+# CRITICAL: Install FreeCADGui stub BEFORE importing any Composites modules
+if "FreeCADGui" not in sys.modules:
+    _stub = types.SimpleNamespace()
+    _stub.addCommand = lambda *a, **k: None
+    _stub.addWorkbench = lambda *a, **k: None
+    sys.modules["FreeCADGui"] = _stub
 
 # Import FreeCAD after mocking FreeCADGui
 import FreeCAD
@@ -31,7 +32,7 @@ if "CompositesWB" not in sys.modules:
 import Composites as CompositesWB
 
 # Import base test class
-from test_base import TestFreeCADFP
+from .test_base import TestFreeCADFP
 
 
 class TestDocumentPersistence(TestFreeCADFP):

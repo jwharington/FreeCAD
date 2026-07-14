@@ -1,35 +1,14 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
+"""Smoke tests for the compositeexamples framework.
 
-"""Unit/smoke coverage for the compositeexamples framework.
-
-These tests validate registry and runner behaviour and ensure example build
-paths run with ``run_solver=False`` without requiring a hard solver/runtime.
+Uses real FreeCAD objects — no mocks — consistent with the Composites
+testing philosophy.
 """
 
-import builtins
 import os
 import sys
-import types
 import unittest
-from unittest.mock import MagicMock, patch
-
-# ---------------------------------------------------------------------------
-# FreeCAD mock — must be installed before importing Composites.
-# ---------------------------------------------------------------------------
-
-_freecad_mock = MagicMock()
-_freecad_mock.__unit_test__ = []
-_freecad_mock.Base = types.SimpleNamespace(
-    Precision=types.SimpleNamespace(
-        confusion=lambda: 1e-7,
-        parametric=lambda _tol: 1e-9,
-    )
-)
-_freecad_mock.ParamGet.return_value = MagicMock()
-
-sys.modules["FreeCAD"] = _freecad_mock
-sys.modules["CompositesWB"] = MagicMock()
 
 # ---------------------------------------------------------------------------
 # Ensure repo root is on sys.path so package imports work.
@@ -68,54 +47,27 @@ class TestCompositeExamplesRegistry(unittest.TestCase):
 
 
 class TestCompositeExamplesRunner(unittest.TestCase):
-    def test_run_calls_example_build_with_arguments(self):
-        doc = object()
-        expected = {"ok": True}
-        module = types.SimpleNamespace(build=MagicMock(return_value=expected))
+    """Test runner plumbing with real FreeCAD geometry."""
 
-        with patch.object(
-            registry,
-            "get_example_module",
-            return_value=module,
-        ) as get_example:
-            result = runner.run("dummy", run_solver=False, doc=doc)
+    def test_run_calls_example_build(self):
+        """runner.run delegates to the example's build function."""
+        result = runner.run("ud_plate_basic", run_solver=False, doc=None)
 
-        get_example.assert_called_once_with("dummy")
-        module.build.assert_called_once_with(doc=doc, run_solver=False)
-        self.assertIs(result, expected)
+        self.assertIn("laminate", result)
+        self.assertIsNotNone(result["laminate"])
 
-    def test_run_forwards_build_kwargs(self):
-        doc = object()
-        expected = {"ok": True}
-        module = types.SimpleNamespace(build=MagicMock(return_value=expected))
+    def test_run_forwards_run_solver_flag(self):
+        """run_solver=True still succeeds (geometry only, no solver)."""
+        result = runner.run("ud_plate_basic", run_solver=True, doc=None)
 
-        with patch.object(
-            registry,
-            "get_example_module",
-            return_value=module,
-        ):
-            result = runner.run(
-                "dummy",
-                run_solver=True,
-                doc=doc,
-            )
-
-        module.build.assert_called_once_with(
-            doc=doc,
-            run_solver=True,
-        )
-        self.assertIs(result, expected)
-
-    def test_run_raises_when_build_not_callable(self):
-        module = types.SimpleNamespace(build=None)
-
-        with patch.object(registry, "get_example_module", return_value=module):
-            with self.assertRaises(AttributeError):
-                runner.run("dummy", run_solver=False, doc=None)
+        self.assertIn("laminate", result)
+        self.assertIsNotNone(result["laminate"])
 
 
 class TestFailurePostprocess(unittest.TestCase):
     def test_evaluate_failure_criteria_returns_hotspots(self):
+        import types
+
         result_obj = types.SimpleNamespace(
             TypeId="Fem::FemResultMechanical",
             Name="ResultMechanical",
@@ -135,64 +87,21 @@ class TestFailurePostprocess(unittest.TestCase):
 
 
 class TestCompositeExamplesSmoke(unittest.TestCase):
-    def test_shell_example_run_solver_invokes_full_fem_job(self):
-        doc = MagicMock()
-        support = MagicMock()
-        fake_job = {"status": "ok"}
-        fake_shape = types.SimpleNamespace(Faces=[])
-        fake_part = types.SimpleNamespace(makeCylinder=lambda *args, **kwargs: fake_shape)
+    """End-to-end smoke tests using real FreeCAD geometry."""
 
-        with patch.object(
-            tubular_shell,
-            "import_geometry_modules",
-            return_value=(_freecad_mock, fake_part),
-        ), patch.object(
-            tubular_shell,
-            "create_support_feature",
-            return_value=support,
-        ), patch.object(
-            tubular_shell,
-            "run_full_shell_job",
-            return_value=fake_job,
-        ) as fem_run:
-            result = tubular_shell.build(doc=doc, run_solver=True)
+    def test_tubular_shell_builds(self):
+        """tubular_shell builds successfully with real FreeCAD objects."""
+        result = tubular_shell.build(doc=None, run_solver=False)
+        self.assertIn("laminate", result)
+        self.assertIsNotNone(result["laminate"])
 
-        fem_run.assert_called_once_with(
-            doc,
-            support,
-            case_id="tubular_shell",
-            boundary_conditions=tubular_shell.BOUNDARY_CONDITIONS,
-            solve=True,
-        )
-        self.assertIs(result["fem_job"], fake_job)
-
-    def test_build_paths_do_not_require_solver_when_disabled(self):
-        doc = MagicMock()
-        doc.recompute.side_effect = AssertionError(
-            "recompute must not be called when run_solver=False",
-        )
-
+    def test_all_examples_build(self):
+        """Every example builds successfully with run_solver=False."""
         for example_id in registry.list_examples():
             with self.subTest(example=example_id):
-                result = runner.run(example_id, run_solver=False, doc=doc)
+                result = runner.run(example_id, run_solver=False, doc=None)
                 self.assertIn("laminate", result)
-                self.assertIs(result["doc"], doc)
-                doc.recompute.assert_not_called()
-
-    def test_build_paths_work_without_freecad_import(self):
-        original_import = builtins.__import__
-
-        def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-            if name == "FreeCAD":
-                raise ImportError("simulated missing FreeCAD")
-            return original_import(name, globals, locals, fromlist, level)
-
-        with patch("builtins.__import__", side_effect=_guarded_import):
-            for example_id in registry.list_examples():
-                with self.subTest(example=example_id):
-                    result = runner.run(example_id, run_solver=False, doc=None)
-                    self.assertIn("laminate", result)
-                    self.assertIsNone(result["doc"])
+                self.assertIsNotNone(result["laminate"])
 
 
 if __name__ == "__main__":

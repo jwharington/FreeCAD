@@ -5,7 +5,7 @@
 
 import unittest
 
-from test_base import TestFreeCADFP
+from .test_base import TestFreeCADFP
 
 
 class TestLaminateFP(TestFreeCADFP):

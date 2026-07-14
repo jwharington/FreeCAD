@@ -6,22 +6,24 @@
 import os
 import sys
 import tempfile
+import types
 import unittest
-from unittest.mock import MagicMock
 
 import FreeCAD
 import Part
 
-# Minimal FreeCADGui mock for tests that need GUI access.
-# Features themselves no longer require FreeCADGui at import time.
-# This mock provides stubs for common GUI operations used in tests.
-_freeCADGui_mock = MagicMock()
-_freeCADGui_mock.addCommand = lambda *args, **kwargs: None
-_freeCADGui_mock.addWorkbench = lambda *args, **kwargs: None
-_freeCADGui_mock.Selection = MagicMock()
-_freeCADGui_mock.Selection.getSelectionEx = MagicMock(return_value=[])
-_freeCADGui_mock.Selection.clearSelection = MagicMock()
-sys.modules['FreeCADGui'] = _freeCADGui_mock
+# FreeCADGui is not available in FreeCADCmd headless mode.
+# Features no longer require FreeCADGui at import time, so we
+# only install a minimal stub for command registration.
+if "FreeCADGui" not in sys.modules:
+    _stub = types.SimpleNamespace()
+    _stub.addCommand = lambda *a, **k: None
+    _stub.addWorkbench = lambda *a, **k: None
+    _sel = types.SimpleNamespace()
+    _sel.getSelectionEx = lambda *a, **k: []
+    _sel.clearSelection = lambda *a, **k: None
+    _stub.Selection = _sel
+    sys.modules["FreeCADGui"] = _stub
 
 # Import Composites (now works without heavy mocking)
 if "CompositesWB" not in sys.modules:

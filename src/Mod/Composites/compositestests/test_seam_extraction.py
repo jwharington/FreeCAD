@@ -7,7 +7,7 @@ import unittest
 
 import FreeCAD
 
-from test_base import TestFreeCADFP
+from .test_base import TestFreeCADFP
 
 
 def _extractor_available():

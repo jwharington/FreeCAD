@@ -613,7 +613,11 @@ class CompositeShellFP(CompositeBaseFP):
         if getattr(fp.Proxy, "_needs_recompute", False):
             fp.Proxy._needs_recompute = False
 
-        if (not fp.Support) or (not fp.Laminate):
+        if not fp.Support:
+            return
+        if not fp.Laminate:
+            # No laminate — fall back to the support shape.
+            fp.Shape = fp.Support.Shape
             return
 
         def get_lcs():

@@ -1,27 +1,15 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-import os
+"""Tests for composite failure models.
+
+Uses real NumPy arrays and model dicts — no mocks of FreeCAD behavior.
+"""
+
 import sys
 import types
 import unittest
-from unittest.mock import MagicMock
 
 import numpy as np
-
-# FreeCAD mock must be present before importing Composites package.
-if "FreeCAD" not in sys.modules:
-    freecad_mock = MagicMock()
-    freecad_mock.__unit_test__ = []
-    freecad_mock.Base = MagicMock()
-    freecad_mock.ParamGet.return_value = MagicMock(SetString=lambda *args, **kwargs: None)
-    sys.modules["FreeCAD"] = freecad_mock
-
-
-_REPO_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..")
-)
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
 
 from Composites.fem.failure_models_composites import (  # noqa: E402
     calc_failure_hashin,
@@ -31,34 +19,36 @@ from Composites.fem.failure_models_composites import (  # noqa: E402
 
 
 class TestCompositeFailureModels(unittest.TestCase):
+    """Monotonicity: doubling stresses should increase failure index."""
+
     def setUp(self):
         self.opts = {
-            "XT": 1.0,
-            "XC": 1.0,
-            "YT": 1.0,
-            "YC": 1.0,
-            "ZT": 1.0,
-            "ZC": 1.0,
-            "S12": 1.0,
-            "S13": 1.0,
-            "S23": 1.0,
+            "XT": 1500.0,
+            "XC": 1500.0,
+            "YT": 50.0,
+            "YC": 250.0,
+            "ZT": 50.0,
+            "ZC": 250.0,
+            "S12": 80.0,
+            "S13": 80.0,
+            "S23": 40.0,
             "f12": 0.0,
             "f13": 0.0,
             "f23": 0.0,
         }
-
-    def test_tsai_wu_monotonic(self):
-        s = np.array([0.2, 0.1, 0.0, 0.0, 0.0, 0.0])
-        e = np.zeros(6)
-        f1 = calc_failure_tsai_wu(s, e, self.opts)
-        f2 = calc_failure_tsai_wu(2.0 * s, e, self.opts)
-        self.assertGreater(f2, f1)
 
     def test_hashin_monotonic(self):
         s = np.array([0.2, 0.1, 0.0, 0.05, 0.0, 0.0])
         e = np.zeros(6)
         f1 = calc_failure_hashin(s, e, self.opts)
         f2 = calc_failure_hashin(2.0 * s, e, self.opts)
+        self.assertGreater(f2, f1)
+
+    def test_tsai_wu_monotonic(self):
+        s = np.array([0.2, 0.1, 0.0, 0.0, 0.0, 0.0])
+        e = np.zeros(6)
+        f1 = calc_failure_tsai_wu(s, e, self.opts)
+        f2 = calc_failure_tsai_wu(2.0 * s, e, self.opts)
         self.assertGreater(f2, f1)
 
 

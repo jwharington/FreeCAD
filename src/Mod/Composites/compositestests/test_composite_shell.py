@@ -7,7 +7,7 @@ import os
 import tempfile
 import unittest
 
-from test_base import TestFreeCADFP
+from .test_base import TestFreeCADFP
 
 
 class TestCompositeShellFP(TestFreeCADFP):
