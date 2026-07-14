@@ -68,18 +68,7 @@ class MouldFP(CompositePartFP):
             locked=True,
         ).GenerationSummary = "not computed"
 
-        super().__init__super().__init__(obj)
-
-        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
-        # This ensures the correct ViewProvider is saved with the document
-        if hasattr(FreeCADGui, "getDocument"):
-            try:
-                vobj = obj.ViewObject
-                if vobj is not None:
-                    vobj.Proxy = ViewProviderMould(self)
-            except Exception:
-                pass
-
+        super().__init__(obj)
 
     def execute(self, fp):
         buffer = [fp.XOverhang.Value, fp.YOverhang.Value, fp.ZOverhang.Value]

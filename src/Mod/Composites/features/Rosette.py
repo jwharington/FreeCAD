@@ -129,18 +129,7 @@ class RosetteFP(CompositeBaseFP):
         obj.setPropertyStatus("LocalCoordinateSystem", "LockDynamic")
         obj.setPropertyStatus("LocalCoordinateSystem", "ReadOnly")
 
-        super().__init__super().__init__(obj)
-
-        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
-        # This ensures the correct ViewProvider is saved with the document
-        if hasattr(FreeCADGui, "getDocument"):
-            try:
-                vobj = obj.ViewObject
-                if vobj is not None:
-                    vobj.Proxy = ViewProviderRosette(self)
-            except Exception:
-                pass
-
+        super().__init__(obj)
 
     def execute(self, fp):
         position, rotation = _origin_from_support(fp)

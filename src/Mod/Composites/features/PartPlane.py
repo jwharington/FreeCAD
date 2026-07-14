@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
+import FreeCAD
+
 # FreeCADGui removed for decoupling
 from FreeCAD import Vector
 
@@ -48,18 +50,7 @@ class PartPlaneFP(CompositePartFP):
             "View direction used to infer the parting line",
         ).ViewDir = Vector(0, 0, 1)
 
-        super().__init__super().__init__(obj)
-
-        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
-        # This ensures the correct ViewProvider is saved with the document
-        if hasattr(FreeCADGui, "getDocument"):
-            try:
-                vobj = obj.ViewObject
-                if vobj is not None:
-                    vobj.Proxy = ViewProviderPartPlane(self)
-            except Exception:
-                pass
-
+        super().__init__(obj)
 
     def execute(self, fp):
         shape = make_parting_surface3(

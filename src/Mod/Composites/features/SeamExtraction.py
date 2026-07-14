@@ -30,15 +30,6 @@ class SeamFP(CompositeBaseFP):
     def __init__(self, obj):
         super().__init__(obj)
 
-        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
-        if FreeCAD.GuiUp:
-            try:
-                vobj = obj.ViewObject
-                if vobj is not None:
-                    vobj.Proxy = ViewProviderSeamExtraction(self)
-            except Exception:
-                pass
-
         obj.addProperty(
             "App::PropertyLinkGlobal",
             "Master",
@@ -57,7 +48,7 @@ class SeamFP(CompositeBaseFP):
             "App::PropertyLength",
             "Width",
             "Dimension",
-            "Desired seam width",
+            "Desired seam width in mm",
         ).Width = SEAM_WIDTH_DEFAULT
 
         obj.addProperty(
@@ -138,14 +129,6 @@ class SeamGeometryFP(CompositeShellFP):
 
     def onDocumentRestored(self, fp):
         """Recreate the shape holder when the document is loaded from file."""
-        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
-        if FreeCAD.GuiUp:
-            try:
-                vobj = fp.ViewObject
-                if vobj is not None:
-                    vobj.Proxy = ViewProviderSeamExtraction(self)
-            except Exception:
-                pass
         if not hasattr(self, "_shape_holder") or self._shape_holder is None:
             doc = fp.Document
             if doc is not None:
@@ -196,7 +179,7 @@ class SeamShellFP(CompositeShellFP):
             "App::PropertyLength",
             "Width",
             "Dimension",
-            "Desired seam width",
+            "Desired seam width in mm",
             locked=True,
         ).Width = seam_width
 
@@ -241,13 +224,6 @@ class SeamShellFP(CompositeShellFP):
             seam_shell = doc.addObject("Part::FeaturePython", name)
             SeamGeometryFP(seam_shell, doc)
             self._hide_object(seam_shell)
-        # Attach ViewProvider explicitly (mirrors drape example pattern)
-        # Runs both at creation time and when loaded from file
-        if FreeCAD.GuiUp:
-            try:
-                ViewProviderSeamExtraction(seam_shell.ViewObject)
-            except Exception:
-                pass
 
         laminate = self._build_virtual_laminate(doc, fp, master, attachment)
         rosette = getattr(master, "Rosette", None) or getattr(
@@ -366,6 +342,7 @@ class CompositeSeamExtractionCommand(BaseCommand):
         from .Container import getCompositesContainer
 
         getCompositesContainer().addObject(obj)
+        import FreeCADGui
 
         FreeCADGui.Selection.clearSelection()
         doc.recompute()

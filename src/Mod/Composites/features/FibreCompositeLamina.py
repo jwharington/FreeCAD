@@ -24,18 +24,6 @@ class FibreCompositeLaminaFP(BaseLaminaFP):
     def __init__(self, obj):
         super().__init__(obj)
 
-        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
-        # This ensures the correct ViewProvider is saved with the document
-        import FreeCADGui
-        if hasattr(FreeCADGui, "getDocument"):
-            try:
-                vobj = obj.ViewObject
-                if vobj is not None:
-                    vobj.Proxy = ViewProviderFibreCompositeLamina(self)
-            except Exception:
-                pass
-
-
         add_composite_props(obj)
 
         obj.addProperty(

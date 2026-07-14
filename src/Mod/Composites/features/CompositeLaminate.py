@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
+import FreeCAD
+
 from .. import (
     COMPOSITE_LAMINATE_TOOL_ICON,
 )
@@ -20,18 +22,6 @@ from .Laminate import (
 class CompositeLaminateFP(LaminateFP):
     def __init__(self, obj, laminae=[]):
         super().__init__(obj, laminae=laminae)
-
-        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
-        # This ensures the correct ViewProvider is saved with the document
-        import FreeCADGui
-        if hasattr(FreeCADGui, "getDocument"):
-            try:
-                vobj = obj.ViewObject
-                if vobj is not None:
-                    vobj.Proxy = ViewProviderCompositeLaminate(self)
-            except Exception:
-                pass
-
 
         add_composite_props(obj)
 

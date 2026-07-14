@@ -63,18 +63,7 @@ class TransferRosetteFP(RosetteFP):
         # Suppress any solve while the defining references are being set up.
         # Set before super().__init__ (which may trigger onChanged).
         self._solving = True
-        super().__init__super().__init__(obj, support)
-
-        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
-        # This ensures the correct ViewProvider is saved with the document
-        if hasattr(FreeCADGui, "getDocument"):
-            try:
-                vobj = obj.ViewObject
-                if vobj is not None:
-                    vobj.Proxy = ViewProviderTransferRosette(self)
-            except Exception:
-                pass
-
+        super().__init__(obj, support)
         obj.addProperty(
             type="App::PropertyLinkGlobal",
             name="MasterShell",

@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
+import FreeCAD
+
 """AlignFibreRosette — a Rosette whose Angle is solved so a warp fibre
 passes through a second picked point on the draped surface.
 
@@ -72,18 +74,7 @@ class AlignFibreRosetteFP(RosetteFP):
         # Suppress any solve while the defining references are being set up.
         # Set before super().__init__ (which may trigger onChanged).
         self._solving = False
-        super().__init__super().__init__(obj, support)
-
-        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
-        # This ensures the correct ViewProvider is saved with the document
-        if hasattr(FreeCADGui, "getDocument"):
-            try:
-                vobj = obj.ViewObject
-                if vobj is not None:
-                    vobj.Proxy = ViewProviderAlignFibreRosette(self)
-            except Exception:
-                pass
-  # adds Support, Angle, LocalCoordinateSystem
+        super().__init__(obj, support)  # adds Support, Angle, LocalCoordinateSystem
         obj.addProperty(
             "App::PropertyLinkGlobal",
             "CompositeShell",

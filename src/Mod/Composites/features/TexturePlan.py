@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
+import FreeCAD
+
 # FreeCADGui removed for decoupling
 import Part
 from FreeCAD import Console
@@ -27,18 +29,7 @@ class TexturePlanFP(CompositePartFP):
             doc="Composite Shells to unwrap",
         ).CompositeShell = shells
 
-        super().__init__super().__init__(obj)
-
-        # Attach ViewProvider when running in GUI mode (FreeCADGui is available)
-        # This ensures the correct ViewProvider is saved with the document
-        if hasattr(FreeCADGui, "getDocument"):
-            try:
-                vobj = obj.ViewObject
-                if vobj is not None:
-                    vobj.Proxy = ViewProviderTexturePlan(self)
-            except Exception:
-                pass
-
+        super().__init__(obj)
 
     def execute(self, fp):
         import FreeCAD
