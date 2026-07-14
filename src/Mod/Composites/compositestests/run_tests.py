@@ -75,9 +75,9 @@ def run_tests():
 
     # Run seam extraction tests
     try:
-        from test_seam_extraction import TestSeamShellFP, TestSeamExtractionShellFP
+        from test_seam_extraction import TestSeamGeometryFP, TestSeamShellFP
+        suite.addTests(loader.loadTestsFromTestCase(TestSeamGeometryFP))
         suite.addTests(loader.loadTestsFromTestCase(TestSeamShellFP))
-        suite.addTests(loader.loadTestsFromTestCase(TestSeamExtractionShellFP))
     except Exception as e:
         print(f"Warning: Could not import seam extraction tests: {e}")
 

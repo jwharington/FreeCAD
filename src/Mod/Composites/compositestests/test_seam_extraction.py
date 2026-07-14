@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
-"""Tests for SeamExtractionFP and SeamExtractionShellFP."""
+"""Tests for SeamFP and SeamShellFP."""
 
 import unittest
 
@@ -31,15 +31,15 @@ def _make_composite_shells(test_case):
     return ms, as_
 
 
-class TestSeamShellFP(TestFreeCADFP):
-    """Tests for SeamShellFP — the composite shell that holds seam geometry."""
+class TestSeamGeometryFP(TestFreeCADFP):
+    """Tests for SeamGeometryFP — the composite shell that holds seam geometry."""
 
     def test_creation(self):
-        """SeamShellFP can be created with a doc reference."""
-        from Composites.features.SeamExtraction import SeamShellFP
+        """SeamGeometryFP can be created with a doc reference."""
+        from Composites.features.SeamExtraction import SeamGeometryFP
 
         seam_shell = self.doc.addObject("Part::FeaturePython", "SeamShell")
-        SeamShellFP(seam_shell, self.doc)
+        SeamGeometryFP(seam_shell, self.doc)
 
         self.assertIsNotNone(seam_shell)
         self.assertIsNotNone(seam_shell.Support)
@@ -47,7 +47,7 @@ class TestSeamShellFP(TestFreeCADFP):
 
     def test_update_sets_shape(self):
         """update() sets the shape on the seam shell."""
-        from Composites.features.SeamExtraction import SeamShellFP
+        from Composites.features.SeamExtraction import SeamGeometryFP
 
         box = self.doc.addObject("Part::Box", "Box")
         box.Length = 100
@@ -55,7 +55,7 @@ class TestSeamShellFP(TestFreeCADFP):
         box.Height = 2
 
         seam_shell = self.doc.addObject("Part::FeaturePython", "SeamShell")
-        SeamShellFP(seam_shell, self.doc)
+        SeamGeometryFP(seam_shell, self.doc)
         seam_shell.Proxy.update(seam_shell, box.Shape, None, None)
 
         self.assertFalse(seam_shell.Shape.isNull())
@@ -63,7 +63,7 @@ class TestSeamShellFP(TestFreeCADFP):
 
     def test_update_sets_laminate(self):
         """update() sets the laminate on the seam shell."""
-        from Composites.features.SeamExtraction import SeamShellFP
+        from Composites.features.SeamExtraction import SeamGeometryFP
 
         box = self.doc.addObject("Part::Box", "Box")
         box.Length = 100
@@ -73,14 +73,14 @@ class TestSeamShellFP(TestFreeCADFP):
         lam = self._create_laminate()
 
         seam_shell = self.doc.addObject("Part::FeaturePython", "SeamShell")
-        SeamShellFP(seam_shell, self.doc)
+        SeamGeometryFP(seam_shell, self.doc)
         seam_shell.Proxy.update(seam_shell, box.Shape, lam, None)
 
         self.assertIs(seam_shell.Laminate, lam)
 
     def test_update_sets_rosette(self):
         """update() sets the rosette on the seam shell."""
-        from Composites.features.SeamExtraction import SeamShellFP
+        from Composites.features.SeamExtraction import SeamGeometryFP
 
         box = self.doc.addObject("Part::Box", "Box")
         box.Length = 100
@@ -90,14 +90,14 @@ class TestSeamShellFP(TestFreeCADFP):
         rosette = self.doc.addObject("App::FeaturePython", "Rosette")
 
         seam_shell = self.doc.addObject("Part::FeaturePython", "SeamShell")
-        SeamShellFP(seam_shell, self.doc)
+        SeamGeometryFP(seam_shell, self.doc)
         seam_shell.Proxy.update(seam_shell, box.Shape, None, rosette)
 
         self.assertIs(seam_shell.Rosette, rosette)
 
     def test_execute_is_noop(self):
         """execute() does nothing — seam shells never drape."""
-        from Composites.features.SeamExtraction import SeamShellFP
+        from Composites.features.SeamExtraction import SeamGeometryFP
 
         box = self.doc.addObject("Part::Box", "Box")
         box.Length = 100
@@ -105,14 +105,14 @@ class TestSeamShellFP(TestFreeCADFP):
         box.Height = 2
 
         seam_shell = self.doc.addObject("Part::FeaturePython", "SeamShell")
-        SeamShellFP(seam_shell, self.doc)
+        SeamGeometryFP(seam_shell, self.doc)
 
         # execute() should not raise and should not trigger drape
         seam_shell.Proxy.execute(seam_shell)
 
 
-class TestSeamExtractionShellFP(TestFreeCADFP):
-    """Tests for SeamExtractionShellFP — the extraction node."""
+class TestSeamShellFP(TestFreeCADFP):
+    """Tests for SeamShellFP — the extraction node."""
 
     def _make_composite_shells(self):
         """Create two composite shells that share an edge."""
@@ -142,13 +142,13 @@ class TestSeamExtractionShellFP(TestFreeCADFP):
         return master_shell, att_shell
 
     def test_creation(self):
-        """SeamExtractionShellFP is created with correct properties."""
-        from Composites.features.SeamExtraction import SeamExtractionShellFP
+        """SeamShellFP is created with correct properties."""
+        from Composites.features.SeamExtraction import SeamShellFP
 
         master, att = _make_composite_shells(self)
 
         ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
-        SeamExtractionShellFP(ext, master, att)
+        SeamShellFP(ext, master, att)
 
         self.assertIs(ext.Master, master)
         self.assertIs(ext.Attachment, att)
@@ -156,50 +156,50 @@ class TestSeamExtractionShellFP(TestFreeCADFP):
         self.assertIsNotNone(ext.Seam)  # May be None if extraction fails
 
     def test_has_seam_property(self):
-        """SeamExtractionShellFP has a Seam property (not scattered Support/Laminate)."""
-        from Composites.features.SeamExtraction import SeamExtractionShellFP
+        """SeamShellFP has a Seam property (not scattered Support/Laminate)."""
+        from Composites.features.SeamExtraction import SeamShellFP
 
         master, att = _make_composite_shells(self)
 
         ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
-        SeamExtractionShellFP(ext, master, att)
+        SeamShellFP(ext, master, att)
 
         # The key assertion: Seam property exists
         self.assertTrue(hasattr(ext, "Seam"))
 
     def test_seam_property_exists_even_when_extraction_fails(self):
         """Seam property is always present, even when extraction fails."""
-        from Composites.features.SeamExtraction import SeamExtractionShellFP
+        from Composites.features.SeamExtraction import SeamShellFP
 
         master, att = _make_composite_shells(self)
 
         ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
-        SeamExtractionShellFP(ext, master, att)
+        SeamShellFP(ext, master, att)
 
         # Seam property must exist (even if None)
         self.assertTrue(hasattr(ext, "Seam"))
 
     def test_seam_shell_created_on_success(self):
-        """When extraction succeeds, Seam points to a SeamShellFP child."""
-        from Composites.features.SeamExtraction import SeamExtractionShellFP
+        """When extraction succeeds, Seam points to a SeamGeometryFP child."""
+        from Composites.features.SeamExtraction import SeamShellFP
 
         master, att = _make_composite_shells(self)
 
         ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
-        SeamExtractionShellFP(ext, master, att)
+        SeamShellFP(ext, master, att)
 
-        # When extraction succeeds, Seam points to a SeamShellFP
+        # When extraction succeeds, Seam points to a SeamGeometryFP
         if ext.Seam is not None:
             self.assertIn("SeamShell", ext.Seam.Name)
 
     def test_on_changed_triggers_sync(self):
         """Changing Master/Attachment/SeamWidth triggers _sync_virtual_inputs."""
-        from Composites.features.SeamExtraction import SeamExtractionShellFP
+        from Composites.features.SeamExtraction import SeamShellFP
 
         master, att = _make_composite_shells(self)
 
         ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
-        SeamExtractionShellFP(ext, master, att)
+        SeamShellFP(ext, master, att)
 
         # Changing Master should trigger onChanged → _sync_virtual_inputs
         new_master, _ = _make_composite_shells(self)
@@ -209,12 +209,12 @@ class TestSeamExtractionShellFP(TestFreeCADFP):
         self.assertIs(ext.Master, new_master)
 
 
-class TestSeamExtractionFP(TestFreeCADFP):
-    """Tests for SeamExtractionFP — basic Part-level extraction."""
+class TestSeamFP(TestFreeCADFP):
+    """Tests for SeamFP — basic Part-level extraction."""
 
     def test_creation(self):
-        """SeamExtractionFP is created with correct properties."""
-        from Composites.features.SeamExtraction import SeamExtractionFP
+        """SeamFP is created with correct properties."""
+        from Composites.features.SeamExtraction import SeamFP
 
         master = self.doc.addObject("Part::Box", "Master")
         master.Length = 100
@@ -227,7 +227,7 @@ class TestSeamExtractionFP(TestFreeCADFP):
         att.Height = 2
 
         ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
-        SeamExtractionFP(ext)
+        SeamFP(ext)
         ext.Master = master
         ext.Attachment = att
         ext.SeamWidth = 10.0
