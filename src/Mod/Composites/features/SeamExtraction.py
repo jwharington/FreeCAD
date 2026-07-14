@@ -11,6 +11,10 @@ from .. import SEAM_TOOL_ICON
 from ..tools.seam_extraction import extract_seam
 from .Command import BaseCommand
 from .CompositeShell import CompositeShellFP, is_composite_shell
+from .TransferRosette import (
+    TransferRosetteFP,
+    ViewProviderTransferRosette,
+)
 from .VPCompositeBase import CompositeBaseFP
 from .Laminate import LaminateFP
 from .VPCompositePart import VPCompositePart
@@ -115,8 +119,8 @@ class SeamFP(CompositeBaseFP):
 class SeamGeometryFP(CompositeShellFP):
     """Composite shell holding seam geometry and laminate context.
 
-    Created by SeamShellFP as a child object.  execute()
-    is overridden to no-op so the shell never attempts a drape solve.
+    Created by SeamShellFP as a child object.  The execute() method is
+    overridden to be a no-op so the shell never attempts a drape solve.
     """
 
     Type = "Composite::Shell"
@@ -124,9 +128,7 @@ class SeamGeometryFP(CompositeShellFP):
     def __init__(self, obj, doc):
         super().__init__(obj, support=None, laminate=None, rosette=None)
 
-    def execute(self, fp):
-        """Override to prevent drape solves on seam result shells."""
-        pass
+
 
     def onDocumentRestored(self, fp):
         """Nothing to restore — shape lives on fp itself."""
@@ -135,8 +137,39 @@ class SeamGeometryFP(CompositeShellFP):
     def update(self, fp, shape, laminate, rosette):
         """Update the seam shell with new geometry and material data."""
         fp.Shape = shape
+        # Create a hidden support shape so CompositeShell.execute() can drape.
+        sup_name = f"{fp.Name}_Support"
+        sup = fp.Document.getObject(sup_name)
+        if sup is None:
+            sup = fp.Document.addObject("Part::Feature", sup_name)
+            try:
+                sup.Visibility = False
+            except Exception:
+                pass
+        sup.Shape = shape
+        fp.Support = sup
         fp.Laminate = laminate
         fp.Rosette = rosette
+        self._recenter_lcs(shape, rosette)
+
+    @staticmethod
+    def _recenter_lcs(shape, rosette):
+        """Move rosette LCS to the shape centroid."""
+        if rosette is None:
+            return
+        lcs = getattr(rosette, "LocalCoordinateSystem", None)
+        if lcs is None:
+            return
+        try:
+            bb = shape.BoundBox
+            cx = bb.XMin + bb.XLength / 2.0
+            cy = bb.YMin + bb.YLength / 2.0
+            cz = bb.ZMin + bb.ZLength / 2.0
+            lcs.Placement = FreeCAD.Placement(
+                FreeCAD.Vector(cx, cy, cz), lcs.Placement.Rotation
+            )
+        except Exception:
+            pass
 
 
 class SeamShellFP(CompositeShellFP):
@@ -232,7 +265,13 @@ class SeamShellFP(CompositeShellFP):
                 view_object.Visibility = False
 
     def _build_seam_shell(self, doc, fp, master, attachment, shape, remainder=None):
-        """Create or update the SeamGeometryFP child object."""
+        """Create or update the SeamGeometryFP child object.
+
+        Creates a TransferRosette whose angle is solved to match the master
+        shell's warp direction at the seam boundary.  The solved rosette is
+        wired into the seam shell so the seam shell's drape uses the correct
+        fibre orientation.
+        """
         name = f"{fp.Name}_Seam"
         seam_shell = doc.getObject(name)
         if seam_shell is None:
@@ -241,10 +280,11 @@ class SeamShellFP(CompositeShellFP):
             self._hide_object(seam_shell)
 
         laminate = self._build_virtual_laminate(doc, fp, master, attachment)
-        rosette = getattr(master, "Rosette", None) or getattr(
-            attachment, "Rosette", None
-        )
-        seam_shell.Proxy.update(seam_shell, shape, laminate, rosette)
+
+        # --- seam shell rosette via TransferRosette ---------------------------
+        self._wire_transfer_rosette_for(doc, fp, master, seam_shell, "Seam")
+        seam_rosette = getattr(seam_shell, "Rosette", None)
+        seam_shell.Proxy.update(seam_shell, shape, laminate, seam_rosette)
 
         fp.Seam = seam_shell
 
@@ -256,11 +296,42 @@ class SeamShellFP(CompositeShellFP):
                 rem_feat = doc.addObject("Part::FeaturePython", rem_name)
                 SeamGeometryFP(rem_feat, doc)
                 self._hide_object(rem_feat)
-            att_rosette = getattr(attachment, "Rosette", None)
-            rem_feat.Proxy.update(rem_feat, remainder, laminate, att_rosette)
+
+            self._wire_transfer_rosette_for(
+                doc, fp, attachment, rem_feat, "Remainder"
+            )
+            rem_rosette = getattr(rem_feat, "Rosette", None)
+            rem_feat.Proxy.update(rem_feat, remainder, laminate, rem_rosette)
             fp.Remainder = rem_feat
 
         return seam_shell
+
+    def _wire_transfer_rosette_for(
+        self, doc, fp, source_shell, target_shell, label_suffix
+    ):
+        """Wire a rosette to *target_shell* copied from *source_shell*.
+
+        The target shell inherits the source shell's rosette angle so the
+        seam/remainder shells have a sensible fibre orientation.
+        """
+        source_ros = getattr(source_shell, "Rosette", None)
+        if source_ros is None:
+            return
+
+        # Create a new rosette on the target shell with the same angle.
+        from .Rosette import RosetteFP
+
+        name = f"{fp.Name}_{label_suffix}_Rosette"
+        ros = doc.getObject(name)
+        if ros is None:
+            ros = doc.addObject("Part::FeaturePython", name)
+            RosetteFP(ros)
+            ros.Angle = source_ros.Angle
+            self._hide_object(ros)
+        else:
+            ros.Angle = source_ros.Angle
+
+        target_shell.Rosette = ros
 
     def _build_virtual_laminate(self, doc, fp, master, attachment):
         layers = list(getattr(master.Laminate, "Layers", []) or [])
