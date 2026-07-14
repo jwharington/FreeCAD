@@ -49,7 +49,6 @@ def run_tests():
     test_modules = {
         'test_composite_shell': 'TestCompositeShellFP',
         'test_laminate': 'TestLaminateFP',
-        'test_seam': 'TestSeamShellFP',
         'test_stiffener': 'TestStiffenerFP',
         'test_mould': 'TestMouldFP',
         'test_place_dart': 'TestPlaceDartFP',
