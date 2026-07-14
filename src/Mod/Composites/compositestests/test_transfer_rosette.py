@@ -11,7 +11,9 @@ solver). Run them with:
 """
 
 import math
+import os
 import sys
+import tempfile
 import types
 import unittest
 
@@ -57,6 +59,31 @@ def _face_from_pts(pts):
 
 class TestTransferRosette(unittest.TestCase):
     """Headless integration tests for Composite::TransferRosette."""
+
+    save_fcstd = True
+
+    def tearDown(self):
+        """Save .FCStd file after each test."""
+        try:
+            if self.save_fcstd:
+                docs = FreeCAD.listDocuments()
+                if docs:
+                    doc_name = list(docs.keys())[0]
+                    filepath = os.path.join(
+                        tempfile.gettempdir(),
+                        f"{self.__class__.__name__}_{self._testMethodName}.FCStd",
+                    )
+                    doc = docs[doc_name]
+                    doc.saveAs(filepath)
+                    print(f"Saved: {filepath}")
+        except Exception:
+            pass
+        # Close any remaining documents
+        for dn in list(FreeCAD.listDocuments()):
+            try:
+                FreeCAD.closeDocument(dn)
+            except Exception:
+                pass
 
     def _close_doc_if_exists(self, doc_name):
         if doc_name in FreeCAD.listDocuments():

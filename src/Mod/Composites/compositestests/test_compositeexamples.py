@@ -8,7 +8,10 @@ testing philosophy.
 
 import os
 import sys
+import tempfile
 import unittest
+
+import FreeCAD  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Ensure repo root is on sys.path so package imports work.
@@ -27,7 +30,35 @@ from Composites.compositeexamples.examples import (  # noqa: E402
 )
 
 
-class TestCompositeExamplesRegistry(unittest.TestCase):
+class TestCompositeExamplesBase(unittest.TestCase):
+    """Base class with automatic .FCStd file generation."""
+
+    save_fcstd = True
+
+    def tearDown(self):
+        """Save .FCStd file after each test and close document."""
+        try:
+            if self.save_fcstd:
+                docs = FreeCAD.listDocuments()
+                if docs:
+                    doc_name = list(docs.keys())[0]
+                    filepath = os.path.join(
+                        tempfile.gettempdir(),
+                        f"{self.__class__.__name__}_{self._testMethodName}.FCStd",
+                    )
+                    doc = docs[doc_name]
+                    doc.saveAs(filepath)
+                    print(f"Saved: {filepath}")
+            for doc_name in list(FreeCAD.listDocuments()):
+                try:
+                    FreeCAD.closeDocument(doc_name)
+                except Exception:
+                    pass
+        except Exception as exc:
+            print(f"Teardown error in {self._testMethodName}: {exc}")
+
+
+class TestCompositeExamplesRegistry(TestCompositeExamplesBase):
     def test_list_examples_is_sorted(self):
         examples = registry.list_examples()
         self.assertEqual(examples, sorted(examples))
@@ -46,12 +77,13 @@ class TestCompositeExamplesRegistry(unittest.TestCase):
         self.assertIn("Available examples", msg)
 
 
-class TestCompositeExamplesRunner(unittest.TestCase):
+class TestCompositeExamplesRunner(TestCompositeExamplesBase):
     """Test runner plumbing with real FreeCAD geometry."""
 
     def test_run_calls_example_build(self):
         """runner.run delegates to the example's build function."""
         result = runner.run("ud_plate_basic", run_solver=False, doc=None)
+        self._saved_doc = result.get("doc")
 
         self.assertIn("laminate", result)
         self.assertIsNotNone(result["laminate"])
@@ -59,12 +91,13 @@ class TestCompositeExamplesRunner(unittest.TestCase):
     def test_run_forwards_run_solver_flag(self):
         """run_solver=True still succeeds (geometry only, no solver)."""
         result = runner.run("ud_plate_basic", run_solver=True, doc=None)
+        self._saved_doc = result.get("doc")
 
         self.assertIn("laminate", result)
         self.assertIsNotNone(result["laminate"])
 
 
-class TestFailurePostprocess(unittest.TestCase):
+class TestFailurePostprocess(TestCompositeExamplesBase):
     def test_evaluate_failure_criteria_returns_hotspots(self):
         import types
 
@@ -86,12 +119,13 @@ class TestFailurePostprocess(unittest.TestCase):
         self.assertEqual(report["hotspots"][0]["element_id"], 2)
 
 
-class TestCompositeExamplesSmoke(unittest.TestCase):
+class TestCompositeExamplesSmoke(TestCompositeExamplesBase):
     """End-to-end smoke tests using real FreeCAD geometry."""
 
     def test_tubular_shell_builds(self):
         """tubular_shell builds successfully with real FreeCAD objects."""
         result = tubular_shell.build(doc=None, run_solver=False)
+        self._saved_doc = result.get("doc")
         self.assertIn("laminate", result)
         self.assertIsNotNone(result["laminate"])
 
@@ -100,6 +134,7 @@ class TestCompositeExamplesSmoke(unittest.TestCase):
         for example_id in registry.list_examples():
             with self.subTest(example=example_id):
                 result = runner.run(example_id, run_solver=False, doc=None)
+                self._saved_doc = result.get("doc")
                 self.assertIn("laminate", result)
                 self.assertIsNotNone(result["laminate"])
 
