@@ -39,17 +39,21 @@ def main():
     lam = doc.addObject("Part::FeaturePython", "Laminate")
     LaminateFP(lam)
 
-    # Rosette on master shell (45° fibre angle)
-    rosette = doc.addObject("Part::FeaturePython", "Rosette")
-    RosetteFP(rosette, support=master_sup)
-    rosette.Angle = 45.0
+    # Rosettes on master (45°) and attachment (−45°) shells
+    ros_master = doc.addObject("Part::FeaturePython", "Rosette_Master")
+    RosetteFP(ros_master, support=master_sup)
+    ros_master.Angle = 45.0
+
+    ros_att = doc.addObject("Part::FeaturePython", "Rosette_Attachment")
+    RosetteFP(ros_att, support=att_sup)
+    ros_att.Angle = -45.0
 
     # Shells
     ms = doc.addObject("Part::FeaturePython", "MasterShell")
-    CompositeShellFP(ms, support=master_sup, laminate=lam, rosette=rosette)
+    CompositeShellFP(ms, support=master_sup, laminate=lam, rosette=ros_master)
 
     as_ = doc.addObject("Part::FeaturePython", "AttShell")
-    CompositeShellFP(as_, support=att_sup, laminate=lam, rosette=None)
+    CompositeShellFP(as_, support=att_sup, laminate=lam, rosette=ros_att)
 
     doc.recompute()
 
