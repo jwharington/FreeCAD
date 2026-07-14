@@ -41,11 +41,11 @@ def main():
 
     # Rosettes on master (45°) and attachment (−45°) shells
     ros_master = doc.addObject("Part::FeaturePython", "Rosette_Master")
-    RosetteFP(ros_master, support=master_sup)
+    RosetteFP(ros_master, support=(master_sup, ["Face1"]))
     ros_master.Angle = 45.0
 
     ros_att = doc.addObject("Part::FeaturePython", "Rosette_Attachment")
-    RosetteFP(ros_att, support=att_sup)
+    RosetteFP(ros_att, support=(att_sup, ["Face1"]))
     ros_att.Angle = -45.0
 
     # Shells
