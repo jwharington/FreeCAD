@@ -9,6 +9,7 @@ import FreeCAD
 
 from .. import SEAM_TOOL_ICON
 from ..tools.seam_extraction import extract_seam
+from ..util.geometry_util import shape_fingerprint
 from .Command import BaseCommand
 from .CompositeShell import CompositeShellFP, is_composite_shell
 from .TransferRosette import (
@@ -130,13 +131,8 @@ class SeamGeometryFP(CompositeShellFP):
         super().__init__(obj, support=None, laminate=None, rosette=None)
 
     def _shape_fingerprint(self, shape) -> str:
-        """Hash the BREP representation of a shape."""
-        import hashlib
-        try:
-            brep_str = shape.exportBrepToString()
-            return hashlib.sha256(brep_str.encode()).hexdigest()
-        except Exception:
-            return repr(shape)
+        """Delegate to shared geometry_util function."""
+        return shape_fingerprint(shape)
 
     def execute(self, fp):
         """Skip drape solve when the support shape hasn't changed."""

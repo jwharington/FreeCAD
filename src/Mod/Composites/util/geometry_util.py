@@ -1,10 +1,61 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
-# Copyright 2025 John Wharington jwharington@gmail.com
+# Copyright 2025 John Wharington jwharington@gmail
 
 from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
     from ..objects.symmetry_type import SymmetryType
+
+
+import hashlib
+
+
+def shape_fingerprint(shape) -> str:
+    """Compute a structural hash of a FreeCAD shape.
+
+    Used to detect whether the support geometry has changed between
+    recompute cycles.  Combines shape-level metadata that is cheap
+    to compute but sufficiently discriminative.
+
+    Parameters
+    ----------
+    shape : FreeCAD.Shape
+        The shape to fingerprint.
+
+    Returns
+    -------
+    str
+        A hex digest (first 16 chars) suitable for equality comparison.
+    """
+    h = hashlib.sha256()
+    h.update(b"shape:v1:")
+    try:
+        h.update(getattr(shape, "Label", "").encode())
+    except Exception:
+        pass
+    try:
+        h.update(f"{shape.Volume:.6f}".encode())
+    except Exception:
+        pass
+    try:
+        bb = shape.BoundBox
+        h.update(
+            f"{bb.XMin:.3f},{bb.YMin:.3f},{bb.ZMin:.3f},"
+            f"{bb.XMax:.3f},{bb.YMax:.3f},{bb.ZMax:.3f}".encode()
+        )
+    except Exception:
+        pass
+    try:
+        verts, edges, faces, shells = (
+            len(shape.Vertexes),
+            len(shape.Edges),
+            len(shape.Faces),
+            len(shape.Shells),
+        )
+        h.update(f"V{verts}E{edges}F{faces}S{shells}".encode())
+    except Exception:
+        pass
+    return h.hexdigest()[:16]
 
 
 def expand_symmetry(

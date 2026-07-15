@@ -383,6 +383,7 @@ from ..tools.fibre import (
     make_fibre_orientation_analysis,
 )
 from ..util import mesh_util
+from ..util.geometry_util import shape_fingerprint
 from .Command import BaseCommand
 from .Container import getCompositesContainer
 from .Laminate import is_laminate
@@ -637,6 +638,17 @@ class CompositeShellFP(CompositeBaseFP):
             fp.Shape = fp.Support.Shape
             return
 
+        # ── In-memory fast-path: skip when support shape unchanged ──────
+        if fp.Support:
+            try:
+                current_fp = shape_fingerprint(fp.Support.Shape)
+                stored_fp = getattr(fp, "ShapeFingerprint", "")
+                if stored_fp and stored_fp == current_fp:
+                    # Shape unchanged — skip rehydrate/re-solve entirely.
+                    return
+            except Exception:
+                pass
+
         def get_lcs():
             rosette = fp.Rosette
             if rosette:
@@ -808,39 +820,8 @@ class CompositeShellFP(CompositeBaseFP):
         return h.hexdigest()[:16]
 
     def _shape_fingerprint(self, shape) -> str:
-        """Compute a fast structural hash of a FreeCAD shape.
-
-        Used to detect whether the support geometry has changed between
-        recompute cycles.  Combines shape-level metadata that is cheap
-        to compute but sufficiently discriminative.
-        """
-        h = hashlib.sha256()
-        h.update(b"shape:v1:")
-        try:
-            h.update(getattr(shape, "Label", "").encode())
-        except Exception:
-            pass
-        try:
-            h.update(f"{shape.Volume:.6f}".encode())
-        except Exception:
-            pass
-        try:
-            bb = shape.BoundBox
-            h.update(f"{bb.XMin:.3f},{bb.YMin:.3f},{bb.ZMin:.3f},"
-                     f"{bb.XMax:.3f},{bb.YMax:.3f},{bb.ZMax:.3f}".encode())
-        except Exception:
-            pass
-        try:
-            verts, edges, faces, shells = (
-                len(shape.Vertexes),
-                len(shape.Edges),
-                len(shape.Faces),
-                len(shape.Shells),
-            )
-            h.update(f"V{verts}E{edges}F{faces}S{shells}".encode())
-        except Exception:
-            pass
-        return h.hexdigest()[:16]
+        """Delegate to shared geometry_util function."""
+        return shape_fingerprint(shape)
 
     def _can_use_persisted(self, fp) -> bool:
         """Return True if persisted solve data is still valid."""
@@ -974,7 +955,7 @@ class CompositeShellFP(CompositeBaseFP):
             solve_result.get("quality", {})
         )
         # Cache the shape fingerprint so _can_use_persisted skips rehashing
-        fp.ShapeFingerprint = self._shape_fingerprint(fp.Support.Shape)
+        fp.ShapeFingerprint = shape_fingerprint(fp.Support.Shape)
         # Cache the rosette angle so _can_use_persisted detects changes
         fp._LastRosetteAngle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
         # Cache the drape pitch so _can_use_persisted detects changes
