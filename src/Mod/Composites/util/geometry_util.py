@@ -13,9 +13,9 @@ import hashlib
 def shape_fingerprint(shape) -> str:
     """Compute a structural hash of a FreeCAD shape.
 
-    Used to detect whether the support geometry has changed between
-    recompute cycles.  Combines shape-level metadata that is cheap
-    to compute but sufficiently discriminative.
+    Primary signature is ``shape.hashCode()`` as requested.
+    Falls back to ``BOPTools.Utils.HashableShape_Deep`` for composed
+    shapes where a direct hashCode call may be unavailable.
 
     Parameters
     ----------
@@ -29,33 +29,22 @@ def shape_fingerprint(shape) -> str:
     """
     h = hashlib.sha256()
     h.update(b"shape:v1:")
+
     try:
-        h.update(getattr(shape, "Label", "").encode())
+        h.update(str(shape.hashCode()).encode())
+        return h.hexdigest()[:16]
     except Exception:
         pass
+
     try:
-        h.update(f"{shape.Volume:.6f}".encode())
+        from BOPTools.Utils import HashableShape_Deep
+
+        h.update(str(hash(HashableShape_Deep(shape))).encode())
+        return h.hexdigest()[:16]
     except Exception:
         pass
-    try:
-        bb = shape.BoundBox
-        h.update(
-            f"{bb.XMin:.3f},{bb.YMin:.3f},{bb.ZMin:.3f},"
-            f"{bb.XMax:.3f},{bb.YMax:.3f},{bb.ZMax:.3f}".encode()
-        )
-    except Exception:
-        pass
-    try:
-        verts, edges, faces, shells = (
-            len(shape.Vertexes),
-            len(shape.Edges),
-            len(shape.Faces),
-            len(shape.Shells),
-        )
-        h.update(f"V{verts}E{edges}F{faces}S{shells}".encode())
-    except Exception:
-        pass
-    return h.hexdigest()[:16]
+
+    return "fallback:"
 
 
 def expand_symmetry(
