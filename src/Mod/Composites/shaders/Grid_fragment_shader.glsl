@@ -2,7 +2,7 @@
 precision mediump float;
 
 uniform float darken = 0.5;
-uniform float x_scale = 16.0;
+uniform float x_scale = 8.0;
 uniform float y_scale = 8.0;
 uniform float z_scale = 2.0;
 uniform float offset_angle = 0.0;  // rosette rotation, radians
@@ -86,8 +86,8 @@ void main() {
   // We want lines opaque (a=1) and background transparent (a=0),
   // so invert: alpha is high where gridMax is low.
   float a = mix(1.0, baseColor.a, gridMax);
-  gl_FragColor = vec4(mixcol(baseColor.r, grid.x),
-                      mixcol(baseColor.g, grid.y),
+  gl_FragColor = vec4(mixcol(baseColor.r, grid.y),
+                      mixcol(baseColor.g, grid.x),
                       mixcol(baseColor.b, grid.z),
                       a);
 }
