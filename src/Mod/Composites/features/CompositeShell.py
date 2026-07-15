@@ -919,7 +919,7 @@ class CompositeShellFP(CompositeBaseFP):
         solve_result = self._backend._run_solve()
         node_positions = solve_result.get("node_positions", [])
         quads = solve_result.get("quads", [])
-        drapecd_coin = build_drapecd_coin(node_positions, quads)
+        drapecd_coin = build_drapecd_coin(node_positions, quads, wireframe=True)
 
         # Inject draped mesh geometry + reload shader synchronously.
         self._inject_drape_geometry(fp, drapecd_coin)
