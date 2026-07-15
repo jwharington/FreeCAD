@@ -120,7 +120,8 @@ class SeamGeometryFP(CompositeShellFP):
     """Composite shell holding seam geometry and laminate context.
 
     Created by SeamShellFP as a child object.  The execute() method is
-    overridden to be a no-op so the shell never attempts a drape solve.
+    overridden to skip drape solves when the shape hasn't changed,
+    avoiding redundant expensive draping.
     """
 
     Type = "Composite::Shell"
@@ -128,7 +129,27 @@ class SeamGeometryFP(CompositeShellFP):
     def __init__(self, obj, doc):
         super().__init__(obj, support=None, laminate=None, rosette=None)
 
+    def _shape_fingerprint(self, shape) -> str:
+        """Hash the BREP representation of a shape."""
+        import hashlib
+        try:
+            brep_str = shape.exportBrepToString()
+            return hashlib.sha256(brep_str.encode()).hexdigest()
+        except Exception:
+            return repr(shape)
 
+    def execute(self, fp):
+        """Skip drape solve when the support shape hasn't changed."""
+        if not fp.Support:
+            return
+        # Check if the support shape changed since last solve.
+        current_fp = self._shape_fingerprint(fp.Support.Shape)
+        stored_fp = getattr(self, "_last_shape_fingerprint", None)
+        if stored_fp and stored_fp == current_fp:
+            return  # No change — skip drape solve.
+        self._last_shape_fingerprint = current_fp
+        # Delegate to parent execute (runs the drape solve).
+        super().execute(fp)
 
     def onDocumentRestored(self, fp):
         """Nothing to restore — shape lives on fp itself."""
@@ -347,6 +368,23 @@ class SeamShellFP(CompositeShellFP):
         self._hide_object(laminate)
         return laminate
 
+    def _input_fingerprint(self, fp) -> str:
+        """Hash the seam extraction inputs so we can skip when they haven't changed."""
+        import hashlib
+        master = fp.Master
+        attachment = fp.Attachment
+        width = fp.Width
+        parts = []
+        if master is not None:
+            parts.append(getattr(master, "Name", ""))
+        if attachment is not None:
+            parts.append(getattr(attachment, "Name", ""))
+        parts.append(str(width))
+        h = hashlib.sha256()
+        for p in parts:
+            h.update(str(p).encode())
+        return h.hexdigest()
+
     def _sync_virtual_inputs(self, fp):
         doc = getattr(fp, "Document", None) or FreeCAD.ActiveDocument
         if doc is None:
@@ -358,6 +396,13 @@ class SeamShellFP(CompositeShellFP):
             master, attachment = fp.Master, fp.Attachment
             if not is_composite_shell(master) or not is_composite_shell(attachment):
                 return
+
+            # Skip extraction when inputs haven't changed.
+            current_fp = self._input_fingerprint(fp)
+            stored_fp = getattr(self, "_last_input_fingerprint", None)
+            if stored_fp is not None and current_fp == stored_fp:
+                return
+            self._last_input_fingerprint = current_fp
 
             result = extract_seam(master, attachment, float(fp.Width))
             if not result.get("success"):
