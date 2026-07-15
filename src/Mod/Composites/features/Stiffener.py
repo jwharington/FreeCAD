@@ -91,7 +91,10 @@ class StiffenerFP(CompositePartFP):
 
 class ViewProviderStiffener(VPCompositePart):
     def claimChildren(self):
-        return [self.Object.Support, self.Object.Plan, self.Object.Profile]
+        obj = getattr(self, "Object", None)
+        if obj is None:
+            return []
+        return [obj.Support, obj.Plan, obj.Profile]
 
     def getIcon(self):
         return STIFFENER_TOOL_ICON

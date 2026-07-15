@@ -184,7 +184,10 @@ class ViewProviderRosette(VPCompositeBase):
         )
 
     def claimChildren(self):
-        return [self.Object.LocalCoordinateSystem]
+        obj = getattr(self, "Object", None)
+        if obj is None:
+            return []
+        return [obj.LocalCoordinateSystem]
 
     def getIcon(self):
         return ROSETTE_TOOL_ICON

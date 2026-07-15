@@ -66,9 +66,12 @@ class ViewProviderCompositeShell:
         return COMPOSITE_SHELL_TOOL_ICON
 
     def claimChildren(self):
+        obj = getattr(self, "Object", None)
+        if obj is None:
+            return []
         children = []
-        if hasattr(self.Object, "Rosette") and self.Object.Rosette:
-            children.append(self.Object.Rosette)
+        if hasattr(obj, "Rosette") and obj.Rosette:
+            children.append(obj.Rosette)
         return children
 
     def attach(self, obj):

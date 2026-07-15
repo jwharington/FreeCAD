@@ -45,7 +45,10 @@ class ViewProviderCompositesContainer(VPCompositeBase):
         return WB_ICON
 
     def claimChildren(self):
-        return self.Object.Group
+        obj = getattr(self, "Object", None)
+        if obj is None:
+            return []
+        return obj.Group
 
 
 def getCompositesContainer() -> FreeCAD.Document:
