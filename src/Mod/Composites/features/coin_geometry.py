@@ -91,13 +91,19 @@ def build_support_surface_coin(shape):
     return sep
 
 
-def build_drapecd_coin(node_positions, quads):
+def build_drapecd_coin(node_positions, quads, wireframe=False):
     """Build Coin3D geometry from draper node_positions and quads.
 
     Preserves 1:1 mapping: vertex i = node_positions[i].
     No deduplication.
 
-    Returns a SoSeparator with SoCoordinate3 + SoIndexedFaceSet.
+    Args:
+        node_positions: list of (x, y, z) tuples
+        quads: list of quad connectivity [N, 4]
+        wireframe: if True, render as wireframe (lines only)
+
+    Returns:
+        SoSeparator with SoCoordinate3 + SoIndexedFaceSet (+ SoDrawStyle if wireframe).
     """
     coords = coin.SoCoordinate3()
     pts = [coin.SbVec3f(float(p[0]), float(p[1]), float(p[2])) for p in node_positions]
@@ -118,6 +124,10 @@ def build_drapecd_coin(node_positions, quads):
 
     sep = coin.SoSeparator()
     sep.addChild(coords)
+    if wireframe:
+        ds = coin.SoDrawStyle()
+        ds.style.setValue(coin.SoDrawStyle.LINES)
+        sep.addChild(ds)
     sep.addChild(face_set)
     return sep
 
