@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
+import math
 # Copyright 2025 John Wharington jwharington@gmail.com
 
 """ViewProvider for the CompositeShell feature.
@@ -19,7 +20,6 @@ class ViewProviderCompositeShell:
         from ..shaders.MeshGridShader import MeshGridShader
 
         self.grid_shader = MeshGridShader()
-        self._last_offset_angle_deg = None
 
         obj.addProperty(
             "App::PropertyFloatConstraint",
@@ -38,12 +38,22 @@ class ViewProviderCompositeShell:
         obj.ShowRosette = True
 
         obj.addProperty(
+            "App::PropertyBool",
+            "ScreenSpaceGrid",
+            "Rosette",
+            "Use screen-space zoom-stable grid lines",
+        )
+        obj.ScreenSpaceGrid = True
+
+        obj.addProperty(
             "App::PropertyFloat",
             "RosetteScale",
             "Rosette",
             "Radius of fibre orientation rosette symbol (mm)",
         )
         obj.RosetteScale = 20.0
+
+        obj.Proxy = self
 
     def setDisplayMode(self, mode):
         return mode
@@ -66,12 +76,9 @@ class ViewProviderCompositeShell:
         return COMPOSITE_SHELL_TOOL_ICON
 
     def claimChildren(self):
-        obj = getattr(self, "Object", None)
-        if obj is None:
-            return []
         children = []
-        if hasattr(obj, "Rosette") and obj.Rosette:
-            children.append(obj.Rosette)
+        if hasattr(self.Object, "LocalCoordinateSystem") and self.Object.LocalCoordinateSystem:
+            children.append(self.Object.LocalCoordinateSystem)
         return children
 
     def attach(self, obj):
@@ -84,8 +91,6 @@ class ViewProviderCompositeShell:
         if not hasattr(self, "grid_shader"):
             from ..shaders.MeshGridShader import MeshGridShader
             self.grid_shader = MeshGridShader()
-        if not hasattr(self, "_last_offset_angle_deg"):
-            self._last_offset_angle_deg = None
 
         # Drape geometry + shader live in a dedicated SoSwitch on this
         # ViewProvider's RootNode (Part ViewProvider only rebuilds the
@@ -145,8 +150,9 @@ class ViewProviderCompositeShell:
 
     def _hide_lcs(self, fp):
         """Always hide the native LCS symbology (planes + 3D arrows)."""
-        rosette = getattr(fp, "Rosette", None)
-        lcs = rosette.LocalCoordinateSystem if rosette else None
+        lcs = fp.LocalCoordinateSystem
+        if lcs is None and fp.Rosette:
+            lcs = fp.Rosette.LocalCoordinateSystem
         if lcs is None:
             return
         lcs_vobj = getattr(lcs, "ViewObject", None)
@@ -162,9 +168,8 @@ class ViewProviderCompositeShell:
             except Exception:
                 pass
         self._set_shell_transparency(vobj)
-        support = getattr(self.Object, "Support", None)
-        if support:
-            support.Visibility = visible
+        if self.Object.Support:
+            self.Object.Support.Visibility = visible
 
     def _set_shell_transparency(self, vobj):
         """Make the shell semi-transparent when drape geometry is present."""
@@ -205,7 +210,7 @@ class ViewProviderCompositeShell:
 
     def updateData(self, fp, prop):
         match prop:
-            case "Support" | "Rosette":
+            case "LocalCoordinateSystem" | "Support" | "Rosette":
                 self.update_rosette(self.ViewObject)
             case "Laminate":
                 if fp.Laminate:
@@ -213,10 +218,6 @@ class ViewProviderCompositeShell:
                 self.update_rosette(self.ViewObject)
             case _:
                 return
-
-        if prop == "Laminate" and self._apply_layer_orientation(fp):
-            return
-
         self.reload_shader()
 
     def update_rosette(self, vobj):
@@ -238,6 +239,8 @@ class ViewProviderCompositeShell:
         lcs = None
         if obj.Rosette:
             lcs = obj.Rosette.LocalCoordinateSystem
+        elif obj.LocalCoordinateSystem:
+            lcs = obj.LocalCoordinateSystem
 
         if lcs:
             base = lcs.Placement.Base
@@ -260,11 +263,15 @@ class ViewProviderCompositeShell:
             case "Darken":
                 pass
             case "DisplayLayer":
-                feature_obj = getattr(vobj, "Object", None) or getattr(self, "Object", None)
-                if feature_obj is None or not self._apply_layer_orientation(feature_obj):
-                    self.reload_shader()
+                self.reload_shader()
             case "ShapeAppearance":
                 self._set_shell_transparency(vobj)
+            case "ScreenSpaceGrid":
+                if hasattr(self, "grid_shader") and self.grid_shader:
+                    self.grid_shader.detach()
+                    self.grid_shader._attached = False
+                self.Active = False
+                self.load_shader()
             case "ShowRosette":
                 if hasattr(self, "rosette_switch"):
                     self.rosette_switch.whichChild = (
@@ -291,54 +298,13 @@ class ViewProviderCompositeShell:
 
     def get_offset_angle(self, vobj):
         if not hasattr(vobj.ViewObject, "DisplayLayer"):
-            return 0.0
-        if not vobj.Laminate:
-            return 0.0
-
+            return 0
         layer = vobj.ViewObject.DisplayLayer
-        stack_orientation = getattr(vobj.Laminate, "StackOrientation", {}) or {}
-
-        key = None
-        if layer in stack_orientation:
-            key = layer
-        else:
-            layer_str = str(layer)
-            if layer_str in stack_orientation:
-                key = layer_str
-            else:
-                for existing_key in stack_orientation.keys():
-                    if str(existing_key) == layer_str:
-                        key = existing_key
-                        break
-
-        if key is None:
-            return 0.0
-
-        try:
-            return float(stack_orientation[key])
-        except (TypeError, ValueError):
-            return 0.0
-
-    def _apply_layer_orientation(self, vobj):
-        """Update UV rotation in-place when shader is already attached."""
-        shader = getattr(self, "grid_shader", None)
-        if shader is None or not getattr(shader, "_attached", False):
-            return False
-
-        offset_angle_deg = self.get_offset_angle(vobj)
-        if self._last_offset_angle_deg is not None and abs(self._last_offset_angle_deg - offset_angle_deg) < 1e-9:
-            return True
-
-        shader.set_offset_angle(offset_angle_deg)
-        self._last_offset_angle_deg = offset_angle_deg
-
-        view_obj = getattr(vobj, "ViewObject", None)
-        if view_obj is not None:
-            try:
-                view_obj.update()
-            except Exception:
-                pass
-        return True
+        if not vobj.Laminate:
+            return 0
+        if layer in vobj.Laminate.StackOrientation:
+            return int(vobj.Laminate.StackOrientation[layer])
+        return 0
 
     def load_shader(self):
         try:
@@ -365,12 +331,12 @@ class ViewProviderCompositeShell:
                 from ..shaders.MeshGridShader import MeshGridShader
                 self.grid_shader = MeshGridShader()
             if self.grid_shader:
+                self.grid_shader.ScreenSpace = bool(self.ViewObject.ScreenSpaceGrid)
                 self.grid_shader.attach(
                     drape_host,
                     tex_coords,
                     offset_angle_deg,
                 )
-                self._last_offset_angle_deg = offset_angle_deg
                 self.Active = True
                 import FreeCADGui
 
@@ -389,7 +355,6 @@ class ViewProviderCompositeShell:
             except Exception:
                 pass
         self.Active = False
-        self._last_offset_angle_deg = None
         try:
             import FreeCADGui
             FreeCADGui.Selection.removeObserver(self)

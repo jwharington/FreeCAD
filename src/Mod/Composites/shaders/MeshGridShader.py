@@ -45,25 +45,23 @@ class MeshGridShader:
 
     def __init__(self) -> None:
         # Shader parameters
-        self.x_scale = coin.SoShaderParameter1f()
-        self.x_scale.name = "x_scale"
-        self.y_scale = coin.SoShaderParameter1f()
-        self.y_scale.name = "y_scale"
-        self.z_scale = coin.SoShaderParameter1f()
-        self.z_scale.name = "z_scale"
         self.darken = coin.SoShaderParameter1f()
         self.darken.name = "darken"
         self.offset_angle = coin.SoShaderParameter1f()
         self.offset_angle.name = "offset_angle"
         self.offset_angle.value = 0.0
 
+        self.screen_space = coin.SoShaderParameter1f()
+        self.screen_space.name = "screen_space"
+        self.screen_space.value = 1.0  # 1 = screen-space, 0 = world-space
+
+        self.ScreenSpaceGrid = False  # toggle: True=dFdx/dFdy screen-space, False=world-scale
+
         self.Spacing = [20.0, 2.0, 10.0]
         self.Darken = 0.5
 
         shader_params = [
-            self.x_scale,
-            self.y_scale,
-            self.z_scale,
+            self.screen_space,
             self.darken,
             self.offset_angle,
         ]
@@ -144,18 +142,12 @@ class MeshGridShader:
         self._attached = False
 
     @property
-    def Spacing(self) -> list[float]:
-        return [
-            1.0 / self.x_scale.value.getValue(),
-            1.0 / self.y_scale.value.getValue(),
-            1.0 / self.z_scale.value.getValue(),
-        ]
+    def ScreenSpace(self) -> bool:
+        return bool(self.screen_space.value.getValue())
 
-    @Spacing.setter
-    def Spacing(self, v: list[float]) -> None:
-        self.x_scale.value = 1.0 / v[0]
-        self.y_scale.value = 1.0 / v[1]
-        self.z_scale.value = 1.0 / v[2]
+    @ScreenSpace.setter
+    def ScreenSpace(self, v: bool) -> None:
+        self.screen_space.value = 1.0 if v else 0.0
 
     @property
     def Darken(self) -> float:
