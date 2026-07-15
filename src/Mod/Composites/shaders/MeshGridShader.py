@@ -251,18 +251,45 @@ class MeshGridShader:
         self.grp.addChild(self.strain_material)
         self.grp.addChild(self.dummy_texture)
         self.grp.addChild(self.coord_binding)
-        self.grp.addChild(self.texcoords)
         self.grp.addChild(self.shaderProgram)
 
         if coin_geo is not None:
             face_set = self._find_face_set_in_root(coin_geo)
+            # Determine early whether the geometry already has its own paired
+            # SoTextureCoordinate3 (set at construction time by
+            # build_support_surface_coin()).  This must be checked BEFORE any
+            # patching below, otherwise the drape-mesh geometry (whose
+            # textureCoordIndex is filled in by this very block) would also
+            # appear to "have its own UVs" and the shader's texcoords would be
+            # incorrectly skipped — the drape mesh would become invisible.
+            geometry_has_own_uv = (
+                face_set is not None
+                and len(face_set.textureCoordIndex.getValues()) > 0
+            )
             if face_set:
                 coord_index = face_set.coordIndex.getValues()
-                face_set.textureCoordIndex.setValues(
-                    0,
-                    len(coord_index),
-                    coord_index,
-                )
+                # Only patch textureCoordIndex when the geometry does not
+                # already have its own paired SoTextureCoordinate3.  The
+                # support-surface geometry built by build_support_surface_coin()
+                # already has textureCoordIndex set at construction time;
+                # patching it here would be redundant and, combined with the
+                # standalone SoTextureCoordinate3 in self.grp, causes Coin3D
+                # to bind the WRONG texture-coordinate element (the drape-
+                # native one with N entries instead of the support-surface
+                # mapped one with M entries), producing the stripe pattern.
+                if not geometry_has_own_uv:
+                    face_set.textureCoordIndex.setValues(
+                        0,
+                        len(coord_index),
+                        coord_index,
+                    )
+            # Only inject the shader's standalone SoTextureCoordinate3 when
+            # the geometry does not already have its own paired one.
+            # For the support surface the UVs come from build_support_surface_coin()
+            # and are already correct; injecting the drape-native texcoords
+            # would shadow them and produce stripes.
+            if not geometry_has_own_uv:
+                self.grp.addChild(self.texcoords)
             self.grp.addChild(coin_geo)
             # Only remove from root on the first steal; on re-attach the
             # node was never in root (it lived in the previous grp).
@@ -348,22 +375,24 @@ class MeshGridShader:
 
         The injected node can appear as Separator or Group depending on
         how FreeCAD wraps display-mode subgraphs. We therefore recurse into
-        any child container exposing getChildren(), skipping shader_state.
+        any child container exposing getChildren().
+
+        Nodes whose Coin3D name is ``SupportSurface`` are always returned
+        first — this prevents the drape-mesh wireframe (also Coordinate3 +
+        IndexedFaceSet) from being mistakenly grabbed when the shader
+        should render on the support surface instead.
         """
         children = node.getChildren()
         if children is None or children.getLength() == 0:
             return None
 
+        support_candidates = []
+        other_candidates = []
+
         for i in range(int(children.getLength())):
             c = children[i]
             if c is None:
                 continue
-
-            try:
-                if c.getName() == "shader_state":
-                    continue
-            except AttributeError:
-                pass
 
             sub_children = c.getChildren() if hasattr(c, "getChildren") else None
             has_coord = False
@@ -379,13 +408,34 @@ class MeshGridShader:
                     elif "IndexedFaceSet" in st:
                         has_face = True
                 if has_coord and has_face:
-                    return c
+                    # Classify by Coin3D name
+                    is_support = False
+                    try:
+                        if c.getName() == "SupportSurface":
+                            is_support = True
+                    except AttributeError:
+                        pass
+                    if is_support:
+                        support_candidates.append(c)
+                    else:
+                        other_candidates.append(c)
 
-                res = self._find_coin_geometry(c)
-                if res is not None:
-                    return res
+            # Recurse into nested containers
+            res = self._find_coin_geometry(c)
+            if res is not None:
+                try:
+                    if res.getName() == "SupportSurface":
+                        support_candidates.append(res)
+                    else:
+                        other_candidates.append(res)
+                except AttributeError:
+                    other_candidates.append(res)
 
-        return None
+        # Prioritise support surface so the shader renders on it,
+        # not on the drape-mesh wireframe.
+        if support_candidates:
+            return support_candidates[0]
+        return other_candidates[0] if other_candidates else None
 
     def _remove_node_from_parent(self, node: Any, parent: Any) -> bool:
         """Remove a child node from its parent by name match.
