@@ -94,16 +94,15 @@ void main() {
   vec3 coord = vec3(px_per_unit_x * gl_TexCoord[0].s,
                     px_per_unit_y * gl_TexCoord[0].t,
                     px_per_unit_z * gl_TexCoord[0].r);
-  vec3 grid = vec3(gridFactor(coord.x, pixel_width, feather),
-                   gridFactor(coord.y, pixel_width, feather),
-                   gridFactor(coord.z, pixel_width, feather));
-  float gridMax = max(grid.x, max(grid.y, grid.z));
+  float gridX = gridFactor(coord.x, pixel_width, feather);
+  float gridY = gridFactor(coord.y, pixel_width, feather);
+  float gridMax = max(gridX, gridY);
   // gridFactor returns 0 at grid lines, 1 between them.
   // We want lines opaque (a=1) and background transparent (a=0),
   // so invert: alpha is high where gridMax is low.
   float a = mix(1.0, baseColor.a, gridMax);
-  gl_FragColor = vec4(mixcol(baseColor.r, grid.x),
-                      mixcol(baseColor.g, grid.y),
-                      mixcol(baseColor.b, grid.z),
+  gl_FragColor = vec4(mixcol(baseColor.r, gridX),
+                      mixcol(baseColor.g, gridY),
+                      baseColor.b,
                       a);
 }
