@@ -61,7 +61,7 @@ float mixcol(float col, float amount) {
 
 void main() {
   // Hardcoded color (replaces old gl_Color from per-vertex strain coloring)
-  vec4 baseColor = vec4(0.5, 0.5, 0.5, 0.2);
+  vec4 baseColor = vec4(0.5, 0.5, 0.5, 0.0);
   float pixel_width = 1.0;
   float feather = 0.0;
 
