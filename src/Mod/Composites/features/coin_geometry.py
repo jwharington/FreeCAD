@@ -16,21 +16,20 @@ from pivy import coin
 import numpy as np
 
 
-def build_support_surface_coin(shape, deflection=1.0, drape_node_positions=None, drape_tex_coords=None):
+def build_support_surface_coin(shape, deflection=1.0, draper=None):
     """Build Coin3D geometry from a FreeCAD Part.Shape with UV coordinates.
 
     Uses Shape.tessellate() to convert the shape into a triangle mesh,
     then builds SoCoordinate3 + SoIndexedFaceSet with UV coordinates.
 
     UV coordinates are mapped from the drape mesh to the support surface
-    via nearest-neighbor interpolation: for each support surface vertex,
-    find the nearest drape mesh vertex and copy its UV coordinate.
+    via the draper's get_tex_coord_at_point() (quad containment + refinement,
+    with nearest-quad fallback only for points outside the mesh).
 
     Args:
         shape: FreeCAD Part.Shape object
         deflection: tessellation deflection tolerance (lower = finer mesh)
-        drape_node_positions: list of (x, y, z) tuples from drape solve
-        drape_tex_coords: list of (u, v) tuples from drape solve (same length as drape_node_positions)
+        draper: CompositeShell instance (provides get_tex_coord_at_point)
 
     Returns:
         SoSeparator with SoCoordinate3 + SoIndexedFaceSet + SoTextureCoordinate3
@@ -38,7 +37,7 @@ def build_support_surface_coin(shape, deflection=1.0, drape_node_positions=None,
     verts, tris = shape.tessellate(deflection)
 
     # Map UV coordinates from drape mesh to support surface
-    uv_coords = _map_uv_to_support(verts, drape_node_positions, drape_tex_coords)
+    uv_coords = _map_uv_to_support(draper, verts)
 
     # Build vertex coordinates
     coords = coin.SoCoordinate3()
@@ -67,40 +66,33 @@ def build_support_surface_coin(shape, deflection=1.0, drape_node_positions=None,
     return sep
 
 
-def _map_uv_to_support(support_verts, drape_node_positions, drape_tex_coords):
-    """Map UV coordinates from drape mesh to support surface via nearest-neighbor.
+def _map_uv_to_support(draper, support_verts):
+    """Map UV coordinates from drape mesh to support surface.
 
-    For each support surface vertex, find the nearest drape mesh vertex
-    and copy its UV coordinate.
+    Delegates to the draper backend's get_tex_coord_at_point() for each
+    vertex, which performs proper quad containment checking + refinement,
+    falling back to nearest-quad only for points outside the mesh.
 
     Args:
+        draper: CompositeShell FP object (provides _backend)
         support_verts: list of (x, y, z) tuples from tessellation
-        drape_node_positions: list of (x, y, z) tuples from drape solve
-        drape_tex_coords: list of (u, v) tuples from drape solve
 
     Returns:
         Array of (u, v) coordinates for support surface vertices
     """
-    if not drape_node_positions or not drape_tex_coords:
-        # Fallback: zero UV coordinates
+    if draper is None or not hasattr(draper, "_backend") or draper._backend is None:
         return np.zeros((len(support_verts), 2), dtype=np.float32)
 
-    # Convert to numpy arrays for efficient computation
-    support_arr = np.array(support_verts, dtype=np.float32)
-    drape_arr = np.array(drape_node_positions, dtype=np.float32)
-    drape_uv = np.array(drape_tex_coords, dtype=np.float32)
+    backend = draper._backend
+    uv_coords = []
+    for vert in support_verts:
+        uv = backend.get_tex_coord_at_point(vert, 0)
+        if uv is not None:
+            uv_coords.append(uv)
+        else:
+            uv_coords.append([0.0, 0.0])
 
-    # Compute pairwise distances using broadcasting
-    # support_arr: (N, 3), drape_arr: (M, 3) -> diff: (N, M, 3)
-    diff = support_arr[:, np.newaxis, :] - drape_arr[np.newaxis, :, :]
-    dist_sq = np.sum(diff ** 2, axis=2)  # (N, M)
-
-    # Find nearest drape vertex for each support vertex
-    nearest = np.argmin(dist_sq, axis=1)  # (N,)
-
-    # Copy UV coordinates
-    mapped_uv = drape_uv[nearest]  # (N, 2)
-    return mapped_uv
+    return np.array(uv_coords, dtype=np.float32)
 
 
 def build_drapecd_coin(node_positions, quads, wireframe=False):

@@ -242,108 +242,10 @@ class _RehydratedBackend:
         """Interpolate UV at a 3D point from persisted data."""
         if self._status != "valid" or not self._quads or len(self._node_positions) == 0:
             return None
-
-        node_positions = self._node_positions
-        quads = self._quads
-        tex_coords = self._tex_coords
-
-        px, py, pz = float(point[0]), float(point[1]), float(point[2])
-
-        best_quad = None
-        best_dist = float("inf")
-        best_u, best_v = 0.0, 0.0
-
-        for q in quads:
-            i0, i1, i2, i3 = [int(idx) for idx in q]
-            c0, c1, c2, c3 = node_positions[i0], node_positions[i1], node_positions[i2], node_positions[i3]
-
-            centroid = (c0 + c1 + c2 + c3) / 4.0
-            v1, v2 = c1 - c0, c3 - c0
-            normal = np.cross(v1, v2)
-            norm_len = np.linalg.norm(normal)
-            if norm_len < 1e-10:
-                continue
-            normal /= norm_len
-
-            to_point = np.array([px, py, pz]) - centroid
-            dist_to_plane = abs(np.dot(to_point, normal))
-            if dist_to_plane > 5.0:
-                continue
-
-            proj_point = np.array([px, py, pz]) - normal * dist_to_plane * np.sign(
-                np.dot(to_point, normal)
-            )
-
-            e0 = c1 - c0
-            e1 = c3 - c0
-            e0_norm = np.linalg.norm(e0)
-            e1_norm = np.linalg.norm(e1)
-            if e0_norm < 1e-10 or e1_norm < 1e-10:
-                continue
-            e0_unit = e0 / e0_norm
-            e1_unit = e1 - np.dot(e1, e0_unit) * e0_unit
-            e1_unit_norm = np.linalg.norm(e1_unit)
-            if e1_unit_norm < 1e-10:
-                continue
-            e1_unit /= e1_unit_norm
-
-            delta = proj_point - c0
-            u_est = np.dot(delta, e0_unit) / e0_norm
-            v_est = np.dot(delta, e1_unit) / e1_unit_norm
-
-            if -0.05 <= u_est <= 1.05 and -0.05 <= v_est <= 1.05:
-                c_corner = c2 - c1 - c3 + c0
-                if np.linalg.norm(c_corner) > 1e-10:
-                    a_u = np.dot(c_corner, e0_unit)
-                    b_u = np.dot(e0, e0_unit) + np.dot(c_corner, e1_unit) * v_est - np.dot(delta, e0_unit)
-                    c_u = np.dot(e0, e0_unit) * v_est + np.dot(c0, e0_unit) - np.dot(delta, e0_unit)
-                    if abs(a_u) > 1e-15:
-                        disc = b_u * b_u - 4 * a_u * c_u
-                        if disc >= 0:
-                            u_est = (-b_u + np.sqrt(disc)) / (2 * a_u)
-                            if 0 <= u_est <= 1:
-                                a_v = np.dot(c_corner, e1_unit)
-                                b_v = np.dot(e1, e1_unit) + np.dot(c_corner, e0_unit) * u_est - np.dot(delta, e1_unit)
-                                c_v = np.dot(e1, e1_unit) * u_est + np.dot(c0, e1_unit) - np.dot(delta, e1_unit)
-                                if abs(a_v) > 1e-15:
-                                    disc_v = b_v * b_v - 4 * a_v * c_v
-                                    if disc_v >= 0:
-                                        v_est = (-b_v + np.sqrt(disc_v)) / (2 * a_v)
-                else:
-                    u_est = np.dot(delta, e0_unit) / e0_norm
-                    v_est = np.dot(delta, e1_unit) / e1_unit_norm
-
-                if 0 <= u_est <= 1 and 0 <= v_est <= 1:
-                    uv = (
-                        (1 - u_est) * (1 - v_est) * tex_coords[i0]
-                        + u_est * (1 - v_est) * tex_coords[i1]
-                        + u_est * v_est * tex_coords[i2]
-                        + (1 - u_est) * v_est * tex_coords[i3]
-                    )
-                    dist = np.linalg.norm(proj_point - (c0 + u_est * (c1 - c0) + v_est * (c3 - c0)))
-                    if dist < best_dist:
-                        best_dist = dist
-                        best_quad = q
-                        best_u, best_v = uv[0], uv[1]
-
-        if best_quad is None:
-            from ..util.geometry_util import (
-                tex_coord_nearest_quad_fallback,
-            )
-            return tex_coord_nearest_quad_fallback(
-                [px, py, pz], node_positions, quads, tex_coords
-            )
-
-        if offset_angle_deg:
-            import math
-            ang = math.radians(-offset_angle_deg)
-            cos_a, sin_a = math.cos(ang), math.sin(ang)
-            best_u, best_v = (
-                best_u * cos_a - best_v * sin_a,
-                best_u * sin_a + best_v * cos_a,
-            )
-
-        return [best_u, best_v]
+        from ..util.geometry_util import tex_coord_at_point
+        return tex_coord_at_point(
+            self._node_positions, self._quads, self._tex_coords, point, offset_angle_deg
+        )
 
     @property
     def strains(self) -> np.ndarray:
@@ -718,26 +620,10 @@ class CompositeShellFP(CompositeBaseFP):
                 # Build support surface geometry from fp.Support.Shape
                 if fp.Support and hasattr(fp.Support, "Shape"):
                     from .coin_geometry import build_support_surface_coin
-                    # Get UV coordinates from persisted solve data
-                    drape_node_positions = None
-                    drape_tex_coords = None
-                    if hasattr(fp, "NodePositionsJSON") and fp.NodePositionsJSON:
-                        try:
-                            import json
-                            drape_node_positions = json.loads(fp.NodePositionsJSON)
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-                    if hasattr(fp, "TexCoordsJSON") and fp.TexCoordsJSON:
-                        try:
-                            import json
-                            drape_tex_coords = json.loads(fp.TexCoordsJSON)
-                        except (json.JSONDecodeError, TypeError):
-                            pass
                     support_coin = build_support_surface_coin(
                         fp.Support.Shape,
                         deflection=1.0,
-                        drape_node_positions=drape_node_positions,
-                        drape_tex_coords=drape_tex_coords,
+                        draper=self,
                     )
                     inject_coin_geometry(drape_host, support_coin)
                 # Inject drape mesh geometry
