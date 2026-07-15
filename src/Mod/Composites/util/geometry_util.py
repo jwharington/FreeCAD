@@ -166,41 +166,53 @@ def tex_coord_at_point(node_positions, quads, tex_coords, point, offset_angle_de
         if -0.05 <= u_est <= 1.05 and -0.05 <= v_est <= 1.05:
             c_corner = c2 - c1 - c3 + c0
             if np.linalg.norm(c_corner) > 1e-10:
-                a_u = np.dot(c_corner, e0_unit)
-                b_u = np.dot(e0, e0_unit) + np.dot(c_corner, e1_unit) * v_est - np.dot(delta, e0_unit)
-                c_u = np.dot(e0, e0_unit) * v_est + np.dot(c0, e0_unit) - np.dot(delta, e0_unit)
-                if abs(a_u) > 1e-15:
-                    disc = b_u * b_u - 4 * a_u * c_u
-                    if disc >= 0:
-                        u_est = (-b_u + np.sqrt(disc)) / (2 * a_u)
-                        if 0 <= u_est <= 1:
-                            a_v = np.dot(c_corner, e1_unit)
-                            b_v = np.dot(e1, e1_unit) + np.dot(c_corner, e0_unit) * u_est - np.dot(delta, e1_unit)
-                            c_v = np.dot(e1, e1_unit) * u_est + np.dot(c0, e1_unit) - np.dot(delta, e1_unit)
-                            if abs(a_v) > 1e-15:
-                                disc_v = b_v * b_v - 4 * a_v * c_v
-                                if disc_v >= 0:
-                                    v_est = (-b_v + np.sqrt(disc_v)) / (2 * a_v)
+                # Bilinear refinement: solve P(u,v)=proj_point for u,v.
+                # P(u,v) = c0 + u*e0 + v*e1 + uv*c_corner
+                # Project onto e0_unit: u*A0 + v*B0 + uv*C0 = D0
+                # Project onto e1_unit: u*A1 + v*B1 + uv*C1 = D1
+                # Eliminating v: u^2*(A0*C1-A1*C0) + u*(A0*B1-A1*B0+D1*C0-D0*C1)
+                #   + (D1*B0-D0*B1) = 0
+                A0, B0, C0, D0 = e0_norm, np.dot(e1, e0_unit), np.dot(c_corner, e0_unit), np.dot(delta, e0_unit)
+                A1, B1, C1, D1 = np.dot(e0, e1_unit), e1_unit_norm, np.dot(c_corner, e1_unit), np.dot(delta, e1_unit)
+                a_uv = A0 * C1 - A1 * C0
+                b_uv = A0 * B1 - A1 * B0 + D1 * C0 - D0 * C1
+                c_uv = D1 * B0 - D0 * B1
+                if abs(a_uv) > 1e-15:
+                    disc_uv = b_uv * b_uv - 4 * a_uv * c_uv
+                    if disc_uv >= 0:
+                        u_root = (-b_uv + np.sqrt(disc_uv)) / (2 * a_uv)
+                        denom = B1 + u_root * C1
+                        if abs(denom) > 1e-15:
+                            v_root = (D1 - u_root * A1) / denom
+                            u_est, v_est = u_root, v_root
+                elif abs(b_uv) > 1e-15:
+                    # Degenerate: linear equation
+                    u_root = -c_uv / b_uv
+                    denom = B1 + u_root * C1
+                    if abs(denom) > 1e-15:
+                        v_root = (D1 - u_root * A1) / denom
+                        u_est, v_est = u_root, v_root
             else:
                 u_est = np.dot(delta, e0_unit) / e0_norm
                 v_est = np.dot(delta, e1_unit) / e1_unit_norm
 
-            if 0 <= u_est <= 1 and 0 <= v_est <= 1:
-                uv = (
-                    (1 - u_est) * (1 - v_est) * tex_coords[i0]
-                    + u_est * (1 - v_est) * tex_coords[i1]
-                    + u_est * v_est * tex_coords[i2]
-                    + (1 - u_est) * v_est * tex_coords[i3]
-                )
-                dist = np.linalg.norm(proj_point - (c0 + u_est * (c1 - c0) + v_est * (c3 - c0)))
-                if dist < best_dist:
-                    best_dist = dist
-                    best_quad = q
-                    best_u, best_v = uv[0], uv[1]
+            # Interpolate/extrapolate UVs using bilinear basis.
+            # Texture coords are in world-space, so we don't restrict to [0,1].
+            uv = (
+                (1 - u_est) * (1 - v_est) * tex_coords[i0]
+                + u_est * (1 - v_est) * tex_coords[i1]
+                + u_est * v_est * tex_coords[i2]
+                + (1 - u_est) * v_est * tex_coords[i3]
+            )
+            dist = np.linalg.norm(proj_point - (c0 + u_est * (c1 - c0) + v_est * (c3 - c0)))
+            if dist < best_dist:
+                best_dist = dist
+                best_quad = q
+                best_u, best_v = uv[0], uv[1]
 
     if best_quad is None:
         # No quad contained the projected point — use nearest quad
-        # and clamp UV to [0,1] for a sensible fallback.
+        # and project onto the quad plane for a better UV estimate.
         if nearest_quad is not None:
             i0, i1, i2, i3 = [int(idx) for idx in nearest_quad]
             c0, c1, c2, c3 = node_positions[i0], node_positions[i1], node_positions[i2], node_positions[i3]
@@ -213,27 +225,62 @@ def tex_coord_at_point(node_positions, quads, tex_coords, point, offset_angle_de
                 proj_point = np.array([px, py, pz]) - normal * dist_to_plane * np.sign(
                     np.dot(to_point, normal)
                 )
+                # Project onto quad plane using bilinear basis
                 e0 = c1 - c0
                 e1 = c3 - c0
+                c_corner = c2 - c1 - c3 + c0
                 e0_norm = np.linalg.norm(e0)
-                e1_norm = np.linalg.norm(e1)
-                if e0_norm >= 1e-10 and e1_norm >= 1e-10:
+                if e0_norm >= 1e-10:
                     e0_unit = e0 / e0_norm
                     e1_unit = e1 - np.dot(e1, e0_unit) * e0_unit
                     e1_unit_norm = np.linalg.norm(e1_unit)
                     if e1_unit_norm >= 1e-10:
                         e1_unit /= e1_unit_norm
                         delta = proj_point - c0
-                        u_est = np.dot(delta, e0_unit) / e0_norm
-                        v_est = np.dot(delta, e1_unit) / e1_norm
-                        best_u = max(0.0, min(1.0, u_est))
-                        best_v = max(0.0, min(1.0, v_est))
+                        # Planar projection fallback
+                        u_planar = np.dot(delta, e0_unit) / e0_norm
+                        v_planar = np.dot(delta, e1_unit) / e1_unit_norm
+                        # Solve bilinear: u*e0_norm + v*dot(e1,e0_unit) +
+                        #   uv*dot(c_corner,e0_unit) = dot(delta,e0_unit)
+                        # and: u*dot(e0,e1_unit) + v*e1_unit_norm +
+                        #   uv*dot(c_corner,e1_unit) = dot(delta,e1_unit)
+                        A0, B0, C0_val, D0 = e0_norm, np.dot(e1, e0_unit), np.dot(c_corner, e0_unit), np.dot(delta, e0_unit)
+                        A1, B1, C1, D1 = np.dot(e0, e1_unit), e1_unit_norm, np.dot(c_corner, e1_unit), np.dot(delta, e1_unit)
+                        a_uv = A0 * C1 - A1 * C0_val
+                        b_uv = A0 * B1 - A1 * B0 + D1 * C0_val - D0 * C1
+                        c_uv = D1 * B0 - D0 * B1
+                        if abs(a_uv) > 1e-15:
+                            disc_uv = b_uv * b_uv - 4 * a_uv * c_uv
+                            if disc_uv >= 0:
+                                u_root = (-b_uv + np.sqrt(disc_uv)) / (2 * a_uv)
+                                denom = B1 + u_root * C1
+                                if abs(denom) > 1e-15:
+                                    v_root = (D1 - u_root * A1) / denom
+                                    best_u, best_v = u_root, v_root
+                                else:
+                                    # Degenerate v-solve → use planar projection
+                                    best_u, best_v = u_planar, v_planar
+                            else:
+                                # No real root → use planar projection
+                                best_u, best_v = u_planar, v_planar
+                        elif abs(b_uv) > 1e-15:
+                            u_root = -c_uv / b_uv
+                            denom = B1 + u_root * C1
+                            if abs(denom) > 1e-15:
+                                v_root = (D1 - u_root * A1) / denom
+                                best_u, best_v = u_root, v_root
+                            else:
+                                best_u, best_v = u_planar, v_planar
+                        else:
+                            best_u, best_v = u_planar, v_planar
+                    else:
+                        best_u, best_v = 0.5, 0.5
                 else:
-                    best_u, best_v = 0.0, 0.0
+                    best_u, best_v = 0.5, 0.5
             else:
-                best_u, best_v = 0.0, 0.0
+                best_u, best_v = 0.5, 0.5
         else:
-            best_u, best_v = 0.0, 0.0
+            best_u, best_v = 0.5, 0.0
 
     # Apply offset angle rotation
     if offset_angle_deg:
