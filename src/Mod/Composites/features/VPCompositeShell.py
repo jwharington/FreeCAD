@@ -77,6 +77,8 @@ class ViewProviderCompositeShell:
 
     def claimChildren(self):
         children = []
+        if not hasattr(self, "Object"):
+            return children
         if hasattr(self.Object, "LocalCoordinateSystem") and self.Object.LocalCoordinateSystem:
             children.append(self.Object.LocalCoordinateSystem)
         return children
@@ -160,6 +162,8 @@ class ViewProviderCompositeShell:
             lcs_vobj.Visibility = False
 
     def update_visibility(self, vobj):
+        if not hasattr(self, "Object"):
+            return
         visible = vobj.Visibility
         drape_host = getattr(self, "drape_host", None)
         if drape_host is not None:
@@ -209,6 +213,8 @@ class ViewProviderCompositeShell:
             self.grid_shader.set_strain_colors(strains, mode)
 
     def updateData(self, fp, prop):
+        if not hasattr(self, "ViewObject"):
+            return
         match prop:
             case "LocalCoordinateSystem" | "Support" | "Rosette":
                 self.update_rosette(self.ViewObject)
