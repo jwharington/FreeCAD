@@ -569,7 +569,7 @@ class CompositeShellFP(CompositeBaseFP):
         # Attach ViewProvider so it persists in the saved document
         vobj = obj.ViewObject
         if vobj is not None:
-            vobj.Proxy = ViewProviderCompositeShell(obj)
+            vobj.Proxy = ViewProviderCompositeShell(vobj)
 
     def onDocumentRestored(self, fp):
         """Restore ViewProvider and initialise tracking fields."""
@@ -579,7 +579,7 @@ class CompositeShellFP(CompositeBaseFP):
         try:
             vobj = fp.ViewObject
             if vobj is not None and isinstance(getattr(vobj, "Proxy", None), int):
-                vobj.Proxy = ViewProviderCompositeShell(fp)
+                vobj.Proxy = ViewProviderCompositeShell(vobj)
         except Exception:
             pass
 

@@ -48,7 +48,7 @@ def build_support_surface_coin(shape, deflection=1.0, drape_node_positions=None,
     # Build UV coordinates
     tex_coords = coin.SoTextureCoordinate3()
     uv_pts = [coin.SbVec2f(float(u[0]), float(u[1])) for u in uv_coords]
-    tex_coords.setValues(0, len(uv_pts), uv_pts)
+    tex_coords.point.setValues(0, len(uv_pts), uv_pts)
 
     # Build triangle indices (SoIndexedFaceSet expects -1 separators)
     face_set = coin.SoIndexedFaceSet()

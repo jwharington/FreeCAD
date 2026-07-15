@@ -54,6 +54,7 @@ class ViewProviderCompositeShell:
         obj.RosetteScale = 20.0
 
         obj.Proxy = self
+        self.attach(obj)
 
     def setDisplayMode(self, mode):
         return mode
@@ -79,11 +80,19 @@ class ViewProviderCompositeShell:
         children = []
         if not hasattr(self, "Object"):
             return children
-        if hasattr(self.Object, "LocalCoordinateSystem") and self.Object.LocalCoordinateSystem:
-            children.append(self.Object.LocalCoordinateSystem)
+        lcs = getattr(self.Object, "LocalCoordinateSystem", None)
+        if lcs is None and self.Object.Rosette:
+            lcs = getattr(self.Object.Rosette, "LocalCoordinateSystem", None)
+        if lcs is not None:
+            children.append(lcs)
         return children
 
     def attach(self, obj):
+        # Idempotent: skip if already attached (e.g. __init__ called attach,
+        # then FreeCAD's C++ machinery calls attach() again).
+        if hasattr(self, "drape_host") and self.drape_host is not None:
+            return
+
         self.Active = False
 
         self.ViewObject = obj
@@ -152,9 +161,9 @@ class ViewProviderCompositeShell:
 
     def _hide_lcs(self, fp):
         """Always hide the native LCS symbology (planes + 3D arrows)."""
-        lcs = fp.LocalCoordinateSystem
+        lcs = getattr(fp, "LocalCoordinateSystem", None)
         if lcs is None and fp.Rosette:
-            lcs = fp.Rosette.LocalCoordinateSystem
+            lcs = getattr(fp.Rosette, "LocalCoordinateSystem", None)
         if lcs is None:
             return
         lcs_vobj = getattr(lcs, "ViewObject", None)
@@ -244,9 +253,9 @@ class ViewProviderCompositeShell:
 
         lcs = None
         if obj.Rosette:
-            lcs = obj.Rosette.LocalCoordinateSystem
-        elif obj.LocalCoordinateSystem:
-            lcs = obj.LocalCoordinateSystem
+            lcs = getattr(obj.Rosette, "LocalCoordinateSystem", None)
+        if lcs is None:
+            lcs = getattr(obj, "LocalCoordinateSystem", None)
 
         if lcs:
             base = lcs.Placement.Base
