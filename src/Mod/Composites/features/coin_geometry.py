@@ -123,16 +123,14 @@ def build_drapecd_coin(node_positions, quads, wireframe=False):
 
     face_set = coin.SoIndexedFaceSet()
     indices: list[int] = []
-    material_indices: list[int] = []
     for quad_idx, q in enumerate(quads):
         i0, i1, i2, i3 = [int(idx) for idx in q]
         indices.extend([i0, i1, i2, -1])
         indices.extend([i0, i2, i3, -1])
-        material_indices.extend([quad_idx, -1, quad_idx, -1])
     indices.append(-1)
-    material_indices.append(-1)
     face_set.coordIndex.setValues(0, len(indices), indices)
-    face_set.materialIndex.setValues(0, len(material_indices), material_indices)
+    # Don't set materialIndex – causes "index out of bounds" warnings when
+    # no SoMaterial node with multiple materials exists in the scene graph.
 
     sep = coin.SoSeparator()
     sep.addChild(coords)
