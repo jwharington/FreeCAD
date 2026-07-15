@@ -14,6 +14,83 @@ from __future__ import annotations
 from pivy import coin
 
 
+def build_support_surface_coin(shape, deflection=1.0):
+    """Build Coin3D geometry from a FreeCAD Part.Shape.
+
+    Uses Shape.tessellate() to convert the shape into a triangle mesh,
+    then builds SoCoordinate3 + SoIndexedFaceSet.
+
+    Args:
+        shape: FreeCAD Part.Shape object
+        deflection: tessellation deflection tolerance (lower = finer mesh)
+
+    Returns:
+        SoSeparator with SoCoordinate3 + SoIndexedFaceSet
+    """
+    verts, tris = shape.tessellate(deflection)
+
+    # Build vertex coordinates
+    coords = coin.SoCoordinate3()
+    pts = [coin.SbVec3f(float(v[0]), float(v[1]), float(v[2])) for v in verts]
+    coords.point.setValues(0, len(pts), pts)
+
+    # Build triangle indices (SoIndexedFaceSet expects -1 separators)
+    face_set = coin.SoIndexedFaceSet()
+    indices: list[int] = []
+    for tri in tris:
+        indices.extend([int(tri[0]), int(tri[1]), int(tri[2]), -1])
+    indices.append(-1)
+    face_set.coordIndex.setValues(0, len(indices), indices)
+
+    sep = coin.SoSeparator()
+    sep.addChild(coords)
+    sep.addChild(face_set)
+    return sep
+
+
+def build_support_surface_coin(shape):
+    """Build Coin3D geometry from a FreeCAD Part.Shape.
+
+    Uses Shape.tessellate() to convert the shape into a triangle mesh,
+    then builds SoCoordinate3 + SoIndexedFaceSet.
+
+    Parameters
+    ----------
+    shape : FreeCAD.Part.Shape
+        The shape to tessellate and convert to Coin3D geometry.
+
+    Returns
+    -------
+    SoSeparator
+        A separator containing SoCoordinate3 + SoIndexedFaceSet.
+    """
+    # Tessellate the shape into triangles
+    # Returns (vertices, triangles) where:
+    #   vertices: list of (x, y, z) tuples
+    #   triangles: list of (i0, i1, i2) index triples
+    verts, tris = shape.tessellate(1.0)  # deflection tolerance
+
+    # Build Coin3D coordinate data
+    coords = coin.SoCoordinate3()
+    pts = [coin.SbVec3f(float(v[0]), float(v[1]), float(v[2])) for v in verts]
+    coords.point.setValues(0, len(pts), pts)
+
+    # Build Coin3D face indices (triangles, not quads)
+    face_set = coin.SoIndexedFaceSet()
+    indices: list[int] = []
+    for tri in tris:
+        indices.extend([int(i) for i in tri])
+        indices.append(-1)  # End of face
+    indices.append(-1)  # End of all faces
+    face_set.coordIndex.setValues(0, len(indices), indices)
+
+    # Build separator
+    sep = coin.SoSeparator()
+    sep.addChild(coords)
+    sep.addChild(face_set)
+    return sep
+
+
 def build_drapecd_coin(node_positions, quads):
     """Build Coin3D geometry from draper node_positions and quads.
 

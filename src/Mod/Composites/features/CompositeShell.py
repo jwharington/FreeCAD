@@ -715,6 +715,12 @@ class CompositeShellFP(CompositeBaseFP):
         try:
             if drape_host is not None:
                 remove_existing_coin_geometry(drape_host)
+                # Build support surface geometry from fp.Support.Shape
+                if fp.Support and hasattr(fp.Support, "Shape"):
+                    from .coin_geometry import build_support_surface_coin
+                    support_coin = build_support_surface_coin(fp.Support.Shape, deflection=1.0)
+                    inject_coin_geometry(drape_host, support_coin)
+                # Inject drape mesh geometry
                 inject_coin_geometry(drape_host, drapecd_coin)
                 if cut_edges is not None:
                     remove_cut_edges(drape_host)
