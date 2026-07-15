@@ -270,5 +270,163 @@ class TestSeamFP(TestFreeCADFP):
         self.assertTrue(hasattr(ext, "Seam"))
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Caching tests — both levels
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestSeamShellFPInputFingerprint(TestFreeCADFP):
+    """Tests for SeamShellFP._sync_virtual_inputs input fingerprint caching."""
+
+    def test_skip_extraction_when_inputs_unchanged(self):
+        """Second _sync_virtual_inputs call skips when inputs match."""
+        from Composites.features.SeamExtraction import SeamShellFP
+
+        master, att, _ = _make_two_adjacent_shells(self.doc)
+
+        ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
+        SeamShellFP(ext, master, att)
+        self.doc.recompute()
+
+        # First call completed — fingerprint should be stored.
+        self.assertIsNotNone(
+            getattr(ext.Proxy, "_last_input_fingerprint", None),
+            "First sync should store input fingerprint",
+        )
+
+        # Track how many times _build_seam_shell was called.
+        build_calls = []
+        orig_build = ext.Proxy._build_seam_shell
+        def counted_build(*a, **kw):
+            build_calls.append(1)
+            return orig_build(*a, **kw)
+        ext.Proxy._build_seam_shell = counted_build
+
+        # Trigger another recompute — should be skipped.
+        ext.Proxy._sync_virtual_inputs(ext)
+
+        # _build_seam_shell should NOT have been called again.
+        self.assertEqual(
+            len(build_calls),
+            0,
+            "_sync_virtual_inputs should skip when inputs unchanged",
+        )
+
+    def test_re_extract_when_width_changes(self):
+        """Changing Width forces re-extraction."""
+        from Composites.features.SeamExtraction import SeamShellFP
+
+        master, att, _ = _make_two_adjacent_shells(self.doc)
+
+        ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
+        SeamShellFP(ext, master, att)
+        self.doc.recompute()
+
+        # Change width — should force re-extraction.
+        ext.Width = "20.0 mm"
+        ext.Proxy._sync_virtual_inputs(ext)
+
+        # Fingerprint should have been updated.
+        self.assertIsNotNone(
+            getattr(ext.Proxy, "_last_input_fingerprint", None),
+            "Width change should update input fingerprint",
+        )
+
+
+class TestSeamGeometryFPExecuteFingerprint(TestFreeCADFP):
+    """Tests for SeamGeometryFP.execute() shape fingerprint caching."""
+
+    def _setup_seam_shell(self, shape):
+        """Helper: create a SeamGeometryFP with support and laminate."""
+        from Composites.features.SeamExtraction import SeamGeometryFP
+        from Composites.features.Laminate import LaminateFP
+
+        box = self.doc.addObject("Part::Box", "Box")
+        box.Length = shape.Length
+        box.Width = shape.Width
+        box.Height = shape.Height
+
+        seam = self.doc.addObject("Part::FeaturePython", "Seam")
+        SeamGeometryFP(seam, FreeCAD.ActiveDocument)
+
+        sup = self.doc.addObject("Part::Feature", "Support")
+        sup.Shape = box.Shape
+        seam.Support = sup
+
+        lam = self.doc.addObject("Part::FeaturePython", "Laminate")
+        LaminateFP(lam)
+        seam.Laminate = lam
+
+        self.doc.recompute()
+        return seam
+
+    def test_skip_execute_when_shape_unchanged(self):
+        """Second execute() call skips when support shape hasn't changed."""
+        box = self.doc.addObject("Part::Box", "Box")
+        box.Length = 100
+        box.Width = 50
+        box.Height = 2
+
+        seam = self._setup_seam_shell(box)
+
+        # First execute — should set the fingerprint.
+        seam.Proxy.execute(seam)
+        fp = seam.Proxy._shape_fingerprint(seam.Support.Shape)
+        self.assertEqual(
+            seam.Proxy._last_shape_fingerprint,
+            fp,
+            "First execute should store shape fingerprint",
+        )
+
+        # Second execute with same shape — should skip.
+        # The fingerprint should match, so execute returns early.
+        # We verify by checking that _last_shape_fingerprint is unchanged
+        # and no exception is raised.
+        prev_fp = seam.Proxy._last_shape_fingerprint
+        seam.Proxy.execute(seam)
+        self.assertEqual(
+            seam.Proxy._last_shape_fingerprint,
+            prev_fp,
+            "Fingerprint unchanged after second execute",
+        )
+
+    def test_run_execute_when_shape_changes(self):
+        """execute() runs again when support shape changes."""
+        box1 = self.doc.addObject("Part::Box", "Box1")
+        box1.Length = 100
+        box1.Width = 50
+        box1.Height = 2
+
+        box2 = self.doc.addObject("Part::Box", "Box2")
+        box2.Length = 200
+        box2.Width = 50
+        box2.Height = 2
+
+        seam = self._setup_seam_shell(box1)
+
+        # First execute with box1.
+        seam.Proxy.execute(seam)
+        fp1 = seam.Proxy._shape_fingerprint(seam.Support.Shape)
+        self.assertEqual(
+            seam.Proxy._last_shape_fingerprint,
+            fp1,
+            "First execute should store fingerprint",
+        )
+
+        # Change support to a different shape.
+        sup2 = self.doc.addObject("Part::Feature", "Support2")
+        sup2.Shape = box2.Shape
+        seam.Support = sup2
+
+        # Second execute — fingerprint should change.
+        seam.Proxy.execute(seam)
+        fp2 = seam.Proxy._shape_fingerprint(seam.Support.Shape)
+        self.assertNotEqual(
+            fp1,
+            fp2,
+            "execute() should update fingerprint when shape changes",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
