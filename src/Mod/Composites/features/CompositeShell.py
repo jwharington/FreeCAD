@@ -610,7 +610,14 @@ class CompositeShellFP(CompositeBaseFP):
         GUI/scene-graph hiccup never aborts the drape solve or the
         document recompute that called it.
         """
+        # Get ViewObject — may be None during initial solve before GUI attach.
         vp = getattr(fp, "ViewObject", None)
+        if vp is None and fp.Document is not None:
+            # Try to find the ViewObject via the document's object list.
+            for obj in fp.Document.Objects:
+                if getattr(obj, "Name", None) == fp.Name:
+                    vp = getattr(obj, "ViewObject", None)
+                    break
         if not (vp and hasattr(vp, "Proxy")):
             return
         drape_host = getattr(vp.Proxy, "drape_host", None)
@@ -626,6 +633,13 @@ class CompositeShellFP(CompositeBaseFP):
                         draper=self,
                     )
                     inject_coin_geometry(drape_host, support_coin)
+                    # Name uniquely so _find_coin_geometry prioritises it
+                    # (inject_coin_geometry overwrites the name, so set it after)
+                    support_coin.setName("SupportSurface")
+                    # Store reference so attach() can re-use it if _find_coin_geometry
+                    # can't find the support surface (e.g. after remove_shader clears it)
+                    if hasattr(vp.Proxy, "grid_shader") and vp.Proxy.grid_shader:
+                        vp.Proxy.grid_shader._coin_geo = support_coin
                 # Inject drape mesh geometry
                 inject_coin_geometry(drape_host, drapecd_coin)
                 if cut_edges is not None:

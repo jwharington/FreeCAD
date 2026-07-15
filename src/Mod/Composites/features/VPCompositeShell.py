@@ -185,10 +185,17 @@ class ViewProviderCompositeShell:
             self.Object.Support.Visibility = visible
 
     def _set_shell_transparency(self, vobj):
-        """Make the shell semi-transparent when drape geometry is present."""
+        """Make the shell semi-transparent when drape geometry is present.
+
+        Skip when the shader is active — the fragment shader controls
+        per-fragment alpha (grid lines opaque, background transparent).
+        Setting vobj.Transparency forces FILTER mode which overrides
+        the shader's BLEND transparency and kills per-fragment alpha.
+        """
+        has_shader = getattr(self, "grid_shader", None) is not None and getattr(self.grid_shader, "_attached", False)
         has_drape = getattr(self, "drape_host", None) is not None and self.drape_host.getNumChildren() > 0
         try:
-            vobj.Transparency = 50 if has_drape else 0
+            vobj.Transparency = 0 if has_shader else (50 if has_drape else 0)
         except Exception:
             pass
 
@@ -353,6 +360,8 @@ class ViewProviderCompositeShell:
                     offset_angle_deg,
                 )
                 self.Active = True
+                # Expose the shader_state group for geometry injection
+                self._shader_grp = self.grid_shader.grp
                 import FreeCADGui
 
                 FreeCADGui.Selection.addObserver(self)
@@ -370,6 +379,9 @@ class ViewProviderCompositeShell:
             except Exception:
                 pass
         self.Active = False
+        # Clear the shader group reference so geometry injection stops
+        if hasattr(self, "_shader_grp"):
+            del self._shader_grp
         try:
             import FreeCADGui
             FreeCADGui.Selection.removeObserver(self)
