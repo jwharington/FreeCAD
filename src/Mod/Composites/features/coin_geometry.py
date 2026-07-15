@@ -13,26 +13,42 @@ from __future__ import annotations
 
 from pivy import coin
 
+import numpy as np
 
-def build_support_surface_coin(shape, deflection=1.0):
-    """Build Coin3D geometry from a FreeCAD Part.Shape.
+
+def build_support_surface_coin(shape, deflection=1.0, drape_node_positions=None, drape_tex_coords=None):
+    """Build Coin3D geometry from a FreeCAD Part.Shape with UV coordinates.
 
     Uses Shape.tessellate() to convert the shape into a triangle mesh,
-    then builds SoCoordinate3 + SoIndexedFaceSet.
+    then builds SoCoordinate3 + SoIndexedFaceSet with UV coordinates.
+
+    UV coordinates are mapped from the drape mesh to the support surface
+    via nearest-neighbor interpolation: for each support surface vertex,
+    find the nearest drape mesh vertex and copy its UV coordinate.
 
     Args:
         shape: FreeCAD Part.Shape object
         deflection: tessellation deflection tolerance (lower = finer mesh)
+        drape_node_positions: list of (x, y, z) tuples from drape solve
+        drape_tex_coords: list of (u, v) tuples from drape solve (same length as drape_node_positions)
 
     Returns:
-        SoSeparator with SoCoordinate3 + SoIndexedFaceSet
+        SoSeparator with SoCoordinate3 + SoIndexedFaceSet + SoTextureCoordinate3
     """
     verts, tris = shape.tessellate(deflection)
+
+    # Map UV coordinates from drape mesh to support surface
+    uv_coords = _map_uv_to_support(verts, drape_node_positions, drape_tex_coords)
 
     # Build vertex coordinates
     coords = coin.SoCoordinate3()
     pts = [coin.SbVec3f(float(v[0]), float(v[1]), float(v[2])) for v in verts]
     coords.point.setValues(0, len(pts), pts)
+
+    # Build UV coordinates
+    tex_coords = coin.SoTextureCoordinate3()
+    uv_pts = [coin.SbVec2f(float(u[0]), float(u[1])) for u in uv_coords]
+    tex_coords.setValues(0, len(uv_pts), uv_pts)
 
     # Build triangle indices (SoIndexedFaceSet expects -1 separators)
     face_set = coin.SoIndexedFaceSet()
@@ -41,54 +57,50 @@ def build_support_surface_coin(shape, deflection=1.0):
         indices.extend([int(tri[0]), int(tri[1]), int(tri[2]), -1])
     indices.append(-1)
     face_set.coordIndex.setValues(0, len(indices), indices)
+    # Set texture coord indices (indexed, matching coordIndex)
+    face_set.textureCoordIndex.setValues(0, len(indices), indices)
 
     sep = coin.SoSeparator()
     sep.addChild(coords)
+    sep.addChild(tex_coords)
     sep.addChild(face_set)
     return sep
 
 
-def build_support_surface_coin(shape):
-    """Build Coin3D geometry from a FreeCAD Part.Shape.
+def _map_uv_to_support(support_verts, drape_node_positions, drape_tex_coords):
+    """Map UV coordinates from drape mesh to support surface via nearest-neighbor.
 
-    Uses Shape.tessellate() to convert the shape into a triangle mesh,
-    then builds SoCoordinate3 + SoIndexedFaceSet.
+    For each support surface vertex, find the nearest drape mesh vertex
+    and copy its UV coordinate.
 
-    Parameters
-    ----------
-    shape : FreeCAD.Part.Shape
-        The shape to tessellate and convert to Coin3D geometry.
+    Args:
+        support_verts: list of (x, y, z) tuples from tessellation
+        drape_node_positions: list of (x, y, z) tuples from drape solve
+        drape_tex_coords: list of (u, v) tuples from drape solve
 
-    Returns
-    -------
-    SoSeparator
-        A separator containing SoCoordinate3 + SoIndexedFaceSet.
+    Returns:
+        Array of (u, v) coordinates for support surface vertices
     """
-    # Tessellate the shape into triangles
-    # Returns (vertices, triangles) where:
-    #   vertices: list of (x, y, z) tuples
-    #   triangles: list of (i0, i1, i2) index triples
-    verts, tris = shape.tessellate(1.0)  # deflection tolerance
+    if not drape_node_positions or not drape_tex_coords:
+        # Fallback: zero UV coordinates
+        return np.zeros((len(support_verts), 2), dtype=np.float32)
 
-    # Build Coin3D coordinate data
-    coords = coin.SoCoordinate3()
-    pts = [coin.SbVec3f(float(v[0]), float(v[1]), float(v[2])) for v in verts]
-    coords.point.setValues(0, len(pts), pts)
+    # Convert to numpy arrays for efficient computation
+    support_arr = np.array(support_verts, dtype=np.float32)
+    drape_arr = np.array(drape_node_positions, dtype=np.float32)
+    drape_uv = np.array(drape_tex_coords, dtype=np.float32)
 
-    # Build Coin3D face indices (triangles, not quads)
-    face_set = coin.SoIndexedFaceSet()
-    indices: list[int] = []
-    for tri in tris:
-        indices.extend([int(i) for i in tri])
-        indices.append(-1)  # End of face
-    indices.append(-1)  # End of all faces
-    face_set.coordIndex.setValues(0, len(indices), indices)
+    # Compute pairwise distances using broadcasting
+    # support_arr: (N, 3), drape_arr: (M, 3) -> diff: (N, M, 3)
+    diff = support_arr[:, np.newaxis, :] - drape_arr[np.newaxis, :, :]
+    dist_sq = np.sum(diff ** 2, axis=2)  # (N, M)
 
-    # Build separator
-    sep = coin.SoSeparator()
-    sep.addChild(coords)
-    sep.addChild(face_set)
-    return sep
+    # Find nearest drape vertex for each support vertex
+    nearest = np.argmin(dist_sq, axis=1)  # (N,)
+
+    # Copy UV coordinates
+    mapped_uv = drape_uv[nearest]  # (N, 2)
+    return mapped_uv
 
 
 def build_drapecd_coin(node_positions, quads, wireframe=False):

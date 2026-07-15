@@ -718,7 +718,27 @@ class CompositeShellFP(CompositeBaseFP):
                 # Build support surface geometry from fp.Support.Shape
                 if fp.Support and hasattr(fp.Support, "Shape"):
                     from .coin_geometry import build_support_surface_coin
-                    support_coin = build_support_surface_coin(fp.Support.Shape, deflection=1.0)
+                    # Get UV coordinates from persisted solve data
+                    drape_node_positions = None
+                    drape_tex_coords = None
+                    if hasattr(fp, "NodePositionsJSON") and fp.NodePositionsJSON:
+                        try:
+                            import json
+                            drape_node_positions = json.loads(fp.NodePositionsJSON)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    if hasattr(fp, "TexCoordsJSON") and fp.TexCoordsJSON:
+                        try:
+                            import json
+                            drape_tex_coords = json.loads(fp.TexCoordsJSON)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    support_coin = build_support_surface_coin(
+                        fp.Support.Shape,
+                        deflection=1.0,
+                        drape_node_positions=drape_node_positions,
+                        drape_tex_coords=drape_tex_coords,
+                    )
                     inject_coin_geometry(drape_host, support_coin)
                 # Inject drape mesh geometry
                 inject_coin_geometry(drape_host, drapecd_coin)
