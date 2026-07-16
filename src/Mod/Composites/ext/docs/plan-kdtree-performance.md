@@ -61,7 +61,7 @@ nextdrape_tests — KDTreeLocatorTest.*
   test_kdtree_matches_bruteforce_fallback ✓
 ```
 
-All Python tests and the focused KDTreeLocator C++ gtest set pass. Remaining verification gates are accuracy, integration, and performance benchmarks.
+All Python tests and the focused KDTreeLocator C++ gtest set pass. A flat 50×50 benchmark run shows 124.95× speedup with numerical agreement (max diff 7.1e-15). Remaining verification gates are the warped-mesh accuracy sweep, integration, and the larger-size performance benchmark.
 
 ---
 
@@ -254,9 +254,9 @@ Created using nextdrape's GTest infrastructure. It covers basic lookup, Z-offset
 - [ ] Existing `test_rosette_integration.py` tests still pass
 - [ ] Composite shell creation and drape solve work end-to-end
 
-### Gate 4: Performance Gate — Pending
+### Gate 4: Performance Gate — In Progress
 
-- [ ] 50×50 grid shows >3× speedup
+- [x] 50×50 grid shows >3× speedup — flat-grid benchmark measured 124.95× with max diff 7.1e-15
 - [ ] 100×100 grid shows >5× speedup
 - [ ] Overall pipeline (tessellation + UV mapping) shows measurable improvement
 

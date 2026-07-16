@@ -124,7 +124,7 @@ commit 10:(merge) enh(composites): UV quality improvements  ← Stream 2
 | G2 | soft_clamp correct, no regressions | ✅ PASS |
 | G3 | Accuracy: KD matches brute-force to 6dp | ✅ PASS — `test_kd_tree_locator.py` compares KD lookup against the brute-force reference to 6dp |
 | G4 | UVs bounded at mesh edges | ✅ PASS |
-| G5 | >3× speedup on 50×50 grid | ⏸ TBD — needs benchmark |
+| G5 | >3× speedup on 50×50 grid | ✅ PASS — flat 50×50 benchmark measured 124.95× speedup with max diff 7.1e-15 |
 | G6 | No UV jumps >0.05 at shared edges | ✅ PASS |
 | G7 | Full pipeline works end-to-end | ⏸ TBD — needs integration test |
 | G8 | All Composites tests pass | ⏸ TBD |
