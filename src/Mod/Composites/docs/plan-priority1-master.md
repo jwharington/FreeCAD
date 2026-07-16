@@ -3,7 +3,7 @@
 **Date:** 2026-07-15
 **Last Updated:** 2026-07-16
 **Scope:** All Priority 1 work from the handoff document
-**Status:** Implementation complete — awaiting verification gates (accuracy, integration, performance benchmarks)
+**Status:** Implementation incomplete — G7 reopened; awaiting verification and ownership cleanup for shader rendering and drape state storage
 
 ---
 
@@ -78,6 +78,8 @@ Both streams write tests in parallel.
 
 ### Phase C: Cross-Validation (Day 3–4) ⏸ PENDING
 
+> Note: G7 is the next priority focus. Reopen it until the shader renders in FreeCAD MCP and drape state is fully owned by the C++ backend rather than serialized on `CompositeShell`.
+
 7. Run full test suite (`test_uv_mapping.py` + C++ unit tests) — TBD
 8. Visual verification in FreeCAD GUI — TBD
 9. Performance measurement (confirm ~37× speedup) — TBD
@@ -117,6 +119,13 @@ commit 10:(merge) enh(composites): UV quality improvements  ← Stream 2
 
 ## Gates
 
+**Gate policy:** do not mark a gate closed until the behavior is covered by an automated test that fails before the fix and passes after it. For rendering and persistence issues, establish a real FreeCAD/headless or MCP-backed regression test before reopening the gate.
+
+**G7 closure requirements:**
+- Shader rendering must be covered by a FreeCAD MCP or GUI-backed regression test that proves the view provider/shader path is active, not just instantiated.
+- Drape state ownership must be covered by a persistence regression test that proves the internal drape payload is not stored on `CompositeShell` and is restored via the C++ backend.
+- Visual verification may support the diagnosis, but it does not close the gate by itself.
+
 | Gate | Criteria | Status |
 |------|----------|--------|
 | G0 | All existing tests pass | ⏸ TBD |
@@ -126,8 +135,10 @@ commit 10:(merge) enh(composites): UV quality improvements  ← Stream 2
 | G4 | UVs bounded at mesh edges | ✅ PASS |
 | G5 | >3× speedup on 50×50 grid | ✅ PASS — flat 50×50 benchmark measured 124.95× speedup with max diff 7.1e-15 |
 | G6 | No UV jumps >0.05 at shared edges | ✅ PASS |
-| G7 | Full pipeline works end-to-end | ✅ PASS — covered by `test_compositeexamples.py::TestCompositeExamplesSmoke.test_conical_panel_full_pipeline_round_trip` |
+| G7 | Full pipeline works end-to-end | ⏸ REOPENED — shader rendering is not active in MCP, and drape state still serializes on `CompositeShell` |
 | G8 | All Composites tests pass | ⏸ TBD |
+
+**Order of closure:** G7 is the first blocker to resolve; G0/G8 only count once G7 is back to a real passing state and backed by regression tests.
 
 ## Files Modified
 
