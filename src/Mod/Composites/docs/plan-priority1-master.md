@@ -120,7 +120,7 @@ commit 10:(merge) enh(composites): UV quality improvements  ← Stream 2
 | Gate | Criteria | Status |
 |------|----------|--------|
 | G0 | All existing tests pass | ⏸ TBD |
-| G1 | KDTreeLocator compiles, basic lookup works | ✅ PASS (6/6 tests) |
+| G1 | KDTreeLocator compiles, basic lookup works | ✅ PASS (7/7 tests) |
 | G2 | soft_clamp correct, no regressions | ✅ PASS |
 | G3 | Accuracy: KD matches brute-force to 6dp | ✅ PASS — `test_kd_tree_locator.py` compares KD lookup against the brute-force reference to 6dp |
 | G4 | UVs bounded at mesh edges | ✅ PASS |
@@ -143,7 +143,7 @@ commit 10:(merge) enh(composites): UV quality improvements  ← Stream 2
 | `src/Mod/Composites/features/AlignFibreRosette.py` | 1 | ✅ Transparent (delegates to backend) |
 | `src/Mod/Composites/compositestests/test_uv_mapping.py` | 2 | ✅ UV quality tests |
 | `src/Mod/Composites/compositestests/test_kd_tree_locator.py` | 1 | ✅ Added KD-vs-brute-force comparison test |
-| `src/3rdParty/nextdrape/tests/test_kd_tree_locator.cpp` | 1 | ⏸ Not yet wired into C++ build |
+| `src/3rdParty/nextdrape/tests/test_kd_tree_locator.cpp` | 1 | ✅ 7 C++ tests, all passing |
 | `src/3rdParty/nextdrape/include/nextdrape/KDTreeLocator.hpp` | — | Moved from `App/` to `nextdrape/` |
 | `src/Mod/Composites/App/KDTreeLocator.h` | — | Deleted (moved to nextdrape/) |
 | `src/Mod/Composites/App/KDTreeLocator.cpp` | — | Deleted (moved to nextdrape/) |

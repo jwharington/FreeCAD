@@ -38,7 +38,7 @@ All code has been written, committed, and wired into the runtime. The k-d tree a
 |-------|----------|------------|
 | C++ segfault on `lookup()` | CRITICAL | Fixed — no longer crashes on single quad or small grids |
 | kdtree++ API mismatches | HIGH | Fixed — switched to `find_nearest()` |
-| C++ unit tests not wired | LOW | Still pending — see Gates below |
+| C++ unit tests wired | LOW | Passed — see current test results below |
 
 ### 📊 Current Test Results
 
@@ -50,9 +50,18 @@ test_kd_tree_locator.py — 6 tests
   test_small_grid_accuracy         ✓  (previously returned [0,0])
   test_z_offset                    ✓
   test_large_mesh_kdtree_activation ✓ (previously crashed)
+
+nextdrape_tests — KDTreeLocatorTest.*
+  test_empty_quads                 ✓
+  test_single_quad_center          ✓
+  test_small_grid_accuracy         ✓
+  test_point_outside_mesh          ✓
+  test_z_offset                    ✓
+  test_min_quads_for_kdtree        ✓
+  test_kdtree_matches_bruteforce_fallback ✓
 ```
 
-All 6 Python tests pass. Remaining verification gates are accuracy, integration, and performance benchmarks.
+All Python tests and the focused KDTreeLocator C++ gtest set pass. Remaining verification gates are accuracy, integration, and performance benchmarks.
 
 ---
 
@@ -204,11 +213,11 @@ Handled in C++:
 | `test_z_offset` | ✅ Z-offset invariant |
 | `test_large_mesh_kdtree_activation` | ✅ 10×10 grid accurate to 1e-4 |
 
-### 3.2 C++ Unit Tests — Pending
+### 3.2 C++ Unit Tests ✅
 
-**File:** `src/3rdParty/nextdrape/tests/test_kd_tree_locator.cpp` (does not exist yet)
+**File:** `src/3rdParty/nextdrape/tests/test_kd_tree_locator.cpp`
 
-Should be created using nextdrape's GTest infrastructure. Would test the C++ internals directly (tree build, edge cases, performance characteristics) without FreeCAD dependency.
+Created using nextdrape's GTest infrastructure. It covers basic lookup, Z-offset invariance, and KD-vs-brute-force fallback comparison on a threshold-crossing mesh.
 
 ### 3.3 Existing Tests — No Changes Needed
 
@@ -230,7 +239,7 @@ Should be created using nextdrape's GTest infrastructure. Would test the C++ int
 - [x] `KDTreeLocator` compiles and links ✅
 - [x] pybind11 bindings expose class to Python ✅
 - [x] Small grid (3×3) passes accuracy tests ✅
-- [ ] C++ unit tests pass (pending — see §3.2)
+- [x] C++ unit tests pass (see §3.2)
 
 ### Gate 2: Accuracy Gate — Pending
 
@@ -270,7 +279,7 @@ Should be created using nextdrape's GTest infrastructure. Would test the C++ int
 | 4 | `src/Mod/Composites/App/CompositesDrape.cpp` | `feat(composites): bind nextdrape::KDTreeLocator via pybind11` |
 | 5 | `tools/drape_backend_nextdrape.py` | `refactor(nextdrape): use KDTreeLocator for UV point lookup` |
 | 6 | `features/CompositeShell.py` | `refactor(rehydrated): use KDTreeLocator for UV point lookup` |
-| 7 | `src/3rdParty/nextdrape/tests/test_kd_tree_locator.cpp` (new) | `test(nextdrape): add C++ unit tests for KDTreeLocator` |
+| 7 | `src/3rdParty/nextdrape/tests/test_kd_tree_locator.cpp` (new) | `test(nextdrape): add KDTreeLocator C++ unit tests` |
 | 8 | (merge) | `perf(composites): k-d tree acceleration for UV mapping` |
 
 ---
