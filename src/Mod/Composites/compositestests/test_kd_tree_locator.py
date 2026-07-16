@@ -8,6 +8,30 @@ import unittest
 import FreeCAD
 import Composites_drape
 
+from Composites.util.geometry_util import tex_coord_at_point
+
+
+def _build_warped_grid_mesh(nx=12, ny=12):
+    """Build a deterministic warped grid large enough to trigger KD lookup."""
+    nodes = []
+    quads = []
+    tex_coords = []
+
+    for j in range(ny + 1):
+        for i in range(nx + 1):
+            x = float(i)
+            y = float(j)
+            z = 0.05 * ((i % 4) - 1.5) * ((j % 3) - 1.0)
+            nodes.append((x, y, z))
+            tex_coords.append((x + 0.1 * y, y - 0.05 * x))
+
+    for j in range(ny):
+        for i in range(nx):
+            idx = j * (nx + 1) + i
+            quads.append([idx, idx + 1, idx + (nx + 1) + 1, idx + (nx + 1)])
+
+    return nodes, quads, tex_coords
+
 
 class TestKDTreeLocator(unittest.TestCase):
     """Tests for the C++ KDTreeLocator class."""
@@ -100,27 +124,43 @@ class TestKDTreeLocator(unittest.TestCase):
 
     def test_large_mesh_kdtree_activation(self):
         """Test that k-d tree is activated for large meshes."""
-        nodes = []
-        quads = []
-        node_tex_coords = []
-
-        nx, ny = 10, 10
-        for j in range(ny + 1):
-            for i in range(nx + 1):
-                nodes.append((float(i), float(j), 0.0))
-                node_tex_coords.append((float(i), float(j)))
-
-        for j in range(ny):
-            for i in range(nx):
-                idx = j * (nx + 1) + i
-                quads.append([idx, idx + 1, idx + (nx + 1) + 1, idx + (nx + 1)])
+        nodes, quads, tex_coords = _build_warped_grid_mesh(nx=10, ny=10)
 
         locator = Composites_drape.KDTreeLocator(nodes, quads)
 
-        result = locator.lookup([5.5, 5.5, 0.0], node_tex_coords)
+        result = locator.lookup([5.5, 5.5, 0.0], tex_coords)
         if len(result) >= 2:
-            self.assertAlmostEqual(result[0], 5.5, delta=1e-4)
-            self.assertAlmostEqual(result[1], 5.5, delta=1e-4)
+            self.assertAlmostEqual(result[0], 6.05, delta=1e-4)
+            self.assertAlmostEqual(result[1], 5.225, delta=1e-4)
+
+    def test_kdtree_matches_bruteforce_reference(self):
+        """KD lookup must match brute-force reference to 6 decimal places."""
+        nodes, quads, tex_coords = _build_warped_grid_mesh()
+        locator = Composites_drape.KDTreeLocator(nodes, quads)
+
+        self.assertGreaterEqual(
+            len(quads), Composites_drape.KDTreeLocator.min_quads_for_kdtree()
+        )
+
+        sample_points = [
+            (0.25, 0.25, 0.01),
+            (2.75, 1.50, -0.02),
+            (4.40, 3.10, 0.03),
+            (6.20, 7.80, 0.04),
+            (9.10, 10.30, -0.01),
+            (11.75, 8.25, 0.02),
+        ]
+
+        for point in sample_points:
+            with self.subTest(point=point):
+                expected = tex_coord_at_point(nodes, quads, tex_coords, point)
+                actual = locator.lookup(list(point), tex_coords)
+
+                self.assertIsNotNone(expected)
+                self.assertEqual(len(actual), 2)
+                self.assertEqual(len(expected), 2)
+                self.assertAlmostEqual(actual[0], expected[0], places=6)
+                self.assertAlmostEqual(actual[1], expected[1], places=6)
 
 
 if __name__ == '__main__':
