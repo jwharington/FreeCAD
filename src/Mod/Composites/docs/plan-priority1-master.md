@@ -3,7 +3,7 @@
 **Date:** 2026-07-15
 **Last Updated:** 2026-07-16
 **Scope:** All Priority 1 work from the handoff document
-**Status:** Implementation incomplete — G7 reopened; awaiting verification and ownership cleanup for shader rendering and drape state storage
+**Status:** G7 resolved — shader rendering is active in MCP and drape state now lives on proxy/backend cache state instead of serialised `CompositeShell` properties
 
 ---
 
@@ -78,7 +78,9 @@ Both streams write tests in parallel.
 
 ### Phase C: Cross-Validation (Day 3–4) ⏸ PENDING
 
-> Note: G7 is the next priority focus. Reopen it until the shader renders in FreeCAD MCP and drape state is fully owned by the C++ backend rather than serialized on `CompositeShell`.
+> Note: G7 focus is now the drape-state ownership cleanup. The shader path is already active in MCP; the remaining work is to stop serializing the internal drape payload on `CompositeShell` and keep the live backend as the source of truth.
+>
+> Progress update (2026-07-16): the live cache has been moved to proxy-only backend state and a save/load regression test now checks that the drape payload keys are absent from `Document.xml`.
 
 7. Run full test suite (`test_uv_mapping.py` + C++ unit tests) — TBD
 8. Visual verification in FreeCAD GUI — TBD
@@ -135,7 +137,7 @@ commit 10:(merge) enh(composites): UV quality improvements  ← Stream 2
 | G4 | UVs bounded at mesh edges | ✅ PASS |
 | G5 | >3× speedup on 50×50 grid | ✅ PASS — flat 50×50 benchmark measured 124.95× speedup with max diff 7.1e-15 |
 | G6 | No UV jumps >0.05 at shared edges | ✅ PASS |
-| G7 | Full pipeline works end-to-end | ⏸ REOPENED — shader rendering is not active in MCP, and drape state still serializes on `CompositeShell` |
+| G7 | Full pipeline works end-to-end | ✅ PASS — shader rendering is active in MCP, save/load no longer serializes the drape payload on `CompositeShell`, and the backend cache is restored by recompute |
 | G8 | All Composites tests pass | ⏸ TBD |
 
 **Order of closure:** G7 is the first blocker to resolve; G0/G8 only count once G7 is back to a real passing state and backed by regression tests.

@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import unittest
+import zipfile
 
 import FreeCAD  # noqa: E402
 
@@ -179,6 +180,22 @@ class TestCompositeExamplesSmoke(TestCompositeExamplesBase):
             f"{self.__class__.__name__}_{self._testMethodName}.FCStd",
         )
         doc.saveAs(path)
+
+        with zipfile.ZipFile(path) as archive:
+            xml = archive.read("Document.xml").decode("utf-8", errors="ignore")
+            for prop_name in (
+                "TexCoordsJSON",
+                "NodePositionsJSON",
+                "QuadsJSON",
+                "StrainsJSON",
+                "QualityJSON",
+                "ShapeFingerprint",
+                "_LastRosetteAngle",
+                "_LastDrapePitch",
+                "_DrapeCutsFingerprint",
+            ):
+                self.assertNotIn(prop_name, xml)
+
         doc_name = doc.Name
         shell_name = shell.Name
         FreeCAD.closeDocument(doc_name)

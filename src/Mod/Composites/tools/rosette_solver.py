@@ -83,13 +83,6 @@ def solve_rosette_angle(
             rosette.Proxy.execute(rosette)
         except Exception:
             pass
-        # Force a genuine re-solve (not a stale rehydrate): the persisted
-        # cache (_can_use_persisted) can short-circuit to a rehydrate that
-        # leaves _backend pointing at the previous angle's data.
-        try:
-            shell._LastRosetteAngle = float(angle_deg) + 999.0
-        except Exception:
-            pass
         shell.touch()
         doc.recompute()
         _require_valid_draper(shell)

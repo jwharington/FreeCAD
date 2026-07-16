@@ -48,15 +48,12 @@ from .VPCompositeShell import ViewProviderCompositeShell
 
 
 class _RehydratedBackend:
-    """Transient backend rebuilt from persisted JSON properties.
+    """Legacy compatibility backend for old saved drape payloads.
 
-    When the support shape hasn't changed across recompute cycles,
-    the draper solve result is reconstructed from FreeCAD properties
-    (NodePositionsJSON, QuadsJSON, TexCoordsJSON, StrainsJSON, QualityJSON)
-    instead
-    of re-running the C++ solver.  This class implements the same
-    interface as NextDrapeBackend so that execute() and all public
-    accessor methods on CompositeShellFP work identically.
+    The current implementation keeps the live cache on the proxy and
+    recomputes via the C++ backend on restore. This helper is retained
+    only so older saved documents can still be interpreted if they carry
+    the historical JSON payload fields.
 
     Attributes
     ----------
@@ -411,71 +408,13 @@ class CompositeShellFP(CompositeBaseFP):
         )
         obj.setPropertyStatus("DrapeQuality", "ReadOnly")
 
-        obj.addProperty(
-            type="App::PropertyString",
-            name="TexCoordsJSON",
-            group="Draping",
-            doc="Serialized texture coordinates from the drape solve",
-        )
-
-        # Persisted draper solve data — allows skipping re-solve when the
-        # support shape is unchanged across recompute cycles.
-        obj.addProperty(
-            type="App::PropertyString",
-            name="NodePositionsJSON",
-            group="Draping",
-            doc="Serialized node positions [N,3] from the drape solve",
-        )
-        obj.addProperty(
-            type="App::PropertyString",
-            name="QuadsJSON",
-            group="Draping",
-            doc="Serialized quad connectivity [M,4] from the drape solve",
-        )
-        obj.addProperty(
-            type="App::PropertyString",
-            name="StrainsJSON",
-            group="Draping",
-            doc="Serialized per-quad shear angles from the drape solve",
-        )
-        obj.addProperty(
-            type="App::PropertyString",
-            name="QualityJSON",
-            group="Draping",
-            doc="Serialized quality result from the drape solve",
-        )
-
-        obj.addProperty(
-            type="App::PropertyString",
-            name="ShapeFingerprint",
-            group="Draping",
-            doc="SHA256 hash of the support shape for detecting geometry changes",
-            hidden=True,
-        )
-
-        obj.addProperty(
-            type="App::PropertyFloat",
-            name="_LastRosetteAngle",
-            group="Draping",
-            doc="Cached rosette angle for detecting angle changes",
-            hidden=True,
-        )
-
-        obj.addProperty(
-            type="App::PropertyFloat",
-            name="_LastDrapePitch",
-            group="Draping",
-            doc="Cached drape pitch for detecting pitch changes",
-            hidden=True,
-        )
-
-        obj.addProperty(
-            type="App::PropertyString",
-            name="_DrapeCutsFingerprint",
-            group="Draping",
-            doc="Cached fingerprint of DrapeCuts for persisted solve data",
-            hidden=True,
-        )
+        # The live drape cache stays on the proxy/backend only. It is rebuilt
+        # from the nextdrape solver on recompute and is not serialized on the
+        # FeaturePython object.
+        self._cached_shape_fingerprint = ""
+        self._cached_rosette_angle = None
+        self._cached_drape_pitch = None
+        self._cached_drape_cuts_fingerprint = ""
 
         obj.addProperty(
             type="App::PropertyLinkGlobal",
@@ -514,26 +453,15 @@ class CompositeShellFP(CompositeBaseFP):
         except Exception:
             pass
 
-        # Ensure DrapeCuts property exists on older FCStd files
-        # that were saved before this property was added.
-        if not hasattr(fp, "DrapeCuts"):
-            fp.addProperty(
-                type="App::PropertyLinkList",
-                name="DrapeCuts",
-                group="Draping",
-                doc="Wires defining cut paths on the support surface during draping",
-            )
-        if not hasattr(fp, "_LastDrapePitch") or fp._LastDrapePitch is None:
-            fp._LastDrapePitch = float(fp.DrapePitch)
-        if not hasattr(fp, "_LastRosetteAngle") or fp._LastRosetteAngle is None:
-            fp._LastRosetteAngle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
-        if not hasattr(fp, "_DrapeCutsFingerprint") or not fp._DrapeCutsFingerprint:
-            fp._DrapeCutsFingerprint = self._drape_cuts_fingerprint(fp)
-        if not hasattr(fp, "ShapeFingerprint") or not fp.ShapeFingerprint:
-            try:
-                fp.ShapeFingerprint = self._shape_fingerprint(fp.Support.Shape)
-            except Exception:
-                pass
+        for attr, value in (
+            ("_cached_shape_fingerprint", ""),
+            ("_cached_rosette_angle", None),
+            ("_cached_drape_pitch", None),
+            ("_cached_drape_cuts_fingerprint", ""),
+        ):
+            if not hasattr(self, attr):
+                setattr(self, attr, value)
+
         super().onDocumentRestored(fp)
 
     def execute(self, fp):
@@ -543,17 +471,6 @@ class CompositeShellFP(CompositeBaseFP):
         # restore completes runs the real logic.
         if not hasattr(fp, "Support") or not hasattr(fp, "Laminate"):
             return
-        # If restoring and the persisted-drape properties aren't registered
-        # yet, don't attempt a fresh solve (it would write to properties that
-        # don't exist). The persisted Angle survives restore; a later recompute
-        # rehydrates from the persisted drape data.
-        if fp.Document.Restoring and not (
-            hasattr(fp, "NodePositionsJSON")
-            and hasattr(fp, "QuadsJSON")
-            and hasattr(fp, "TexCoordsJSON")
-        ):
-            return
-
         # Always hide the native LCS symbology so only the rosette
         # disk+arrows are visible in the 3D view.
         self._hide_lcs_view(fp)
@@ -569,16 +486,9 @@ class CompositeShellFP(CompositeBaseFP):
             fp.Shape = fp.Support.Shape
             return
 
-        # ── In-memory fast-path: skip when support shape unchanged ──────
-        if fp.Support:
-            try:
-                current_fp = shape_fingerprint(fp.Support.Shape)
-                stored_fp = getattr(fp, "ShapeFingerprint", "")
-                if stored_fp and stored_fp == current_fp:
-                    # Shape unchanged — skip rehydrate/re-solve entirely.
-                    return
-            except Exception:
-                pass
+        # ── In-memory fast-path: skip when the live backend cache matches ──
+        if self._can_use_persisted(fp):
+            return
 
         def get_lcs():
             rosette = fp.Rosette
@@ -590,19 +500,10 @@ class CompositeShellFP(CompositeBaseFP):
 
         # During document restore the rosette FeaturePython may not have its
         # properties registered yet (proxy __init__ hasn't run). Fall back to
-        # 0.0 so the shell can still rehydrate from persisted drape data.
+        # 0.0 so the shell can still solve cleanly after restore.
         self._rosette_angle = float(
             getattr(getattr(fp, "Rosette", None), "Angle", 0.0) or 0.0
         )
-
-        # ── Try to rehydrate from persisted data ───────────────────
-        if self._can_use_persisted(fp):
-            self._diag(fp, "rehydrating from persisted drape")
-            try:
-                self._rehydrate(fp)
-                return
-            except Exception as exc:
-                self._diag(fp, f"rehydrate failed: {exc}")
 
         # ── Full solve — run synchronously ─────────────────────────
         _profiler('drape_solve')
@@ -690,7 +591,6 @@ class CompositeShellFP(CompositeBaseFP):
     def _complete_drape(self, fp, result):
         """Update FreeCAD properties and load shader (main thread)."""
         _profiler('complete_drape')
-        import json
 
         backend = result["backend"]
         self._backend = backend
@@ -699,7 +599,6 @@ class CompositeShellFP(CompositeBaseFP):
         diag = result["diag"]
         valid = result["valid"]
         quality_pass = result["quality_pass"]
-        tex_coords = result["tex_coords"]
 
         # Diagnostics
         self._set_drape_diagnostics(
@@ -719,13 +618,8 @@ class CompositeShellFP(CompositeBaseFP):
         qual = solve_result.get("quality", {})
         fp.DrapeQuality = repr(qual)
 
-        if tex_coords is not None:
-            fp.TexCoordsJSON = json.dumps(tex_coords)
-        else:
-            fp.TexCoordsJSON = ""
-
-        # Persist solve data for rehydration
-        self._persist_solve_data(fp, solve_result)
+        # Keep the live cache state on the proxy/backend only.
+        self._store_cache_state(fp)
 
         # Store mesh in backend for ViewProvider shader attachment
         backend._mesh = drapecd_mesh
@@ -744,16 +638,15 @@ class CompositeShellFP(CompositeBaseFP):
 
     def _mark_failed(self, fp, error_msg):
         """Mark the shell as failed (main thread)."""
-        import json
 
         self._backend = None
+        self._cached_shape_fingerprint = ""
+        self._cached_rosette_angle = None
+        self._cached_drape_pitch = None
+        self._cached_drape_cuts_fingerprint = ""
         fp.DrapeValid = False
         fp.QualityPass = False
         fp.DrapeQuality = "error: " + error_msg[:200]
-        fp.TexCoordsJSON = ""
-        fp.NodePositionsJSON = ""
-        fp.QuadsJSON = ""
-        fp.StrainsJSON = ""
         self._set_drape_diagnostics(
             fp,
             backend="nextdrape",
@@ -788,59 +681,36 @@ class CompositeShellFP(CompositeBaseFP):
         return shape_fingerprint(shape)
 
     def _can_use_persisted(self, fp) -> bool:
-        """Return True if persisted solve data is still valid."""
-        # During restore the persisted-data properties may not be registered yet.
-        for prop in ("DrapeValid", "NodePositionsJSON", "QuadsJSON", "TexCoordsJSON"):
-            if not hasattr(fp, prop):
-                return False
-        # Must have a valid prior solve
-        if not fp.DrapeValid:
+        """Return True if the in-memory backend cache still matches the shell."""
+        backend = getattr(self, "_backend", None)
+        if backend is None or not backend.is_valid():
             return False
-        # Must have all persisted fields
-        if not (fp.NodePositionsJSON and fp.QuadsJSON and fp.TexCoordsJSON):
-            return False
-        # Support shape must be unchanged
-        if not fp.Support:
+        if not hasattr(fp, "Support") or not fp.Support:
             return False
         try:
-            current = self._shape_fingerprint(fp.Support.Shape)
+            current_shape_fp = self._shape_fingerprint(fp.Support.Shape)
         except Exception:
             return False
-        stored = getattr(fp, "ShapeFingerprint", "")
-        if not stored:
+        if current_shape_fp != getattr(self, "_cached_shape_fingerprint", ""):
             return False
-        if current != stored:
-            return False
-        # Rosette angle affects texture coordinate rotation.
-        # If the angle changed, the persisted tex_coords are stale.
         try:
             current_angle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
-            stored_angle = getattr(fp, "_LastRosetteAngle", 0.0)
-            if abs(current_angle - stored_angle) > 0.001:
-                return False
         except Exception:
             return False
-        # Drape cuts affect the drape solve result.
-        # If cut wires changed, the persisted payload is stale.
-        try:
-            cuts_fp = self._drape_cuts_fingerprint(fp)
-            stored_cuts_fp = getattr(fp, "_DrapeCutsFingerprint", "")
-            if stored_cuts_fp and cuts_fp != stored_cuts_fp:
-                return False
-        except Exception:
+        if abs(current_angle - float(getattr(self, "_cached_rosette_angle", 0.0) or 0.0)) > 0.001:
             return False
-        # Drape pitch affects the drape solve result.
-        # If the pitch changed, persisted node positions/quads are stale.
         try:
             current_pitch = float(fp.DrapePitch)
-            stored_pitch = getattr(fp, "_LastDrapePitch", None)
-            # If _LastDrapePitch was never recorded (e.g. data saved before
-            # this check existed), distrust the persisted payload.
-            if stored_pitch is None:
-                return False
-            if abs(current_pitch - stored_pitch) > 0.001:
-                return False
         except Exception:
+            return False
+        cached_pitch = getattr(self, "_cached_drape_pitch", None)
+        if cached_pitch is None or abs(current_pitch - float(cached_pitch)) > 0.001:
+            return False
+        try:
+            cuts_fp = self._drape_cuts_fingerprint(fp)
+        except Exception:
+            return False
+        if cuts_fp != getattr(self, "_cached_drape_cuts_fingerprint", ""):
             return False
         return True
 
@@ -888,44 +758,12 @@ class CompositeShellFP(CompositeBaseFP):
 
         # Transparency is set by _inject_drape_geometry above
 
-    def _persist_solve_data(self, fp, solve_result: dict) -> None:
-        """Store solve result arrays as JSON properties for rehydration."""
-        node_positions = solve_result.get("node_positions")
-        if node_positions is None:
-            node_positions_payload = []
-        else:
-            node_positions_payload = np.asarray(node_positions).tolist()
-        fp.NodePositionsJSON = json.dumps(node_positions_payload)
-        fp.QuadsJSON = json.dumps(
-            solve_result.get("quads", [])
-        )
-        shear = np.asarray(solve_result.get("shear_angle", []), dtype=float)
-        warp = np.asarray(solve_result.get("warp_strain", []), dtype=float)
-        weft = np.asarray(solve_result.get("weft_strain", []), dtype=float)
-        if (
-            shear.ndim == 1
-            and warp.ndim == 1
-            and weft.ndim == 1
-            and len(shear)
-            and len(warp) == len(shear)
-            and len(weft) == len(shear)
-        ):
-            strains_payload = np.column_stack([warp, weft, shear]).tolist()
-        else:
-            # Backward compatibility: persist shear-only if full tensor is absent.
-            strains_payload = shear.tolist()
-        fp.StrainsJSON = json.dumps(strains_payload)
-        fp.QualityJSON = json.dumps(
-            solve_result.get("quality", {})
-        )
-        # Cache the shape fingerprint so _can_use_persisted skips rehashing
-        fp.ShapeFingerprint = shape_fingerprint(fp.Support.Shape)
-        # Cache the rosette angle so _can_use_persisted detects changes
-        fp._LastRosetteAngle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
-        # Cache the drape pitch so _can_use_persisted detects changes
-        fp._LastDrapePitch = float(fp.DrapePitch)
-        # Cache cut-wire fingerprint so _can_use_persisted detects wire changes
-        fp._DrapeCutsFingerprint = self._drape_cuts_fingerprint(fp)
+    def _store_cache_state(self, fp) -> None:
+        """Store the live backend cache state on the proxy only."""
+        self._cached_shape_fingerprint = self._shape_fingerprint(fp.Support.Shape)
+        self._cached_rosette_angle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
+        self._cached_drape_pitch = float(fp.DrapePitch)
+        self._cached_drape_cuts_fingerprint = self._drape_cuts_fingerprint(fp)
 
     def fibre_analysis(self, fp):
         histograms_length = make_fibre_length_analysis(fp)

@@ -182,6 +182,23 @@ class TestFreeCADIntegration(unittest.TestCase):
         finally:
             pass
 
+    def test_conical_panel_attaches_shader_in_gui(self):
+        self._ensure_freecadgui()
+        if not getattr(FreeCAD, "GuiUp", False):
+            self.skipTest("GUI not available")
+
+        from Composites.compositeexamples.examples.conical_panel_segment import (
+            build,
+        )
+
+        result = build(run_solver=False)
+        shell = result["feature_stack"]["shell"]
+        vp = shell.ViewObject.Proxy
+
+        self.assertTrue(vp.Active)
+        self.assertTrue(getattr(vp.grid_shader, "_attached", False))
+        self.assertGreater(vp.grid_shader.grp.getNumChildren(), 0)
+
     def _make_fibre_lamina(self, doc):
         import FreeCADGui
 
