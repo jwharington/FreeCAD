@@ -65,6 +65,7 @@ if(COMPOSITES_BUILD_CPP)
             ${CMAKE_SOURCE_DIR}/src
             ${CMAKE_CURRENT_SOURCE_DIR}
             ${CMAKE_CURRENT_BINARY_DIR}
+            ${CMAKE_SOURCE_DIR}/src/3rdParty/libkdtree
     )
     
     target_link_libraries(Composites_drape ${Composites_LIBS})

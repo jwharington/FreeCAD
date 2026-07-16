@@ -23,6 +23,24 @@ def _import_solver():
     return Composites_drape.solve
 
 
+def _import_kdtree():
+    """Import the KDTreeLocator class from the C++ solver module."""
+    import Composites_drape
+    return Composites_drape.KDTreeLocator
+
+
+# Lazy import of KDTreeLocator
+KDTreeLocator = None
+
+
+def _ensure_kdtree():
+    """Ensure KDTreeLocator is imported."""
+    global KDTreeLocator
+    if KDTreeLocator is None:
+        KDTreeLocator = _import_kdtree()
+    return KDTreeLocator
+
+
 class NextDrapeBackend(DrapeBackend):
     """Wraps the C++ nextdrape solver (Composites_drape module)."""
 
@@ -323,8 +341,8 @@ class NextDrapeBackend(DrapeBackend):
     def get_tex_coord_at_point(self, point: Any, offset_angle_deg: float = 0) -> Any | None:
         """Return texture coordinate at a 3D point via bilinear interpolation.
 
-        Finds the quad containing the projected 3D point and interpolates
-        the UV coordinates from the four corner nodes.
+        Uses KDTreeLocator (C++ k-d tree) for O(log N) quad lookup,
+        falling back to brute-force for small meshes.
         """
         r = self._run_solve()
         if not r.get("success"):
@@ -337,6 +355,18 @@ class NextDrapeBackend(DrapeBackend):
         if not quads or len(node_positions) == 0:
             return None
 
+        # Use KDTreeLocator if available (large mesh)
+        n_quads = len(quads)
+        if n_quads >= _ensure_kdtree().min_quads_for_kdtree():
+            # Build or reuse KDTreeLocator (C++ via pybind11)
+            if not hasattr(self, "_quad_locator"):
+                self._quad_locator = _ensure_kdtree()(
+                    node_positions.tolist(),
+                    quads,
+                )
+            return self._quad_locator.lookup(list(point), tex_coords.tolist())
+
+        # Fall back to brute-force for small meshes
         from ..util.geometry_util import tex_coord_at_point
         return tex_coord_at_point(
             node_positions, quads, tex_coords, point, offset_angle_deg

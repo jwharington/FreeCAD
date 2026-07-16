@@ -5,18 +5,35 @@ import FreeCAD
 
 import hashlib
 import json
+import time
 from datetime import datetime, timezone
 
 import numpy as np
 
 from FreeCAD import Console
 
+_profiler_data = {}
+
+def _profiler(label):
+    '''Call at entry/exit to record elapsed time.'''
+    if label not in _profiler_data:
+        _profiler_data[label] = time.perf_counter()
+    else:
+        elapsed = time.perf_counter() - _profiler_data.pop(label)
+        ms = elapsed * 1000
+        # Print to stderr with flush
+        import sys
+        sys.stderr.write(f'[PROFILER] {label}: {ms:.0f}ms\n')
+        sys.stderr.flush()
+        return elapsed
+    return None
+
 from .. import (
     COMPOSITE_SHELL_TOOL_ICON,
     is_comp_type,
     roma_map,
 )
-from ..tools.drape_backend_nextdrape import NextDrapeBackend
+from ..tools.drape_backend_nextdrape import NextDrapeBackend, _ensure_kdtree
 from .coin_geometry import (
     build_drapecd_coin,
     find_switch,
@@ -242,6 +259,18 @@ class _RehydratedBackend:
         """Interpolate UV at a 3D point from persisted data."""
         if self._status != "valid" or not self._quads or len(self._node_positions) == 0:
             return None
+
+        # Use KDTreeLocator if available (large mesh)
+        n_quads = len(self._quads)
+        if n_quads >= _ensure_kdtree().min_quads_for_kdtree():
+            # Build or reuse KDTreeLocator (C++ via pybind11)
+            if not hasattr(self, "_quad_locator"):
+                self._quad_locator = _ensure_kdtree()(
+                    self._node_positions.tolist(),
+                    self._quads,
+                )
+            return self._quad_locator.lookup(list(point), self._tex_coords.tolist())
+
         from ..util.geometry_util import tex_coord_at_point
         return tex_coord_at_point(
             self._node_positions, self._quads, self._tex_coords, point, offset_angle_deg
@@ -576,15 +605,21 @@ class CompositeShellFP(CompositeBaseFP):
                 self._diag(fp, f"rehydrate failed: {exc}")
 
         # ── Full solve — run synchronously ─────────────────────────
+        _profiler('drape_solve')
         self._diag(fp, "running drape solve")
         fp.Shape = fp.Support.Shape
         result = self._run_drape_sync(fp, get_lcs())
+        _profiler('drape_solve')
         if isinstance(result, Exception):
             self._diag(fp, f"drape failed: {result}")
             self._mark_failed(fp, str(result))
         else:
             self._diag(fp, "drape completed")
+            _profiler('complete_drape')
             self._complete_drape(fp, result)
+            _profiler('complete_drape')
+            if _profiler_data:
+                print(f'[PROFILER] TOTAL: {sum(_profiler_data.values()):.0f}ms', flush=True)
 
     def _diag(self, fp, message):
         try:
@@ -610,6 +645,7 @@ class CompositeShellFP(CompositeBaseFP):
         GUI/scene-graph hiccup never aborts the drape solve or the
         document recompute that called it.
         """
+        _profiler('inject_drape_geometry')
         # Get ViewObject — may be None during initial solve before GUI attach.
         vp = getattr(fp, "ViewObject", None)
         if vp is None and fp.Document is not None:
@@ -649,9 +685,11 @@ class CompositeShellFP(CompositeBaseFP):
             vp.Proxy._set_shell_transparency(vp)
         except Exception:
             pass
+        _profiler('inject_drape_geometry')
 
     def _complete_drape(self, fp, result):
         """Update FreeCAD properties and load shader (main thread)."""
+        _profiler('complete_drape')
         import json
 
         backend = result["backend"]
