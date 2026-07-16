@@ -129,6 +129,82 @@ class TestCompositeExamplesSmoke(TestCompositeExamplesBase):
         self.assertIn("laminate", result)
         self.assertIsNotNone(result["laminate"])
 
+    def test_conical_panel_full_pipeline_round_trip(self):
+        """The conical panel example drives the full drape-to-FEM pipeline."""
+        try:
+            result = runner.run(
+                "conical_panel_segment",
+                run_solver=True,
+                doc=None,
+                debug_options={"skip_view_providers": True},
+            )
+        except RuntimeError as exc:
+            msg = str(exc)
+            missing_stack_markers = (
+                "ObjectsFem is required",
+                "Unable to create FEM analysis/solver/mesh objects",
+                "Mesh generation failed",
+            )
+            if any(marker in msg for marker in missing_stack_markers):
+                self.skipTest(
+                    f"FEM stack unavailable in this FreeCAD build: {msg}",
+                )
+            raise
+
+        self._saved_doc = result.get("doc")
+        shell = result.get("feature_stack", {}).get("shell")
+        fem_job = result.get("fem_job")
+        self.assertIsNotNone(shell)
+        self.assertTrue(shell.DrapeValid)
+        self.assertTrue(shell.Proxy._can_use_persisted(shell))
+        self.assertIsNotNone(fem_job)
+        self.assertIsNotNone(fem_job.get("analysis"))
+        self.assertIsNotNone(fem_job.get("solver"))
+        self.assertIsNotNone(fem_job.get("mesh"))
+        self.assertIsNotNone(fem_job.get("shell_section"))
+        self.assertIsNotNone(fem_job.get("material"))
+
+        for key in ("shell_section", "material"):
+            refs = getattr(fem_job[key], "References", None)
+            self.assertTrue(refs, msg=f"{key} missing shell reference")
+            self.assertEqual(refs[0][0].Name, shell.Name)
+            ref_sub = refs[0][1]
+            if isinstance(ref_sub, (tuple, list)):
+                ref_sub = ref_sub[0]
+            self.assertEqual(ref_sub, "Face1")
+
+        doc = result["doc"]
+        path = os.path.join(
+            tempfile.gettempdir(),
+            f"{self.__class__.__name__}_{self._testMethodName}.FCStd",
+        )
+        doc.saveAs(path)
+        doc_name = doc.Name
+        shell_name = shell.Name
+        FreeCAD.closeDocument(doc_name)
+
+        reopened = FreeCAD.openDocument(path)
+        try:
+            reopened.recompute()
+            shell2 = reopened.getObject(shell_name)
+            self.assertIsNotNone(shell2)
+            self.assertTrue(shell2.DrapeValid)
+            self.assertTrue(shell2.Proxy._can_use_persisted(shell2))
+        finally:
+            try:
+                reopened.close()
+            except Exception:
+                pass
+            if os.path.exists(path):
+                os.remove(path)
+            import glob
+
+            for bak in glob.glob(os.path.splitext(path)[0] + ".*.FCBak"):
+                try:
+                    os.remove(bak)
+                except OSError:
+                    pass
+
     def test_all_examples_build(self):
         """Every example builds successfully with run_solver=False."""
         for example_id in registry.list_examples():

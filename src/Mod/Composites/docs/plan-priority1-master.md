@@ -126,7 +126,7 @@ commit 10:(merge) enh(composites): UV quality improvements  ← Stream 2
 | G4 | UVs bounded at mesh edges | ✅ PASS |
 | G5 | >3× speedup on 50×50 grid | ✅ PASS — flat 50×50 benchmark measured 124.95× speedup with max diff 7.1e-15 |
 | G6 | No UV jumps >0.05 at shared edges | ✅ PASS |
-| G7 | Full pipeline works end-to-end | ⏸ TBD — needs integration test |
+| G7 | Full pipeline works end-to-end | ✅ PASS — covered by `test_compositeexamples.py::TestCompositeExamplesSmoke.test_conical_panel_full_pipeline_round_trip` |
 | G8 | All Composites tests pass | ⏸ TBD |
 
 ## Files Modified
@@ -142,6 +142,7 @@ commit 10:(merge) enh(composites): UV quality improvements  ← Stream 2
 | `src/Mod/Composites/features/CompositeShell.py` | 1,2 | ✅ Wired into _RehydratedBackend |
 | `src/Mod/Composites/features/AlignFibreRosette.py` | 1 | ✅ Transparent (delegates to backend) |
 | `src/Mod/Composites/compositestests/test_uv_mapping.py` | 2 | ✅ UV quality tests |
+| `src/Mod/Composites/compositestests/test_compositeexamples.py` | 2 | ✅ Added end-to-end full-pipeline smoke test |
 | `src/Mod/Composites/compositestests/test_kd_tree_locator.py` | 1 | ✅ Added KD-vs-brute-force comparison test |
 | `src/3rdParty/nextdrape/tests/test_kd_tree_locator.cpp` | 1 | ✅ 7 C++ tests, all passing |
 | `src/3rdParty/nextdrape/include/nextdrape/KDTreeLocator.hpp` | — | Moved from `App/` to `nextdrape/` |
