@@ -3,7 +3,52 @@
 **Date:** 2026-07-15
 **Last Updated:** 2026-07-16
 **Scope:** All Priority 1 work from the handoff document
-**Status:** G7 resolved — shader rendering is active in MCP and drape state now lives on proxy/backend cache state instead of serialised `CompositeShell` properties
+**Status:** G7 — root-cause bugs fixed, shader-only verified via MCP. Persistence proof still pending.
+
+1. Disable the separate mesh geometry. ✅
+2. Verify shader-only output. ✅ (MCP-verified 2026-07-16)
+3. Close G7 with objective evidence. ⏸ persistence proof pending.
+
+Current state: the drape-mesh branch is removed, the shader attaches to the **SupportSurface** geometry (confirmed via MCP: `shader_state` has 9 children, last child = `SupportSurface` Separator; `_coin_geo = SupportSurface`; `drape_host` has only `shader_state` — no competing geometry). ConicalPanelSupport is hidden by default. The swallowed exception is now logged and aborts shader attach on failure. Persistence ownership proof is the remaining G7 item.
+
+**Verification note:** Shader correctness must be proven with objective, machine-checkable evidence. Do not use ambiguous visual inspection alone as proof of positive shader functioning. `_attached=True` on an empty shader group is NOT proof of functioning — it was the source of the false-positive.
+
+**Current verified state (MCP, 2026-07-16):**
+- `shader_state` group has 9 children: 8 shader state nodes + `SupportSurface` Separator (Coordinate3 + TextureCoordinate3 + IndexedFaceSet).
+- `grid_shader._coin_geo = SupportSurface`; `_attached = True` (real — geometry present).
+- `drape_host` has exactly 1 child (`shader_state`) — no `DrapedMeshGeometry`, no standalone `SupportSurface` direct child.
+- ConicalPanelSupport `Visibility = False` by default; `update_visibility` no longer force-re-shows it.
+- `hide_drape_mesh` debug toggle no longer hides the support surface (the incorrect `mode_switch.whichChild = -1` coupling was removed).
+- Next step: persistence regression proof for G7 closure.
+
+## Resolved blockers
+
+### B1 — `build_support_surface_coin` threw on inhomogeneous UV array ✅ FIXED
+
+`get_tex_coord_at_point` violated its own "return None if no quad reachable" contract: the KDTree `lookup` returns `[]` (empty list) when no valid quad is found, but the code returned `[]` instead of `None`. In `_map_uv_to_support`, `if uv is not None` was True for `[]`, so empty lists were appended → inhomogeneous numpy array → `ValueError`. Fix: `drape_backend_nextdrape.py` now converts empty KDTree results to `None`.
+
+### B2 — Swallowed exception masked B1 as silent success ✅ FIXED
+
+`_inject_drape_geometry` wrapped its body in `try: ... except: pass`. B1's `ValueError` was caught and discarded; `reload_shader` then ran on an empty shader and set `_attached=True` with zero geometry. Fix: geometry injection is now in its own try/except that logs via `Console.PrintWarning` and returns early — `reload_shader` is NOT called if injection failed, so no empty-shader false positive.
+
+### B3 — Drape-mesh fallback was masking B1/B2 ✅ RESOLVED (do not restore)
+
+The removed `load_shader` fallback (`_coin_geo = backend._mesh`) hid B1/B2: when the support surface failed to build, the shader fell back to the drape mesh. The fallback is gone and will not be restored.
+
+### B4 — ConicalPanelSupport visibility ✅ FIXED
+
+`update_visibility` force-set `self.Object.Support.Visibility = visible` on every recompute/attach, un-hiding what the demo hid. Fix: removed that line — the shader renders on its own injected geometry, so the support object's visibility is irrelevant to the overlay.
+
+### Additional fix — geometry no longer injected as direct child of `drape_host`
+
+The SupportSurface is now handed directly to the shader via `_coin_geo` instead of being injected into `drape_host` and later removed. This eliminates both the competing native render branch AND a Coin3D segfault caused by removing the node from `drape_host` after adding it to `shader_state`.
+
+### Why tests missed this
+
+- `test_meshgrid_shader_binding.py` attaches to a **hand-built dummy geometry**; it never exercises `build_support_surface_coin` → the numpy coercion path.
+- The end-to-end scene-graph tests **skip in headless mode** (ViewObject is `None` without GUI), so they only assert under MCP/GUI — and were never run against the real pipeline before today.
+- Headless smoke tests never trigger the path at all (no ViewObject → `_inject_drape_geometry` returns early), so B1 never fired there.
+- B2 converted the hard failure into silent empty state; only a test asserting `gs._coin_geo is not None` would have caught it, and none did.
 
 ---
 
@@ -78,13 +123,15 @@ Both streams write tests in parallel.
 
 ### Phase C: Cross-Validation (Day 3–4) ⏸ PENDING
 
-> Note: G7 focus is now the drape-state ownership cleanup. The shader path is already active in MCP; the remaining work is to stop serializing the internal drape payload on `CompositeShell` and keep the live backend as the source of truth.
->
-> Progress update (2026-07-16): the live cache has been moved to proxy-only backend state and a save/load regression test now checks that the drape payload keys are absent from `Document.xml`.
+> Note:
+> 1. Dummy-geometry regression passes in headless tests — but this path does NOT exercise `build_support_surface_coin` (see Open blockers B1/B2).
+> 2. Grid spacing is fixed at 10 mm physical spacing.
+> 3. The separate drape mesh branch has been removed from the render path in code.
+> 4. Shader output is **not** verified: the support surface fails to build and the shader attaches to an empty group. Fix B1–B4 before validating.
 
 7. Run full test suite (`test_uv_mapping.py` + C++ unit tests) — TBD
-8. Visual verification in FreeCAD GUI — TBD
-9. Performance measurement (confirm ~37× speedup) — TBD
+8. Performance measurement (confirm ~37× speedup) — TBD
+9. Final review and merge — TBD
 
 ### Phase D: Polish (Day 4–5) ⏸ PENDING
 
@@ -121,12 +168,17 @@ commit 10:(merge) enh(composites): UV quality improvements  ← Stream 2
 
 ## Gates
 
-**Gate policy:** do not mark a gate closed until the behavior is covered by an automated test that fails before the fix and passes after it. For rendering and persistence issues, establish a real FreeCAD/headless or MCP-backed regression test before reopening the gate.
+**Gate policy:**
+- Do not close a gate without an automated test.
+- For rendering and persistence, use a real FreeCAD/headless or MCP-backed regression test.
+- Do not use visual inspection as proof.
+- Require objective, machine-checkable evidence.
 
 **G7 closure requirements:**
-- Shader rendering must be covered by a FreeCAD MCP or GUI-backed regression test that proves the view provider/shader path is active, not just instantiated.
-- Drape state ownership must be covered by a persistence regression test that proves the internal drape payload is not stored on `CompositeShell` and is restored via the C++ backend.
-- Visual verification may support the diagnosis, but it does not close the gate by itself.
+1. Disable the separate mesh geometry.
+2. Prove shader rendering with a FreeCAD MCP or GUI-backed regression test.
+3. Prove drape state ownership with a persistence regression test.
+4. Use visual checks only as support, not proof.
 
 | Gate | Criteria | Status |
 |------|----------|--------|
@@ -137,7 +189,7 @@ commit 10:(merge) enh(composites): UV quality improvements  ← Stream 2
 | G4 | UVs bounded at mesh edges | ✅ PASS |
 | G5 | >3× speedup on 50×50 grid | ✅ PASS — flat 50×50 benchmark measured 124.95× speedup with max diff 7.1e-15 |
 | G6 | No UV jumps >0.05 at shared edges | ✅ PASS |
-| G7 | Full pipeline works end-to-end | ✅ PASS — shader rendering is active in MCP, save/load no longer serializes the drape payload on `CompositeShell`, and the backend cache is restored by recompute |
+| G7 | Full pipeline works end-to-end | ⏸ IN PROGRESS — shader-only output verified via MCP (2026-07-16): `shader_state` has 9 children incl. `SupportSurface`; `_coin_geo=SupportSurface`; `drape_host` has only `shader_state` (no competing geometry); ConicalPanelSupport hidden. B1–B4 fixed. Remaining: persistence regression proof. |
 | G8 | All Composites tests pass | ⏸ TBD |
 
 **Order of closure:** G7 is the first blocker to resolve; G0/G8 only count once G7 is back to a real passing state and backed by regression tests.
@@ -155,7 +207,10 @@ commit 10:(merge) enh(composites): UV quality improvements  ← Stream 2
 | `src/Mod/Composites/features/CompositeShell.py` | 1,2 | ✅ Wired into _RehydratedBackend |
 | `src/Mod/Composites/features/AlignFibreRosette.py` | 1 | ✅ Transparent (delegates to backend) |
 | `src/Mod/Composites/compositestests/test_uv_mapping.py` | 2 | ✅ UV quality tests |
-| `src/Mod/Composites/compositestests/test_compositeexamples.py` | 2 | ✅ Added end-to-end full-pipeline smoke test |
+| `src/Mod/Composites/compositestests/test_compositeexamples.py` | 2 | ✅ Added end-to-end full-pipeline smoke test. ⚠️ Added shader-only scene-graph regression but it SKIPS in headless mode (ViewObject is None without GUI) — must be run/verified via MCP. Not yet proven green against the real pipeline. |
+| `src/Mod/Composites/compositestests/test_meshgrid_shader_binding.py` | 2 | ⚠️ Added controlled dummy-geometry shader regression test and 10 mm spacing assertion — but uses hand-built geometry that bypasses `build_support_surface_coin`, so it did NOT catch B1. Needs a test exercising the real support-surface build path. |
+| `src/Mod/Composites/compositeexamples/examples/test_shader_grid_diagnostic.py` | 2 | ✅ Added high-contrast diagnostic scene for visible grid proof |
+| `src/Mod/Composites/compositeexamples/examples/conical_panel_segment.py` | 2 | ✅ Added hide-drape-mesh debug toggle for shader isolation |
 | `src/Mod/Composites/compositestests/test_kd_tree_locator.py` | 1 | ✅ Added KD-vs-brute-force comparison test |
 | `src/3rdParty/nextdrape/tests/test_kd_tree_locator.cpp` | 1 | ✅ 7 C++ tests, all passing |
 | `src/3rdParty/nextdrape/include/nextdrape/KDTreeLocator.hpp` | — | Moved from `App/` to `nextdrape/` |

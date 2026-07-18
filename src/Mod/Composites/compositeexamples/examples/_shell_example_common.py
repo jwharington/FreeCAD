@@ -398,15 +398,28 @@ def create_composite_feature_stack(
             support=support,
             laminate=laminate_obj,
             rosette=rosette_obj,
+            hide_drape_mesh=bool(
+                diagnostics and diagnostics.get("options", {}).get("hide_drape_mesh")
+            ),
         )
         record_diagnostic_event(diagnostics, "feature_stack.shell.fp_ctor.done")
+
+        if diagnostics and diagnostics.get("options", {}).get("hide_drape_mesh"):
+            try:
+                shell_obj.Proxy.hide_drape_mesh = True
+            except Exception:
+                pass
 
         if attach_view_providers and getattr(shell_obj, "ViewObject", None):
             record_diagnostic_event(
                 diagnostics,
                 "feature_stack.shell.view_provider.begin",
             )
-            ViewProviderCompositeShell(shell_obj.ViewObject)
+            vp = ViewProviderCompositeShell(shell_obj.ViewObject)
+            try:
+                shell_obj.ViewObject.Proxy = vp
+            except Exception:
+                pass
             record_diagnostic_event(
                 diagnostics,
                 "feature_stack.shell.view_provider.done",

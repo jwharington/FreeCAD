@@ -106,11 +106,14 @@ class ViewProviderCompositeShell:
         # Drape geometry + shader live in a dedicated SoSwitch on this
         # ViewProvider's RootNode (Part ViewProvider only rebuilds the
         # display-mode Switch, not direct RootNode children).
+        root = getattr(obj, "RootNode", None)
+        self.mode_switch = self._ensure_mode_switch(root)
         self.drape_host = coin.SoSwitch()
         self.drape_host.setName("DrapeHost")
         self.drape_host.whichChild = coin.SO_SWITCH_ALL
         try:
-            obj.RootNode.addChild(self.drape_host)
+            if root is not None:
+                root.addChild(self.drape_host)
         except AttributeError:
             pass  # RootNode not available in non-GUI / test environments
 
@@ -141,12 +144,60 @@ class ViewProviderCompositeShell:
         self.rosette_switch.addChild(self.rosette.separator)
         self.rosette_switch.whichChild = 0  # visible by default
         try:
-            obj.RootNode.addChild(self.rosette_switch)
+            if root is not None:
+                root.addChild(self.rosette_switch)
         except AttributeError:
             pass  # RootNode not available in non-GUI / test environments
 
         # needed to trigger color update
         self.onChanged(obj, "Color")
+        self.update_visibility(obj)
+
+    def _find_switch(self, node):
+        """Find the first Coin3D Switch node under *node* recursively."""
+        if node is None:
+            return None
+        children = getattr(node, "getChildren", lambda: None)()
+        if children is None:
+            return None
+        for i in range(int(children.getLength())):
+            child = children[i]
+            if child is None:
+                continue
+            try:
+                if "Switch" in str(child.getTypeId().getName()):
+                    return child
+            except AttributeError:
+                pass
+            found = self._find_switch(child)
+            if found is not None:
+                return found
+        return None
+
+    def _ensure_mode_switch(self, root):
+        """Return an existing display switch or create a fallback wrapper."""
+        switch = self._find_switch(root)
+        if switch is not None:
+            return switch
+        fallback = coin.SoSwitch()
+        fallback.setName("NativeShapeSwitch")
+        fallback.whichChild = coin.SO_SWITCH_ALL
+        if root is None:
+            return fallback
+        children = getattr(root, "getChildren", lambda: None)()
+        if children is None:
+            return fallback
+        try:
+            for i in range(int(children.getLength()) - 1, -1, -1):
+                child = children[i]
+                if child is None:
+                    continue
+                root.removeChild(i)
+                fallback.addChild(child)
+            root.addChild(fallback)
+        except Exception:
+            pass
+        return fallback
 
     def update_display_layer(self, fp):
         if not hasattr(fp.ViewObject, "DisplayLayer"):
@@ -181,8 +232,10 @@ class ViewProviderCompositeShell:
             except Exception:
                 pass
         self._set_shell_transparency(vobj)
-        if self.Object.Support:
-            self.Object.Support.Visibility = visible
+        # Do not force the support surface's visibility here. The shader
+        # renders on its own injected geometry inside drape_host, so the
+        # original support object's visibility is irrelevant to the overlay;
+        # forcing it visible would un-hide what the demo hid.
 
     def _set_shell_transparency(self, vobj):
         """Make the shell semi-transparent when drape geometry is present.
@@ -353,6 +406,8 @@ class ViewProviderCompositeShell:
                 from ..shaders.MeshGridShader import MeshGridShader
                 self.grid_shader = MeshGridShader()
             if self.grid_shader:
+                # Shader attachment now targets the support surface already
+                # injected into the GUI scene graph.
                 self.grid_shader.ScreenSpace = bool(self.ViewObject.ScreenSpaceGrid)
                 self.grid_shader.attach(
                     drape_host,

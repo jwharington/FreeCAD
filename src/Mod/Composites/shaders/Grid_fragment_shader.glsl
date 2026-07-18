@@ -1,8 +1,8 @@
 #version 130
-precision mediump float;
 
 uniform float darken = 0.5;
 uniform float screen_space = 1.0;
+uniform float grid_spacing_mm = 10.0;
 
 
 // https://github.com/rreusser/glsl-solid-wireframe?tab=readme-ov-file
@@ -65,35 +65,11 @@ void main() {
   float pixel_width = 1.0;
   float feather = 0.0;
 
-  // Compute screen-space scale from dFdx/dFdy of texture coordinates.
-  // dFdx/dFdy give the rate of change of texcoords per screen pixel.
-  // Inverse gives texcoords per screen pixel → multiply by target_cycles
-  // to get the scale that produces ~20px grid spacing.
-  vec2 ds_dt = vec2(dFdx(gl_TexCoord[0].s), dFdy(gl_TexCoord[0].s));
-  vec2 dt_dt = vec2(dFdx(gl_TexCoord[0].t), dFdy(gl_TexCoord[0].t));
-  vec2 dr_dr = vec2(dFdx(gl_TexCoord[0].r), dFdy(gl_TexCoord[0].r));
-
-  // Magnitude of texcoord change per screen pixel.
-  float ds_per_px = length(ds_dt);
-  float dt_per_px = length(dt_dt);
-  float dr_per_px = length(dr_dr);
-
-  // Avoid division by zero.
-  ds_per_px = max(ds_per_px, 1e-6);
-  dt_per_px = max(dt_per_px, 1e-6);
-  dr_per_px = max(dr_per_px, 1e-6);
-
-  // Target: ~25 grid cycles across the texcoord range → ~20px spacing.
-  // scale = 1 / (texcoords_per_pixel * target_cycles)
-  // = (pixels_per_texcoord_unit) / target_cycles
-  float target_cycles = 25.0;
-  float px_per_unit_x = 1.0 / (ds_per_px * target_cycles);
-  float px_per_unit_y = 1.0 / (dt_per_px * target_cycles);
-  float px_per_unit_z = 1.0 / (dr_per_px * target_cycles);
-
-  vec3 coord = vec3(px_per_unit_x * gl_TexCoord[0].s,
-                    px_per_unit_y * gl_TexCoord[0].t,
-                    px_per_unit_z * gl_TexCoord[0].r);
+  // Texture coordinates are already in physical units (mm).
+  // Divide by the requested physical spacing so the shader draws
+  // one repeat every grid_spacing_mm in world space.
+  float spacing = max(grid_spacing_mm, 1e-6);
+  vec3 coord = gl_TexCoord[0].xyz / spacing;
   float gridX = gridFactor(coord.x, pixel_width, feather);
   float gridY = gridFactor(coord.y, pixel_width, feather);
   float gridMax = max(gridX, gridY);

@@ -133,7 +133,7 @@ def run_drape_task(
 
         node_positions = solve_result.get("node_positions", [])
         quads = solve_result.get("quads", [])
-        drapecd_mesh = build_drapecd_coin(node_positions, quads, wireframe=True)
+        drapecd_mesh = build_drapecd_coin(node_positions, quads, wireframe=False)
 
         # 6. Collect results
         return {

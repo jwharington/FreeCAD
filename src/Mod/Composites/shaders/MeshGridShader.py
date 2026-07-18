@@ -51,19 +51,22 @@ class MeshGridShader:
         self.offset_angle.name = "offset_angle"
         self.offset_angle.value = 0.0
 
+        self.grid_spacing_mm = coin.SoShaderParameter1f()
+        self.grid_spacing_mm.name = "grid_spacing_mm"
+        self.grid_spacing_mm.value = 10.0
+
         self.screen_space = coin.SoShaderParameter1f()
         self.screen_space.name = "screen_space"
         self.screen_space.value = 1.0  # 1 = screen-space, 0 = world-space
 
         self.ScreenSpaceGrid = False  # toggle: True=dFdx/dFdy screen-space, False=world-scale
-
-        self.Spacing = [20.0, 2.0, 10.0]
         self.Darken = 0.5
 
         shader_params = [
             self.screen_space,
             self.darken,
             self.offset_angle,
+            self.grid_spacing_mm,
         ]
 
         self.fragmentShader = coin.SoFragmentShader()
@@ -156,6 +159,14 @@ class MeshGridShader:
     @Darken.setter
     def Darken(self, v: float) -> None:
         self.darken.value = v
+
+    @property
+    def GridSpacingMM(self) -> float:
+        return self.grid_spacing_mm.value.getValue()
+
+    @GridSpacingMM.setter
+    def GridSpacingMM(self, v: float) -> None:
+        self.grid_spacing_mm.value = v
 
     @property
     def Root(self) -> coin.SoSeparator:
@@ -291,10 +302,8 @@ class MeshGridShader:
             if not geometry_has_own_uv:
                 self.grp.addChild(self.texcoords)
             self.grp.addChild(coin_geo)
-            # Only remove from root on the first steal; on re-attach the
-            # node was never in root (it lived in the previous grp).
-            if self._coin_geo is None:
-                self._remove_node_from_parent(coin_geo, self.root)
+            # The geometry is handed directly via _coin_geo (never injected
+            # as a direct child of root), so there is nothing to remove.
             self._coin_geo = coin_geo
 
         self._attached = True

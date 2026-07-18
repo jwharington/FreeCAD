@@ -197,6 +197,7 @@ class TestFreeCADIntegration(unittest.TestCase):
 
         self.assertTrue(vp.Active)
         self.assertTrue(getattr(vp.grid_shader, "_attached", False))
+        self.assertIsNotNone(vp.grid_shader._coin_geo)
         self.assertGreater(vp.grid_shader.grp.getNumChildren(), 0)
 
     def _make_fibre_lamina(self, doc):

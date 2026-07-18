@@ -27,6 +27,7 @@ if _REPO_ROOT not in sys.path:
 from Composites.compositeexamples import registry, runner  # noqa: E402
 from Composites.compositeexamples.examples import (  # noqa: E402
     _shell_example_common,
+    conical_panel_segment,
     tubular_shell,
 )
 
@@ -221,6 +222,71 @@ class TestCompositeExamplesSmoke(TestCompositeExamplesBase):
                     os.remove(bak)
                 except OSError:
                     pass
+
+    def test_conical_panel_uses_shader_only_scene_graph(self):
+        """The conical panel example keeps the shader scene graph mesh-free."""
+        if not getattr(FreeCAD, "GuiUp", False):
+            self.skipTest("GUI not available — scene graph requires MCP/GUI mode")
+        result = conical_panel_segment.build(doc=None, run_solver=False)
+        shell = result.get("feature_stack", {}).get("shell")
+        self.assertIsNotNone(shell)
+
+        vp = getattr(shell.ViewObject, "Proxy", None)
+        mode_switch = getattr(vp, "mode_switch", None)
+        self.assertIsNotNone(mode_switch)
+        self.assertNotEqual(mode_switch.whichChild.getValue(), -1)
+
+        drape_host = getattr(vp, "drape_host", None)
+        self.assertIsNotNone(drape_host)
+        self.assertEqual(drape_host.getNumChildren(), 1)
+
+        child = drape_host.getChild(0)
+        self.assertEqual(child.getName(), "shader_state")
+        self.assertEqual(child.getNumChildren(), 9)
+
+        geometry = child.getChild(int(child.getNumChildren()) - 1)
+        self.assertEqual(geometry.getName(), "SupportSurface")
+        self.assertEqual(geometry.getTypeId().getName(), "Separator")
+        self.assertEqual(geometry.getNumChildren(), 3)
+
+        child_names = []
+        for i in range(int(drape_host.getNumChildren())):
+            child_names.append(drape_host.getChild(i).getName())
+        self.assertNotIn("DrapedMeshGeometry", child_names)
+
+    def test_conical_panel_can_hide_drape_mesh(self):
+        """The debug toggle must not hide the support surface or restore the drape mesh."""
+        if not getattr(FreeCAD, "GuiUp", False):
+            self.skipTest("GUI not available — scene graph requires MCP/GUI mode")
+        result = conical_panel_segment.build(
+            doc=None,
+            run_solver=False,
+            debug_options={"hide_drape_mesh": True},
+        )
+        shell = result.get("feature_stack", {}).get("shell")
+        self.assertIsNotNone(shell)
+        vp = getattr(shell.ViewObject, "Proxy", None)
+        mode_switch = getattr(vp, "mode_switch", None)
+        self.assertIsNotNone(mode_switch)
+        # The support surface (native display branch) must remain visible.
+        self.assertNotEqual(mode_switch.whichChild.getValue(), -1)
+
+        drape_host = getattr(vp, "drape_host", None)
+        self.assertIsNotNone(drape_host)
+        self.assertEqual(drape_host.getNumChildren(), 1)
+
+        shader_state = drape_host.getChild(0)
+        self.assertEqual(shader_state.getName(), "shader_state")
+        self.assertEqual(shader_state.getNumChildren(), 9)
+        geometry = shader_state.getChild(int(shader_state.getNumChildren()) - 1)
+        self.assertEqual(geometry.getName(), "SupportSurface")
+        self.assertEqual(geometry.getTypeId().getName(), "Separator")
+        self.assertEqual(geometry.getNumChildren(), 3)
+
+        child_names = []
+        for i in range(int(drape_host.getNumChildren())):
+            child_names.append(drape_host.getChild(i).getName())
+        self.assertNotIn("DrapedMeshGeometry", child_names)
 
     def test_all_examples_build(self):
         """Every example builds successfully with run_solver=False."""

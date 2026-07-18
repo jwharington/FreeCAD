@@ -331,9 +331,10 @@ class CompositeShellFP(CompositeBaseFP):
     Type = "Composite::Shell"
 
     def __init__(
-        self, obj, support=None, laminate=None, rosette=None
+        self, obj, support=None, laminate=None, rosette=None, hide_drape_mesh=False
     ):
         self._initializing = True
+        self.hide_drape_mesh = bool(hide_drape_mesh)
         obj.addProperty(
             type="App::PropertyLinkGlobal",
             name="Support",
@@ -558,34 +559,46 @@ class CompositeShellFP(CompositeBaseFP):
         if not (vp and hasattr(vp, "Proxy")):
             return
         drape_host = getattr(vp.Proxy, "drape_host", None)
+        if drape_host is None:
+            return
+
+        # Build and inject the support-surface geometry. If this fails we
+        # must NOT proceed to reload_shader() — attaching the shader to an
+        # empty scene graph silently produces a no-op overlay that reports
+        # _attached=True. Log the error and leave the shader detached so
+        # the failure is visible instead of masked.
         try:
-            if drape_host is not None:
-                remove_existing_coin_geometry(drape_host)
-                # Build support surface geometry from fp.Support.Shape
-                if fp.Support and hasattr(fp.Support, "Shape"):
-                    from .coin_geometry import build_support_surface_coin
-                    support_coin = build_support_surface_coin(
-                        fp.Support.Shape,
-                        deflection=1.0,
-                        draper=self,
-                    )
-                    inject_coin_geometry(drape_host, support_coin)
-                    # Name uniquely so _find_coin_geometry prioritises it
-                    # (inject_coin_geometry overwrites the name, so set it after)
-                    support_coin.setName("SupportSurface")
-                    # Store reference so attach() can re-use it if _find_coin_geometry
-                    # can't find the support surface (e.g. after remove_shader clears it)
-                    if hasattr(vp.Proxy, "grid_shader") and vp.Proxy.grid_shader:
-                        vp.Proxy.grid_shader._coin_geo = support_coin
-                # Inject drape mesh geometry
-                inject_coin_geometry(drape_host, drapecd_coin)
-                if cut_edges is not None:
-                    remove_cut_edges(drape_host)
-                    inject_cut_edges(drape_host, cut_edges)
-            vp.Proxy.reload_shader()
-            vp.Proxy._set_shell_transparency(vp)
-        except Exception:
-            pass
+            remove_existing_coin_geometry(drape_host)
+            if fp.Support and hasattr(fp.Support, "Shape"):
+                from .coin_geometry import build_support_surface_coin
+                support_coin = build_support_surface_coin(
+                    fp.Support.Shape,
+                    deflection=1.0,
+                    draper=self,
+                )
+                # Name uniquely so _find_coin_geometry prioritises it.
+                support_coin.setName("SupportSurface")
+                # Hand the geometry directly to the shader. It goes into the
+                # shader_state group on attach() — never as a direct child of
+                # drape_host — so there is no competing native render branch
+                # and no remove-from-root refcount hazard.
+                if hasattr(vp.Proxy, "grid_shader") and vp.Proxy.grid_shader:
+                    vp.Proxy.grid_shader._coin_geo = support_coin
+            if cut_edges is not None:
+                remove_cut_edges(drape_host)
+                inject_cut_edges(drape_host, cut_edges)
+        except Exception as exc:
+            import traceback
+            Console.PrintWarning(
+                f"[Composites][Drape] {fp.Name}: support-surface geometry "
+                f"injection failed — shader left detached: {exc}\n"
+            )
+            traceback.print_exc()
+            _profiler('inject_drape_geometry')
+            return
+
+        vp.Proxy.reload_shader()
+        vp.Proxy._set_shell_transparency(vp)
         _profiler('inject_drape_geometry')
 
     def _complete_drape(self, fp, result):
@@ -621,15 +634,10 @@ class CompositeShellFP(CompositeBaseFP):
         # Keep the live cache state on the proxy/backend only.
         self._store_cache_state(fp)
 
-        # Store mesh in backend for ViewProvider shader attachment
-        backend._mesh = drapecd_mesh
-
-        # drapecd_mesh is now just the Coin3D separator (build_drapecd_coin)
-        drapecd_coin = drapecd_mesh
-
-        # Inject draped mesh geometry + reload shader synchronously.
+        # Inject support-surface geometry + reload shader synchronously.
+        # The separate drape mesh is intentionally kept out of the GUI scene graph.
         cut_edges = result.get("cut_edges")
-        self._inject_drape_geometry(fp, drapecd_coin, cut_edges)
+        self._inject_drape_geometry(fp, drapecd_mesh, cut_edges)
 
         # Update the view
         view_object = getattr(fp, "ViewObject", None)
@@ -747,7 +755,7 @@ class CompositeShellFP(CompositeBaseFP):
         solve_result = self._backend._run_solve()
         node_positions = solve_result.get("node_positions", [])
         quads = solve_result.get("quads", [])
-        drapecd_coin = build_drapecd_coin(node_positions, quads, wireframe=True)
+        drapecd_coin = build_drapecd_coin(node_positions, quads, wireframe=False)
 
         # Inject draped mesh geometry + reload shader synchronously.
         self._inject_drape_geometry(fp, drapecd_coin)

@@ -364,7 +364,11 @@ class NextDrapeBackend(DrapeBackend):
                     node_positions.tolist(),
                     quads,
                 )
-            return self._quad_locator.lookup(list(point), tex_coords.tolist())
+            result = self._quad_locator.lookup(list(point), tex_coords.tolist())
+            # KDTree returns [] when no valid quad is found; honour the
+            # "return None if no quad is reachable" contract so consumers
+            # can distinguish miss from a real (u, v).
+            return result if result else None
 
         # Fall back to brute-force for small meshes
         from ..util.geometry_util import tex_coord_at_point
