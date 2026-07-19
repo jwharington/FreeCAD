@@ -68,6 +68,7 @@ class ViewProviderCompositeShell:
             "Strain XX",
             "Strain YY",
             "Strain XY",
+            "Grid",
         ]
 
     def getDefaultDisplayMode(self):
@@ -108,6 +109,24 @@ class ViewProviderCompositeShell:
         # display-mode Switch, not direct RootNode children).
         root = getattr(obj, "RootNode", None)
         self.mode_switch = self._ensure_mode_switch(root)
+
+        # Register a "Grid" display mode with an empty node branch. When
+        # the shader is active we switch DisplayMode to "Grid"; FreeCAD's
+        # C++ machinery points ModeSwitch.whichChild at this empty branch,
+        # so the native Part shape renders nothing while the shader overlay
+        # (a sibling in DrapeHost) still renders. This is the C++-friendly
+        # alternative to fighting whichChild from Python (reset by C++) or
+        # SoDrawStyle overrides (global first-override-wins, hides the
+        # shader too).
+        if self.mode_switch is not None:
+            try:
+                if "Grid" not in obj.listDisplayModes():
+                    empty = coin.SoSeparator()
+                    empty.setName("GridEmptyRoot")
+                    obj.addDisplayMode(empty, "Grid")
+            except Exception:
+                pass
+
         self.drape_host = coin.SoSwitch()
         self.drape_host.setName("DrapeHost")
         self.drape_host.whichChild = coin.SO_SWITCH_ALL
@@ -232,6 +251,26 @@ class ViewProviderCompositeShell:
             except Exception:
                 pass
         self._set_shell_transparency(vobj)
+        # When the shader is active, switch to the empty "Grid" display
+        # mode so the native Part shape (ModeSwitch → FlatRoot →
+        # SoBrepFaceSet) renders nothing. The shader overlay lives in a
+        # sibling DrapeHost subtree and is unaffected. This is the only
+        # mechanism that sticks: C++ resets mode_switch.whichChild to the
+        # active DisplayMode index, so switching DisplayMode is the way to
+        # make C++ itself point at the empty Grid branch. SoDrawStyle
+        # overrides don't work (global first-override-wins hides shader).
+        has_shader = getattr(self, "grid_shader", None) is not None and getattr(self.grid_shader, "_attached", False)
+        try:
+            if visible and has_shader:
+                if getattr(vobj, "DisplayMode", "") != "Grid":
+                    vobj.DisplayMode = "Grid"
+            else:
+                # Restore a real display mode when the shader is off so
+                # the native shape is visible again.
+                if getattr(vobj, "DisplayMode", "") == "Grid":
+                    vobj.DisplayMode = "Shaded"
+        except Exception:
+            pass
         # Do not force the support surface's visibility here. The shader
         # renders on its own injected geometry inside drape_host, so the
         # original support object's visibility is irrelevant to the overlay;
