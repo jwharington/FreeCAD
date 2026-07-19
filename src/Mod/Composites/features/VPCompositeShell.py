@@ -118,9 +118,17 @@ class ViewProviderCompositeShell:
         # alternative to fighting whichChild from Python (reset by C++) or
         # SoDrawStyle overrides (global first-override-wins, hides the
         # shader too).
+        #
+        # Guard by branch name (not listDisplayModes, which already lists
+        # "Grid" via getDisplayModes) so we register exactly once and don't
+        # rely on -1/empty (which FreeCAD's tree treats as disabled).
         if self.mode_switch is not None:
             try:
-                if "Grid" not in obj.listDisplayModes():
+                already = any(
+                    self.mode_switch.getChild(i).getName() == "GridEmptyRoot"
+                    for i in range(int(self.mode_switch.getNumChildren()))
+                )
+                if not already:
                     empty = coin.SoSeparator()
                     empty.setName("GridEmptyRoot")
                     obj.addDisplayMode(empty, "Grid")
