@@ -55,30 +55,43 @@ float gridFactor (vec3 parameter, float width) {
 }
 
 
-float mixcol(float col, float amount) {
-  return col*(1.0-darken*amount);
-}
-
 void main() {
-  // Hardcoded color (replaces old gl_Color from per-vertex strain coloring)
-  vec4 baseColor = vec4(0.5, 0.5, 0.5, 0.0);
-  float pixel_width = 1.0;
-  float feather = 0.0;
+  // Uniform neutral grid color — previously R and G were modulated
+  // separately (mixcol on gridX vs gridY), painting X-lines cyan and
+  // Y-lines magenta. Use one color for all lines.
+  vec3 baseColor = vec3(0.5);
 
-  // Texture coordinates are already in physical units (mm).
-  // Divide by the requested physical spacing so the shader draws
-  // one repeat every grid_spacing_mm in world space.
   float spacing = max(grid_spacing_mm, 1e-6);
   vec3 coord = gl_TexCoord[0].xyz / spacing;
+
+  // screen_space: 1.0 = zoom-stable ~1px lines via fwidth (default),
+  // 0.0 = wider fixed screen-space width. Blend the line width so the
+  // toggle actually does something (it was previously declared but
+  // never referenced in main()).
+  float sw = clamp(screen_space, 0.0, 1.0);
+  float pixel_width = mix(2.5, 1.0, sw);
+  // Non-zero feather gives smoothstep a real transition band (was 0.0,
+  // which degenerated into a hard step at the Nyquist limit → moiré).
+  float feather = 1.0;
+
   float gridX = gridFactor(coord.x, pixel_width, feather);
   float gridY = gridFactor(coord.y, pixel_width, feather);
-  float gridMax = max(gridX, gridY);
-  // gridFactor returns 0 at grid lines, 1 between them.
-  // We want lines opaque (a=1) and background transparent (a=0),
-  // so invert: alpha is high where gridMax is low.
-  float a = mix(1.0, baseColor.a, gridMax);
-  gl_FragColor = vec4(mixcol(baseColor.r, gridX),
-                      mixcol(baseColor.g, gridY),
-                      baseColor.b,
-                      a);
+  // gridFactor: 0 at a grid line, 1 between lines. A fragment is on a
+  // line if EITHER axis is on a line, so combine with min (not max —
+  // max only hits zero at X∩Y intersections, which is why only dots
+  // rendered before).
+  float between = min(gridX, gridY);   // 0 on any line, 1 between
+  float line = 1.0 - between;          // 1 at lines, 0 between
+
+  // Anti-moiré: when the grid is denser than the screen can resolve
+  // (>~1–2 lines per pixel), fade the lines out instead of aliasing.
+  // This is the standard fix for dense-grid moiré at low zoom.
+  float density = max(fwidth(coord.x), fwidth(coord.y));
+  float fade = 1.0 - smoothstep(1.0, 2.0, density);
+  line *= fade;
+
+  // Uniform line color (darken scales line darkness); alpha follows
+  // line intensity so background stays transparent.
+  vec3 col = baseColor * (1.0 - darken * line);
+  gl_FragColor = vec4(col, line);
 }

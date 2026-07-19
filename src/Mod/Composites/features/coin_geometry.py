@@ -54,7 +54,6 @@ def build_support_surface_coin(shape, deflection=1.0, draper=None):
     indices: list[int] = []
     for tri in tris:
         indices.extend([int(tri[0]), int(tri[1]), int(tri[2]), -1])
-    indices.append(-1)
     face_set.coordIndex.setValues(0, len(indices), indices)
     # Set texture coord indices (indexed, matching coordIndex)
     face_set.textureCoordIndex.setValues(0, len(indices), indices)
@@ -119,7 +118,6 @@ def build_drapecd_coin(node_positions, quads, wireframe=False):
         i0, i1, i2, i3 = [int(idx) for idx in q]
         indices.extend([i0, i1, i2, -1])
         indices.extend([i0, i2, i3, -1])
-    indices.append(-1)
     face_set.coordIndex.setValues(0, len(indices), indices)
     # Don't set materialIndex – causes "index out of bounds" warnings when
     # no SoMaterial node with multiple materials exists in the scene graph.

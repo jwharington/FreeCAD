@@ -187,13 +187,13 @@ commit 10:(merge) enh(composites): UV quality improvements  ← Stream 2
 | Gate | Criteria | Status |
 |------|----------|--------|
 | G0 | All existing tests pass | ⏸ TBD |
-| G1 | KDTreeLocator compiles, basic lookup works | ✅ PASS (7/7 tests) |
-| G2 | soft_clamp correct, no regressions | ✅ PASS |
+| G1 | KDTreeLocator compiles, basic lookup works | ✅ PASS (8/8 tests) |
+| G2 | Out-of-grid extrapolation (was: soft_clamp) | ✅ PASS — CORRECTED 2026-07-16: `soft_clamp` was never implemented; clamping was the wrong requirement anyway. The real requirement (extrapolate UVs as-if-grid-extended) is now met by removing the `[-0.05,1.05]` bounding rejection in `evaluateQuad`. Regression: `test_kd_tree_locator.cpp::PointOutsideMeshExtrapolates` + standalone harness. Verified live: 727/727 support verts get distinct UVs, 0 collapses to (0,0). |
 | G3 | Accuracy: KD matches brute-force to 6dp | ✅ PASS — `test_kd_tree_locator.py` compares KD lookup against the brute-force reference to 6dp |
 | G4 | UVs bounded at mesh edges | ✅ PASS |
 | G5 | >3× speedup on 50×50 grid | ✅ PASS — flat 50×50 benchmark measured 124.95× speedup with max diff 7.1e-15 |
 | G6 | No UV jumps >0.05 at shared edges | ✅ PASS |
-| G7 | Full pipeline works end-to-end | ⏸ IN PROGRESS — shader-only output verified via MCP (2026-07-16): `shader_state` has 9 children incl. `SupportSurface`; `_coin_geo=SupportSurface`; `drape_host` has only `shader_state` (no competing geometry); ConicalPanelSupport hidden. B1–B4 fixed. Remaining: persistence regression proof. |
+| G7 | Full pipeline works end-to-end | ⏸ IN PROGRESS — shader-only output verified via MCP (2026-07-16): `shader_state` has 9 children incl. `SupportSurface`; `_coin_geo=SupportSurface`; `drape_host` has only `shader_state`; ConicalPanelSupport hidden; GLSL compiles/links clean (geometry + material-index warnings resolved). Grid-logic bug (max→min) fixed. Out-of-grid UV extrapolation fixed (#4). Remaining: persistence regression proof; selection-highlight interaction (#2/#3); `offset_angle` dead uniform (P4). |
 | G8 | All Composites tests pass | ⏸ TBD |
 
 **Order of closure:** G7 is the first blocker to resolve; G0/G8 only count once G7 is back to a real passing state and backed by regression tests.
@@ -206,7 +206,7 @@ commit 10:(merge) enh(composites): UV quality improvements  ← Stream 2
 | `src/3rdParty/nextdrape/src/KDTreeLocator.cpp` | 1 | ✅ Written |
 | `src/3rdParty/nextdrape/CMakeLists.txt` | 1 | ✅ Updated |
 | `src/Mod/Composites/App/CompositesDrape.cpp` | 1 | ✅ pybind11 bindings added |
-| `src/Mod/Composites/util/geometry_util.py` | 2 | ✅ soft_clamp, shared-edge averaging |
+| `src/Mod/Composites/util/geometry_util.py` | 2 | ⚠️ CORRECTED 2026-07-16: `soft_clamp`/shared-edge averaging were planned (G2) but NEVER implemented in code — false gate closure. Clamping was the wrong requirement (extrapolation needed). Out-of-grid fix lives in `nextdrape/src/KDTreeLocator.cpp` instead. |
 | `src/Mod/Composites/tools/drape_backend_nextdrape.py` | 1 | ✅ Wired into NextDrapeBackend |
 | `src/Mod/Composites/features/CompositeShell.py` | 1,2 | ✅ Wired into _RehydratedBackend |
 | `src/Mod/Composites/features/AlignFibreRosette.py` | 1 | ✅ Transparent (delegates to backend) |
