@@ -19,6 +19,10 @@ Current state: the drape-mesh branch is removed, the shader attaches to the **Su
 - `drape_host` has exactly 1 child (`shader_state`) — no `DrapedMeshGeometry`, no standalone `SupportSurface` direct child.
 - ConicalPanelSupport `Visibility = False` by default; `update_visibility` no longer force-re-shows it.
 - `hide_drape_mesh` debug toggle no longer hides the support surface (the incorrect `mode_switch.whichChild = -1` coupling was removed).
+- **GLSL compile/link: 0 errors/warnings** (MCP diagnostic `test_shader_glsl_capture.py`: truncated log, forced 3D render via `viewIsometric`+`fitAll`+`redraw` ×3, read back Coin messages). Verified with `offset_angle` set to 45° to force `SoGLSLShaderParameter::isValid()` — still 0 warnings. Both Vertex + Fragment shader objects active.
+- Geometry/material bindings: 0 warnings (no "Face specification did not end with a valid polygon", no "index out of bounds"). The earlier such warnings were emitted only during the broken intermediate debug states (empty shader / segfault session), not the current clean state.
+- **Not proven:** actual pixel/fragment output (would require GPU readback; visual inspection is disallowed as proof by the gate policy). Compile/link + valid geometry + in-render-path is the machine-checkable evidence gathered so far.
+- **Separate defect (Priority 4, NOT a G7 blocker):** the fragment shader GLSL does not declare `uniform float offset_angle`, so the Python-registered `offset_angle` parameter is dead — setting it has no effect on rendering (rosette rotation not applied to the grid). Coin does not warn about this in the current version.
 - Next step: persistence regression proof for G7 closure.
 
 ## Resolved blockers
