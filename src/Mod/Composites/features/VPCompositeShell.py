@@ -232,6 +232,23 @@ class ViewProviderCompositeShell:
             except Exception:
                 pass
         self._set_shell_transparency(vobj)
+        # When the shader is active, hide the shell's native Part shape
+        # (ModeSwitch → FlatRoot → SoBrepFaceSet). It renders the same
+        # conical surface as the shader overlay but without the grid, and
+        # it owns the selection highlight (blue on hover, green on select)
+        # which bleeds through the shader's transparent fragments as grey
+        # spots. With the shader active the overlay is the only surface
+        # that should be visible.
+        mode_switch = getattr(self, "mode_switch", None)
+        has_shader = getattr(self, "grid_shader", None) is not None and getattr(self.grid_shader, "_attached", False)
+        if mode_switch is not None:
+            try:
+                if visible and has_shader:
+                    mode_switch.whichChild = coin.SO_SWITCH_NONE
+                else:
+                    mode_switch.whichChild = coin.SO_SWITCH_ALL
+            except Exception:
+                pass
         # Do not force the support surface's visibility here. The shader
         # renders on its own injected geometry inside drape_host, so the
         # original support object's visibility is irrelevant to the overlay;
