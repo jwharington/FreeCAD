@@ -108,12 +108,44 @@ class ViewProviderCompositeShell:
         # display-mode Switch, not direct RootNode children).
         root = getattr(obj, "RootNode", None)
         self.mode_switch = self._ensure_mode_switch(root)
+
+        # When the shader is active we hide the shell's native Part shape
+        # (ModeSwitch → FlatRoot → SoBrepFaceSet). It renders the same
+        # surface as the shader overlay but without the grid, and it owns
+        # the selection highlight that bleeds through the shader's
+        # transparent fragments as grey spots. We cannot toggle
+        # mode_switch.whichChild from Python — the C++ Part ViewProvider
+        # resets it to the active DisplayMode index on every update — so
+        # we use a Coin3D SoDrawStyle override (INVISIBLE), which C++
+        # does not manage. A counter-override (FILLED) before drape_host
+        # re-enables rendering for the shader overlay and rosette.
+        self.native_hide = coin.SoDrawStyle()
+        self.native_hide.style = coin.SoDrawStyle.INVISIBLE
+        self.native_hide.setOverride(True)
+        self.shader_show = coin.SoDrawStyle()
+        self.shader_show.style = coin.SoDrawStyle.FILLED
+        self.shader_show.setOverride(True)
+        self._native_hidden = False  # toggled in update_visibility
+        if root is not None and self.mode_switch is not None:
+            try:
+                ms_idx = self._child_index(root, self.mode_switch)
+                if ms_idx >= 0:
+                    root.insertChild(self.native_hide, ms_idx)
+            except Exception:
+                pass
+
         self.drape_host = coin.SoSwitch()
         self.drape_host.setName("DrapeHost")
         self.drape_host.whichChild = coin.SO_SWITCH_ALL
         try:
             if root is not None:
                 root.addChild(self.drape_host)
+                # Insert the counter-override immediately before
+                # drape_host so the shader overlay (and rosette, which
+                # is added later and comes after drape_host) render.
+                dh_idx = self._child_index(root, self.drape_host)
+                if dh_idx > 0:
+                    root.insertChild(self.shader_show, dh_idx)
         except AttributeError:
             pass  # RootNode not available in non-GUI / test environments
 
@@ -174,6 +206,26 @@ class ViewProviderCompositeShell:
                 return found
         return None
 
+    def _child_index(self, parent, child) -> int:
+        """Return the index of *child* in *parent* by Coin3D name, or -1."""
+        try:
+            target = child.getName()
+        except AttributeError:
+            return -1
+        children = parent.getChildren()
+        if children is None:
+            return -1
+        for i in range(int(children.getLength())):
+            c = children[i]
+            if c is None:
+                continue
+            try:
+                if c.getName() == target and target:
+                    return i
+            except AttributeError:
+                continue
+        return -1
+
     def _ensure_mode_switch(self, root):
         """Return an existing display switch or create a fallback wrapper."""
         switch = self._find_switch(root)
@@ -232,21 +284,16 @@ class ViewProviderCompositeShell:
             except Exception:
                 pass
         self._set_shell_transparency(vobj)
-        # When the shader is active, hide the shell's native Part shape
-        # (ModeSwitch → FlatRoot → SoBrepFaceSet). It renders the same
-        # conical surface as the shader overlay but without the grid, and
-        # it owns the selection highlight (blue on hover, green on select)
-        # which bleeds through the shader's transparent fragments as grey
-        # spots. With the shader active the overlay is the only surface
-        # that should be visible.
-        mode_switch = getattr(self, "mode_switch", None)
+        # When the shader is active, hide the shell's native Part shape via
+        # the SoDrawStyle(INVISIBLE) override (see attach()). We toggle the
+        # override's enabled state rather than mode_switch.whichChild,
+        # which the C++ Part ViewProvider resets to the active DisplayMode.
         has_shader = getattr(self, "grid_shader", None) is not None and getattr(self.grid_shader, "_attached", False)
-        if mode_switch is not None:
+        native_hide = getattr(self, "native_hide", None)
+        if native_hide is not None:
             try:
-                if visible and has_shader:
-                    mode_switch.whichChild = coin.SO_SWITCH_NONE
-                else:
-                    mode_switch.whichChild = coin.SO_SWITCH_ALL
+                native_hide.setOverride(bool(visible and has_shader))
+                self._native_hidden = bool(visible and has_shader)
             except Exception:
                 pass
         # Do not force the support surface's visibility here. The shader
