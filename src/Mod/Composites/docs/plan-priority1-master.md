@@ -3,13 +3,13 @@
 **Date:** 2026-07-15
 **Last Updated:** 2026-07-16
 **Scope:** All Priority 1 work from the handoff document
-**Status:** G7 — root-cause bugs fixed, shader-only verified via MCP. Persistence proof still pending.
+**Status:** G7 — PASS. Shader-only output + persistence proven via MCP (2026-07-16).
 
 1. Disable the separate mesh geometry. ✅
 2. Verify shader-only output. ✅ (MCP-verified 2026-07-16)
-3. Close G7 with objective evidence. ⏸ persistence proof pending.
+3. Close G7 with objective evidence. ✅ persistence regression passes
 
-Current state: the drape-mesh branch is removed, the shader attaches to the **SupportSurface** geometry (confirmed via MCP: `shader_state` has 9 children, last child = `SupportSurface` Separator; `_coin_geo = SupportSurface`; `drape_host` has only `shader_state` — no competing geometry). ConicalPanelSupport is hidden by default. The swallowed exception is now logged and aborts shader attach on failure. Persistence ownership proof is the remaining G7 item.
+Current state: the drape-mesh branch is removed, the shader attaches to the **SupportSurface** geometry (MCP-verified), the native Part shape is hidden via the 'Grid' display mode, ConicalPanelSupport is hidden, GLSL compiles/links clean, the grid logic is fixed, and out-of-grid UV extrapolation works. Persistence (save/reload .FCStd) preserves drape state and re-attaches the shader — `test_g7_persistence.py` all 8 checks pass. Remaining are polish items (selection highlight on overlay; `offset_angle` dead uniform P4), not G7 blockers.
 
 **Verification note:** Shader correctness must be proven with objective, machine-checkable evidence. Do not use ambiguous visual inspection alone as proof of positive shader functioning. `_attached=True` on an empty shader group is NOT proof of functioning — it was the source of the false-positive.
 
@@ -195,7 +195,7 @@ commit 10:(merge) enh(composites): UV quality improvements  ← Stream 2
 | G4 | UVs bounded at mesh edges | ✅ PASS |
 | G5 | >3× speedup on 50×50 grid | ✅ PASS — flat 50×50 benchmark measured 124.95× speedup with max diff 7.1e-15 |
 | G6 | No UV jumps >0.05 at shared edges | ✅ PASS |
-| G7 | Full pipeline works end-to-end | ⏸ IN PROGRESS — shader-only output verified via MCP (2026-07-16): `shader_state` has 9 children incl. `SupportSurface`; `_coin_geo=SupportSurface`; `drape_host` has only `shader_state`; ConicalPanelSupport hidden; GLSL compiles/links clean (geometry + material-index warnings resolved); grid-logic bug (max→min) fixed; out-of-grid UV extrapolation fixed (#4); native Part shape hidden via 'Grid' display mode (no grey secondary surface, object not greyed). Remaining: persistence regression proof; selection highlight on shader overlay (polish); `offset_angle` dead uniform (P4). |
+| G7 | Full pipeline works end-to-end | ✅ PASS — shader-only output verified via MCP (2026-07-16): `shader_state` has 9 children incl. `SupportSurface`; `_coin_geo=SupportSurface`; `drape_host` has only `shader_state`; ConicalPanelSupport hidden; GLSL compiles/links clean; grid-logic bug (max→min) fixed; out-of-grid UV extrapolation fixed (#4); native Part shape hidden via 'Grid' display mode (no grey secondary surface, object not greyed). **Persistence proven:** `test_g7_persistence.py` — save conical panel to .FCStd, reload fresh doc, recompute; all 8 objective checks pass (saved file exists, shell reloads, DrapeValid preserved, backend recreated+valid, 887 tex coords repopulated identically, quality metrics identical, shader re-attaches to SupportSurface, drape_host mesh-free). Deterministic across 2 runs. Remaining polish (not blockers): selection highlight on shader overlay; `offset_angle` dead uniform (P4). |
 | G8 | All Composites tests pass | ⏸ TBD |
 
 **Order of closure:** G7 is the first blocker to resolve; G0/G8 only count once G7 is back to a real passing state and backed by regression tests.
