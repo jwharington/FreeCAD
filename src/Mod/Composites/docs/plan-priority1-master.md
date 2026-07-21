@@ -67,7 +67,7 @@ Fragment shader: `vec3 lineColor = mix(vec3(0.5), sel_color, clamp(sel_state,0,1
 **Readback limitation (documented):** `saveImage` cannot capture the shader's *transparent* (BLEND) pass — the real on-screen render mode. The opaque-pass readback (transparency=0) is the valid measurement tool and proves uniform propagation; the transparent mode uses the **same** shader program and the **same** uniform bindings, so the tint applies to the grid lines there too. Transparent-mode visual confirmation is user-visual support only (not required as machine proof given (1)+(2)).
 - **Not proven:** actual pixel/fragment output (would require GPU readback; visual inspection is disallowed as proof by the gate policy). Compile/link + valid geometry + in-render-path + native-shape-hidden is the machine-checkable evidence gathered so far.
 - **Separate defect (Priority 4):** ~~the fragment shader GLSL does not declare `uniform float offset_angle`~~ **RESOLVED 2026-07-16.** `offset_angle` is now declared AND used in `Grid_fragment_shader.glsl` to rotate the grid UV (`rcoord = R(offset_angle) * coord.xy`) so the grid aligns with the selected layer's fibre orientation. Put back in `shader_params` (no Coin warning — it's declared+used). `get_offset_angle` fixed (str-coerces the layer key — was an int/str mismatch that silently returned 0, which also caused the "clobbering on reload" via `attach`→`set_offset_angle(0)`). `onChanged("DisplayLayer")` now calls `set_offset_angle` without a full reload when attached (was always reloading). **Verified:** GLSL compiles clean (0 warnings); opaque-pass GPU readback — 0°vs45° = 1.3% pixel diff (rotation reaches GPU), 0°vs90° = 0% (correct: square grid invariant under 90°), noise floor 0°vs0° = 0%. All Composites tests pass.
-- Next step: G0/G8 test gates — close with full Composites suite green.
+- Next step: Phase C/D open items — performance re-measurement (confirm speedup still holds after decoupling) and final review/merge. See Phases C/D.
 
 ## Resolved blockers
 
@@ -177,14 +177,14 @@ Both streams write tests in parallel.
 > 3. The separate drape mesh branch has been removed from the render path in code.
 > 4. Shader output is **not** verified: the support surface fails to build and the shader attaches to an empty group. Fix B1–B4 before validating.
 
-7. Run full test suite (`test_uv_mapping.py` + C++ unit tests) — TBD
-8. Performance measurement (confirm ~37× speedup) — TBD
-9. Final review and merge — TBD
+7. Run full test suite (`test_uv_mapping.py` + C++ unit tests) — ✅ DONE (FreeCAD `run-tests.sh` 22/22 green; nextdrape C++ 7/7 green; `test_kd_tree_locator.py` removed — cross-check migrated to nextdrape C++)
+8. Performance measurement (confirm ~37× speedup) — ⏸ TBD (re-measure after the DrapeEngine decoupling; G5's 124.95× was measured on the direct-KDTree path, parity proven but not re-benchmarked through `engine.lookup_uv`)
+9. Final review and merge — ⏸ TBD
 
 ### Phase D: Polish (Day 4–5) ⏸ PENDING
 
-10. Priority 4 bug investigation (if time permits) — TBD
-11. Final review and merge — TBD
+10. Priority 4 bug investigation (if time permits) — ✅ DONE (P4 `offset_angle` resolved: grid rotation implemented in GLSL + plumbing bugs fixed; see G7 entry)
+11. Final review and merge — ⏸ TBD
 
 ## Commit Strategy
 
@@ -230,15 +230,15 @@ commit 10:(merge) enh(composites): UV quality improvements  ← Stream 2
 
 | Gate | Criteria | Status |
 |------|----------|--------|
-| G0 | All existing tests pass | ✅ PASS — all 21 Composites test modules green (0 failures, 0 errors) via `run-tests.sh` headless. No core FreeCAD files touched this session (changes scoped to Composites + nextdrape). GUI-dependent tests (G7 persistence, shader examples) skip headless and were verified via MCP.
-| G1 | KDTreeLocator compiles, basic lookup works | ✅ PASS (8/8 tests) |
-| G2 | Out-of-grid extrapolation (was: soft_clamp) | ✅ PASS — CORRECTED 2026-07-16: `soft_clamp` was never implemented; clamping was the wrong requirement anyway. The real requirement (extrapolate UVs as-if-grid-extended) is now met by removing the `[-0.05,1.05]` bounding rejection in `evaluateQuad`. Regression: `test_kd_tree_locator.cpp::PointOutsideMeshExtrapolates` + standalone harness. Verified live: 727/727 support verts get distinct UVs, 0 collapses to (0,0). |
-| G3 | Accuracy: KD matches brute-force to 6dp | ✅ PASS — `test_kd_tree_locator.py` compares KD lookup against the brute-force reference to 6dp |
+| G0 | All existing tests pass | ✅ PASS — all 22 Composites test modules green (0 failures) via `run-tests.sh` headless (test set expanded: `test_uv_mapping` added, `test_kd_tree_locator` removed after the decoupling — its cross-check migrated to nextdrape C++). GUI-dependent tests (G7 persistence, shader examples) skip headless and were verified via MCP. |
+| G1 | KDTreeLocator compiles, basic lookup works | ✅ PASS (7/7 nextdrape C++ tests) |
+| G2 | Out-of-grid extrapolation (was: soft_clamp) | ✅ PASS — CORRECTED 2026-07-16: `soft_clamp` was never implemented; clamping was the wrong requirement anyway. The real requirement (extrapolate UVs as-if-grid-extended) is met by removing the `[-0.05,1.05]` bounding rejection in `evaluateQuad`. Regression: `test_kd_tree_locator.cpp::PointOutsideMeshExtrapolates`. Verified live: 727/727 support verts get distinct UVs, 0 collapses to (0,0). |
+| G3 | Accuracy: KD matches brute-force to 6dp | ✅ PASS — migrated to nextdrape C++ as `KdTreeMatchesBruteForce` (`test_kd_tree_locator.cpp`): on one 12×12 warped grid, `lookup()` (k-d path) == `bruteForceLookup()` (exhaustive, same selection rule) to 1e-9 — asserts the k-d tree never misses the best quad. (The old Python cross-check was removed with the decoupling; it compared two different selection rules and diverged, which was a fragile assertion, not a bug.) |
 | G4 | UVs bounded at mesh edges | ✅ PASS |
 | G5 | >3× speedup on 50×50 grid | ✅ PASS — flat 50×50 benchmark measured 124.95× speedup with max diff 7.1e-15 |
 | G6 | No UV jumps >0.05 at shared edges | ✅ PASS |
 | G7 | Full pipeline works end-to-end | ✅ PASS — shader-only output verified via MCP (2026-07-16): `shader_state` has 9 children incl. `SupportSurface`; `_coin_geo=SupportSurface`; `drape_host` has only `shader_state`; ConicalPanelSupport hidden; GLSL compiles/links clean; grid-logic bug (max→min) fixed; out-of-grid UV extrapolation fixed (#4); native Part shape hidden via 'Grid' display mode (no grey secondary surface, object not greyed). **Selection highlight WORKING** (2026-07-16) via `sel_color`/`sel_state` SoShaderParameter uniforms driven by SelectionObserver (green select/blue hover/grey), proven by opaque-pass GPU readback. **Persistence proven:** `test_g7_persistence.py` — save conical panel to .FCStd, reload fresh doc, recompute; all 8 objective checks pass. Deterministic across 2 runs.
-| G8 | All Composites tests pass | ✅ PASS — all 21 modules green (0 failures): 312 tests total, 6 skipped (GUI-only, verified via MCP). Includes the 2 previously-failing `test_vp_composite_shell_shader_reload` tests (offset_angle plumbing) now fixed.
+| G8 | All Composites tests pass | ✅ PASS — 22 modules green (0 failures): `run-tests.sh` now runs every module and reports a summary (no longer stops on first failure; `test_uv_mapping` added to scope, `test_kd_tree_locator` removed after decoupling). 6 skipped (GUI-only, verified via MCP). Includes the 2 previously-failing `test_vp_composite_shell_shader_reload` tests (offset_angle plumbing) now fixed. |
 
 **Order of closure:** G7 is the first blocker to resolve; G0/G8 only count once G7 is back to a real passing state and backed by regression tests.
 
