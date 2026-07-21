@@ -13,6 +13,12 @@ uniform float grid_spacing_mm = 10.0;
 uniform vec3 sel_color;
 uniform float sel_state;
 
+// Grid rotation angle (radians) for the selected layer's fibre
+// orientation. Driven by SoShaderParameter from the VP
+// (get_offset_angle -> set_offset_angle). Declared AND used so the
+// linker keeps it in the program.
+uniform float offset_angle;
+
 
 // https://github.com/rreusser/glsl-solid-wireframe?tab=readme-ov-file
 
@@ -74,6 +80,13 @@ void main() {
   float spacing = max(grid_spacing_mm, 1e-6);
   vec3 coord = gl_TexCoord[0].xyz / spacing;
 
+  // Rotate the grid UV by offset_angle so the grid aligns with the
+  // selected layer's fibre orientation.
+  float ca = cos(offset_angle);
+  float sa = sin(offset_angle);
+  vec2 rcoord = vec2(ca * coord.x - sa * coord.y,
+                     sa * coord.x + ca * coord.y);
+
   // screen_space: 1.0 = zoom-stable ~1px lines via fwidth (default),
   // 0.0 = wider fixed screen-space width. Blend the line width so the
   // toggle actually does something (it was previously declared but
@@ -84,8 +97,8 @@ void main() {
   // which degenerated into a hard step at the Nyquist limit → moiré).
   float feather = 1.0;
 
-  float gridX = gridFactor(coord.x, pixel_width, feather);
-  float gridY = gridFactor(coord.y, pixel_width, feather);
+  float gridX = gridFactor(rcoord.x, pixel_width, feather);
+  float gridY = gridFactor(rcoord.y, pixel_width, feather);
   // gridFactor: 0 at a grid line, 1 between lines. A fragment is on a
   // line if EITHER axis is on a line, so combine with min (not max —
   // max only hits zero at X∩Y intersections, which is why only dots
@@ -96,7 +109,7 @@ void main() {
   // Anti-moiré: when the grid is denser than the screen can resolve
   // (>~1–2 lines per pixel), fade the lines out instead of aliasing.
   // This is the standard fix for dense-grid moiré at low zoom.
-  float density = max(fwidth(coord.x), fwidth(coord.y));
+  float density = max(fwidth(rcoord.x), fwidth(rcoord.y));
   float fade = 1.0 - smoothstep(1.0, 2.0, density);
   line *= fade;
 

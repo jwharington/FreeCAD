@@ -396,7 +396,15 @@ class ViewProviderCompositeShell:
             case "Darken":
                 pass
             case "DisplayLayer":
-                self.reload_shader()
+                # When the shader is attached, a layer change only needs to
+                # rotate the grid (offset_angle uniform) — avoid an expensive
+                # detach/reattach reload. Fall back to reload when not attached.
+                if self._shader_ready():
+                    self.grid_shader.set_offset_angle(
+                        self.get_offset_angle(self.Object)
+                    )
+                else:
+                    self.reload_shader()
             case "ShapeAppearance":
                 self._set_shell_transparency(vobj)
             case "ScreenSpaceGrid":
@@ -435,8 +443,16 @@ class ViewProviderCompositeShell:
         layer = vobj.ViewObject.DisplayLayer
         if not vobj.Laminate:
             return 0
-        if layer in vobj.Laminate.StackOrientation:
-            return int(vobj.Laminate.StackOrientation[layer])
+        stack = vobj.Laminate.StackOrientation
+        # DisplayLayer may be an int (enum index) while StackOrientation
+        # keys are strings ("1", "L2", ...). Coerce to str so the lookup
+        # matches; without this an int layer silently misses and returns 0
+        # (which then clobbered the angle to 0 on every reload via attach).
+        key = str(layer)
+        if key in stack:
+            return int(stack[key])
+        if layer in stack:
+            return int(stack[layer])
         return 0
 
     def _obj_name(self):

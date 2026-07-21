@@ -76,6 +76,7 @@ class MeshGridShader:
         shader_params = [
             self.screen_space,
             self.darken,
+            self.offset_angle,
             self.grid_spacing_mm,
             self.sel_color,
             self.sel_state,
