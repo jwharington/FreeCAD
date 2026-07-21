@@ -337,6 +337,14 @@ class CompositeShellFP(CompositeBaseFP):
 
         vp.Proxy.reload_shader()
         vp.Proxy._set_shell_transparency(vp)
+        # Re-sync DisplayMode now that the shader is attached. On reload,
+        # attach() ran update_visibility before the shader was ready
+        # (has_shader=False -> "Shaded"), leaving the native Part shape
+        # (ModeSwitch -> FlatRoot -> SoBrepFaceSet) visible alongside the
+        # shader's SupportSurface -> a duplicate cone and flashing.
+        # Flipping to "Grid" points whichChild at the empty GridEmptyRoot
+        # branch so only the shader overlay renders.
+        vp.Proxy.update_visibility(vp)
         _profiler('inject_drape_geometry')
 
     def _complete_drape(self, fp, result):
