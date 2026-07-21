@@ -28,12 +28,6 @@
 #include <nextdrape/Utilities.hpp>
 #include <nextdrape/SeamOverlapSolver.hpp>
 
-// KDTreeLocator — exposed for unit-testing the spatial index in isolation
-// (test_kd_tree_locator.py builds synthetic meshes without an OCC shape, so
-// it cannot go through DrapeEngine). Production UV lookup goes through
-// DrapeEngine::LookupUV; this binding is a test/profiling seam only.
-#include <nextdrape/KDTreeLocator.hpp>
-
 namespace py = pybind11;
 
 // Standard FreeCAD pattern: the PyObject IS the TopoShapePy.
@@ -368,58 +362,4 @@ PYBIND11_MODULE(Composites_drape, m) {
     },
     py::arg("master"), py::arg("attachment"), py::arg("seam_width") = 10.0,
     "Extract seam geometry between master and attachment surfaces.");
-
-    // ── KDTreeLocator bindings (TEST/PROFILING SEAM ONLY) ───────
-    // Production UV lookup goes through DrapeEngine::lookup_uv. This
-    // binding exists so test_kd_tree_locator.py can exercise the spatial
-    // index in isolation on synthetic meshes that have no OCC shape (and
-    // therefore cannot go through DrapeEngine::Compute). Keeping it does
-    // not couple production code to the k-d tree implementation.
-    py::class_<nextdrape::KDTreeLocator>(m, "KDTreeLocator")
-        .def(py::init([](py::list node_positions,
-                         py::list quads) {
-            std::vector<nextdrape::Vec3> positions;
-            for (auto item : node_positions) {
-                py::tuple t = item.cast<py::tuple>();
-                positions.push_back({t[0].cast<double>(), t[1].cast<double>(), t[2].cast<double>()});
-            }
-            std::vector<std::array<std::uint32_t, 4>> q;
-            for (auto item : quads) {
-                py::tuple t = item.cast<py::tuple>();
-                q.push_back({
-                    static_cast<std::uint32_t>(t[0].cast<int>()),
-                    static_cast<std::uint32_t>(t[1].cast<int>()),
-                    static_cast<std::uint32_t>(t[2].cast<int>()),
-                    static_cast<std::uint32_t>(t[3].cast<int>())
-                });
-            }
-            return new nextdrape::KDTreeLocator(positions, q);
-        }))
-        .def("lookup",
-             [](nextdrape::KDTreeLocator& self, py::list point, py::list tex_coords) {
-                 nextdrape::Vec3 p;
-                 if (py::len(point) == 3) {
-                     p.x = point[0].cast<double>();
-                     p.y = point[1].cast<double>();
-                     p.z = point[2].cast<double>();
-                 } else {
-                     return std::vector<double>();
-                 }
-                 std::vector<nextdrape::Vec2> tc;
-                 for (auto item : tex_coords) {
-                     py::list row = item.cast<py::list>();
-                     if (py::len(row) >= 2) {
-                         tc.push_back({row[0].cast<double>(), row[1].cast<double>()});
-                     }
-                 }
-                 return self.lookup(p, tc);
-             },
-             py::arg("point"), py::arg("tex_coords"),
-             "Find UV coordinate for a 3D point.")
-        .def_static("min_quads_for_kdtree",
-            &nextdrape::KDTreeLocator::min_quads_for_kdtree,
-            "Minimum number of quads before k-d tree is worth building.")
-        .def("last_lookup_us",
-             &nextdrape::KDTreeLocator::last_lookup_us,
-             "Last lookup duration in microseconds (for profiling).");
 }
