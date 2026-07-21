@@ -440,13 +440,18 @@ class ViewProviderCompositeShell:
         return 0
 
     def _obj_name(self):
-        """Name of this VP's App object, or None if unavailable."""
+        """Name of this VP's App object, or None if unavailable.
+
+        Returns None when the underlying document object has been
+        deleted/recreated (stale proxy) so the SelectionObserver
+        callbacks no-op cleanly instead of raising ReferenceError.
+        """
         obj = getattr(self, "Object", None)
         if obj is None:
             return None
         try:
             return obj.Name
-        except AttributeError:
+        except (ReferenceError, AttributeError):
             return None
 
     def _shader_ready(self):

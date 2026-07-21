@@ -52,7 +52,7 @@ Fragment shader: `vec3 lineColor = mix(vec3(0.5), sel_color, clamp(sel_state,0,1
 
 `MeshGridShader`: `self.sel_color`/`self.sel_state` added to `shader_params`; `set_highlight_color(rgb|None)` sets `sel_color`+`sel_state=1` (or `sel_state=0` when `None`).
 
-`VPCompositeShell`: SelectionObserver callbacks (`setPreselection`/`removePreselection`/`addSelection`/`removeSelection`/`clearSelection`, signatures verified from `SelectionObserverPython.cpp`: `(doc,obj,sub[,pnt])` strings) compare `obj == self.Object.Name`, track `_selected`/`_preselected` booleans, and call `_apply_highlight()` which sets green (selected) > blue (hover) > neutral. `load_shader` seeds `_selected` from `FreeCADGui.Selection.isSelected` and registers `addObserver(self)`.
+`VPCompositeShell`: SelectionObserver callbacks (`setPreselection`/`removePreselection`/`addSelection`/`removeSelection`/`clearSelection`, signatures verified from `SelectionObserverPython.cpp`: `(doc,obj,sub[,pnt])` strings) compare `obj == self.Object.Name` (via `_obj_name()`, which guards `ReferenceError` when the App object proxy is stale/deleted — the observer is global and survives object recreation), track `_selected`/`_preselected` booleans, and call `_apply_highlight()` which sets green (selected) > blue (hover) > neutral. `load_shader` seeds `_selected` from `FreeCADGui.Selection.isSelected` and registers `addObserver(self)`.
 
 **Objective evidence (machine-checkable):**
 1. **GLSL compiles/links clean** in the real transparent render mode — `test_shader_glsl_capture.py`: 0 coin messages, 0 glsl/geometry/material warnings; 2 shader objects active, `SupportSurface` bound, 9 group children.
@@ -67,6 +67,7 @@ Fragment shader: `vec3 lineColor = mix(vec3(0.5), sel_color, clamp(sel_state,0,1
 **Readback limitation (documented):** `saveImage` cannot capture the shader's *transparent* (BLEND) pass — the real on-screen render mode. The opaque-pass readback (transparency=0) is the valid measurement tool and proves uniform propagation; the transparent mode uses the **same** shader program and the **same** uniform bindings, so the tint applies to the grid lines there too. Transparent-mode visual confirmation is user-visual support only (not required as machine proof given (1)+(2)).
 - **Not proven:** actual pixel/fragment output (would require GPU readback; visual inspection is disallowed as proof by the gate policy). Compile/link + valid geometry + in-render-path + native-shape-hidden is the machine-checkable evidence gathered so far.
 - **Separate defect (Priority 4, NOT a G7 blocker):** the fragment shader GLSL does not declare `uniform float offset_angle`, so the Python-registered `offset_angle` parameter is dead — setting it has no effect on rendering (rosette rotation not applied to the grid). Coin does not warn about this in the current version.
+  - **Interim fix (2026-07-16):** `offset_angle` removed from `shader_params` so Coin no longer validates it against the program (silences the `offset_angle not found in program` warning that fired on every render). The `SoShaderParameter` node + `set_offset_angle` remain for API compatibility but are not bound. The P4 task (implement rosette rotation in GLSL, or remove the feature) is still open.
 - Next step: persistence regression proof for G7 closure.
 
 ## Resolved blockers
