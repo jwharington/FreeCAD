@@ -17,28 +17,17 @@ if TYPE_CHECKING:
     import FreeCAD  # noqa: F401
 
 
-def _import_solver():
-    """Import the C++ nextdrape solver module."""
+def _import_engine():
+    """Import the nextdrape DrapeEngine class (the clean frontend).
+
+    FreeCAD holds a persistent DrapeEngine: compute() runs the solve and
+    builds the UV-query index internally; lookup_uv() answers point
+    queries. This keeps the k-d tree / brute-force algorithm choice and
+    the flat-data round-trip inside nextdrape — FreeCAD no longer reaches
+    into KDTreeLocator.
+    """
     import Composites_drape
-    return Composites_drape.solve
-
-
-def _import_kdtree():
-    """Import the KDTreeLocator class from the C++ solver module."""
-    import Composites_drape
-    return Composites_drape.KDTreeLocator
-
-
-# Lazy import of KDTreeLocator
-KDTreeLocator = None
-
-
-def _ensure_kdtree():
-    """Ensure KDTreeLocator is imported."""
-    global KDTreeLocator
-    if KDTreeLocator is None:
-        KDTreeLocator = _import_kdtree()
-    return KDTreeLocator
+    return Composites_drape.DrapeEngine
 
 
 class NextDrapeBackend(DrapeBackend):
@@ -55,7 +44,11 @@ class NextDrapeBackend(DrapeBackend):
         cut_shape: Any = None,
         use_cut_shape: bool = False,
     ) -> None:
-        self._solve = _import_solver()
+        # Persistent frontend: compute() builds the UV-query index that
+        # lookup_uv() then serves. The engine owns the algorithm choice
+        # (k-d tree vs brute force) and the flat data; FreeCAD never
+        # reassembles node_positions/quads/tex_coords or caches a locator.
+        self._engine = _import_engine()()
         self._mesh = mesh
         self._lcs = lcs
         self._shape = shape
@@ -89,7 +82,7 @@ class NextDrapeBackend(DrapeBackend):
                 f.flush()
 
             solver_shape = self._cut_shape if self._use_cut_shape else self._shape
-            self._result = self._solve(solver_shape, seed, params)
+            self._result = self._engine.compute(solver_shape, seed, params)
 
             with open(debug_file, "a") as f:
                 f.write(f"[_run_solve] solved, success={self._result.get('success')}\n")
@@ -339,42 +332,20 @@ class NextDrapeBackend(DrapeBackend):
         return fc_placement
 
     def get_tex_coord_at_point(self, point: Any, offset_angle_deg: float = 0) -> Any | None:
-        """Return texture coordinate at a 3D point via bilinear interpolation.
+        """Return texture coordinate at a 3D point via the engine's query.
 
-        Uses KDTreeLocator (C++ k-d tree) for O(log N) quad lookup,
-        falling back to brute-force for small meshes.
+        Delegates to DrapeEngine::lookup_uv, which owns the spatial index
+        built during compute(). offset_angle_deg is accepted for caller
+        compatibility but not applied here — grid rotation is handled in
+        get_tex_coords() (bulk UVs) and by the shader's offset_angle
+        uniform, not per-point. (The previous KDTree path likewise ignored
+        it.)
         """
         r = self._run_solve()
         if not r.get("success"):
             return None
-
-        node_positions = np.asarray(r["node_positions"])  # (N, 3)
-        quads = r.get("quads", [])  # list of [i0, i1, i2, i3]
-        tex_coords = np.asarray(r["tex_coords"])  # (N, 2)
-
-        if not quads or len(node_positions) == 0:
-            return None
-
-        # Use KDTreeLocator if available (large mesh)
-        n_quads = len(quads)
-        if n_quads >= _ensure_kdtree().min_quads_for_kdtree():
-            # Build or reuse KDTreeLocator (C++ via pybind11)
-            if not hasattr(self, "_quad_locator"):
-                self._quad_locator = _ensure_kdtree()(
-                    node_positions.tolist(),
-                    quads,
-                )
-            result = self._quad_locator.lookup(list(point), tex_coords.tolist())
-            # KDTree returns [] when no valid quad is found; honour the
-            # "return None if no quad is reachable" contract so consumers
-            # can distinguish miss from a real (u, v).
-            return result if result else None
-
-        # Fall back to brute-force for small meshes
-        from ..util.geometry_util import tex_coord_at_point
-        return tex_coord_at_point(
-            node_positions, quads, tex_coords, point, offset_angle_deg
-        )
+        uv = self._engine.lookup_uv(list(point))
+        return [uv[0], uv[1]] if uv is not None else None
 
     @property
     def strains(self) -> np.ndarray:

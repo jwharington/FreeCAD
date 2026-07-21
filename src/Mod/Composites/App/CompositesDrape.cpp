@@ -28,10 +28,14 @@
 #include <nextdrape/Utilities.hpp>
 #include <nextdrape/SeamOverlapSolver.hpp>
 
-// KDTreeLocator — k-d tree spatial index for UV point lookup
+// KDTreeLocator — exposed for unit-testing the spatial index in isolation
+// (test_kd_tree_locator.py builds synthetic meshes without an OCC shape, so
+// it cannot go through DrapeEngine). Production UV lookup goes through
+// DrapeEngine::LookupUV; this binding is a test/profiling seam only.
 #include <nextdrape/KDTreeLocator.hpp>
 
 namespace py = pybind11;
+
 // Standard FreeCAD pattern: the PyObject IS the TopoShapePy.
 static TopoDS_Shape extract_topods_shape(PyObject* obj) {
     // Unwrap Part::Feature → .Shape if needed
@@ -58,180 +62,252 @@ static TopoDS_Shape extract_topods_shape(PyObject* obj) {
     return topo->getShape();
 }
 
-// ── Main solve function ────────────────────────────────────────
+// ── Shared helpers (used by both the solve() free function and the
+//    DrapeEngine.compute() method, so the dict shape stays identical) ──
+
+static nextdrape::DrapeParams build_params(const py::dict& params_dict) {
+    nextdrape::DrapeParams params;
+    if (params_dict.contains("pitch"))
+        params.pitch = params_dict["pitch"].cast<double>();
+    if (params_dict.contains("shear_warn_deg"))
+        params.shearWarnDeg = params_dict["shear_warn_deg"].cast<double>();
+    if (params_dict.contains("shear_fail_deg"))
+        params.shearFailDeg = params_dict["shear_fail_deg"].cast<double>();
+    if (params_dict.contains("projection_tol"))
+        params.projectionTol = params_dict["projection_tol"].cast<double>();
+    if (params_dict.contains("boundary_tol"))
+        params.boundaryTol = params_dict["boundary_tol"].cast<double>();
+    if (params_dict.contains("strain_fail"))
+        params.strainFail = params_dict["strain_fail"].cast<double>();
+
+    // === CUT-WIRE CONFIG ===
+    params.cutWires.enabled = false;
+    if (params_dict.contains("cut_wires_enabled"))
+        params.cutWires.enabled = pybind11::cast<bool>(
+            params_dict["cut_wires_enabled"]);
+    if (params_dict.contains("cut_wires_proximity_tol"))
+        params.cutWires.proximityTol =
+            params_dict["cut_wires_proximity_tol"].cast<double>();
+    if (params_dict.contains("cut_wires_block_nodes"))
+        params.cutWires.blockNodesOnWire =
+            pybind11::cast<bool>(
+                params_dict["cut_wires_block_nodes"]);
+    if (params_dict.contains(
+            "cut_wires_block_quads"))
+        params.cutWires.blockQuadsCrossingWire =
+            pybind11::cast<bool>(
+                params_dict["cut_wires_block_quads"]);
+
+    return params;
+}
+
+static nextdrape::SeedInput build_seed(const py::dict& seed_dict) {
+    nextdrape::SeedInput seed;
+    if (seed_dict.contains("point")) {
+        auto pt = seed_dict["point"].cast<py::tuple>();
+        seed.point = gp_Pnt(pt[0].cast<double>(),
+                           pt[1].cast<double>(),
+                           pt[2].cast<double>());
+    } else {
+        seed.point = gp_Pnt(0, 0, 0);
+    }
+    if (seed_dict.contains("warp_direction")) {
+        auto wd = seed_dict["warp_direction"].cast<py::tuple>();
+        seed.warpDir3D = gp_Dir(wd[0].cast<double>(),
+                                wd[1].cast<double>(),
+                                wd[2].cast<double>());
+    } else {
+        seed.warpDir3D = gp_Dir(1, 0, 0);
+    }
+    return seed;
+}
+
+static py::dict pack_result(const nextdrape::DrapeResult& result) {
+    py::dict res;
+    res["success"] = true;
+
+    ssize_t n_nodes = static_cast<ssize_t>(result.nodes.size());
+    py::array_t<double> node_pos({n_nodes, py::ssize_t(3)});
+    auto np = node_pos.mutable_unchecked<2>();
+    for (ssize_t i = 0; i < n_nodes; ++i) {
+        np(i, 0) = result.nodes[i].p3d.X();
+        np(i, 1) = result.nodes[i].p3d.Y();
+        np(i, 2) = result.nodes[i].p3d.Z();
+    }
+    res["node_positions"] = node_pos;
+
+    ssize_t n_flat = static_cast<ssize_t>(result.texturePlan.flatNodes.size());
+    py::array_t<double> tex_coords({n_flat, py::ssize_t(2)});
+    auto tc = tex_coords.mutable_unchecked<2>();
+    for (ssize_t i = 0; i < n_flat; ++i) {
+        tc(i, 0) = result.texturePlan.flatNodes[i].X();
+        tc(i, 1) = result.texturePlan.flatNodes[i].Y();
+    }
+    res["tex_coords"] = tex_coords;
+
+    py::list quad_list;
+    for (const auto& q : result.texturePlan.quads) {
+        py::list q_list;
+        for (auto idx : q) q_list.append(static_cast<py::ssize_t>(idx));
+        quad_list.append(q_list);
+    }
+    res["quads"] = quad_list;
+
+    // Export strains only for the seed-connected quads (texturePlan.quads)
+    // so they align with the mesh geometry.
+    const auto& connected = nextdrape::SeedConnectedQuadIndices(result.quads);
+    ssize_t n_mesh_quads = static_cast<ssize_t>(connected.size());
+    py::array_t<double> warp_strain(n_mesh_quads);
+    py::array_t<double> weft_strain(n_mesh_quads);
+    py::array_t<double> shear_deg_arr(n_mesh_quads);
+    auto ws = warp_strain.mutable_unchecked<1>();
+    auto wf = weft_strain.mutable_unchecked<1>();
+    auto sd = shear_deg_arr.mutable_unchecked<1>();
+    for (ssize_t i = 0; i < n_mesh_quads; ++i) {
+        const auto& q = result.quads[connected[static_cast<std::size_t>(i)]];
+        ws(i) = q.warpStrain;
+        wf(i) = q.weftStrain;
+        sd(i) = q.shearDeg;
+    }
+    res["warp_strain"] = warp_strain;
+    res["weft_strain"] = weft_strain;
+    res["shear_angle"] = shear_deg_arr;
+
+    py::list boundary_list;
+    for (const auto& bl : result.texturePlan.boundaries) {
+        py::list bl_list;
+        for (const auto& pt : bl) {
+            py::list pt_list;
+            pt_list.append(pt.X());
+            pt_list.append(pt.Y());
+            bl_list.append(pt_list);
+        }
+        boundary_list.append(bl_list);
+    }
+    res["boundaries"] = boundary_list;
+
+    py::dict diag;
+    diag["status"] = static_cast<int>(result.status);
+    diag["coverage_ratio"] = result.coverageRatio;
+    diag["max_shear_deg"] = result.maxShearDeg;
+    diag["max_strain"] = result.maxStrain;
+    diag["solve_time_ms"] = result.solveTimeMs;
+    diag["accepted_nodes"] = static_cast<int>(result.nodes.size());
+    diag["total_nodes"] = static_cast<int>(result.nodes.size());
+    res["diagnostics"] = diag;
+
+    // Quality result — forward from C++ CheckQuality
+    py::dict qual;
+    qual["overall_pass"] = result.qualityResult.overallPass;
+    py::list qual_failures;
+    for (const auto& f : result.qualityResult.failures) {
+        qual_failures.append(f);
+    }
+    qual["failures"] = qual_failures;
+    res["quality"] = qual;
+
+    // === CUT-WIRE DIAGNOSTICS ===
+    py::dict cut_diag;
+    cut_diag["nodes_blocked"] = result.cutWireDiagnostics.nodesBlocked;
+    cut_diag["quads_blocked"] = result.cutWireDiagnostics.quadsBlocked;
+    cut_diag["edges_crossing_wire"] = result.cutWireDiagnostics.edgesDetectedCrossing;
+    py::list blocked_descs;
+    for (const auto& desc : result.cutWireDiagnostics.blockedWireDescriptions) {
+        blocked_descs.append(desc);
+    }
+    cut_diag["blocked_wire_descriptions"] = blocked_descs;
+    res["cut_wire_diagnostics"] = cut_diag;
+
+    return res;
+}
+
+// Run a full drape on the engine and pack the result. Shared by the solve()
+// free function (temporary engine) and DrapeEngine.compute() (persistent
+// engine, retained so LookupUV() can query the last result).
+static py::dict engine_compute(nextdrape::DrapeEngine& engine,
+                               py::object shape_obj,
+                               const py::dict& seed_dict,
+                               const py::dict& params_dict) {
+    TopoDS_Shape shape;
+    try {
+        shape = extract_topods_shape(shape_obj.ptr());
+    } catch (const std::exception& e) {
+        return py::dict(py::arg("success") = false,
+                        py::arg("error") = std::string(e.what()));
+    }
+
+    auto params = build_params(params_dict);
+    auto seed = build_seed(seed_dict);
+
+    nextdrape::DrapeResult result;
+    try {
+        result = engine.Compute(shape, seed, params);
+    } catch (const std::exception& e) {
+        return py::dict(py::arg("success") = false,
+                        py::arg("error") = std::string(e.what()));
+    }
+
+    if (result.status != nextdrape::DrapeStatus::Ok) {
+        std::string status_str = nextdrape::StatusToString(result.status);
+        return py::dict(py::arg("success") = false,
+                        py::arg("error") = std::string("Drape status: ") + status_str);
+    }
+
+    return pack_result(result);
+}
+
+// ── Module ────────────────────────────────────────────────────
 PYBIND11_MODULE(Composites_drape, m) {
     m.doc() = "Composites draping solver — nextdrape integrated with FreeCAD";
 
+    // ── DrapeEngine: the clean frontend ─────────────────────────
+    // FreeCAD holds a persistent DrapeEngine, calls compute() once (which
+    // builds the UV-query index internally), then lookup_uv() for any
+    // number of point queries. This keeps the k-d tree / brute-force
+    // algorithm choice and the flat-data round-trip inside nextdrape.
+    py::class_<nextdrape::DrapeEngine>(m, "DrapeEngine")
+        .def(py::init<>())
+        .def("compute",
+             [](nextdrape::DrapeEngine& self,
+                py::object shape_obj,
+                py::dict seed_dict,
+                py::dict params_dict) {
+                 return engine_compute(self, shape_obj, seed_dict, params_dict);
+             },
+             py::arg("shape"), py::arg("seed"), py::arg("params") = py::dict(),
+             "Run the drape solve; returns the same result dict as solve(). "
+             "The engine retains a UV-query index for subsequent lookup_uv() calls.")
+        .def("lookup_uv",
+             [](const nextdrape::DrapeEngine& self, py::object point_obj) -> py::object {
+                 nextdrape::Vec3 p{0.0, 0.0, 0.0};
+                 try {
+                     py::sequence seq(point_obj);
+                     if (py::len(seq) < 3) {
+                         return py::none();
+                     }
+                     p.x = py::cast<double>(seq[0]);
+                     p.y = py::cast<double>(seq[1]);
+                     p.z = py::cast<double>(seq[2]);
+                 } catch (const std::exception&) {
+                     return py::none();
+                 }
+                 const auto uv = self.LookupUV(p);
+                 if (!uv) {
+                     return py::none();
+                 }
+                 return py::make_tuple(uv->u, uv->v);
+             },
+             py::arg("point"),
+             "Return (u, v) texture coordinate at a 3D point on the last "
+             "compute() result, or None if no quad is reachable.");
+
+    // ── solve(): thin wrapper over a temporary DrapeEngine ──────
+    // Retained for backward compatibility / one-shot use. Holding a
+    // persistent DrapeEngine (compute + lookup_uv) is preferred so the
+    // UV-query index survives across lookups.
     m.def("solve", [](py::object shape_obj, py::dict seed_dict, py::dict params_dict) {
-        TopoDS_Shape shape;
-        try {
-            shape = extract_topods_shape(shape_obj.ptr());
-        } catch (const std::exception& e) {
-            return py::dict(py::arg("success") = false,
-                          py::arg("error") = std::string(e.what()));
-        }
-
-        nextdrape::DrapeParams params;
-        if (params_dict.contains("pitch"))
-            params.pitch = params_dict["pitch"].cast<double>();
-        if (params_dict.contains("shear_warn_deg"))
-            params.shearWarnDeg = params_dict["shear_warn_deg"].cast<double>();
-        if (params_dict.contains("shear_fail_deg"))
-            params.shearFailDeg = params_dict["shear_fail_deg"].cast<double>();
-        if (params_dict.contains("projection_tol"))
-            params.projectionTol = params_dict["projection_tol"].cast<double>();
-        if (params_dict.contains("boundary_tol"))
-            params.boundaryTol = params_dict["boundary_tol"].cast<double>();
-        if (params_dict.contains("strain_fail"))
-            params.strainFail = params_dict["strain_fail"].cast<double>();
-
-        // === CUT-WIRE CONFIG ===
-        params.cutWires.enabled = false;
-        if (params_dict.contains("cut_wires_enabled"))
-            params.cutWires.enabled = pybind11::cast<bool>(
-                params_dict["cut_wires_enabled"]);
-        if (params_dict.contains("cut_wires_proximity_tol"))
-            params.cutWires.proximityTol =
-                params_dict["cut_wires_proximity_tol"].cast<double>();
-        if (params_dict.contains("cut_wires_block_nodes"))
-            params.cutWires.blockNodesOnWire =
-                pybind11::cast<bool>(
-                    params_dict["cut_wires_block_nodes"]);
-        if (params_dict.contains(
-                "cut_wires_block_quads"))
-            params.cutWires.blockQuadsCrossingWire =
-                pybind11::cast<bool>(
-                    params_dict["cut_wires_block_quads"]);
-
-        nextdrape::SeedInput seed;
-        if (seed_dict.contains("point")) {
-            auto pt = seed_dict["point"].cast<py::tuple>();
-            seed.point = gp_Pnt(pt[0].cast<double>(),
-                               pt[1].cast<double>(),
-                               pt[2].cast<double>());
-        } else {
-            seed.point = gp_Pnt(0, 0, 0);
-        }
-        if (seed_dict.contains("warp_direction")) {
-            auto wd = seed_dict["warp_direction"].cast<py::tuple>();
-            seed.warpDir3D = gp_Dir(wd[0].cast<double>(),
-                                    wd[1].cast<double>(),
-                                    wd[2].cast<double>());
-        } else {
-            seed.warpDir3D = gp_Dir(1, 0, 0);
-        }
-
         nextdrape::DrapeEngine engine;
-        nextdrape::DrapeResult result;
-        try {
-            result = engine.Compute(shape, seed, params);
-        } catch (const std::exception& e) {
-            return py::dict(py::arg("success") = false,
-                          py::arg("error") = std::string(e.what()));
-        }
-
-        if (result.status != nextdrape::DrapeStatus::Ok) {
-            std::string status_str = nextdrape::StatusToString(result.status);
-            return py::dict(py::arg("success") = false,
-                          py::arg("error") = std::string("Drape status: ") + status_str);
-        }
-
-        py::dict res;
-        res["success"] = true;
-
-        ssize_t n_nodes = static_cast<ssize_t>(result.nodes.size());
-        py::array_t<double> node_pos({n_nodes, py::ssize_t(3)});
-        auto np = node_pos.mutable_unchecked<2>();
-        for (ssize_t i = 0; i < n_nodes; ++i) {
-            np(i, 0) = result.nodes[i].p3d.X();
-            np(i, 1) = result.nodes[i].p3d.Y();
-            np(i, 2) = result.nodes[i].p3d.Z();
-        }
-        res["node_positions"] = node_pos;
-
-        ssize_t n_flat = static_cast<ssize_t>(result.texturePlan.flatNodes.size());
-        py::array_t<double> tex_coords({n_flat, py::ssize_t(2)});
-        auto tc = tex_coords.mutable_unchecked<2>();
-        for (ssize_t i = 0; i < n_flat; ++i) {
-            tc(i, 0) = result.texturePlan.flatNodes[i].X();
-            tc(i, 1) = result.texturePlan.flatNodes[i].Y();
-        }
-        res["tex_coords"] = tex_coords;
-
-        py::list quad_list;
-        for (const auto& q : result.texturePlan.quads) {
-            py::list q_list;
-            for (auto idx : q) q_list.append(static_cast<py::ssize_t>(idx));
-            quad_list.append(q_list);
-        }
-        res["quads"] = quad_list;
-
-        // Export strains only for the seed-connected quads (texturePlan.quads)
-        // so they align with the mesh geometry.
-        const auto& connected = nextdrape::SeedConnectedQuadIndices(result.quads);
-        ssize_t n_mesh_quads = static_cast<ssize_t>(connected.size());
-        py::array_t<double> warp_strain(n_mesh_quads);
-        py::array_t<double> weft_strain(n_mesh_quads);
-        py::array_t<double> shear_deg_arr(n_mesh_quads);
-        auto ws = warp_strain.mutable_unchecked<1>();
-        auto wf = weft_strain.mutable_unchecked<1>();
-        auto sd = shear_deg_arr.mutable_unchecked<1>();
-        for (ssize_t i = 0; i < n_mesh_quads; ++i) {
-            const auto& q = result.quads[connected[static_cast<std::size_t>(i)]];
-            ws(i) = q.warpStrain;
-            wf(i) = q.weftStrain;
-            sd(i) = q.shearDeg;
-        }
-        res["warp_strain"] = warp_strain;
-        res["weft_strain"] = weft_strain;
-        res["shear_angle"] = shear_deg_arr;
-
-        py::list boundary_list;
-        for (const auto& bl : result.texturePlan.boundaries) {
-            py::list bl_list;
-            for (const auto& pt : bl) {
-                py::list pt_list;
-                pt_list.append(pt.X());
-                pt_list.append(pt.Y());
-                bl_list.append(pt_list);
-            }
-            boundary_list.append(bl_list);
-        }
-        res["boundaries"] = boundary_list;
-
-        py::dict diag;
-        diag["status"] = static_cast<int>(result.status);
-        diag["coverage_ratio"] = result.coverageRatio;
-        diag["max_shear_deg"] = result.maxShearDeg;
-        diag["max_strain"] = result.maxStrain;
-        diag["solve_time_ms"] = result.solveTimeMs;
-        diag["accepted_nodes"] = static_cast<int>(result.nodes.size());
-        diag["total_nodes"] = static_cast<int>(result.nodes.size());
-        res["diagnostics"] = diag;
-
-        // Quality result — forward from C++ CheckQuality
-        py::dict qual;
-        qual["overall_pass"] = result.qualityResult.overallPass;
-        py::list qual_failures;
-        for (const auto& f : result.qualityResult.failures) {
-            qual_failures.append(f);
-        }
-        qual["failures"] = qual_failures;
-        res["quality"] = qual;
-
-        // === CUT-WIRE DIAGNOSTICS ===
-        py::dict cut_diag;
-        cut_diag["nodes_blocked"] = result.cutWireDiagnostics.nodesBlocked;
-        cut_diag["quads_blocked"] = result.cutWireDiagnostics.quadsBlocked;
-        cut_diag["edges_crossing_wire"] = result.cutWireDiagnostics.edgesDetectedCrossing;
-        py::list blocked_descs;
-        for (const auto& desc : result.cutWireDiagnostics.blockedWireDescriptions) {
-            blocked_descs.append(desc);
-        }
-        cut_diag["blocked_wire_descriptions"] = blocked_descs;
-        res["cut_wire_diagnostics"] = cut_diag;
-
-        return res;
+        return engine_compute(engine, shape_obj, seed_dict, params_dict);
     },
     py::arg("shape"), py::arg("seed"), py::arg("params") = py::dict(),
     "Run nextdrape solver on a FreeCAD Part.Shape — zero-copy TopoDS_Shape access.");
@@ -293,8 +369,12 @@ PYBIND11_MODULE(Composites_drape, m) {
     py::arg("master"), py::arg("attachment"), py::arg("seam_width") = 10.0,
     "Extract seam geometry between master and attachment surfaces.");
 
-    // ── KDTreeLocator bindings ──────────────────────────────
-    // Expose the k-d tree spatial index for UV point lookup.
+    // ── KDTreeLocator bindings (TEST/PROFILING SEAM ONLY) ───────
+    // Production UV lookup goes through DrapeEngine::lookup_uv. This
+    // binding exists so test_kd_tree_locator.py can exercise the spatial
+    // index in isolation on synthetic meshes that have no OCC shape (and
+    // therefore cannot go through DrapeEngine::Compute). Keeping it does
+    // not couple production code to the k-d tree implementation.
     py::class_<nextdrape::KDTreeLocator>(m, "KDTreeLocator")
         .def(py::init([](py::list node_positions,
                          py::list quads) {

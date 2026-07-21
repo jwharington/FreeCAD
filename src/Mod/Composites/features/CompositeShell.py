@@ -33,7 +33,7 @@ from .. import (
     is_comp_type,
     roma_map,
 )
-from ..tools.drape_backend_nextdrape import NextDrapeBackend, _ensure_kdtree
+from ..tools.drape_backend_nextdrape import NextDrapeBackend
 from .coin_geometry import (
     build_drapecd_coin,
     find_switch,
