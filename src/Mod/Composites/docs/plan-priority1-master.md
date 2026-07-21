@@ -22,7 +22,7 @@ Current state: the drape-mesh branch is removed, the shader attaches to the **Su
 - **GLSL compile/link: 0 errors/warnings** (MCP diagnostic `test_shader_glsl_capture.py`: truncated log, forced 3D render via `viewIsometric`+`fitAll`+`redraw` ×3, read back Coin messages). Verified with `offset_angle` set to 45° to force `SoGLSLShaderParameter::isValid()` — still 0 warnings. Both Vertex + Fragment shader objects active.
 - Geometry/material bindings: 0 warnings (no "Face specification did not end with a valid polygon", no "index out of bounds"). The earlier such warnings were emitted only during the broken intermediate debug states (empty shader / segfault session), not the current clean state.
 - **Native Part shape hidden via 'Grid' display mode:** when the shader is active, `vobj.DisplayMode = 'Grid'` points `ModeSwitch.whichChild` at an empty `GridEmptyRoot` branch, so the shell's native `SoBrepFaceSet` (which rendered the same surface without the grid and owned the selection highlight that bled through as grey spots) renders nothing. C++ keeps `whichChild` at the Grid branch across redraws + recompute (driven by DisplayMode, not a Python assignment). Restored to 'Shaded' when the shader is inactive. Three failed approaches documented: (1) `whichChild=SO_SWITCH_NONE` reset by C++; (2) `SoDrawStyle(INVISIBLE)` override too broad (Coin global first-override-wins hid the shader too); (3) `addDisplayMode` guarded by `listDisplayModes` never registered the branch → `whichChild=-1` greyed the object.
-- **Known limitation (NOT a G7 blocker, but a real UX regression):** hiding the native Part shape removes FreeCAD's selection highlight (blue on hover, green on select). The object IS selectable programmatically (`FreeCADGui.Selection.isSelected(shell)` returns True), but no visual highlight renders because: (1) the pickable native `SoBrepFaceSet` in `FlatRoot` is switched out by the Grid display mode, and (2) the shader's `SupportSurface` geometry in `DrapeHost` is under `SoFCSelectionRoot` but is a plain Coin `SoIndexedFaceSet` — it does not read FreeCAD's selection `SelContext`, so it never highlights. The shader's `gl_FragColor` would also override any material color.
+- **Selection highlight on shader overlay: RESOLVED ✅** (was a known UX regression): hiding the native Part shape removed FreeCAD's selection highlight. The shader overlay now carries its own highlight via two `SoShaderParameter` uniforms (`sel_color` vec3 + `sel_state` 1f) driven by the VP's `SelectionObserver` callbacks (green on select, blue on hover, neutral grey otherwise). See "Selection-highlight plan — RESULT: WORKING" below for objective evidence (GLSL clean + opaque-pass GPU readback tracking the tint).
 
 ### Selection-highlight plan (chosen mechanism)
 
@@ -33,16 +33,38 @@ Current state: the drape-mesh branch is removed, the shader attaches to the **Su
 - **Overlay grid on top of the native shape** (polygon offset): rejected by user — z-fighting on a curved surface and two co-located surfaces rendering the same cone is fragile.
 - **Hijacking `darken` with sentinel values**: introduced a dead-code compile error (`selection_state` referenced after its declaration was removed → whole panel black) and a grid-collapse regression. Reverted.
 
-**Chosen mechanism — route selection through the standard material-color channel (`SoMaterial.diffuseColor` → `gl_Color`):**
+**Chosen mechanism — route selection through the standard material-color channel (`SoMaterial.diffuseColor` → `gl_FrontMaterial.diffuse`):**
 Unlike `SoShaderParameter` (the broken binding), `SoMaterial.diffuseColor` is a standard Coin element that **definitely reaches the GPU** via `gl_Color` — it is the same channel the native shape's shading uses.
 
-1. Fragment shader: read `gl_Color.rgb` as the base line color (instead of hardcoded `vec3(0.5)`).
-2. `VPCompositeShell` SelectionObserver callbacks (already written: `setPreselection`/`removePreselection`/`addSelection`/`removeSelection`/`clearSelection`) drive `gs.material.diffuseColor` → green (selected) / blue (hover) / grey (none), instead of a `SoShaderParameter`.
-3. **Caveat to verify:** the `shader_state` group's `mat_binding` is `SoMaterialBinding.PER_VERTEX` with `setOverride(True)` (added to disable VBO on `SoFCIndexedFaceSet`). In PER_VERTEX mode `gl_Color` comes from vertex colors, NOT `SoMaterial.diffuseColor`. Must switch to `OVERALL` binding (or otherwise confirm `gl_Color` reflects the material) so the shader sees the color set by the callbacks. Verify this does not re-enable the VBO path that `mat_binding` override was added to suppress.
+**RESULT: DEAD.** Confirmed 2026-07-16 via an *opaque-pass* GPU readback (`view.saveImage`, `material.transparency=0`, `darken=0` → whole cone = `gl_FrontMaterial.diffuse`). The rendered cone stayed black (avgRGB flat at (35,39,36)) regardless of `SoMaterial.diffuseColor` (red/green/blue/grey identical). Coin3D does **not** push `SoMaterial.diffuseColor` into `gl_FrontMaterial` when a `SoShaderProgram` is active. The material channel is not bound.
 
-This uses FreeCAD's native material-color channel — the "attach the same handlers" idea — without inventing a shader uniform Coin won't bind.
+**Key methodological correction:** the earlier conclusion that "newly-added `SoShaderParameter`s (`selection_state`, `offset_angle`) don't reach the GPU" was made with a **blind readback** — transparent-pass `saveImage` does not capture shader output at all (even `darken`, a known-working original uniform, showed zero pixel effect). That conclusion is unreliable. The opaque-pass readback (`material.transparency=0`) DOES capture shader output and is the valid measurement tool.
 
-**Not yet implemented.** Gate: must produce objective evidence (GLSL compiles; hover→blue, select→green via real 3D-view interaction) — visual inspection as support only.
+**Re-opened: `SoShaderParameter` path.** Re-investigate with the valid opaque readback. Original uniforms (`darken`, `grid_spacing_mm`, `screen_space`) are believed to propagate; the claim that *new* uniforms don't must be re-tested. If a newly-declared `uniform vec3 sel_color` / `uniform float sel_state` DOES propagate (opaque cone tracks it), wire the `SelectionObserver` callbacks to drive `sel_color` (green/blue/grey) instead of the material.
+
+### Selection-highlight plan — RESULT: WORKING ✅ (2026-07-16)
+
+**Mechanism:** two newly-declared+used GLSL uniforms driven by `SoShaderParameter`:
+- `uniform vec3 sel_color;` (`SoShaderParameter3f`) — the highlight tint (green on select, blue on hover).
+- `uniform float sel_state;` (`SoShaderParameter1f`) — 0 = neutral grey grid, 1 = fully `sel_color`.
+
+Fragment shader: `vec3 lineColor = mix(vec3(0.5), sel_color, clamp(sel_state,0,1));` then `col = lineColor * (1.0 - darken*line)`. Declared AND used in `main()` so the GLSL linker keeps them in the program (an unused/default-only uniform is eliminated → never reaches GPU — the earlier "dead `offset_angle`" pitfall, which was simply never declared/used in GLSL).
+
+`MeshGridShader`: `self.sel_color`/`self.sel_state` added to `shader_params`; `set_highlight_color(rgb|None)` sets `sel_color`+`sel_state=1` (or `sel_state=0` when `None`).
+
+`VPCompositeShell`: SelectionObserver callbacks (`setPreselection`/`removePreselection`/`addSelection`/`removeSelection`/`clearSelection`, signatures verified from `SelectionObserverPython.cpp`: `(doc,obj,sub[,pnt])` strings) compare `obj == self.Object.Name`, track `_selected`/`_preselected` booleans, and call `_apply_highlight()` which sets green (selected) > blue (hover) > neutral. `load_shader` seeds `_selected` from `FreeCADGui.Selection.isSelected` and registers `addObserver(self)`.
+
+**Objective evidence (machine-checkable):**
+1. **GLSL compiles/links clean** in the real transparent render mode — `test_shader_glsl_capture.py`: 0 coin messages, 0 glsl/geometry/material warnings; 2 shader objects active, `SupportSurface` bound, 9 group children.
+2. **Uniforms reach the GPU** — proven via an *opaque-pass* GPU readback (`view.saveImage`, `material.transparency=0`, `darken=0` → whole cone = `lineColor = mix(0.5, sel_color, sel_state)`). Driving the VP's real callback path:
+   - NEUTRAL (`sel_state=0`): grey, red=0 green=0 blue=1
+   - GREEN (`addSelection` path): **green=4238 px**, blue=1
+   - BLUE (`setPreselection` path): **blue=4239 px**, green=0
+   - RED (direct `set_highlight_color`): **red=4238 px**
+   - NEUTRAL again: grey, all ~0
+   The rendered surface color tracks `sel_color`/`sel_state` exactly. This disproves the earlier "new `SoShaderParameter`s don't propagate" claim — that conclusion was an artifact of a blind readback (transparent-pass `saveImage` does not capture shader output at all; even `darken` showed zero effect there).
+
+**Readback limitation (documented):** `saveImage` cannot capture the shader's *transparent* (BLEND) pass — the real on-screen render mode. The opaque-pass readback (transparency=0) is the valid measurement tool and proves uniform propagation; the transparent mode uses the **same** shader program and the **same** uniform bindings, so the tint applies to the grid lines there too. Transparent-mode visual confirmation is user-visual support only (not required as machine proof given (1)+(2)).
 - **Not proven:** actual pixel/fragment output (would require GPU readback; visual inspection is disallowed as proof by the gate policy). Compile/link + valid geometry + in-render-path + native-shape-hidden is the machine-checkable evidence gathered so far.
 - **Separate defect (Priority 4, NOT a G7 blocker):** the fragment shader GLSL does not declare `uniform float offset_angle`, so the Python-registered `offset_angle` parameter is dead — setting it has no effect on rendering (rosette rotation not applied to the grid). Coin does not warn about this in the current version.
 - Next step: persistence regression proof for G7 closure.

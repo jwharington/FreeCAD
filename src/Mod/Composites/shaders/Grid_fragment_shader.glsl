@@ -4,6 +4,15 @@ uniform float darken = 0.5;
 uniform float screen_space = 1.0;
 uniform float grid_spacing_mm = 10.0;
 
+// Selection-highlight tint, driven from the ViewProvider's
+// SelectionObserver callbacks via SoShaderParameter (vec3 + 1f). sel_state
+// = 0 => neutral grey grid; = 1 => fully sel_color (green on select,
+// blue on hover). Declared AND used so the GLSL linker keeps them in the
+// program (an unused/default-only uniform is eliminated and never
+// reaches the GPU — that was the earlier "dead uniform" pitfall).
+uniform vec3 sel_color;
+uniform float sel_state;
+
 
 // https://github.com/rreusser/glsl-solid-wireframe?tab=readme-ov-file
 
@@ -56,10 +65,11 @@ float gridFactor (vec3 parameter, float width) {
 
 
 void main() {
-  // Uniform neutral grid color — previously R and G were modulated
-  // separately (mixcol on gridX vs gridY), painting X-lines cyan and
-  // Y-lines magenta. Use one color for all lines.
+  // Neutral grid base color. Selection tint mixes toward sel_color
+  // when sel_state > 0 (driven by SoShaderParameter from the VP's
+  // SelectionObserver callbacks).
   vec3 baseColor = vec3(0.5);
+  vec3 lineColor = mix(baseColor, sel_color, clamp(sel_state, 0.0, 1.0));
 
   float spacing = max(grid_spacing_mm, 1e-6);
   vec3 coord = gl_TexCoord[0].xyz / spacing;
@@ -92,6 +102,6 @@ void main() {
 
   // Uniform line color (darken scales line darkness); alpha follows
   // line intensity so background stays transparent.
-  vec3 col = baseColor * (1.0 - darken * line);
+  vec3 col = lineColor * (1.0 - darken * line);
   gl_FragColor = vec4(col, line);
 }

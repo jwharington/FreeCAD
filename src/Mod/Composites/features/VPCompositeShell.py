@@ -13,6 +13,13 @@ from pivy import coin
 
 from .. import COMPOSITE_SHELL_TOOL_ICON
 
+# Selection-highlight colors driven through the material-diffuse channel
+# (read by the fragment shader as gl_FrontMaterial.diffuse). Green on
+# select, blue on hover, neutral grey otherwise.
+_HL_NONE = (0.5, 0.5, 0.5)
+_HL_PRESELECT = (0.0, 0.0, 1.0)
+_HL_SELECTED = (0.0, 1.0, 0.0)
+
 
 class ViewProviderCompositeShell:
     def __init__(self, obj):
@@ -95,6 +102,10 @@ class ViewProviderCompositeShell:
             return
 
         self.Active = False
+
+        # Selection-highlight state (driven by SelectionObserver callbacks).
+        self._selected = False
+        self._preselected = False
 
         self.ViewObject = obj
         self.Object = obj.Object
@@ -428,6 +439,62 @@ class ViewProviderCompositeShell:
             return int(vobj.Laminate.StackOrientation[layer])
         return 0
 
+    def _obj_name(self):
+        """Name of this VP's App object, or None if unavailable."""
+        obj = getattr(self, "Object", None)
+        if obj is None:
+            return None
+        try:
+            return obj.Name
+        except AttributeError:
+            return None
+
+    def _shader_ready(self):
+        gs = getattr(self, "grid_shader", None)
+        return gs is not None and getattr(gs, "_attached", False)
+
+    def _apply_highlight(self):
+        """Push the current highlight state to the shader tint uniforms."""
+        if not self._shader_ready():
+            return
+        if getattr(self, "_selected", False):
+            self.grid_shader.set_highlight_color(_HL_SELECTED)
+        elif getattr(self, "_preselected", False):
+            self.grid_shader.set_highlight_color(_HL_PRESELECT)
+        else:
+            self.grid_shader.set_highlight_color(None)
+
+    # --- SelectionObserver interface (FreeCAD calls these via
+    # Selection.addObserver(self) registered in load_shader). They drive
+    # the material-diffuse highlight channel so the shader overlay gets
+    # the same blue-on-hover / green-on-select feedback the native shape
+    # used to provide. ---
+
+    def setPreselection(self, doc, obj, sub):
+        if obj == self._obj_name():
+            self._preselected = True
+            self._apply_highlight()
+
+    def removePreselection(self, doc, obj, sub):
+        if obj == self._obj_name():
+            self._preselected = False
+            self._apply_highlight()
+
+    def addSelection(self, doc, obj, sub, pnt):
+        if obj == self._obj_name():
+            self._selected = True
+            self._apply_highlight()
+
+    def removeSelection(self, doc, obj, sub):
+        if obj == self._obj_name():
+            self._selected = False
+            self._apply_highlight()
+
+    def clearSelection(self, doc):
+        self._selected = False
+        self._preselected = False
+        self._apply_highlight()
+
     def load_shader(self):
         try:
             if self.Active:
@@ -467,6 +534,16 @@ class ViewProviderCompositeShell:
                 import FreeCADGui
 
                 FreeCADGui.Selection.addObserver(self)
+                # Seed highlight from any existing selection so a reload
+                # does not drop the green/blue state.
+                try:
+                    self._selected = bool(
+                        FreeCADGui.Selection.isSelected(self.Object)
+                    )
+                except Exception:
+                    self._selected = False
+                self._preselected = False
+                self._apply_highlight()
         except Exception as e:
             import traceback
             print(f'load_shader ERROR: {e}')

@@ -55,6 +55,17 @@ class MeshGridShader:
         self.grid_spacing_mm.name = "grid_spacing_mm"
         self.grid_spacing_mm.value = 10.0
 
+        # Selection-highlight tint, driven by the ViewProvider's
+        # SelectionObserver callbacks. Declared AND used in the GLSL so
+        # the linker keeps them in the program (an unused/default-only
+        # uniform is eliminated and never reaches the GPU).
+        self.sel_color = coin.SoShaderParameter3f()
+        self.sel_color.name = "sel_color"
+        self.sel_color.value = (0.5, 0.5, 0.5)  # neutral grey default
+        self.sel_state = coin.SoShaderParameter1f()
+        self.sel_state.name = "sel_state"
+        self.sel_state.value = 0.0  # 0 = neutral, 1 = use sel_color
+
         self.screen_space = coin.SoShaderParameter1f()
         self.screen_space.name = "screen_space"
         self.screen_space.value = 1.0  # 1 = screen-space, 0 = world-space
@@ -67,6 +78,8 @@ class MeshGridShader:
             self.darken,
             self.offset_angle,
             self.grid_spacing_mm,
+            self.sel_color,
+            self.sel_state,
         ]
 
         self.fragmentShader = coin.SoFragmentShader()
@@ -120,8 +133,12 @@ class MeshGridShader:
         # Material with non-zero transparency so Coin3D renders this geometry
         # in the transparency (blending) pass. The shader controls per-fragment
         # alpha via gl_FragColor.a; this just triggers the correct render path.
+        # diffuseColor is the selection-highlight channel: the fragment shader
+        # reads gl_FrontMaterial.diffuse, and the ViewProvider's
+        # SelectionObserver callbacks drive this value green/blue/grey.
         self.material = coin.SoMaterial()
         self.material.transparency = 0.5
+        self.material.diffuseColor = (0.5, 0.5, 0.5)  # neutral grey default
 
         # Strain color material — per-vertex diffuse colors for strain visualization
         self.strain_material = coin.SoMaterial()
@@ -188,6 +205,28 @@ class MeshGridShader:
                     r = float(pt[2]) if len(pt) >= 3 else 0.0
                     texture_coords.point.set1Value(idx, float(pt[0]), float(pt[1]), r)
         return texture_coords
+
+    def set_highlight_color(self, rgb) -> None:
+        """Set the selection-highlight tint on the grid.
+
+        rgb is an (r, g, b) tuple in 0..1 to tint the grid (green on
+        select, blue on hover). Pass None to clear the highlight back to
+        the neutral grey base. Routes through SoShaderParameter (vec3
+        sel_color + 1f sel_state), which — unlike SoMaterial.diffuseColor
+        (not bound to gl_FrontMaterial under a shader program) — reaches
+        the GPU. The SoShaderParameter nodes persist across attach/reload
+        (reused, not recreated).
+        """
+        if self.sel_color is None or self.sel_state is None:
+            return
+        try:
+            if rgb is None:
+                self.sel_state.value = 0.0
+            else:
+                self.sel_color.value = (float(rgb[0]), float(rgb[1]), float(rgb[2]))
+                self.sel_state.value = 1.0
+        except Exception:
+            pass
 
     def set_offset_angle(self, offset_angle_deg: float = 0.0) -> None:
         """Apply rosette angle as a uniform rotation in the fragment shader."""
