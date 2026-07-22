@@ -20,7 +20,17 @@ class RosetteSymbol:
     of the given local coordinate system:
     - X axis (0°/180°): red
     - Y axis (90°/270°): green
+
+    The symbol is lifted slightly along the LCS +Z axis (the surface
+    normal) so it renders just in front of the draped surface. Without
+    this offset the rosette lines are coplanar with the surface and
+    z-fight / get occluded by the shader's transparent render pass.
     """
+
+    # Offset along the local +Z (surface normal) to clear z-fighting with
+    # the surface. Small enough to look attached, large enough to survive
+    # depth-buffer precision at typical shell scales (hundreds of mm).
+    _SURFACE_OFFSET_MM = 0.5
 
     def __init__(self):
         self.separator = coin.SoSeparator()
@@ -59,6 +69,15 @@ class RosetteSymbol:
             rotation[0], rotation[1], rotation[2], rotation[3]
         )
         self.separator.addChild(transform)
+
+        # Lift the symbol along the local +Z (surface normal) so it renders
+        # just in front of the surface. This child transform is applied in
+        # the frame established by `transform` above (after its rotation),
+        # so (0,0,offset) maps to the surface-normal direction in world
+        # space — the rosette moves toward the camera, clearing z-fighting.
+        offset = coin.SoTransform()
+        offset.translation.setValue(0.0, 0.0, self._SURFACE_OFFSET_MM)
+        self.separator.addChild(offset)
 
         # Thin line style for all geometry
         draw_style = coin.SoDrawStyle()
