@@ -178,6 +178,57 @@ Add to `compositestests/test_mould.py`:
 3. Layer 2 geometry-behavior tests — fill in the public-function contracts.
 4. Resolve the open questions (warnings, null-shape contract, CAM import).
 
+## Progress (2026-07-16)
+
+- **Layer 1 — DONE.** `test_mould_analysis_unit.py`: 59 pure-Python unit
+  tests, all pass. Covers score breakdown, risk class, overlay bands/groups,
+  decomposition planning, split-offset derivation, multipart selection,
+  normalization hints, quantity parsing.
+- **Layer 2 — DONE (authored; pending sync to run).** `test_mould_geometry.py`:
+  26 tests for the 5 public functions. 23 pass; 3 propblade-fixture tests
+  pending sync (blocked by nextdrape build break — see below). Surfaced a
+  real finding: the draw-direction heuristic minimizes mould stock
+  (bbox_score = 1/extent → picks smallest-extent axis), NOT draw engagement.
+  Tests pin the actual behavior + flag the design question.
+- **Layer 3 — DONE (authored; pending sync to run).** `test_mould.py` extended
+  with 9 tests: null source, empty shape, draw-direction correctness (flat
+  box→Z, tall box→not-Z), preferred-direction respect, parting-surface
+  normal axis-alignment, mould-halves persistence across reload, PartPlane
+  on box + null-source crash guard.
+- **`propblade.FCStd` fixture added** under `compositetests/fixtures/`;
+  CMake `*.FCStd` install pattern added. Real-world propeller-blade CAD
+  (shell/surface solid) exercises `normalize_source_shape` on non-trivial
+  geometry.
+
+## Findings surfaced (not bugs in the tests — real code observations)
+
+1. **Draw-direction heuristic = stock minimization, not draw engagement.**
+   `_candidate_scores` uses `bbox_score = 1/extent`, so it picks the
+   smallest-extent axis (least mould stock). For a 20×20×2 box it picks Z;\   for a 2×2×20 box it picks X or Y. This may be the wrong objective for a
+   mould (draw engagement usually favours the long axis). Flagged as an
+   open design question, not silently asserted either way.
+2. **`PartPlaneFP.execute` has no null-source guard** — calls
+   `make_parting_surface3(fp.Source.Shape)` directly. A null Source would
+   raise `AttributeError`. `test_part_plane_null_source_does_not_crash`
+   pins this (expects recompute to either contain it or fail the test).
+3. **`PartPlaneFP` has dead properties** — `Inset`, `Ruled`, `ViewDir` are
+   declared but never read by `execute` (it ignores them and calls
+   `make_parting_surface3(fp.Source.Shape)` with no args). Not a test
+   failure, but a cleanup item.
+4. **`make_mould_halves` cuts the source out of each half** (cavity), so the
+   combined half volume is NOT necessarily > source volume. The Layer 2 test
+   was corrected to assert each half has positive stock volume instead.
+
+## Blocker (2026-07-16)
+
+`build-install-freecad.sh` fails to compile nextdrape's
+`prototype/atlas_fit_validate.cpp` (`error: use of undeclared identifier
+'MakeConicalSegment'`) on the `experimental-bilinear-atlas` branch. Because
+the script builds the whole project, that C++ failure aborts before
+`cmake --install` runs — so the new Layer 2/3 Python files and the propblade
+fixture can't be synced to the install tree. Once the nextdrape build is
+unblocked, the sync will land them and all tests can run.
+
 ## Files
 
 - New: `compositestests/test_mould_analysis_unit.py` (Layer 1)

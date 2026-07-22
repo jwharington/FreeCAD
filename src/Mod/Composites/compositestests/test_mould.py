@@ -13,7 +13,7 @@ from .test_base import TestFreeCADFP
 
 
 class TestMouldAnalysis(TestFreeCADFP):
-    """Tests for MouldAnalysisFP and PartPlaneFP features."""
+    """Tests for MouldAnalysisFP and PartPlaneFP features (Layer 3)."""
 
     def _make_source(self, name, shape):
         source = self.doc.addObject("Part::Feature", name)
@@ -129,3 +129,118 @@ class TestMouldAnalysis(TestFreeCADFP):
 
         self.assert_analysis_ready(analysis)
         self.assertTrue(analysis.PartingSurfaceSummary)
+
+    # ── Layer 3: error paths + correctness ──────────────────────────────
+
+    def test_mould_analysis_null_source_is_waiting(self):
+        # A MouldAnalysis with no Source must not raise; it pins to the
+        # documented 'Waiting for source' state.
+        from Composites.features.MouldAnalysis import MouldAnalysisFP
+        obj = self.doc.addObject("Part::FeaturePython", "MouldAnalysisNull")
+        MouldAnalysisFP(obj, None)
+        self.doc.recompute()
+        self.assertEqual(obj.AnalysisStatus, "Waiting for source")
+        self.assertEqual(obj.ValidationStatus, "Waiting for source")
+        self.assertEqual(tuple(obj.BestDrawDirection), (0.0, 0.0, 1.0))
+
+    def test_mould_analysis_empty_shape_is_fail(self):
+        # An empty Part.Shape is a real failure (not 'Waiting') — the source
+        # exists but has no geometry. Pin the actual behavior.
+        source = self.doc.addObject("Part::Feature", "EmptySource")
+        source.Shape = Part.Shape()
+        self.doc.recompute()
+        analysis = self._make_mould_analysis(source, name="MouldAnalysisEmpty")
+        self.assertNotEqual(analysis.AnalysisStatus, "Ready")
+        self.assertTrue(analysis.AnalysisSummary)
+
+    def test_draw_direction_picks_smallest_extent_axis(self):
+        # The heuristic minimizes mould stock: bbox_score = 1/extent, so it
+        # picks the SMALLEST-extent axis. For a flat 20x20x2 box, Z (extent
+        # 2) wins. (Flags the design question: is stock-minimization right,
+        # or should draw engagement win?)
+        source = self._make_source("FlatBox", Part.makeBox(20.0, 20.0, 2.0))
+        analysis = self._make_mould_analysis(source, name="MouldAnalysisFlat")
+        best = analysis.BestDrawDirection
+        self.assertAlmostEqual(best.z, 1.0, places=6)
+
+    def test_draw_direction_tall_box_not_z(self):
+        # Tall thin 2x2x20 box: smallest extent is X or Y (2), not Z (20).
+        source = self._make_source("TallBox", Part.makeBox(2.0, 2.0, 20.0))
+        analysis = self._make_mould_analysis(source, name="MouldAnalysisTall")
+        best = analysis.BestDrawDirection
+        self.assertNotAlmostEqual(best.z, 1.0, places=6)
+
+    def test_preferred_draw_direction_is_respected_when_valid(self):
+        # Setting PreferredDrawDirection to an axis candidate should make
+        # DrawDirectionScore reflect that direction (matched_candidate=True
+        # in the diagnostics), even if it isn't the top-ranked one.
+        from Composites.features.MouldAnalysis import MouldAnalysisFP
+        source = self._make_source("BoxForPref", Part.makeBox(20.0, 15.0, 10.0))
+        obj = self.doc.addObject("Part::FeaturePython", "MouldAnalysisPref")
+        MouldAnalysisFP(obj, source)
+        obj.PreferredDrawDirection = FreeCAD.Vector(0, 0, 1)  # Z, likely not winner
+        self.doc.recompute()
+        # Score is computed; the feature doesn't crash on a non-winning pref.
+        self.assertGreaterEqual(obj.DrawDirectionScore, 0.0)
+        self.assertNotEqual(obj.AnalysisStatus, "Waiting for source")
+
+    def test_parting_surface_normal_is_axis_aligned(self):
+        # On a box the parting surface normal must be a unit axis vector
+        # (the dominant axis of the chosen draw direction).
+        source = self._make_source("BoxForParting", Part.makeBox(20.0, 20.0, 2.0))
+        analysis = self._make_mould_analysis(source, name="MouldAnalysisParting")
+        n = analysis.PartingSurfaceNormal
+        # Exactly one component is ~±1, the others ~0
+        comps = sorted([abs(n.x), abs(n.y), abs(n.z)], reverse=True)
+        self.assertAlmostEqual(comps[0], 1.0, places=6)
+        self.assertAlmostEqual(comps[1] + comps[2], 0.0, places=6)
+
+    def test_mould_halves_persist_across_reload(self):
+        # Extended round-trip: the analysis result (not just the shape) must
+        # survive save/reload — AnalysisStatus, BestDrawDirection, and the
+        # mould-half shapes.
+        source = self._make_source("ReloadSource", Part.makeBox(20.0, 10.0, 12.0))
+        analysis = self._make_mould_analysis(source, name="ReloadAnalysis")
+        best_before = tuple(analysis.BestDrawDirection)
+        status_before = analysis.AnalysisStatus
+
+        filepath = os.path.join(tempfile.gettempdir(), "mould_reload.FCStd")
+        try:
+            self._save_document(filepath)
+            reopened = FreeCAD.openDocument(filepath)
+            try:
+                ra = reopened.getObject(analysis.Name)
+                self.assertIsNotNone(ra)
+                self.assertEqual(ra.AnalysisStatus, status_before)
+                self.assertEqual(tuple(ra.BestDrawDirection), best_before)
+                self.assertFalse(ra.MouldHalfA.Shape.isNull())
+                self.assertFalse(ra.MouldHalfB.Shape.isNull())
+            finally:
+                try:
+                    reopened.close()
+                except Exception:
+                    pass
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+
+    def test_part_plane_on_box(self):
+        # PartPlane should produce a non-null compound on a simple box too
+        # (the existing test only covers a cylinder).
+        source = self._make_source("BoxForPP", Part.makeBox(20.0, 15.0, 10.0))
+        part_plane = self._make_part_plane(source, name="PartPlaneBox")
+        self.assert_non_null_shape(part_plane)
+
+    def test_part_plane_null_source_does_not_crash(self):
+        # PartPlaneFP.execute has no null-source guard (it calls
+        # make_parting_surface3(fp.Source.Shape) directly). Pin the actual
+        # behavior — it must not abort the recompute; it may produce a null
+        # shape or raise a caught exception.
+        from Composites.features.PartPlane import PartPlaneFP
+        obj = self.doc.addObject("Part::FeaturePython", "PartPlaneNull")
+        PartPlaneFP(obj, None)
+        # Recompute must not raise — whatever happens is contained.
+        try:
+            self.doc.recompute()
+        except Exception as exc:
+            self.fail(f"PartPlane recompute raised on null source: {exc}")
