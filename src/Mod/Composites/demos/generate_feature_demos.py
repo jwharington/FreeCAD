@@ -31,7 +31,6 @@ def _bootstrap_modules():
     from freecad.Composites.features.HomogeneousLamina import (
         HomogeneousLaminaFP,
     )
-    from freecad.Composites.features.Mould import MouldFP
     from freecad.Composites.features.PartPlane import PartPlaneFP
     from freecad.Composites.features.Rosette import RosetteFP
 
@@ -45,7 +44,6 @@ def _bootstrap_modules():
         "CompositeShellFP": CompositeShellFP,
         "FibreCompositeLaminaFP": FibreCompositeLaminaFP,
         "HomogeneousLaminaFP": HomogeneousLaminaFP,
-        "MouldFP": MouldFP,
         "PartPlaneFP": PartPlaneFP,
         "RosetteFP": RosetteFP,
     }
@@ -185,14 +183,9 @@ def generate_manufacturing_demo(output_dir):
     parting_surface = doc.addObject("Part::FeaturePython", "PartPlane")
     MODULES["PartPlaneFP"](parting_surface, source)
 
-    mould = doc.addObject("Part::FeaturePython", "Mould")
-    MODULES["MouldFP"](mould, source)
-
     doc.recompute()
     if parting_surface.Shape.isNull():
         raise RuntimeError("Parting-surface demo did not generate a shape")
-    if mould.Shape.isNull():
-        raise RuntimeError("Mould demo did not generate a shape")
 
     return _save_document(
         doc,

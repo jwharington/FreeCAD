@@ -46,7 +46,6 @@ class CompositesWorkbench(Gui.Workbench):
         from Composites.features.Stiffener import CompositeStiffenerCommand
         from Composites.features.Laminate import LaminateCommand
         from Composites.features.CompositeShell import CompositeShellCommand
-        from Composites.features.Mould import CompositeMouldCommand
         from Composites.features.PlaceDart import PlaceDartCommand
         from Composites.features.SeamExtraction import (
             CompositeSeamExtractionCommand,
@@ -67,7 +66,6 @@ class CompositesWorkbench(Gui.Workbench):
             ("Composites_Stiffener", CompositeStiffenerCommand()),
             ("Composites_Laminate", LaminateCommand()),
             ("Composites_CompositeShell", CompositeShellCommand()),
-            ("Composites_Mould", CompositeMouldCommand()),
             ("Composites_PlaceDart", PlaceDartCommand()),
             ("Composites_Seam", CompositeSeamExtractionCommand()),
             ("Composites_Rosette", RosetteCommand()),

@@ -66,7 +66,6 @@ def get_command_groups():
             [
                 "Composites_MouldAnalysis",
                 "Composites_PartPlane",
-                "Composites_Mould",
             ],
             menu="Mould",
             tooltip="Mould construction tools",
