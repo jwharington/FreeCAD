@@ -120,6 +120,7 @@ install(
         PATTERN "*.css"
         PATTERN "*.FCMat"
         PATTERN "*.glsl"
+        PATTERN "*.FCStd"
     PATTERN "__pycache__" EXCLUDE
     PATTERN "*.pyc" EXCLUDE
     PATTERN ".git" EXCLUDE
