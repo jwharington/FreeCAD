@@ -51,9 +51,12 @@ class MeshGridShader:
         self.offset_angle.name = "offset_angle"
         self.offset_angle.value = 0.0
 
-        self.grid_spacing_mm = coin.SoShaderParameter1f()
-        self.grid_spacing_mm.name = "grid_spacing_mm"
-        self.grid_spacing_mm.value = 10.0
+        self.grid_spacing_x = coin.SoShaderParameter1f()
+        self.grid_spacing_x.name = "grid_spacing_x_mm"
+        self.grid_spacing_x.value = 20.0
+        self.grid_spacing_y = coin.SoShaderParameter1f()
+        self.grid_spacing_y.name = "grid_spacing_y_mm"
+        self.grid_spacing_y.value = 10.0
 
         # Selection-highlight tint, driven by the ViewProvider's
         # SelectionObserver callbacks. Declared AND used in the GLSL so
@@ -77,7 +80,8 @@ class MeshGridShader:
             self.screen_space,
             self.darken,
             self.offset_angle,
-            self.grid_spacing_mm,
+            self.grid_spacing_x,
+            self.grid_spacing_y,
             self.sel_color,
             self.sel_state,
         ]
@@ -178,12 +182,20 @@ class MeshGridShader:
         self.darken.value = v
 
     @property
-    def GridSpacingMM(self) -> float:
-        return self.grid_spacing_mm.value.getValue()
+    def GridSpacingX(self) -> float:
+        return self.grid_spacing_x.value.getValue()
 
-    @GridSpacingMM.setter
-    def GridSpacingMM(self, v: float) -> None:
-        self.grid_spacing_mm.value = v
+    @GridSpacingX.setter
+    def GridSpacingX(self, v: float) -> None:
+        self.grid_spacing_x.value = v
+
+    @property
+    def GridSpacingY(self) -> float:
+        return self.grid_spacing_y.value.getValue()
+
+    @GridSpacingY.setter
+    def GridSpacingY(self, v: float) -> None:
+        self.grid_spacing_y.value = v
 
     @property
     def Root(self) -> coin.SoSeparator:

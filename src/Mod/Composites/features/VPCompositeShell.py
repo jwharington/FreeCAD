@@ -13,12 +13,17 @@ from pivy import coin
 
 from .. import COMPOSITE_SHELL_TOOL_ICON
 
-# Selection-highlight colors driven through the material-diffuse channel
-# (read by the fragment shader as gl_FrontMaterial.diffuse). Green on
-# select, blue on hover, neutral grey otherwise.
+# Neutral grid base color when nothing is highlighted. Selection tint
+# colors (hover/select) are read at runtime from FreeCAD's View
+# preferences so the overlay matches the native highlight colors the
+# user sees on every other object — see _native_hl_color.
 _HL_NONE = (0.5, 0.5, 0.5)
-_HL_PRESELECT = (0.0, 0.0, 1.0)
-_HL_SELECTED = (0.0, 1.0, 0.0)
+
+# Packed-color fallbacks matching Gui::SelectionColors
+# (highlightFallbackColor / selectionFallbackColor), so the overlay
+# matches native defaults even before the user has customized anything.
+_HL_HIGHLIGHT_FALLBACK = 0xE1E114FF   # (225, 225, 20)  — hover
+_HL_SELECTION_FALLBACK = 0x1CAD1CFF  # (28, 173, 28)   — selected
 
 
 class ViewProviderCompositeShell:
@@ -35,6 +40,28 @@ class ViewProviderCompositeShell:
             "Grid darkness",
         )
         obj.Darken = 0.5
+
+        obj.addProperty(
+            "App::PropertyFloatConstraint",
+            "GridSpacingX",
+            "AnalysisOptions",
+            "Grid line spacing along the warp (u) axis in mm",
+        )
+        obj.GridSpacingX = (20.0, 1.0, 1000.0, 1.0)
+
+        obj.addProperty(
+            "App::PropertyFloatConstraint",
+            "GridSpacingY",
+            "AnalysisOptions",
+            "Grid line spacing along the weft (v) axis in mm",
+        )
+        obj.GridSpacingY = (10.0, 1.0, 1000.0, 1.0)
+
+        # Seed the shader with the default X/Y spacing (X = 2×Y by
+        # default, giving a 2:1 warp:weft pattern). onChanged keeps them
+        # in sync with the shader uniforms thereafter.
+        self.grid_shader.GridSpacingX = 20.0
+        self.grid_shader.GridSpacingY = 10.0
 
         obj.addProperty(
             "App::PropertyBool",
@@ -394,7 +421,14 @@ class ViewProviderCompositeShell:
             case "DisplayMode":
                 self.update_mesh_material(vobj)
             case "Darken":
-                pass
+                if self._shader_ready():
+                    self.grid_shader.Darken = float(getattr(vobj, "Darken", 0.5))
+            case "GridSpacingX":
+                if self._shader_ready():
+                    self.grid_shader.GridSpacingX = float(getattr(vobj, "GridSpacingX", 20.0))
+            case "GridSpacingY":
+                if self._shader_ready():
+                    self.grid_shader.GridSpacingY = float(getattr(vobj, "GridSpacingY", 10.0))
             case "DisplayLayer":
                 # When the shader is attached, a layer change only needs to
                 # rotate the grid (offset_angle uniform) — avoid an expensive
@@ -474,14 +508,39 @@ class ViewProviderCompositeShell:
         gs = getattr(self, "grid_shader", None)
         return gs is not None and getattr(gs, "_attached", False)
 
+    def _native_hl_color(self, fallback):
+        """Read a highlight/selection color from FreeCAD's View preferences.
+
+        Returns an (r, g, b) tuple in 0..1 matching the native highlight/
+        selection color the rest of the GUI uses (so the shader overlay
+        matches other objects). The pref value is a packed 0xRRGGBBAA
+        unsigned; falls back to the provided fallback if unavailable.
+        """
+        try:
+            import FreeCAD
+            view = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/View")
+            packed = view.GetUnsigned("HighlightColor" if fallback is _HL_HIGHLIGHT_FALLBACK else "SelectionColor", fallback)
+            r = ((packed >> 24) & 0xFF) / 255.0
+            g = ((packed >> 16) & 0xFF) / 255.0
+            b = ((packed >> 8) & 0xFF) / 255.0
+            return (r, g, b)
+        except Exception:
+            # Offline / non-GUI: fall back to the native default.
+            packed = fallback
+            return (((packed >> 24) & 0xFF) / 255.0,
+                    ((packed >> 16) & 0xFF) / 255.0,
+                    ((packed >> 8) & 0xFF) / 255.0)
+
     def _apply_highlight(self):
         """Push the current highlight state to the shader tint uniforms."""
         if not self._shader_ready():
             return
         if getattr(self, "_selected", False):
-            self.grid_shader.set_highlight_color(_HL_SELECTED)
+            self.grid_shader.set_highlight_color(
+                self._native_hl_color(_HL_SELECTION_FALLBACK))
         elif getattr(self, "_preselected", False):
-            self.grid_shader.set_highlight_color(_HL_PRESELECT)
+            self.grid_shader.set_highlight_color(
+                self._native_hl_color(_HL_HIGHLIGHT_FALLBACK))
         else:
             self.grid_shader.set_highlight_color(None)
 
@@ -541,9 +600,12 @@ class ViewProviderCompositeShell:
                 from ..shaders.MeshGridShader import MeshGridShader
                 self.grid_shader = MeshGridShader()
             if self.grid_shader:
-                # Shader attachment now targets the support surface already
-                # injected into the GUI scene graph.
+                # Seed shader uniforms from the VP's current properties so a
+                # reload picks up user-edited values (not just the defaults).
                 self.grid_shader.ScreenSpace = bool(self.ViewObject.ScreenSpaceGrid)
+                self.grid_shader.Darken = float(getattr(self.ViewObject, "Darken", 0.5))
+                self.grid_shader.GridSpacingX = float(getattr(self.ViewObject, "GridSpacingX", 20.0))
+                self.grid_shader.GridSpacingY = float(getattr(self.ViewObject, "GridSpacingY", 10.0))
                 self.grid_shader.attach(
                     drape_host,
                     tex_coords,

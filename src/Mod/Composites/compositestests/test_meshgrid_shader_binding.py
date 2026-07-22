@@ -42,11 +42,16 @@ class TestMeshGridShaderBinding(unittest.TestCase):
         self.assertEqual(shader.offset_angle.name.getValue(), "offset_angle")
         self.assertEqual(shader.offset_angle.value.getValue(), 0.0)
 
-    def test_grid_spacing_uniform_defaults_to_10_mm(self):
+    def test_grid_spacing_uniforms_default_x_twice_y(self):
         shader = self.mod.MeshGridShader()
-        self.assertEqual(shader.grid_spacing_mm.name.getValue(), "grid_spacing_mm")
-        self.assertEqual(shader.grid_spacing_mm.value.getValue(), 10.0)
-        self.assertEqual(shader.GridSpacingMM, 10.0)
+        self.assertEqual(shader.grid_spacing_x.name.getValue(), "grid_spacing_x_mm")
+        self.assertEqual(shader.grid_spacing_x.value.getValue(), 20.0)
+        self.assertEqual(shader.grid_spacing_y.name.getValue(), "grid_spacing_y_mm")
+        self.assertEqual(shader.grid_spacing_y.value.getValue(), 10.0)
+        self.assertEqual(shader.GridSpacingX, 20.0)
+        self.assertEqual(shader.GridSpacingY, 10.0)
+        # Default X spacing is twice Y (2:1 warp:weft pattern).
+        self.assertAlmostEqual(shader.GridSpacingX, 2.0 * shader.GridSpacingY)
 
     def test_set_offset_angle_writes_radians_to_uniform(self):
         shader = self.mod.MeshGridShader()
@@ -95,7 +100,8 @@ class TestMeshGridShaderBinding(unittest.TestCase):
         self.assertEqual(shader._coin_geo.getName(), "DummyGeometry")
         self.assertEqual(shader._find_coin_geometry(root).getName(), "DummyGeometry")
         self.assertAlmostEqual(shader.offset_angle.value.getValue(), math.radians(30.0))
-        self.assertEqual(shader.grid_spacing_mm.value.getValue(), 10.0)
+        self.assertEqual(shader.grid_spacing_x.value.getValue(), 20.0)
+        self.assertEqual(shader.grid_spacing_y.value.getValue(), 10.0)
         self.assertGreaterEqual(shader.grp.getNumChildren(), 9)
         self.assertGreater(len(face_set.textureCoordIndex.getValues()), 0)
 

@@ -2,7 +2,8 @@
 
 uniform float darken = 0.5;
 uniform float screen_space = 1.0;
-uniform float grid_spacing_mm = 10.0;
+uniform float grid_spacing_x_mm = 20.0;
+uniform float grid_spacing_y_mm = 10.0;
 
 // Selection-highlight tint, driven from the ViewProvider's
 // SelectionObserver callbacks via SoShaderParameter (vec3 + 1f). sel_state
@@ -77,15 +78,15 @@ void main() {
   vec3 baseColor = vec3(0.5);
   vec3 lineColor = mix(baseColor, sel_color, clamp(sel_state, 0.0, 1.0));
 
-  float spacing = max(grid_spacing_mm, 1e-6);
-  vec3 coord = gl_TexCoord[0].xyz / spacing;
+  vec2 spacing = max(vec2(grid_spacing_x_mm, grid_spacing_y_mm), vec2(1e-6));
+  vec2 coord2 = gl_TexCoord[0].xy / spacing;
 
   // Rotate the grid UV by offset_angle so the grid aligns with the
   // selected layer's fibre orientation.
   float ca = cos(offset_angle);
   float sa = sin(offset_angle);
-  vec2 rcoord = vec2(ca * coord.x - sa * coord.y,
-                     sa * coord.x + ca * coord.y);
+  vec2 rcoord = vec2(ca * coord2.x - sa * coord2.y,
+                     sa * coord2.x + ca * coord2.y);
 
   // screen_space: 1.0 = zoom-stable ~1px lines via fwidth (default),
   // 0.0 = wider fixed screen-space width. Blend the line width so the
