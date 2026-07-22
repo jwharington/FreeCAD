@@ -21,10 +21,11 @@ class RosetteSymbol:
     - X axis (0°/180°): red
     - Y axis (90°/270°): green
 
-    The symbol is lifted slightly along the LCS +Z axis (the surface
-    normal) so it renders just in front of the draped surface. Without
-    this offset the rosette lines are coplanar with the surface and
-    z-fight / get occluded by the shader's transparent render pass.
+    The symbol is drawn on BOTH sides of the surface (mirrored about the
+    LCS XY plane at ±_SURFACE_OFFSET_MM along local Z) so it is visible
+    from either viewing direction. The small Z offset also clears
+    z-fighting with the surface that would otherwise occlude the rosette
+    lines drawn coplanar with it.
     """
 
     # Offset along the local +Z (surface normal) to clear z-fighting with
@@ -70,33 +71,43 @@ class RosetteSymbol:
         )
         self.separator.addChild(transform)
 
-        # Lift the symbol along the local +Z (surface normal) so it renders
-        # just in front of the surface. This child transform is applied in
-        # the frame established by `transform` above (after its rotation),
-        # so (0,0,offset) maps to the surface-normal direction in world
-        # space — the rosette moves toward the camera, clearing z-fighting.
-        offset = coin.SoTransform()
-        offset.translation.setValue(0.0, 0.0, self._SURFACE_OFFSET_MM)
-        self.separator.addChild(offset)
+        # Draw the rosette on BOTH sides of the surface: mirrored about the
+        # LCS XY plane at ±_SURFACE_OFFSET_MM along local Z. The flat 2D
+        # symbol is only visible from one viewing direction otherwise.
+        # Each side gets its own offset transform + a fresh copy of the
+        # geometry (Coin nodes are not safely shareable between two
+        # parents, so build twice into two separators).
+        self._add_side(self.separator, +self._SURFACE_OFFSET_MM, scale)
+        self._add_side(self.separator, -self._SURFACE_OFFSET_MM, scale)
 
-        # Thin line style for all geometry
+    def _add_side(self, parent, z_offset, scale):
+        """Build one copy of the rosette geometry, offset along local Z."""
+        side = coin.SoSeparator()
+
+        offset = coin.SoTransform()
+        offset.translation.setValue(0.0, 0.0, z_offset)
+        side.addChild(offset)
+
+        # Thin line style for all geometry on this side.
         draw_style = coin.SoDrawStyle()
         draw_style.lineWidth = 2.0
-        self.separator.addChild(draw_style)
+        side.addChild(draw_style)
 
-        # Reference circle and centre dot
-        self._add_circle(scale)
-        self._add_center()
+        # Reference circle and centre dot.
+        self._add_circle(side, scale)
+        self._add_center(side)
 
         # Draw only principal rosette axes: X (red) and Y (green).
-        self._add_orientation_line(0.0, scale, _X_AXIS_COLOR)
-        self._add_orientation_line(90.0, scale, _Y_AXIS_COLOR)
+        self._add_orientation_line(side, 0.0, scale, _X_AXIS_COLOR)
+        self._add_orientation_line(side, 90.0, scale, _Y_AXIS_COLOR)
+
+        parent.addChild(side)
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _add_circle(self, scale):
+    def _add_circle(self, parent, scale):
         """Draw a grey reference circle of radius *scale* in the XY plane."""
         pts = [
             (
@@ -120,9 +131,9 @@ class RosetteSymbol:
         sep.addChild(mat)
         sep.addChild(coords)
         sep.addChild(lineset)
-        self.separator.addChild(sep)
+        parent.addChild(sep)
 
-    def _add_center(self):
+    def _add_center(self, parent):
         """Draw a white dot at the origin."""
         mat = coin.SoMaterial()
         mat.diffuseColor.setValue(1.0, 1.0, 1.0)
@@ -141,9 +152,9 @@ class RosetteSymbol:
         sep.addChild(style)
         sep.addChild(coords)
         sep.addChild(pointset)
-        self.separator.addChild(sep)
+        parent.addChild(sep)
 
-    def _add_orientation_line(self, angle_deg, scale, color):
+    def _add_orientation_line(self, parent, angle_deg, scale, color):
         """Draw a coloured, double-headed orientation line at *angle_deg*."""
         angle_rad = math.radians(angle_deg)
         cos_a = math.cos(angle_rad)
@@ -207,4 +218,4 @@ class RosetteSymbol:
         sep.addChild(arrowset)
         sep.addChild(neg_arrow_coords)
         sep.addChild(neg_arrowset)
-        self.separator.addChild(sep)
+        parent.addChild(sep)
