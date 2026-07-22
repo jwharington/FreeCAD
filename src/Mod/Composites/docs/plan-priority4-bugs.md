@@ -1,94 +1,29 @@
-# Plan: Priority 4 — Pre-existing Cosmetic Bugs
+# Plan: Priority 4 — Pre-existing Cosmetic Bugs (Resolved)
 
 **Date:** 2026-07-15
-**Scope:** Known cosmetic/functional bugs that are orthogonal to Priority 1 work
-**Relationship:** These are tracked separately from Priority 1 (performance + UV quality). They can be fixed independently or deferred.
+**Status:** Both bugs resolved/obsolete. See `plan-priority1-master.md`.
 
----
+## Bug 1: `offset_angle` shader parameter warning — RESOLVED
 
-## Bug 1: `offset_angle` Shader Parameter Warning
+**Symptom:** `SoGLSLShaderParameter::isValid(): parameter 'offset_angle'
+not found in program.`
 
-### Symptom
+**What happened:** `offset_angle` was registered in `shader_params` but
+never declared/used in GLSL, so the linker eliminated it and Coin warned on
+every render. Now declared AND used in `Grid_fragment_shader.glsl` to rotate
+the grid UV (`rcoord = R(offset_angle) * coord.xy`) so the grid aligns with
+the selected layer's fibre orientation. The accompanying plumbing bug
+(`get_offset_angle` int/str key mismatch silently returning 0, which
+clobbered the angle on reload) is also fixed. See the master plan's "Shader
+features → Grid rotation" section.
 
-Console output:
-```
-SoGLSLShaderParameter::isValid(): parameter 'offset_angle' not found
-```
+## Bug 2: `build(run_solver=True)` fails with `ValueError: null shape` — OBSOLETE
 
-### Root Cause
+**Symptom (as reported):** `conical_panel_segment.build(run_solver=True)`
+raised `ValueError: null shape`.
 
-The GLSL fragment shader defines a uniform `offset_angle` but the Python-side shader parameter registration (`SoGLSLShaderParameter`) either:
-- Uses a different name, or
-- Registers the parameter after the shader is already linked, or
-- The uniform declaration in GLSL doesn't match the Python-side registration
-
-### Investigation Steps
-
-1. Search `shaders/MeshGridShader.py` for `offset_angle` references
-2. Check the GLSL fragment shader source for `uniform float offset_angle`
-3. Verify `SoGLSLShaderParameter` registration matches the GLSL uniform name exactly
-4. Check if the shader is re-linked after parameter registration
-
-### Fix
-
-Align the parameter name between GLSL (`uniform float offset_angle`) and Python registration (`SoGLSLShaderParameter("offset_angle", ...)`). Ensure registration happens before first draw call.
-
-### Files
-
-- `shaders/MeshGridShader.py`
-- `shaders/Grid_fragment_shader.glsl`
-
-### Risk
-
-Low — cosmetic only, no functional impact.
-
----
-
-## Bug 2: `build(run_solver=True)` Fails with `ValueError: null shape`
-
-### Symptom
-
-Running `conical_panel_segment.build(run_solver=True)` raises:
-```
-ValueError: null shape
-```
-
-### Root Cause
-
-This is a pre-existing drape solve bug unrelated to shader support. Likely caused by:
-- An empty or uninitialized shape passed to the drape solver
-- A missing step in the solve pipeline when `run_solver=True`
-- The shape being cleared or invalidated before the solver accesses it
-
-### Investigation Steps
-
-1. Trace the call path from `build(run_solver=True)` to the error
-2. Identify where the "null shape" originates (likely a FreeCAD Part operation)
-3. Determine if this is a race condition or a missing initialization step
-
-### Fix
-
-Depends on investigation. Likely one of:
-- Initialize shape before solver call
-- Add a null-check with meaningful error message
-- Fix the solve pipeline ordering
-
-### Files
-
-- `compositeexamples/examples/conical_panel_segment.py`
-- Relevant Composites feature files
-
-### Risk
-
-Medium — functional bug but only triggered in specific solve paths.
-
----
-
-## Tracking
-
-| Bug | Severity | Status | Priority |
-|-----|----------|--------|----------|
-| `offset_angle` warning | Cosmetic | Open | Low — fix when convenient |
-| `ValueError: null shape` | Functional | Open | Medium — fix before release |
-
-Both bugs should be investigated and fixed before merging Priority 1 changes, but they are independent of the k-d tree and UV quality work.
+**Status:** No longer reproduces. `test_compositeexamples::
+test_run_forwards_run_solver_flag` passes; the drape attaches on recompute
+without the FEM solver. The original investigation was speculative ("likely
+caused by …") and the premise no longer holds. No fix was applied; the bug
+appears to have been resolved by unrelated pipeline changes.
