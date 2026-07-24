@@ -1,7 +1,7 @@
 # Non-Planar Parting — Implementation Plan
 
-**Date:** 2026-07-24
-**Status:** Implementation plan. Companion to `non-planar-parting-requirements.md`. Structured so the **interface outside nextdrape is written first** (Phase 0, Python-only, no nextdrape dependency), letting the Composites side start immediately while the nextdrape C++ work proceeds in parallel.
+**Date:** 2026-07-24 (updated 2026-07-25)
+**Status:** Phase 0 + FreeCAD integration DONE. Phase 1 (nextdrape C++ solver) IN PROGRESS — the degenerate path (box, cylinder) and the single-face general march (sphere) run end-to-end to `Ready`; multi-face handoff + the genuinely non-planar split remain. Companion to `non-planar-parting-requirements.md`.
 **Scope:** Replace the planar midpoint parting for twisted/cambered geometry with the marching-equator parting solver, behind the withdrawal-clearance gate already wired into `analyze_source_shape`.
 
 ## Algorithm summary (the agreed construction)
@@ -45,9 +45,9 @@ Verified against OCCT 8.0.0p1 (this project's version). Items marked *(verify)* 
 
 ## Phasing
 
-- **Phase 0 — Python interface + stub (no nextdrape).** Start now. Adds the FP properties, the result-dict contract, and a stub `_propose_non_planar_parting` that returns a structured "not implemented" result so the planar path stays the default and tests can pin the interface. No C++, no nextdrape build dependency.
-- **Phase 1 — nextdrape C++ solver.** The marching algorithm + OCCT parametric shell split, behind a pybind11 binding. Runs in parallel with Phase 0; no Composites-side blocker.
-- **Phase 2 — wire the real binding + flip the gate.** Replace the stub with the binding call, make the non-planar path the default for twisted geometry (or behind a property), update tests to the truthful WC=Pass expectation for blade/loft.
+- **Phase 0 — Python interface + stub (no nextdrape).** ✅ DONE (`7e7e9b5e6a`). FP properties (`PartingModel`, `PartingLandWidth`, `PartingStockMargin`, `PartingStockFootprint`), `analyze_source_shape` extension, `_propose_non_planar_parting` stub, 5 `TestNonPlanarPartingInterface` tests.
+- **Phase 1 — nextdrape C++ solver.** ⏳ IN PROGRESS. Skeleton + GTest harness landed (`c42ef43`); stages 1-3 (local frame, start point, degenerate detection) coded + validated (`4c07406`); degenerate path (box, cylinder) runs end-to-end to Ready (`09ee8e1`, `e5c8e7f`); general grid-based march traces the sphere equator and reaches Ready (`81f93d2`, `517a485`); cone limitation pinned (`d3c000d`). REMAINING: multi-face handoff (cone, blade, loft), genuinely non-planar split (BRepFeat), ruled skirt (BRepFill).
+- **Phase 2 — wire the real binding + flip the gate.** ⏳ PARTIAL. The binding (`Composites_parting.so`) is built + installed and `_propose_non_planar_parting` calls it (`0f2a789fcf`); box under `NonPlanar` reaches `ready` end-to-end through Python. The default flip + blade/loft WC=Pass acceptance tests remain blocked on Phase 1's freeform march.
 
 ---
 
@@ -223,6 +223,30 @@ Phase 1 (nextdrape C++ solver)      ── nextdrape track, own debugging
 - Phase 2 depends on both. Its tests are the acceptance gate for the non-planar model.
 - Throughout, the WC gate stays authoritative; the planar model + its negative regression remain as the fallback and the documented baseline.
 
+## Progress (2026-07-25)
+
+**Phase 0** ✅, **FreeCAD integration** ✅, **Phase 1 degenerate + single-face general march** ✅. Current state of the nextdrape C++ solver (`src/3rdParty/nextdrape/`):
+
+- `include/nextdrape/NonPlanarPartingSolver.hpp` + `src/NonPlanarPartingSolver.cpp` — the 7-stage pipeline, registered in `nextdrape_core`.
+- `tests/test_non_planar_parting.cpp` — 8 GTests (box, cylinder, sphere end-to-end Ready; cone limitation pinned; contract + status).
+- `src/Mod/Composites/App/CompositesParting.cpp` — pybind11 binding (`Composites_parting`), registered as its own MODULE target in `src/Mod/Composites/CMakeLists.txt`.
+- `tools/mould_analysis.py::_propose_non_planar_parting` — calls the binding, decodes BREP bytes to `Part.Shape`, maps to the Phase 0 contract. Box under `PartingModel="NonPlanar"` reaches `ready` end-to-end through Python.
+
+**What works:** box, cylinder (degenerate path — plane-section at z_mid), sphere (general grid-based `N·D=0` zero-set trace + near-planar split). All run to `Ready` with split shells + closed cavity-cut mould halves, mapped back to the original frame.
+
+**Next steps (Phase 1 remainder):**
+1. Multi-face handoff — the cone's equator is on a face *boundary* (sign change between adjacent faces, not within one). Check shared edges (via `DiscoverSharedEdges`) for `N·D` sign changes; trace the equator along face boundaries; wire `SurfaceProjection::CrossFaceAdvance`. Unlocks cone + blade + loft.
+2. Genuinely non-planar split — blade/loft part lines have real z-variation (the near-planar half-space cut rejects them). Build per-face `(u,v)` pcurves via `GeomProjLib::Curve2d`, split each face via `BRepFeat_SplitShape::SplitByWire`, select +D/-D sub-faces.
+3. Ruled skirt — `BRepFill` ruled surface between the part line and the block boundary (verified OCCT 8).
+4. `CrossFaceAdvance` coverage-backfill test (owed to the nextdrape agent — lands with step 1).
+
+Build/run (nextdrape standalone, documented in the `nextdrape-cli-tests` skill):
+```
+cd src/3rdParty/nextdrape
+pixi run cmake --build build/pixi-debug -j$(nproc)
+./build/pixi-debug/nextdrape_tests --gtest_filter='NonPlanarParting.*'
+```
+
 ## What I start on now (Phase 0)
 
-Per the instruction "write the interface outside nextdrape first so you can start while nextdrape is being worked on": Phase 0 — the FP properties, the result-dict contract, the stub, and the Phase 0 tests. No C++, no nextdrape build. Ready to begin on approval of this plan.
+Phase 0 is done. The current work is Phase 1's general-march remainder (above).
