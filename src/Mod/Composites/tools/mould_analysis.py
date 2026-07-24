@@ -1149,6 +1149,41 @@ def propose_parting_surface(shape, direction):
     }
 
 
+def _import_parting_solver():
+    """Lazily import the Composites_parting C++ binding.
+
+    Returns the module callable, or None if the binding is unavailable
+    (e.g. FreeCAD built without the C++ extension). Importing lazily keeps
+    `mould_analysis` loadable headless without the .so present.
+    """
+    try:
+        import Composites_parting  # noqa: F401
+        return Composites_parting.compute_non_planar_parting
+    except ImportError:
+        return None
+
+
+def _decode_parting_brep(brep_bytes):
+    """Decode BREP bytes from the binding into a Part.Shape (None if empty)."""
+    import os
+    import tempfile
+    import Part
+
+    if not isinstance(brep_bytes, (bytes, bytearray)):
+        return None
+    fd, path = tempfile.mkstemp(suffix=".brep")
+    try:
+        os.write(fd, brep_bytes)
+        os.close(fd)
+        fd = -1
+        shape = Part.read(path)
+        return shape if (shape is not None and not shape.isNull()) else None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        os.unlink(path)
+
+
 def _propose_non_planar_parting(
     shape,
     direction,
@@ -1156,27 +1191,89 @@ def _propose_non_planar_parting(
     stock_margin=0.1,
     stock_footprint=None,
 ):
-    """Stub for the non-planar marching-equator parting-surface solver.
+    """Call the C++ marching-equator solver and map to the Phase 0 contract.
 
-    Returns a structured "not implemented" result shaped exactly like the
-    real solver's eventual output, so `analyze_source_shape` can route to it
-    when ``PartingModel == "NonPlanar"`` and fall back to the planar path
-    until the nextdrape C++ binding lands. See
-    ``docs/non-planar-parting-implementation-plan.md`` (Phase 1) for the
-    real construction.
+    Returns a dict shaped for `_evaluate_split_strategy_attempt`'s
+    non-planar path: `status` ("ready" | "not_implemented" | "fork_degenerate"
+    | ...), `summary`, `parting_surface` (the 3D part line), `lower_shell` /
+    `upper_shell` (the split source halves), `skirt_rays`, and
+    `tangent_face_midpoints` diagnostics. On any non-ready status the caller
+    falls back to the planar path.
     """
+    compute = _import_parting_solver()
+    if compute is None:
+        return {
+            "status": "NotImplemented",
+            "summary": "Composites_parting binding unavailable (nextdrape C++ pending).",
+            "parting_surface": None,
+            "lower_shell": None,
+            "upper_shell": None,
+            "skirt_rays": [],
+            "tangent_face_midpoints": [],
+            "error": "Composites_parting binding unavailable",
+        }
+
+    footprint = (0.0, 0.0)
+    if stock_footprint is not None and getattr(stock_footprint, "Length", 0.0) > 0:
+        footprint = (float(stock_footprint.x), float(stock_footprint.y))
+
+    try:
+        raw = compute(
+            shape,
+            (float(direction.x), float(direction.y), float(direction.z)),
+            float(land_width),
+            float(stock_margin),
+            footprint,
+        )
+    except Exception as exc:
+        return {
+            "status": "NotImplemented",
+            "summary": f"Composites_parting binding raised: {exc}",
+            "parting_surface": None,
+            "lower_shell": None,
+            "upper_shell": None,
+            "skirt_rays": [],
+            "tangent_face_midpoints": [],
+            "error": str(exc),
+        }
+
+    status = raw["status"]
+    if status != "ready":
+        # Non-ready: surface the failure reason; the caller degrades to planar.
+        # Normalize the binding's lowercase status to the capital form the
+        # consumer checks (non_planar_result["status"] != "NotImplemented").
+        normalized = {
+            "not_implemented": "NotImplemented",
+            "fork_degenerate": "fork_degenerate",
+            "no_bbox_touch_point": "no_bbox_touch_point",
+            "march_did_not_close": "march_did_not_close",
+            "split_failed": "split_failed",
+            "invalid_solid_result": "invalid_solid_result",
+        }.get(status, status)
+        return {
+            "status": normalized,
+            "summary": raw["summary"],
+            "parting_surface": None,
+            "lower_shell": None,
+            "upper_shell": None,
+            "skirt_rays": [],
+            "tangent_face_midpoints": raw.get("tangent_face_midpoints", []),
+            "error": raw["summary"],
+        }
+
+    # success: decode the BREP bytes back into Part shapes.
+    parting_surface = _decode_parting_brep(raw.get("part_line_3d"))
+    lower_shell = _decode_parting_brep(raw.get("mould_half_lower"))
+    upper_shell = _decode_parting_brep(raw.get("mould_half_upper"))
     return {
-        "status": "NotImplemented",
-        "summary": (
-            "Non-planar parting not yet implemented (nextdrape C++ pending); "
-            "falling back to planar parting."
-        ),
-        "parting_line": None,
-        "upper_shell": None,
-        "lower_shell": None,
+        "status": "ready",
+        "summary": raw["summary"],
+        "parting_surface": parting_surface,
+        "lower_shell": lower_shell,
+        "upper_shell": upper_shell,
         "skirt_rays": [],
-        "tangent_face_midpoints": [],
-        "error": "non-planar parting not yet implemented (nextdrape C++ pending)",
+        "tangent_face_midpoints": raw.get("tangent_face_midpoints", []),
+        "error": "",
     }
 
 

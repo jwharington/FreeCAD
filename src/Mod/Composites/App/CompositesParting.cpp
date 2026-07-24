@@ -1,0 +1,114 @@
+// Composites_parting.cpp — pybind11 binding for the non-planar parting solver.
+//
+// Mirrors CompositesDrape.cpp's conventions:
+//   - zero-copy TopoDS_Shape extraction via static_cast<Part::TopoShapePy*>
+//   - BREP-serialize (BRepTools::Write) for returning shapes to Python
+//   - a thin free function over a temporary solver instance
+//
+// The Python side (_propose_non_planar_parting in tools/mould_analysis.py)
+// calls compute_non_planar_parting(), maps the result dict to the Phase 0
+// contract, and degrades to planar on any non-"ready" status.
+//
+// Module name: Composites_parting (importable as `import Composites_parting`),
+// matching Composites_drape's underscore convention.
+
+#include <Python.h>
+#include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
+
+// FreeCAD Part module — provides TopoShapePy, TopoShape
+#include <Mod/Part/App/TopoShapePy.h>
+#include <Mod/Part/App/TopoShape.h>
+
+// OpenCASCADE
+#include <BRepTools.hxx>
+#include <TopoDS_Shape.hxx>
+#include <gp_Dir.hxx>
+#include <gp_XY.hxx>
+#include <sstream>
+
+// nextdrape
+#include <nextdrape/NonPlanarPartingSolver.hpp>
+
+namespace py = pybind11;
+
+// Standard FreeCAD pattern: the PyObject IS the TopoShapePy. Same extractor as
+// CompositesDrape.cpp — unwrap Part::Feature -> .Shape if needed, then
+// static_cast (zero copy).
+static TopoDS_Shape extract_topods_shape(PyObject* obj) {
+    PyObject* shape_obj = obj;
+    if (PyObject_HasAttrString(obj, "Shape")) {
+        PyObject* attr = PyObject_GetAttrString(obj, "Shape");
+        if (attr) shape_obj = attr;
+    }
+    if (!PyObject_TypeCheck(shape_obj, &(Part::TopoShapePy::Type))) {
+        throw std::runtime_error("Expected a Part.Shape object");
+    }
+    auto* topo_py = static_cast<Part::TopoShapePy*>(shape_obj);
+    Part::TopoShape* topo = topo_py->getTopoShapePtr();
+    if (!topo) throw std::runtime_error("TopoShape pointer is null");
+    return topo->getShape();
+}
+
+// BREP-serialize a TopoDS_Shape back to Python as bytes. Python decodes via
+// Part.read (temp file) — same pattern as CompositesDrape::extract_seam and
+// tools/seam_extraction.py::_decode_brep.
+static py::object wrap_shape(const TopoDS_Shape& occ_shape) {
+    if (occ_shape.IsNull()) return py::none();
+    std::ostringstream stream;
+    BRepTools::Write(occ_shape, stream);
+    return py::bytes(stream.str());
+}
+
+PYBIND11_MODULE(Composites_parting, m) {
+    m.doc() = "Non-planar marching-equator parting solver (nextdrape C++).";
+
+    // The single entry point the Python side calls.
+    m.def("compute_non_planar_parting",
+        [](py::object shape_obj, py::tuple direction,
+           double land_width, double stock_margin, py::tuple footprint) {
+            nextdrape::PartingParams params;
+            params.landWidth   = land_width;
+            params.stockMargin  = stock_margin;
+            if (py::len(footprint) >= 2) {
+                params.stockFootprint.SetX(footprint[0].cast<double>());
+                params.stockFootprint.SetY(footprint[1].cast<double>());
+            }
+
+            TopoDS_Shape source = extract_topods_shape(shape_obj.ptr());
+            gp_Dir D(direction[0].cast<double>(),
+                     direction[1].cast<double>(),
+                     direction[2].cast<double>());
+
+            nextdrape::NonPlanarPartingSolver solver;
+            bool ok = solver.Solve(source, D, params);
+            const auto& r = solver.Result();
+
+            // Marshal tangent_face_midpoints: list of (face_brep_bytes, z_mid).
+            py::list midpoints;
+            for (const auto& tfm : r.tangentFaceMidpoints) {
+                midpoints.append(py::make_tuple(
+                    wrap_shape(tfm.face), tfm.zMidpoint));
+            }
+
+            return py::dict(
+                py::arg("success")               = ok,
+                py::arg("status")                = nextdrape::PartingStatusToString(r.status),
+                py::arg("summary")               = r.summary,
+                py::arg("part_line_3d")           = wrap_shape(r.partLine3d),
+                py::arg("upper_shell")           = wrap_shape(r.upperShell),
+                py::arg("lower_shell")           = wrap_shape(r.lowerShell),
+                py::arg("mould_half_upper")      = wrap_shape(r.mouldHalfUpper),
+                py::arg("mould_half_lower")      = wrap_shape(r.mouldHalfLower),
+                py::arg("skirt")                 = wrap_shape(r.skirt),
+                py::arg("tangent_face_midpoints") = midpoints
+            );
+        },
+        py::arg("shape"), py::arg("draw_direction"),
+        py::arg("land_width") = 25.0, py::arg("stock_margin") = 0.1,
+        py::arg("stock_footprint") = py::make_tuple(0.0, 0.0),
+        "Compute a non-planar parting surface + mould halves for a FreeCAD "
+        "Part.Shape along a user-specified draw direction. Returns a dict; "
+        "success=True iff the mould halves are valid (status == ready). "
+        "Shapes are returned as BREP bytes; decode via Part.read.");
+}

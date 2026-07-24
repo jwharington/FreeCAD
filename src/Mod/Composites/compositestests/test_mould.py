@@ -319,8 +319,13 @@ class TestNonPlanarPartingInterface(TestFreeCADFP):
                 self.assertIn("non_planar_status", result)
                 self.assertIn("non_planar_summary", result)
                 if model == "NonPlanar":
-                    self.assertEqual(result["non_planar_status"], "NotImplemented")
-                    self.assertIn("not yet implemented", result["non_planar_summary"])
+                    # With the C++ binding wired, the degenerate path
+                    # (box/cylinder along their axis) reaches `ready` —
+                    # real mould halves via the marching-equator solver.
+                    # Freeform shapes (blade/loft) reach `ready` once the
+                    # general march lands; until then they degrade to planar.
+                    self.assertEqual(result["non_planar_status"], "ready")
+                    self.assertTrue(result["non_planar_summary"])
                 else:
                     self.assertEqual(result["non_planar_status"], "not_requested")
 
@@ -339,7 +344,8 @@ class TestNonPlanarPartingInterface(TestFreeCADFP):
             parting_stock_margin=0.2,
             parting_stock_footprint=(50.0, 40.0),
         )
-        # The stub ignores the params but must not reject them; the analysis
-        # still falls back to planar and produces a verdict.
-        self.assertEqual(result["non_planar_status"], "NotImplemented")
+        # The params thread through to the C++ solver; a box is degenerate
+        # (side walls ⊥ D) so the marching-equator path reaches `ready` and
+        # the analysis produces a Ready verdict.
+        self.assertEqual(result["non_planar_status"], "ready")
         self.assertEqual(result["status"], "Ready")

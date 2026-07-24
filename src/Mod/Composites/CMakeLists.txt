@@ -53,13 +53,8 @@ endif()
 # argument (defaults to lib/) and INSTALL to ${CMAKE_INSTALL_LIBDIR}.
 option(COMPOSITES_BUILD_CPP "Build C++ draping extension" ON)
 if(COMPOSITES_BUILD_CPP)
-    set(Composites_CPP_SRCS
-        App/CompositesDrape.cpp
-    )
-    
-    add_library(Composites_drape MODULE ${Composites_CPP_SRCS})
-    
-    target_include_directories(Composites_drape
+    # Shared include dirs + libs for both pybind11 module targets.
+    set(Composites_CPP_INC
         PRIVATE
             ${CMAKE_BINARY_DIR}/src
             ${CMAKE_SOURCE_DIR}/src
@@ -67,17 +62,35 @@ if(COMPOSITES_BUILD_CPP)
             ${CMAKE_CURRENT_BINARY_DIR}
             ${CMAKE_SOURCE_DIR}/src/3rdParty/libkdtree
     )
-    
+
+    # ── Composites_drape: the draping solver + seam extraction binding ──
+    add_library(Composites_drape MODULE App/CompositesDrape.cpp)
+    target_include_directories(Composites_drape ${Composites_CPP_INC})
     target_link_libraries(Composites_drape ${Composites_LIBS})
-    
     SET_BIN_DIR(Composites_drape Composites_drape)
     SET_PYTHON_PREFIX_SUFFIX(Composites_drape)
-    
     install(TARGETS Composites_drape
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     )
 
-    message(STATUS "Composites: C++ extension configured")
+    # ── Composites_parting: the non-planar parting solver binding ──
+    # Same pattern as Composites_drape (standard pybind11 MODULE, SET_BIN_DIR
+    # -> lib/, INSTALL to ${CMAKE_INSTALL_LIBDIR}). Do NOT introduce a custom
+    # loader — see the architecture note above Composites_drape.
+    add_library(Composites_parting MODULE App/CompositesParting.cpp)
+    # No Qt in this target — disable AUTOMOC/AUTOUIC so it doesn't collide with
+    # Composites_drape's autogen output paths (both would otherwise generate
+    # the same ui_*.h under the shared Composites autogen dir).
+    set_target_properties(Composites_parting PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+    target_include_directories(Composites_parting ${Composites_CPP_INC})
+    target_link_libraries(Composites_parting ${Composites_LIBS})
+    SET_BIN_DIR(Composites_parting Composites_parting)
+    SET_PYTHON_PREFIX_SUFFIX(Composites_parting)
+    install(TARGETS Composites_parting
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    )
+
+    message(STATUS "Composites: C++ extensions configured (drape, parting)")
 endif()
 
 # ── Python sources (collect recursively) ────────────────────────
