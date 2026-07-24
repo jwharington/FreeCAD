@@ -27,7 +27,6 @@ from Composites.tools.mould_analysis import (
     NORMALIZATION_CONFIDENCE_FAIL,
     _analysis_gate_status,
     _classify_draft_faces,
-    _direction_profile_and_violations,
     _dot,
     _face_midpoint_normal,
     _sample_draw_accessibility,
@@ -644,15 +643,6 @@ class TestAnalyzeSourceShape(unittest.TestCase):
         self.assertIn("analysis_gate_status", first_attempt)
         self.assertEqual(first_attempt["analysis_gate_status"], "Pass")
         self.assertIn("accessibility_status", first_attempt)
-
-    def test_slice_profile_helper_remains_available_for_regression_diagnostics(self):
-        shape = _box()
-        profile, violations = _direction_profile_and_violations(
-            shape,
-            FreeCAD.Vector(0, 0, 1),
-        )
-        self.assertTrue(profile)
-        self.assertEqual(violations, [])
 
     def test_top_level_evidence_fields_present(self):
         shape = _box()

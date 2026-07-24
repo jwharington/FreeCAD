@@ -2320,61 +2320,6 @@ def _propose_non_planar_parting(
     }
 
 
-def _slice_area_profile(shape, direction, sample_count=11):
-    unit = _normalized(direction)
-    start, end = _projection_bounds(shape, unit)
-    if end <= start:
-        return []
-
-    profile = []
-    for index in range(sample_count):
-        t = start + ((end - start) * index / (sample_count - 1))
-        area = 0.0
-        try:
-            sections = shape.slice(unit, t)
-        except Exception:
-            sections = []
-        for wire in sections:
-            try:
-                if wire.isClosed():
-                    area += Part.Face(wire).Area
-            except Exception:
-                continue
-        profile.append(
-            {
-                "position": t,
-                "area": area,
-            }
-        )
-    return profile
-
-
-def _profile_violations(profile, area_growth_tolerance=0.05):
-    violations = []
-    previous_area = None
-    for index, item in enumerate(profile):
-        area = item["area"]
-        if area <= 0.0:
-            continue
-        if previous_area is None:
-            previous_area = area
-            continue
-        increase = area - previous_area
-        threshold = max(1.0e-6, previous_area * area_growth_tolerance)
-        if increase > threshold:
-            violations.append(
-                {
-                    "start_position": profile[index - 1]["position"],
-                    "end_position": item["position"],
-                    "start_area": previous_area,
-                    "end_area": area,
-                    "increase": increase,
-                }
-            )
-        previous_area = area
-    return violations
-
-
 def _sample_draw_accessibility(shape, direction, sample_density=0.5):
     unit = _normalized(direction)
     bbox = shape.BoundBox
@@ -2517,68 +2462,6 @@ def _sample_draw_accessibility(shape, direction, sample_density=0.5):
         "accessibility_regions": accessibility_regions or ["None"],
         "ray_samples": ray_samples,
     }
-
-
-def _is_simple_box_like_shape(shape):
-    faces = list(getattr(shape, "Faces", []))
-    vertices = list(getattr(shape, "Vertexes", []))
-    if len(faces) != 6 or len(vertices) != 8:
-        return False
-
-    for face in faces:
-        if getattr(face, "Surface", None) is None:
-            return False
-        if getattr(face.Surface, "TypeId", "") != "Part::GeomPlane":
-            return False
-    return True
-
-
-def _is_profile_unimodal(profile, tolerance=0.05):
-    positive_samples = [
-        item for item in (profile or []) if float(item.get("area", 0.0)) > 0.0
-    ]
-    if len(positive_samples) < 3:
-        return True
-
-    peak_index = max(
-        range(len(positive_samples)),
-        key=lambda idx: (
-            float(positive_samples[idx]["area"]),
-            -idx,
-        ),
-    )
-
-    def threshold(a, b):
-        reference = max(float(a), float(b), 0.0)
-        return max(1.0e-6, reference * float(tolerance))
-
-    for idx in range(1, peak_index + 1):
-        prev = positive_samples[idx - 1]
-        cur = positive_samples[idx]
-        if (float(cur["area"]) - float(prev["area"])) < -threshold(prev["area"], cur["area"]):
-            return False
-
-    for idx in range(peak_index + 1, len(positive_samples)):
-        prev = positive_samples[idx - 1]
-        cur = positive_samples[idx]
-        if (float(cur["area"]) - float(prev["area"])) > threshold(prev["area"], cur["area"]):
-            return False
-
-    return True
-
-
-def _direction_profile_and_violations(shape, direction):
-    profile = _slice_area_profile(shape, direction)
-    violations = _profile_violations(profile)
-
-    if (
-        violations
-        and _is_simple_box_like_shape(shape)
-        and _is_profile_unimodal(profile)
-    ):
-        return profile, []
-
-    return profile, violations
 
 
 def _analysis_gate_status(draft_face_screening, accessibility):
