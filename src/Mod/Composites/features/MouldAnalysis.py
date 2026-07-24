@@ -99,54 +99,6 @@ class MouldAnalysisFP(CompositePartFP):
         obj.setPropertyStatus("BestDrawDirection", "ReadOnly")
 
         obj.addProperty(
-            "App::PropertyInteger",
-            "UndercutCount",
-            "MouldAnalysis",
-            "Heuristic count of possible undercut regions",
-        ).UndercutCount = 0
-        obj.setPropertyStatus("UndercutCount", "ReadOnly")
-
-        obj.addProperty(
-            "App::PropertyString",
-            "UndercutSummary",
-            "MouldAnalysis",
-            "Human-readable undercut summary",
-        ).UndercutSummary = "No source shape available."
-        obj.setPropertyStatus("UndercutSummary", "ReadOnly")
-
-        obj.addProperty(
-            "App::PropertyStringList",
-            "UndercutRegions",
-            "MouldAnalysis",
-            "Heuristic undercut regions",
-        ).UndercutRegions = ["No source shape available."]
-        obj.setPropertyStatus("UndercutRegions", "ReadOnly")
-
-        obj.addProperty(
-            "App::PropertyInteger",
-            "DraftViolationCount",
-            "MouldAnalysis",
-            "Heuristic count of possible draft violations",
-        ).DraftViolationCount = 0
-        obj.setPropertyStatus("DraftViolationCount", "ReadOnly")
-
-        obj.addProperty(
-            "App::PropertyString",
-            "DraftViolationSummary",
-            "MouldAnalysis",
-            "Human-readable draft violation summary",
-        ).DraftViolationSummary = "No source shape available."
-        obj.setPropertyStatus("DraftViolationSummary", "ReadOnly")
-
-        obj.addProperty(
-            "App::PropertyStringList",
-            "DraftViolationRegions",
-            "MouldAnalysis",
-            "Heuristic draft violation regions",
-        ).DraftViolationRegions = ["No source shape available."]
-        obj.setPropertyStatus("DraftViolationRegions", "ReadOnly")
-
-        obj.addProperty(
             "App::PropertyString",
             "PartingSurfaceStatus",
             "MouldAnalysis",
@@ -302,12 +254,6 @@ class MouldAnalysisFP(CompositePartFP):
         fp.AnalysisStatus = result["status"]
         fp.DrawDirectionScore = result["draw_direction_score"]
         fp.BestDrawDirection = result["best_draw_direction"]
-        fp.UndercutCount = result["undercut_count"]
-        fp.UndercutSummary = result["undercut_summary"]
-        fp.UndercutRegions = result["undercut_regions"]
-        fp.DraftViolationCount = result["draft_violation_count"]
-        fp.DraftViolationSummary = result["draft_violation_summary"]
-        fp.DraftViolationRegions = result["draft_violation_regions"]
         fp.PartingSurfaceStatus = result["parting_surface_status"]
         fp.PartingSurfaceNormal = result["parting_surface_normal"]
         fp.PartingSurfaceOffset = result["parting_surface_offset"]

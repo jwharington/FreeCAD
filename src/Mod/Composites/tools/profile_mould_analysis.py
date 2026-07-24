@@ -19,7 +19,6 @@ import Part
 
 from Composites.tools.mould_analysis import (
     _classify_draft_faces,
-    _sample_draw_accessibility,
     analyze_source_shape,
     default_mould_analysis_draw_direction,
     make_mould_halves,
@@ -262,14 +261,6 @@ def _benchmark_helpers(shape, checks):
                 default_mould_analysis_draw_direction,
             ),
         )
-    if "accessibility" in selected_checks:
-        _bench(
-            "_sample_draw_accessibility",
-            lambda: _sample_draw_accessibility(
-                shape,
-                default_mould_analysis_draw_direction,
-            ),
-        )
 
     if normalize_result is not None:
         print(f"normalize_confidence: {normalize_result['confidence']}", flush=True)
@@ -294,12 +285,12 @@ def _profile_fast_loop():
             )
             print(
                 "fast_loop[{name}]: status={status} validation={validation} "
-                "analysis_method={method} confidence={confidence}".format(
+                "gate={gate} withdrawal_clearance={wc}".format(
                     name=shape_name,
                     status=result["status"],
                     validation=result["validation_status"],
-                    method=result["analysis_method"],
-                    confidence=result["analysis_confidence"],
+                    gate=result["analysis_gate_status"],
+                    wc=result["withdrawal_clearance_status"],
                 ),
                 flush=True,
             )

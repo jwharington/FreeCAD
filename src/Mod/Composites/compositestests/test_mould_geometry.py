@@ -29,7 +29,6 @@ from Composites.tools.mould_analysis import (
     _classify_draft_faces,
     _dot,
     _face_midpoint_normal,
-    _sample_draw_accessibility,
     _sample_face_draft_alignment,
     _withdrawal_clearance_validity_check,
     _whole_side_draft_envelope,
@@ -420,164 +419,46 @@ class TestDraftEnvelopePrimitives(unittest.TestCase):
                 self.assertEqual(result["skipped_sample_count"], 0)
 
 
-class TestAccessibilitySampling(unittest.TestCase):
-    """_sample_draw_accessibility: ray sampling along a draw direction."""
-
-    def test_box_is_accessible_along_z(self):
-        shape = _box(dx=20.0, dy=10.0, dz=10.0)
-        result = _sample_draw_accessibility(shape, FreeCAD.Vector(0, 0, 1))
-        self.assertEqual(result["status"], "Ready")
-        self.assertGreater(result["sample_count"], 0)
-        self.assertEqual(result["blocked_sample_count"], 0)
-        self.assertEqual(result["multi_hit_sample_count"], 0)
-        self.assertEqual(result["accessibility_regions"], ["None"])
-
-    def test_disjoint_stacked_solids_trigger_multi_hit(self):
-        lower = Part.makeBox(10.0, 10.0, 4.0, FreeCAD.Vector(0, 0, 0))
-        upper = Part.makeBox(10.0, 10.0, 4.0, FreeCAD.Vector(0, 0, 8.0))
-        shape = Part.makeCompound([lower, upper])
-        result = _sample_draw_accessibility(shape, FreeCAD.Vector(0, 0, 1))
-        self.assertEqual(result["status"], "Fail")
-        self.assertGreater(result["multi_hit_sample_count"], 0)
-        self.assertTrue(result["accessibility_regions"])
-        self.assertTrue(result["ray_samples"])
-
-    def test_side_by_side_solids_pin_blocked_outcome(self):
-        # Two solids separated across the transverse plane leave a gap that a
-        # draw-aligned ray passes through without hitting: that is the
-        # "blocked" classification (hit_segments<=0, hit_vertices<=0),
-        # distinct from "multi_hit" (a ray that hits more than one segment).
-        # The gap is made wide enough that the default transverse grid lands
-        # points squarely inside it (not on box edges), so the blocked
-        # outcome is stable across sample densities. Pinning it completes the
-        # clear / blocked / multi-hit trio so a regression in hit
-        # classification is localized to the accessibility sampler, not
-        # blamed on gating or validation.
-        left = Part.makeBox(3.0, 10.0, 10.0, FreeCAD.Vector(0, 0, 0))
-        right = Part.makeBox(3.0, 10.0, 10.0, FreeCAD.Vector(7, 0, 0))
-        shape = Part.makeCompound([left, right])
-        result = _sample_draw_accessibility(shape, FreeCAD.Vector(0, 0, 1))
-        self.assertEqual(result["status"], "Warning")
-        self.assertGreater(result["blocked_sample_count"], 0)
-        self.assertEqual(result["multi_hit_sample_count"], 0)
-        blocked = next(
-            sample for sample in result["ray_samples"]
-            if sample["classification"] == "blocked"
-        )
-        self.assertLessEqual(blocked["hit_segments"], 0)
-        self.assertLessEqual(blocked["hit_vertices"], 0)
-
-
 class TestAnalysisGateStatus(unittest.TestCase):
-    """_analysis_gate_status: the policy that turns evidence into a verdict.
+    """_analysis_gate_status: informational draft-face signal.
 
-    Driven directly with crafted evidence dicts, not through the full
-    pipeline, so a status-policy regression is isolated from the geometric
-    evidence gathering. The contract: uncertain evidence stays a Warning
-    (never silently escalates to Fail), a true accessibility failure is a
-    hard Fail, and clean evidence is a Pass.
+    Driven directly with crafted screening dicts. The gate is decoupled from
+    the verdict: it reports Pass only when every face drafts cleanly away
+    from the draw direction, Warning otherwise (which includes legitimate
+    parting faces). It NEVER returns Fail — withdrawal clearance is the sole
+    authoritative test and the only source of a hard Fail.
     """
 
-    def test_clean_evidence_passes(self):
+    def test_clean_screening_passes(self):
+        self.assertEqual(_analysis_gate_status({"status": "Ready"}), "Pass")
+
+    def test_risky_faces_warn(self):
+        # A box's bottom face is "risky" by the dot test; the gate flags it
+        # Warning rather than asserting releasability it cannot prove.
         self.assertEqual(
-            _analysis_gate_status(
-                {"status": "Pass"}, {"status": "Ready"},
-            ),
-            "Pass",
+            _analysis_gate_status({"status": "Fail", "risky_face_count": 2}),
+            "Warning",
         )
 
-    def test_accessibility_fail_is_a_hard_fail(self):
-        # A true failure (multi-hit access) must return Fail, not Warning.
+    def test_ambiguous_faces_warn(self):
         self.assertEqual(
             _analysis_gate_status(
-                {"status": "Pass"}, {"status": "Fail"},
-            ),
-            "Fail",
-        )
-
-    def test_uncertain_accessibility_stays_warning_not_fail(self):
-        # Blocked access is uncertain (a ray missed), not a proven release
-        # failure, so it must not escalate to Fail.
-        self.assertEqual(
-            _analysis_gate_status(
-                {"status": "Pass"}, {"status": "Warning"},
+                {"status": "Warning", "risky_face_count": 0, "ambiguous_face_count": 1}
             ),
             "Warning",
         )
 
-    def test_draft_warning_with_risky_faces_stays_warning(self):
+    def test_missing_screening_defaults_to_warning(self):
+        self.assertEqual(_analysis_gate_status({}), "Warning")
+
+    def test_gate_never_escalates_to_fail(self):
+        # Even a draft "Fail" stays Warning: the gate cannot hard-fail —
+        # only withdrawal clearance can. Pinning this so a future change
+        # coupling the gate to a hard Fail is a deliberate, visible decision.
         self.assertEqual(
-            _analysis_gate_status(
-                {"status": "Warning", "risky_face_count": 3},
-                {"status": "Ready"},
-            ),
+            _analysis_gate_status({"status": "Fail", "risky_face_count": 5}),
             "Warning",
         )
-
-    def test_draft_warning_without_risky_faces_is_clean(self):
-        # A draft-screening "Warning" label alone, with zero risky faces, is
-        # not even a warning: the gate trusts clean accessibility over the
-        # draft label.
-        self.assertEqual(
-            _analysis_gate_status(
-                {"status": "Warning", "risky_face_count": 0},
-                {"status": "Ready"},
-            ),
-            "Pass",
-        )
-
-    def test_draft_face_fail_label_does_not_override_clean_access(self):
-        # _classify_draft_faces returns "Fail" for a plain box (its bottom
-        # face is "risky"), yet a box is perfectly mouldable. The gate
-        # therefore treats draft-face status as non-authoritative when
-        # accessibility is clean: a draft "Fail" does NOT gate-fail unless
-        # accessibility also fails. Pinning this policy so a future change to
-        # make draft authoritative is a deliberate, visible decision.
-        self.assertEqual(
-            _analysis_gate_status(
-                {"status": "Fail", "risky_face_count": 1},
-                {"status": "Ready"},
-            ),
-            "Pass",
-        )
-
-
-class TestDiscretizationSensitivity(unittest.TestCase):
-    """_sample_draw_accessibility: evidence must respond to sample density.
-
-    A discretization that returns identical evidence regardless of resolution
-    is cosmetic — the accuracy knob is not plumbed through. The easy shape
-    (box) must stay stable (clear at every density), while a non-box-filling
-    shape (sphere) must show its blocked-sample count grow as the grid
-    tightens. If this fails, the bug is in the scan resolution / density
-    plumbing, not in the evidence interpretation.
-    """
-
-    def test_box_stays_clear_as_density_tightens(self):
-        shape = _box(dx=20.0, dy=10.0, dz=10.0)
-        direction = FreeCAD.Vector(0, 0, 1)
-        densities = (0.05, 0.2, 0.5)
-        counts = []
-        for density in densities:
-            result = _sample_draw_accessibility(shape, direction, sample_density=density)
-            self.assertEqual(result["status"], "Ready")
-            self.assertEqual(result["blocked_sample_count"], 0)
-            self.assertEqual(result["multi_hit_sample_count"], 0)
-            counts.append(result["sample_count"])
-        # Strictly increasing sample count proves density actually feeds the grid.
-        self.assertGreater(counts[1], counts[0])
-        self.assertGreater(counts[2], counts[1])
-
-    def test_sphere_blocked_count_grows_with_density(self):
-        shape = make_sphere()
-        direction = FreeCAD.Vector(0, 0, 1)
-        coarse = _sample_draw_accessibility(shape, direction, sample_density=0.05)
-        fine = _sample_draw_accessibility(shape, direction, sample_density=0.5)
-        self.assertGreater(fine["sample_count"], coarse["sample_count"])
-        # Corner rays miss the sphere at both resolutions, proving the
-        # sampler reports non-trivial evidence; the count grows with density.
-        self.assertGreater(coarse["blocked_sample_count"], 0)
-        self.assertGreater(fine["blocked_sample_count"], coarse["blocked_sample_count"])
 
 
 class TestAnalyzeSourceShape(unittest.TestCase):
@@ -589,14 +470,6 @@ class TestAnalyzeSourceShape(unittest.TestCase):
         self.assertEqual(result["status"], "Ready")
         self.assertEqual(result["validation_status"], "Pass")
 
-    def test_box_uses_geometric_screening_only(self):
-        shape = _box()
-        result = analyze_source_shape(shape, default_mould_analysis_draw_direction)
-        self.assertEqual(result["analysis_method"], "geometric_screening_only")
-        self.assertFalse(result["slice_refinement_required"])
-        self.assertEqual(result["profile_violations"], [])
-        self.assertIn("geometric refinement skipped", result["slice_refinement_summary"].lower())
-
     def test_best_direction_is_axis_aligned(self):
         shape = _box()
         result = analyze_source_shape(shape, default_mould_analysis_draw_direction)
@@ -606,8 +479,8 @@ class TestAnalyzeSourceShape(unittest.TestCase):
 
     def test_candidate_strategies_reuse_geometric_evidence(self):
         # Even with a single authoritative direction, the split-strategy
-        # attempt must reuse the precomputed draft-face / accessibility /
-        # geometric-evidence bundles rather than recomputing them.
+        # attempt must reuse the precomputed draft-face / geometric-evidence
+        # bundles rather than recomputing them.
         shape = _box()
         result = analyze_source_shape(shape, default_mould_analysis_draw_direction)
         first_attempt = result["split_strategy_attempts"][0]
@@ -621,95 +494,53 @@ class TestAnalyzeSourceShape(unittest.TestCase):
                                       default_mould_analysis_draw_direction)
         self.assertEqual(result["status"], "Waiting for source")
 
-    def test_manufacturability_metrics_present(self):
-        shape = _box()
-        result = analyze_source_shape(shape, default_mould_analysis_draw_direction)
-        metrics = result["manufacturability_metrics"]
-        for key in ("backface_area_ratio", "undercut_count",
-                    "draft_violation_count", "multipart_piece_count",
-                    "risk_index", "risk_class"):
-            self.assertIn(key, metrics)
-
-    def test_slice_refinement_regression_fields_present(self):
-        shape = _box()
-        result = analyze_source_shape(shape, default_mould_analysis_draw_direction)
-        self.assertIn("slice_refinement_required", result)
-        self.assertIn("slice_refinement_summary", result)
-        self.assertFalse(result["slice_refinement_required"])
-        self.assertTrue(result["slice_refinement_summary"])
-        self.assertTrue(result["split_strategy_attempts"])
-        first_attempt = result["split_strategy_attempts"][0]
-        self.assertIn("slice_refinement_required", first_attempt)
-        self.assertIn("analysis_gate_status", first_attempt)
-        self.assertEqual(first_attempt["analysis_gate_status"], "Pass")
-        self.assertIn("accessibility_status", first_attempt)
-
     def test_top_level_evidence_fields_present(self):
         shape = _box()
         result = analyze_source_shape(shape, default_mould_analysis_draw_direction)
         self.assertIn("analysis_gate_status", result)
-        self.assertIn("analysis_method", result)
-        self.assertIn("analysis_confidence", result)
         self.assertIn("draft_face_summary", result)
         self.assertIn("draft_face_classifications", result)
-        self.assertIn("accessibility_summary", result)
-        self.assertIn("accessibility_checks", result)
-        self.assertIn("profile_summary", result)
-        self.assertIn("profile_violations", result)
-        self.assertIn("geometric_accuracy_mm", result)
-        self.assertIn("geometric_accuracy_tolerance_mm", result)
-        self.assertIn("geometric_accuracy_status", result)
-        self.assertIn("geometric_accuracy_summary", result)
-        self.assertTrue(result["analysis_method"])
-        self.assertTrue(result["analysis_confidence"])
+        self.assertIn("parting_surface_status", result)
+        self.assertIn("mould_halves_status", result)
+        self.assertIn("withdrawal_clearance_status", result)
+        self.assertIn("validation_status", result)
         self.assertTrue(result["draft_face_summary"])
-        self.assertTrue(result["accessibility_summary"])
-        self.assertTrue(result["profile_summary"])
-        self.assertLessEqual(
-            result["geometric_accuracy_mm"],
-            result["geometric_accuracy_tolerance_mm"],
-        )
-        self.assertEqual(result["geometric_accuracy_status"], "Pass")
+        self.assertIn(result["analysis_gate_status"], ("Pass", "Warning"))
 
     def test_summaries_non_empty(self):
         shape = _box()
         result = analyze_source_shape(shape, default_mould_analysis_draw_direction)
         self.assertTrue(result["summary"])
-        self.assertTrue(result["manufacturability_summary"])
+        self.assertTrue(result["draft_face_summary"])
+        self.assertTrue(result["parting_surface_summary"])
+        self.assertTrue(result["mould_halves_summary"])
 
     def test_fast_loop_shapes_separate_box_from_planar_limits(self):
-        # With withdrawal clearance wired into the analysis verdict, the
-        # twisted shapes truthfully report Fail under any planar direction:
-        # their mould halves physically collide with the source on withdrawal.
-        # This is the closed false-confidence seam — the analysis no longer
-        # reports Warning for shapes that are un-releasable. box stays Ready
-        # (it withdraws cleanly). The analysis_gate stays Warning/Fail (the
-        # heuristic signal is still reported separately) but the verdict is
-        # driven by the authoritative withdrawal-clearance check.
+        # With withdrawal clearance as the authoritative verdict, the twisted
+        # shapes truthfully report Fail under any planar direction: their
+        # mould halves physically collide with the source on withdrawal.
+        # box stays Ready (it withdraws cleanly). The analysis_gate is an
+        # informational draft signal (Warning for any risky/ambiguous face,
+        # which includes the box's parting face) and is decoupled from the
+        # verdict — the verdict is driven solely by withdrawal clearance.
         cases = {
             "box": {
                 "direction": default_mould_analysis_draw_direction,
                 "status": "Ready",
                 "validation_status": "Pass",
-                "analysis_gate_status": "Pass",
-                "analysis_method": "geometric_screening_only",
-                "slice_refinement_required": False,
+                "withdrawal_clearance_status": "Pass",
             },
             "blade": {
                 "direction": default_mould_analysis_draw_direction,
                 "status": "Fail",
                 "validation_status": "Fail",
-                "analysis_gate_status": "Warning",
-                "analysis_method": "geometric_screening_with_geometric_refinement",
-                "slice_refinement_required": True,
+                "withdrawal_clearance_status": "Fail",
             },
             "loft": {
                 "direction": FreeCAD.Vector(1, 0, 0),
                 "status": "Fail",
                 "validation_status": "Fail",
-                "analysis_gate_status": "Warning",
-                "analysis_method": "geometric_screening_with_geometric_refinement",
-                "slice_refinement_required": True,
+                "withdrawal_clearance_status": "Fail",
             },
         }
         for shape_name, expectations in cases.items():
@@ -728,24 +559,11 @@ class TestAnalyzeSourceShape(unittest.TestCase):
                     expectations["validation_status"],
                 )
                 self.assertEqual(
-                    result["analysis_gate_status"],
-                    expectations["analysis_gate_status"],
+                    result["withdrawal_clearance_status"],
+                    expectations["withdrawal_clearance_status"],
                 )
-                self.assertEqual(
-                    result["analysis_method"],
-                    expectations["analysis_method"],
-                )
-                self.assertEqual(
-                    result["slice_refinement_required"],
-                    expectations["slice_refinement_required"],
-                )
+                self.assertIn(result["analysis_gate_status"], ("Pass", "Warning"))
                 self.assertTrue(result["summary"])
-                self.assertAlmostEqual(result["geometric_accuracy_tolerance_mm"], 0.1, places=6)
-                self.assertLessEqual(
-                    result["geometric_accuracy_mm"],
-                    result["geometric_accuracy_tolerance_mm"],
-                )
-                self.assertEqual(result["geometric_accuracy_status"], "Pass")
 
 
 class TestWithdrawalClearanceValidity(unittest.TestCase):
@@ -785,8 +603,6 @@ class TestWithdrawalClearanceValidity(unittest.TestCase):
         validation = validate_mould_result(
             parting["status"],
             halves["status"],
-            0,
-            0,
             parting["shape"],
             halves["half_a_shape"],
             halves["half_b_shape"],
@@ -896,80 +712,46 @@ class TestPlanarPartingInsufficiency(unittest.TestCase):
 
 
 class TestValidateMouldResult(unittest.TestCase):
-    """validate_mould_result: status from inputs (pure function over shapes)."""
+    """validate_mould_result: verdict from parting, halves, and withdrawal clearance.
 
-    def _valid(self, shape):
-        return shape  # a real box is valid + non-null
+    Withdrawal clearance is the authoritative necessary test; the draft-face
+    gate is decoupled and not consulted here. A clean mould (Ready parting,
+    valid halves, withdrawal clears) is Pass; any null/invalid shape or a
+    withdrawal collision is a hard Fail.
+    """
 
     def test_pass_on_clean_inputs(self):
         shape = _box()
-        result = validate_mould_result(
-            "Ready", "Ready", 0, 0, shape, shape, shape,
-        )
+        result = validate_mould_result("Ready", "Ready", shape, shape, shape)
         self.assertEqual(result["status"], "Pass")
 
     def test_fail_on_failed_parting_surface(self):
         shape = _box()
-        result = validate_mould_result(
-            "Fail", "Ready", 0, 0, shape, shape, shape,
-        )
+        result = validate_mould_result("Fail", "Ready", shape, shape, shape)
         self.assertEqual(result["status"], "Fail")
-
-    def test_warning_on_undercuts(self):
-        shape = _box()
-        result = validate_mould_result(
-            "Ready", "Ready", 2, 0, shape, shape, shape,
-        )
-        self.assertEqual(result["status"], "Warning")
-
-    def test_warning_on_draft_violations(self):
-        shape = _box()
-        result = validate_mould_result(
-            "Ready", "Ready", 0, 3, shape, shape, shape,
-        )
-        self.assertEqual(result["status"], "Warning")
 
     def test_fail_on_null_half(self):
         shape = _box()
         null_shape = Part.Shape()
-        result = validate_mould_result(
-            "Ready", "Ready", 0, 0, shape, null_shape, shape,
-        )
+        result = validate_mould_result("Ready", "Ready", shape, null_shape, shape)
         self.assertEqual(result["status"], "Fail")
 
-    def test_warning_when_analysis_gate_needs_refinement(self):
+    def test_withdrawal_clearance_fail_escalates_to_fail(self):
         shape = _box()
         result = validate_mould_result(
-            "Ready",
-            "Ready",
-            0,
-            0,
-            shape,
-            shape,
-            shape,
-            analysis_gate_status="Warning",
-        )
-        self.assertEqual(result["status"], "Warning")
-
-    def test_fail_when_analysis_gate_fails_with_otherwise_clean_mould(self):
-        # Isolation check: with a ready parting surface, valid halves, and zero
-        # undercuts/violations, the ONLY failing signal is the analysis gate.
-        # A gate Fail must escalate validation to Fail (mirroring the Warning
-        # case above, which must NOT). This pins the coupling policy: warning-
-        # grade screening stays a warning, a true gate failure hard-fails.
-        shape = _box()
-        result = validate_mould_result(
-            "Ready",
-            "Ready",
-            0,
-            0,
-            shape,
-            shape,
-            shape,
-            analysis_gate_status="Fail",
+            "Ready", "Ready", shape, shape, shape,
+            withdrawal_clearance_status="Fail",
         )
         self.assertEqual(result["status"], "Fail")
-        self.assertTrue(any("gate" in check.lower() for check in result["checks"]))
+        self.assertTrue(any("withdraw" in check.lower() for check in result["checks"]))
+
+    def test_withdrawal_clearance_pass_stays_pass(self):
+        shape = _box()
+        result = validate_mould_result(
+            "Ready", "Ready", shape, shape, shape,
+            withdrawal_clearance_status="Pass",
+        )
+        self.assertEqual(result["status"], "Pass")
 
 
 @unittest.skip("Propblade fixture disabled until later")
@@ -1038,11 +820,6 @@ class TestPropbladeFixture(unittest.TestCase):
         result = self._analyze()
         self.assertIn(result["validation_status"], ("Pass", "Warning"))
         self.assertTrue(result["validation_checks"])
-        self.assertLessEqual(
-            result["geometric_accuracy_mm"],
-            result["geometric_accuracy_tolerance_mm"],
-        )
-        self.assertEqual(result["geometric_accuracy_status"], "Pass")
 
 
 if __name__ == "__main__":

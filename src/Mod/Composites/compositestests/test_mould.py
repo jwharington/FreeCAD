@@ -77,8 +77,6 @@ class TestMouldAnalysis(TestFreeCADFP):
         analysis = self._make_mould_analysis(source)
 
         self.assert_analysis_ready(analysis)
-        self.assertGreaterEqual(analysis.UndercutCount, 0)
-        self.assertGreaterEqual(analysis.DraftViolationCount, 0)
 
     def test_mould_analysis_on_box(self):
         source = self._make_source("BoxSource", Part.makeBox(20.0, 15.0, 10.0))

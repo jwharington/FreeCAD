@@ -16,36 +16,8 @@ NORMALIZATION_CONFIDENCE_FAIL = "fail"
 
 GEOMETRY_BACKFACE_WEIGHT = 0.25
 DRAFT_FACE_ALIGNMENT_MARGIN = 0.25
-GEOMETRIC_ACCURACY_TOLERANCE_MM = 0.1
-GEOMETRIC_ACCURACY_MAX_BAND_MM = 0.099
 MAX_SPLIT_STRATEGIES = 2
-MAX_MULTIPART_EXTRA_SPLITS = 2
-
-DECOMPOSITION_PLAN_STATUS_NOT_APPLICABLE = "not_applicable"
-DECOMPOSITION_PLAN_STATUS_NOT_REQUIRED = "not_required"
-DECOMPOSITION_PLAN_STATUS_CONSIDER_MULTIPART = "consider_multipart"
-DECOMPOSITION_PLAN_STATUS_MULTIPART_REQUIRED = "multipart_required"
-
-MULTIPART_EXECUTION_STATUS_NOT_APPLICABLE = "not_applicable"
-MULTIPART_EXECUTION_STATUS_NOT_ATTEMPTED = "not_attempted"
-MULTIPART_EXECUTION_STATUS_PROTOTYPED = "prototyped"
-
-MANUFACTURABILITY_STATUS_NOT_APPLICABLE = "not_applicable"
-MANUFACTURABILITY_STATUS_READY = "ready"
-MANUFACTURABILITY_CALIBRATION_VERSION = "v2"
-MANUFACTURABILITY_CALIBRATION_WEIGHTS = {
-    "draft_weight": 0.32,
-    "undercut_weight": 0.33,
-    "backface_weight": 0.20,
-    "multipart_weight": 0.10,
-    "group_density_weight": 0.05,
-}
-MANUFACTURABILITY_DRAFT_SATURATION_COUNT = 6.0
-MANUFACTURABILITY_UNDERCUT_SATURATION_COUNT = 6.0
-MANUFACTURABILITY_MULTIPART_SATURATION_COUNT = 2.0
-MANUFACTURABILITY_GROUP_DENSITY_SATURATION_COUNT = 4.0
-MANUFACTURABILITY_BACKFACE_SATURATION_RATIO = 0.60
-MAX_OVERLAY_CLUSTER_SUMMARY_ITEMS = 3
+WITHDRAWAL_CLEARANCE_STEP_MM = 0.1
 
 
 def _safe_copy_shape(shape):
@@ -234,1048 +206,6 @@ def _dedupe_preserve_order(items):
 
 def _normalization_reason_flags(reason_flags, hint_flags):
     return _dedupe_preserve_order(list(reason_flags) + list(hint_flags))
-
-
-def _decomposition_plan_status(analysis_status, validation_status):
-    if (
-        analysis_status == "Waiting for source"
-        or validation_status == "Waiting for source"
-    ):
-        return DECOMPOSITION_PLAN_STATUS_NOT_APPLICABLE
-    if analysis_status == "Fail" or validation_status == "Fail":
-        return DECOMPOSITION_PLAN_STATUS_MULTIPART_REQUIRED
-    if analysis_status == "Warning" or validation_status == "Warning":
-        return DECOMPOSITION_PLAN_STATUS_CONSIDER_MULTIPART
-    if analysis_status == "Ready" and validation_status == "Pass":
-        return DECOMPOSITION_PLAN_STATUS_NOT_REQUIRED
-    return DECOMPOSITION_PLAN_STATUS_CONSIDER_MULTIPART
-
-
-def _clean_decomposition_regions(regions):
-    cleaned = []
-    for region in regions or []:
-        text = str(region or "").strip()
-        if not text:
-            continue
-        if text in ("None", "No source shape available."):
-            continue
-        cleaned.append(text)
-    return cleaned
-
-
-def _decomposition_plan_regions(
-    undercut_regions,
-    draft_violation_regions,
-    validation_reason_codes=None,
-):
-    regions = []
-    regions.extend(
-        f"undercut:{region}"
-        for region in _clean_decomposition_regions(undercut_regions)
-    )
-    regions.extend(
-        f"draft:{region}"
-        for region in _clean_decomposition_regions(draft_violation_regions)
-    )
-    regions.extend(
-        f"validation:{code}"
-        for code in _clean_decomposition_regions(validation_reason_codes)
-    )
-    return _dedupe_preserve_order(regions)
-
-
-def _decomposition_plan_candidates(
-    decomposition_plan_status,
-    undercut_count,
-    draft_violation_count,
-):
-    if decomposition_plan_status in (
-        DECOMPOSITION_PLAN_STATUS_NOT_APPLICABLE,
-        DECOMPOSITION_PLAN_STATUS_NOT_REQUIRED,
-    ):
-        return []
-
-    candidates = []
-    if decomposition_plan_status == DECOMPOSITION_PLAN_STATUS_MULTIPART_REQUIRED:
-        candidates.append("multipart_baseline_required")
-    else:
-        candidates.append("multipart_baseline_optional")
-
-    if undercut_count > 0:
-        candidates.append("split_for_undercut_relief")
-    if draft_violation_count > 0:
-        candidates.append("split_for_draft_relief")
-    if undercut_count <= 0 and draft_violation_count <= 0:
-        candidates.append("split_for_validation_recovery")
-
-    return _dedupe_preserve_order(candidates)
-
-
-def _decomposition_plan_summary(
-    decomposition_plan_status,
-    analysis_status,
-    validation_status,
-    undercut_count,
-    draft_violation_count,
-    candidates,
-    regions,
-):
-    return (
-        f"decomposition={decomposition_plan_status}; "
-        f"analysis_status={analysis_status}, validation_status={validation_status}, "
-        f"undercuts={undercut_count}, draft_violations={draft_violation_count}, "
-        f"candidates={len(candidates)}, regions={len(regions)}"
-    )
-
-
-def _decomposition_readiness_payload(
-    analysis_status,
-    validation_status,
-    undercut_count,
-    draft_violation_count,
-    undercut_regions,
-    draft_violation_regions,
-    validation_reason_codes=None,
-):
-    decomposition_plan_status = _decomposition_plan_status(
-        analysis_status,
-        validation_status,
-    )
-    decomposition_plan_candidates = _decomposition_plan_candidates(
-        decomposition_plan_status,
-        int(undercut_count or 0),
-        int(draft_violation_count or 0),
-    )
-    decomposition_plan_regions = _decomposition_plan_regions(
-        undercut_regions,
-        draft_violation_regions,
-        validation_reason_codes,
-    )
-    decomposition_plan_summary = _decomposition_plan_summary(
-        decomposition_plan_status,
-        analysis_status,
-        validation_status,
-        int(undercut_count or 0),
-        int(draft_violation_count or 0),
-        decomposition_plan_candidates,
-        decomposition_plan_regions,
-    )
-    return {
-        "decomposition_plan_status": decomposition_plan_status,
-        "decomposition_plan_summary": decomposition_plan_summary,
-        "decomposition_plan_candidates": decomposition_plan_candidates,
-        "decomposition_plan_regions": decomposition_plan_regions,
-    }
-
-
-def _axis_bounds(shape, axis):
-    bbox = shape.BoundBox
-    if axis == "x":
-        return float(bbox.XMin), float(bbox.XMax)
-    if axis == "y":
-        return float(bbox.YMin), float(bbox.YMax)
-    return float(bbox.ZMin), float(bbox.ZMax)
-
-
-def _axis_clip_box(shape, axis, start, end, margin=0.1):
-    bbox = shape.BoundBox
-    xmin = float(bbox.XMin - (margin * bbox.XLength))
-    xmax = float(bbox.XMax + (margin * bbox.XLength))
-    ymin = float(bbox.YMin - (margin * bbox.YLength))
-    ymax = float(bbox.YMax + (margin * bbox.YLength))
-    zmin = float(bbox.ZMin - (margin * bbox.ZLength))
-    zmax = float(bbox.ZMax + (margin * bbox.ZLength))
-
-    if end <= start:
-        return Part.Shape()
-
-    if axis == "x":
-        return Part.makeBox(
-            float(end - start),
-            float(ymax - ymin),
-            float(zmax - zmin),
-            Vector(float(start), float(ymin), float(zmin)),
-        )
-    if axis == "y":
-        return Part.makeBox(
-            float(xmax - xmin),
-            float(end - start),
-            float(zmax - zmin),
-            Vector(float(xmin), float(start), float(zmin)),
-        )
-    return Part.makeBox(
-        float(xmax - xmin),
-        float(ymax - ymin),
-        float(end - start),
-        Vector(float(xmin), float(ymin), float(start)),
-    )
-
-
-def _split_offsets_from_violations(
-    violations,
-    axis_min,
-    axis_max,
-    baseline_offset,
-    max_extra_splits=MAX_MULTIPART_EXTRA_SPLITS,
-):
-    span = max(1.0e-6, float(axis_max) - float(axis_min))
-    eps = span * 1.0e-5
-    axis_min_f = float(axis_min)
-    axis_max_f = float(axis_max)
-    baseline_offset_f = float(baseline_offset)
-
-    raw_offsets = []
-    for violation in violations or []:
-        start = float(violation.get("start_position", 0.0))
-        end = float(violation.get("end_position", start))
-        midpoint = 0.5 * (start + end)
-        midpoint = max(axis_min_f + eps, min(axis_max_f - eps, midpoint))
-
-        if abs(midpoint - baseline_offset_f) <= eps:
-            continue
-
-        raw_offsets.append(midpoint)
-
-    raw_offsets.sort()
-
-    offsets = []
-    for midpoint in raw_offsets:
-        if any(abs(midpoint - existing) <= eps for existing in offsets):
-            continue
-        offsets.append(midpoint)
-
-    return offsets[: max(0, int(max_extra_splits))]
-
-
-def _multipart_offset_sets(extra_offsets, max_depth=2):
-    offsets = [float(offset) for offset in extra_offsets or []]
-    if not offsets:
-        return []
-
-    sets = []
-    first = [offsets[0]]
-    sets.append(first)
-
-    if len(offsets) >= 2 and int(max_depth) >= 2:
-        sets.append([offsets[0], offsets[1]])
-
-    return sets
-
-
-def _multipart_piece_slices(shape, axis, baseline_offset, extra_offsets):
-    axis_min, axis_max = _axis_bounds(shape, axis)
-    span = max(1.0e-6, float(axis_max) - float(axis_min))
-    eps = span * 1.0e-5
-
-    offsets = [
-        max(axis_min, min(axis_max, float(baseline_offset))),
-    ]
-    offsets.extend(
-        max(axis_min, min(axis_max, float(offset)))
-        for offset in (extra_offsets or [])
-    )
-
-    unique_offsets = []
-    for offset in sorted(offsets):
-        if unique_offsets and abs(offset - unique_offsets[-1]) <= eps:
-            continue
-        unique_offsets.append(offset)
-
-    cuts = [axis_min] + unique_offsets + [axis_max]
-
-    pieces = []
-    for index in range(len(cuts) - 1):
-        start = cuts[index]
-        end = cuts[index + 1]
-        if end <= start:
-            continue
-        clip_box = _axis_clip_box(shape, axis, start, end)
-        if getattr(clip_box, "isNull", lambda: True)():
-            continue
-        try:
-            piece = shape.common(clip_box)
-        except Exception:
-            piece = Part.Shape()
-
-        volume = float(getattr(piece, "Volume", 0.0) or 0.0)
-        if getattr(piece, "isNull", lambda: True)() or volume <= 1.0e-9:
-            continue
-
-        pieces.append(
-            {
-                "piece_index": len(pieces) + 1,
-                "start": float(start),
-                "end": float(end),
-                "volume": volume,
-                "shape": piece,
-            }
-        )
-
-    return pieces
-
-
-def _multipart_attempt(
-    shape,
-    direction,
-    baseline_offset,
-    extra_offsets,
-    baseline_violation_count,
-):
-    axis = _dominant_axis(direction)
-    split_offsets = [float(offset) for offset in (extra_offsets or [])]
-    pieces = _multipart_piece_slices(
-        shape,
-        axis,
-        baseline_offset,
-        split_offsets,
-    )
-
-    piece_violation_count = 0
-    for piece in pieces:
-        piece_refinement = _geometric_refinement_payload(
-            piece["shape"],
-            direction,
-            None,
-            None,
-        )
-        piece_violation_count += len(piece_refinement["violations"])
-
-    if len(pieces) < 2:
-        status = "Fail"
-        reason = "multipart split produced fewer than two non-null source partitions"
-    elif piece_violation_count < int(baseline_violation_count or 0):
-        status = "Pass"
-        reason = "multipart split reduced geometric refinement violations versus two-piece baseline"
-    else:
-        status = "Warning"
-        reason = "multipart split did not reduce geometric refinement violations versus two-piece baseline"
-
-    return {
-        "axis": axis,
-        "split_offset": float(split_offsets[0]) if split_offsets else float(baseline_offset),
-        "split_offsets": split_offsets,
-        "split_depth": len(split_offsets),
-        "baseline_offset": float(baseline_offset),
-        "piece_count": len(pieces),
-        "piece_volumes": [float(piece["volume"]) for piece in pieces],
-        "total_piece_volume": float(sum(piece["volume"] for piece in pieces)),
-        "baseline_violation_count": int(baseline_violation_count or 0),
-        "piece_violation_count": int(piece_violation_count),
-        "status": status,
-        "reason": reason,
-    }
-
-
-def _select_best_multipart_attempt(attempts):
-    if not attempts:
-        return None
-
-    status_rank = {
-        "Pass": 3,
-        "Warning": 2,
-        "Fail": 1,
-    }
-
-    return max(
-        attempts,
-        key=lambda attempt: (
-            status_rank.get(attempt.get("status", "Fail"), 0),
-            float(attempt.get("baseline_violation_count", 0))
-            - float(attempt.get("piece_violation_count", 0)),
-            float(attempt.get("total_piece_volume", 0.0)),
-            -int(attempt.get("split_depth", 0) or 0),
-            -abs(
-                float(attempt.get("split_offset", 0.0))
-                - float(attempt.get("baseline_offset", 0.0))
-            ),
-        ),
-    )
-
-
-def _multipart_execution_payload(
-    shape,
-    direction,
-    baseline_offset,
-    baseline_violations,
-    decomposition_plan_status,
-):
-    if decomposition_plan_status in (
-        DECOMPOSITION_PLAN_STATUS_NOT_APPLICABLE,
-        DECOMPOSITION_PLAN_STATUS_NOT_REQUIRED,
-    ):
-        return {
-            "multipart_execution_status": MULTIPART_EXECUTION_STATUS_NOT_APPLICABLE,
-            "multipart_execution_summary": (
-                "Multipart prototype not applicable: decomposition planning is not required."
-            ),
-            "multipart_execution_attempts": [],
-            "multipart_piece_count": 0,
-        }
-
-    if shape is None or getattr(shape, "isNull", lambda: True)():
-        return {
-            "multipart_execution_status": MULTIPART_EXECUTION_STATUS_NOT_ATTEMPTED,
-            "multipart_execution_summary": (
-                "Multipart prototype not attempted: effective source shape is unavailable."
-            ),
-            "multipart_execution_attempts": [],
-            "multipart_piece_count": 0,
-        }
-
-    axis = _dominant_axis(direction)
-    axis_min, axis_max = _axis_bounds(shape, axis)
-    extra_offsets = _split_offsets_from_violations(
-        baseline_violations,
-        axis_min,
-        axis_max,
-        baseline_offset,
-    )
-    offset_sets = _multipart_offset_sets(extra_offsets)
-
-    if not offset_sets:
-        return {
-            "multipart_execution_status": MULTIPART_EXECUTION_STATUS_NOT_ATTEMPTED,
-            "multipart_execution_summary": (
-                "Multipart prototype not attempted: no deterministic extra split offset was derived from geometric refinement violations."
-            ),
-            "multipart_execution_attempts": [],
-            "multipart_piece_count": 0,
-        }
-
-    attempts = []
-    baseline_violation_count = len(baseline_violations or [])
-    level_counters = {}
-    for index, split_offsets in enumerate(offset_sets, start=1):
-        attempt = _multipart_attempt(
-            shape,
-            direction,
-            baseline_offset,
-            split_offsets,
-            baseline_violation_count,
-        )
-
-        split_depth = int(attempt["split_depth"])
-        level_counters[split_depth] = level_counters.get(split_depth, 0) + 1
-        level_index = level_counters[split_depth]
-
-        attempts.append(
-            {
-                "attempt_index": index,
-                "strategy_id": f"multipart_extra_split_l{split_depth}_{level_index}",
-                "axis": attempt["axis"],
-                "split_offset": attempt["split_offset"],
-                "split_offsets": attempt["split_offsets"],
-                "split_depth": split_depth,
-                "baseline_offset": attempt["baseline_offset"],
-                "piece_count": attempt["piece_count"],
-                "piece_volumes": attempt["piece_volumes"],
-                "total_piece_volume": attempt["total_piece_volume"],
-                "baseline_violation_count": attempt["baseline_violation_count"],
-                "piece_violation_count": attempt["piece_violation_count"],
-                "status": attempt["status"],
-                "reason": attempt["reason"],
-            }
-        )
-
-    selected_attempt = _select_best_multipart_attempt(attempts)
-    selected_piece_count = int(selected_attempt["piece_count"]) if selected_attempt else 0
-
-    selected_status = selected_attempt["status"] if selected_attempt else "Fail"
-    selected_attempt_index = selected_attempt["attempt_index"] if selected_attempt else 0
-    selected_reason = selected_attempt["reason"] if selected_attempt else ""
-    selected_depth = int(selected_attempt.get("split_depth", 0) or 0) if selected_attempt else 0
-    selected_offset_count = len(selected_attempt.get("split_offsets", [])) if selected_attempt else 0
-    summary = (
-        f"Multipart prototype {MULTIPART_EXECUTION_STATUS_PROTOTYPED}: "
-        f"attempts={len(attempts)}, selected_attempt={selected_attempt_index}, "
-        f"selected_status={selected_status}, piece_count={selected_piece_count}, "
-        f"selected_depth={selected_depth}, selected_offset_count={selected_offset_count}; "
-        f"{selected_reason}"
-    )
-
-    return {
-        "multipart_execution_status": MULTIPART_EXECUTION_STATUS_PROTOTYPED,
-        "multipart_execution_summary": summary,
-        "multipart_execution_attempts": attempts,
-        "multipart_piece_count": selected_piece_count,
-    }
-
-
-def _region_interval(region_text):
-    match = re.search(
-        r"\[\d+\]\s*([-+]?\d*\.?\d+)→([-+]?\d*\.?\d+)",
-        str(region_text or ""),
-    )
-    if not match:
-        return None
-
-    start = float(match.group(1))
-    end = float(match.group(2))
-    if end < start:
-        start, end = end, start
-    return start, end
-
-
-def _manufacturability_overlay_bands(undercut_regions, draft_violation_regions):
-    bands = []
-
-    def extend(kind, regions):
-        for region in regions or []:
-            interval = _region_interval(region)
-            if interval is None:
-                continue
-            start, end = interval
-            bands.append(
-                {
-                    "kind": kind,
-                    "start": round(float(start), 9),
-                    "end": round(float(end), 9),
-                    "label": str(region),
-                }
-            )
-
-    extend("undercut", undercut_regions)
-    extend("draft_violation", draft_violation_regions)
-
-    return sorted(
-        bands,
-        key=lambda item: (
-            item["kind"],
-            float(item["start"]),
-            float(item["end"]),
-            item["label"],
-        ),
-    )
-
-
-def _overlay_group_severity_tier(group):
-    span = max(0.0, float(group.get("span", 0.0) or 0.0))
-    band_count = max(0, int(group.get("band_count", 0) or 0))
-    span_component = min(1.0, span / 10.0)
-    density_component = min(1.0, float(band_count) / 3.0)
-    severity_score = 0.5 * (span_component + density_component)
-
-    if severity_score >= 0.67:
-        return "high"
-    if severity_score >= 0.34:
-        return "medium"
-    return "low"
-
-
-def _overlay_group_cluster_label(group):
-    kind = str(group.get("kind") or "cluster")
-    return f"{kind}_{_overlay_group_severity_tier(group)}_cluster"
-
-
-def _ordered_overlay_groups(groups):
-    return sorted(
-        list(groups or []),
-        key=lambda item: (
-            item.get("kind", ""),
-            float(item.get("start", 0.0) or 0.0),
-            float(item.get("end", 0.0) or 0.0),
-            item.get("group_id", ""),
-        ),
-    )
-
-
-def _manufacturability_overlay_groups(bands):
-    sorted_bands = sorted(
-        list(bands or []),
-        key=lambda item: (
-            item["kind"],
-            float(item["start"]),
-            float(item["end"]),
-            item["label"],
-        ),
-    )
-    if not sorted_bands:
-        return []
-
-    global_start = min(float(band["start"]) for band in sorted_bands)
-    global_end = max(float(band["end"]) for band in sorted_bands)
-    span = max(1.0e-6, global_end - global_start)
-    eps = max(1.0e-9, span * 1.0e-6)
-
-    groups = []
-    current = None
-
-    for band in sorted_bands:
-        kind = str(band["kind"])
-        start = float(band["start"])
-        end = float(band["end"])
-        label = str(band["label"])
-
-        if (
-            current is None
-            or kind != current["kind"]
-            or start > float(current["end"]) + eps
-        ):
-            if current is not None:
-                groups.append(current)
-            current = {
-                "kind": kind,
-                "start": start,
-                "end": end,
-                "band_count": 1,
-                "labels": [label],
-            }
-            continue
-
-        current["end"] = max(float(current["end"]), end)
-        current["band_count"] = int(current["band_count"] or 0) + 1
-        current["labels"].append(label)
-
-    if current is not None:
-        groups.append(current)
-
-    groups = sorted(
-        groups,
-        key=lambda item: (
-            item["kind"],
-            float(item["start"]),
-            float(item["end"]),
-            tuple(sorted(set(item["labels"]))),
-        ),
-    )
-
-    by_kind_index = {}
-    payload = []
-    for group in groups:
-        kind = group["kind"]
-        by_kind_index[kind] = by_kind_index.get(kind, 0) + 1
-        start = round(float(group["start"]), 9)
-        end = round(float(group["end"]), 9)
-        labels = sorted(set(str(label) for label in group.get("labels", [])))
-        cluster_group = {
-            "group_id": f"{kind}_g{by_kind_index[kind]}",
-            "kind": kind,
-            "band_count": int(group.get("band_count", 0) or 0),
-            "start": start,
-            "end": end,
-            "labels": labels,
-            "span": round(max(0.0, end - start), 9),
-        }
-        cluster_group["severity_tier"] = _overlay_group_severity_tier(cluster_group)
-        cluster_group["cluster_label"] = _overlay_group_cluster_label(cluster_group)
-        payload.append(cluster_group)
-
-    return _ordered_overlay_groups(payload)
-
-
-def _manufacturability_overlay_group_summary(groups):
-    groups = _ordered_overlay_groups(groups)
-    undercut_groups = len([group for group in groups if group.get("kind") == "undercut"])
-    draft_groups = len(
-        [group for group in groups if group.get("kind") == "draft_violation"]
-    )
-    return (
-        f"groups={len(groups)}, undercut_groups={undercut_groups}, "
-        f"draft_violation_groups={draft_groups}"
-    )
-
-
-def _manufacturability_overlay_top_clusters(
-    groups,
-    max_items=MAX_OVERLAY_CLUSTER_SUMMARY_ITEMS,
-):
-    ordered_groups = _ordered_overlay_groups(groups)
-    limit = max(0, int(max_items or 0))
-    payload = []
-    for group in ordered_groups[:limit]:
-        payload.append(
-            {
-                "group_id": str(group.get("group_id") or ""),
-                "kind": str(group.get("kind") or ""),
-                "cluster_label": str(group.get("cluster_label") or ""),
-                "severity_tier": str(group.get("severity_tier") or "low"),
-                "start": round(float(group.get("start", 0.0) or 0.0), 9),
-                "end": round(float(group.get("end", 0.0) or 0.0), 9),
-                "span": round(float(group.get("span", 0.0) or 0.0), 9),
-                "band_count": int(group.get("band_count", 0) or 0),
-            }
-        )
-    return payload
-
-
-def _manufacturability_overlay_cluster_summary(
-    groups,
-    max_items=MAX_OVERLAY_CLUSTER_SUMMARY_ITEMS,
-):
-    ordered_groups = _ordered_overlay_groups(groups)
-    top_clusters = _manufacturability_overlay_top_clusters(
-        ordered_groups,
-        max_items=max_items,
-    )
-    if not top_clusters:
-        return f"clusters=0, top_clusters=[], cap={int(max_items or 0)}"
-
-    top_tokens = [
-        f"{cluster['group_id']}:{cluster['cluster_label']}"
-        for cluster in top_clusters
-    ]
-    return (
-        f"clusters={len(ordered_groups)}, top_clusters=[{', '.join(top_tokens)}], "
-        f"cap={int(max_items or 0)}"
-    )
-
-
-def _manufacturability_calibration_weights():
-    return {
-        key: round(float(value), 9)
-        for key, value in MANUFACTURABILITY_CALIBRATION_WEIGHTS.items()
-    }
-
-
-def _manufacturability_calibration_inputs(
-    draft_violation_count,
-    undercut_count,
-    backface_area_ratio,
-    multipart_piece_count,
-    overlay_group_count,
-):
-    multipart_piece_count = int(multipart_piece_count or 0)
-    return {
-        "draft_violation_count": int(draft_violation_count or 0),
-        "undercut_count": int(undercut_count or 0),
-        "backface_area_ratio": round(float(backface_area_ratio or 0.0), 9),
-        "multipart_piece_count": multipart_piece_count,
-        "multipart_excess_piece_count": max(0, multipart_piece_count - 2),
-        "overlay_group_count": int(overlay_group_count or 0),
-        "draft_saturation_count": round(
-            float(MANUFACTURABILITY_DRAFT_SATURATION_COUNT),
-            9,
-        ),
-        "undercut_saturation_count": round(
-            float(MANUFACTURABILITY_UNDERCUT_SATURATION_COUNT),
-            9,
-        ),
-        "multipart_saturation_count": round(
-            float(MANUFACTURABILITY_MULTIPART_SATURATION_COUNT),
-            9,
-        ),
-        "group_density_saturation_count": round(
-            float(MANUFACTURABILITY_GROUP_DENSITY_SATURATION_COUNT),
-            9,
-        ),
-        "backface_saturation_ratio": round(
-            float(MANUFACTURABILITY_BACKFACE_SATURATION_RATIO),
-            9,
-        ),
-    }
-
-
-def _manufacturability_score_breakdown(
-    backface_area_ratio,
-    undercut_count,
-    draft_violation_count,
-    multipart_piece_count,
-    overlay_group_count=0,
-    calibration_weights=None,
-):
-    draft_component = min(
-        1.0,
-        max(0.0, float(draft_violation_count or 0.0))
-        / max(1.0, float(MANUFACTURABILITY_DRAFT_SATURATION_COUNT)),
-    )
-    undercut_component = min(
-        1.0,
-        max(0.0, float(undercut_count or 0.0))
-        / max(1.0, float(MANUFACTURABILITY_UNDERCUT_SATURATION_COUNT)),
-    )
-    backface_component = min(
-        1.0,
-        max(0.0, float(backface_area_ratio or 0.0))
-        / max(1.0e-6, float(MANUFACTURABILITY_BACKFACE_SATURATION_RATIO)),
-    )
-    multipart_component = min(
-        1.0,
-        max(0.0, float(int(multipart_piece_count or 0) - 2))
-        / max(1.0, float(MANUFACTURABILITY_MULTIPART_SATURATION_COUNT)),
-    )
-    group_density_component = min(
-        1.0,
-        max(0.0, float(overlay_group_count or 0.0))
-        / max(1.0, float(MANUFACTURABILITY_GROUP_DENSITY_SATURATION_COUNT)),
-    )
-
-    calibration_weights = calibration_weights or _manufacturability_calibration_weights()
-    draft_weight = max(0.0, float(calibration_weights.get("draft_weight", 0.32) or 0.0))
-    undercut_weight = max(
-        0.0,
-        float(calibration_weights.get("undercut_weight", 0.33) or 0.0),
-    )
-    backface_weight = max(
-        0.0,
-        float(calibration_weights.get("backface_weight", 0.20) or 0.0),
-    )
-    multipart_weight = max(
-        0.0,
-        float(calibration_weights.get("multipart_weight", 0.10) or 0.0),
-    )
-    group_density_weight = max(
-        0.0,
-        float(calibration_weights.get("group_density_weight", 0.05) or 0.0),
-    )
-
-    weighted_total = (
-        (draft_weight * draft_component)
-        + (undercut_weight * undercut_component)
-        + (backface_weight * backface_component)
-        + (multipart_weight * multipart_component)
-        + (group_density_weight * group_density_component)
-    )
-    weight_sum = (
-        draft_weight
-        + undercut_weight
-        + backface_weight
-        + multipart_weight
-        + group_density_weight
-    )
-    if weight_sum <= 1.0e-9:
-        total = 0.0
-    else:
-        total = weighted_total / weight_sum
-    total = min(1.0, max(0.0, total))
-
-    return {
-        "draft_component": round(draft_component, 9),
-        "undercut_component": round(undercut_component, 9),
-        "backface_component": round(backface_component, 9),
-        "multipart_component": round(multipart_component, 9),
-        "group_density_component": round(group_density_component, 9),
-        "total": round(total, 9),
-    }
-
-
-def _manufacturability_risk_class(risk_index):
-    if risk_index >= 0.67:
-        return "high"
-    if risk_index >= 0.34:
-        return "medium"
-    return "low"
-
-
-def _largest_overlay_group(groups, kind):
-    matching = [group for group in (groups or []) if group.get("kind") == kind]
-    if not matching:
-        return None
-    return max(
-        matching,
-        key=lambda group: (
-            float(group.get("span", 0.0) or 0.0),
-            int(group.get("band_count", 0) or 0),
-            group.get("group_id", ""),
-        ),
-    )
-
-
-def _manufacturability_recommendations(
-    breakdown,
-    undercut_count,
-    draft_violation_count,
-    decomposition_plan_status,
-    multipart_piece_count,
-    overlay_groups=None,
-):
-    recommendations = []
-    if int(draft_violation_count or 0) > 0:
-        recommendations.append("reduce_negative_draft")
-    if int(undercut_count or 0) > 0:
-        recommendations.append("relieve_undercut_regions")
-    if float(breakdown.get("backface_component", 0.0) or 0.0) >= 0.25:
-        recommendations.append("reduce_backface_exposure")
-    if (
-        decomposition_plan_status in (
-            DECOMPOSITION_PLAN_STATUS_CONSIDER_MULTIPART,
-            DECOMPOSITION_PLAN_STATUS_MULTIPART_REQUIRED,
-        )
-        or int(multipart_piece_count or 0) >= 4
-    ):
-        recommendations.append("consider_additional_multipart_depth")
-
-    largest_undercut_group = _largest_overlay_group(overlay_groups, "undercut")
-    largest_draft_group = _largest_overlay_group(overlay_groups, "draft_violation")
-
-    if largest_undercut_group is not None:
-        recommendations.append("target_largest_undercut_group")
-        if largest_undercut_group.get("severity_tier") == "high":
-            recommendations.append("prioritize_high_severity_undercut_cluster")
-
-    if largest_draft_group is not None:
-        recommendations.append("target_largest_draft_group")
-        if largest_draft_group.get("severity_tier") == "high":
-            recommendations.append("prioritize_high_severity_draft_cluster")
-
-    return sorted(_dedupe_preserve_order(recommendations))
-
-
-def _not_applicable_manufacturability_payload(reason):
-    calibration_weights = _manufacturability_calibration_weights()
-    calibration_inputs = _manufacturability_calibration_inputs(
-        0,
-        0,
-        0.0,
-        0,
-        0,
-    )
-    return {
-        "manufacturability_status": MANUFACTURABILITY_STATUS_NOT_APPLICABLE,
-        "manufacturability_summary": (
-            f"manufacturability=not_applicable; reason={reason}; "
-            f"groups=0, clusters=0, calibration={MANUFACTURABILITY_CALIBRATION_VERSION}"
-        ),
-        "manufacturability_metrics": {
-            "backface_area_ratio": 0.0,
-            "undercut_count": 0,
-            "draft_violation_count": 0,
-            "multipart_piece_count": 0,
-            "risk_index": 0.0,
-            "risk_class": "low",
-        },
-        "manufacturability_overlay_status": MANUFACTURABILITY_STATUS_NOT_APPLICABLE,
-        "manufacturability_overlay_summary": f"overlay=not_applicable; reason={reason}",
-        "manufacturability_overlay_bands": [],
-        "manufacturability_overlay_groups": [],
-        "manufacturability_overlay_group_count": 0,
-        "manufacturability_overlay_group_summary": (
-            "groups=0, undercut_groups=0, draft_violation_groups=0"
-        ),
-        "manufacturability_overlay_cluster_summary": (
-            f"clusters=0, top_clusters=[], cap={MAX_OVERLAY_CLUSTER_SUMMARY_ITEMS}"
-        ),
-        "manufacturability_overlay_top_clusters": [],
-        "manufacturability_pull_direction": "(0.000, 0.000, 1.000)",
-        "manufacturability_recommendations": [],
-        "manufacturability_score_breakdown": {
-            "draft_component": 0.0,
-            "undercut_component": 0.0,
-            "backface_component": 0.0,
-            "multipart_component": 0.0,
-            "group_density_component": 0.0,
-            "total": 0.0,
-        },
-        "manufacturability_calibration_version": MANUFACTURABILITY_CALIBRATION_VERSION,
-        "manufacturability_calibration_inputs": calibration_inputs,
-        "manufacturability_calibration_weights": calibration_weights,
-    }
-
-
-def _manufacturability_payload(
-    shape,
-    pull_direction,
-    undercut_count,
-    draft_violation_count,
-    undercut_regions,
-    draft_violation_regions,
-    multipart_payload,
-    decomposition_plan_status,
-):
-    if shape is None or getattr(shape, "isNull", lambda: True)():
-        return _not_applicable_manufacturability_payload("source_shape_unavailable")
-
-    pull_unit = _normalized(pull_direction)
-    backface_area_ratio = round(float(_backface_area_ratio(shape, pull_unit)), 9)
-
-    multipart_piece_count = int(multipart_payload.get("multipart_piece_count", 0) or 0)
-    bands = _manufacturability_overlay_bands(
-        undercut_regions,
-        draft_violation_regions,
-    )
-    overlay_groups = _manufacturability_overlay_groups(bands)
-    overlay_group_count = len(overlay_groups)
-    overlay_group_summary = _manufacturability_overlay_group_summary(overlay_groups)
-    overlay_top_clusters = _manufacturability_overlay_top_clusters(
-        overlay_groups,
-        max_items=MAX_OVERLAY_CLUSTER_SUMMARY_ITEMS,
-    )
-    overlay_cluster_summary = _manufacturability_overlay_cluster_summary(
-        overlay_groups,
-        max_items=MAX_OVERLAY_CLUSTER_SUMMARY_ITEMS,
-    )
-
-    calibration_version = MANUFACTURABILITY_CALIBRATION_VERSION
-    calibration_weights = _manufacturability_calibration_weights()
-    calibration_inputs = _manufacturability_calibration_inputs(
-        draft_violation_count,
-        undercut_count,
-        backface_area_ratio,
-        multipart_piece_count,
-        overlay_group_count,
-    )
-
-    breakdown = _manufacturability_score_breakdown(
-        backface_area_ratio,
-        undercut_count,
-        draft_violation_count,
-        multipart_piece_count,
-        overlay_group_count=overlay_group_count,
-        calibration_weights=calibration_weights,
-    )
-    risk_index = float(breakdown["total"])
-    risk_class = _manufacturability_risk_class(risk_index)
-
-    metrics = {
-        "backface_area_ratio": backface_area_ratio,
-        "undercut_count": int(undercut_count or 0),
-        "draft_violation_count": int(draft_violation_count or 0),
-        "multipart_piece_count": multipart_piece_count,
-        "risk_index": round(risk_index, 9),
-        "risk_class": risk_class,
-    }
-
-    summary = (
-        "manufacturability=ready; "
-        f"risk_index={metrics['risk_index']:.2f}, risk_class={risk_class}, "
-        f"backface={backface_area_ratio:.2f}, undercuts={metrics['undercut_count']}, "
-        f"draft_violations={metrics['draft_violation_count']}, "
-        f"multipart_pieces={metrics['multipart_piece_count']}, "
-        f"groups={overlay_group_count}, clusters={len(overlay_top_clusters)}, "
-        f"calibration={calibration_version}, "
-        f"group_density_weight={calibration_weights['group_density_weight']:.2f}, "
-        f"draft_sat={MANUFACTURABILITY_DRAFT_SATURATION_COUNT:.1f}, "
-        f"undercut_sat={MANUFACTURABILITY_UNDERCUT_SATURATION_COUNT:.1f}"
-    )
-
-    undercut_band_count = len([band for band in bands if band["kind"] == "undercut"])
-    draft_band_count = len([band for band in bands if band["kind"] == "draft_violation"])
-
-    pull_direction_text = _format_vector(pull_unit)
-    overlay_summary = (
-        "overlay=ready; "
-        f"bands={len(bands)}, groups={overlay_group_count}, "
-        f"undercut={undercut_band_count}, draft_violation={draft_band_count}, "
-        f"top_clusters={len(overlay_top_clusters)}, pull={pull_direction_text}"
-    )
-
-    recommendations = _manufacturability_recommendations(
-        breakdown,
-        undercut_count,
-        draft_violation_count,
-        decomposition_plan_status,
-        multipart_piece_count,
-        overlay_groups=overlay_groups,
-    )
-
-    return {
-        "manufacturability_status": MANUFACTURABILITY_STATUS_READY,
-        "manufacturability_summary": summary,
-        "manufacturability_metrics": metrics,
-        "manufacturability_overlay_status": MANUFACTURABILITY_STATUS_READY,
-        "manufacturability_overlay_summary": overlay_summary,
-        "manufacturability_overlay_bands": bands,
-        "manufacturability_overlay_groups": overlay_groups,
-        "manufacturability_overlay_group_count": overlay_group_count,
-        "manufacturability_overlay_group_summary": overlay_group_summary,
-        "manufacturability_overlay_cluster_summary": overlay_cluster_summary,
-        "manufacturability_overlay_top_clusters": overlay_top_clusters,
-        "manufacturability_pull_direction": pull_direction_text,
-        "manufacturability_recommendations": recommendations,
-        "manufacturability_score_breakdown": breakdown,
-        "manufacturability_calibration_version": calibration_version,
-        "manufacturability_calibration_inputs": calibration_inputs,
-        "manufacturability_calibration_weights": calibration_weights,
-    }
 
 
 def _format_vector(vec):
@@ -1774,7 +704,6 @@ def _backface_area_ratio(shape, direction, epsilon=1.0e-9):
 def _direction_geometric_evidence_cache_key(
     direction,
     alignment_margin=DRAFT_FACE_ALIGNMENT_MARGIN,
-    sample_density=0.5,
 ):
     unit = _normalized(direction)
     return (
@@ -1782,7 +711,6 @@ def _direction_geometric_evidence_cache_key(
         round(unit.y, 9),
         round(unit.z, 9),
         round(float(alignment_margin or 0.0), 6),
-        round(float(sample_density or 0.0), 6),
     )
 
 
@@ -1790,13 +718,11 @@ def _direction_geometric_evidence(
     shape,
     direction,
     alignment_margin=DRAFT_FACE_ALIGNMENT_MARGIN,
-    sample_density=0.5,
     cache=None,
 ):
     cache_key = _direction_geometric_evidence_cache_key(
         direction,
         alignment_margin=alignment_margin,
-        sample_density=sample_density,
     )
     if cache is not None and cache_key in cache:
         return cache[cache_key]
@@ -1806,21 +732,12 @@ def _direction_geometric_evidence(
         direction,
         alignment_margin=alignment_margin,
     )
-    accessibility = _sample_draw_accessibility(
-        shape,
-        direction,
-        sample_density=sample_density,
-    )
     evidence = {
         "cache_key": cache_key,
         "direction": _normalized(direction),
         "draft_face_screening": draft_face_screening,
-        "accessibility": accessibility,
         "backface_ratio": _backface_area_ratio(shape, direction),
-        "analysis_gate_status": _analysis_gate_status(
-            draft_face_screening,
-            accessibility,
-        ),
+        "analysis_gate_status": _analysis_gate_status(draft_face_screening),
     }
 
     if cache is not None:
@@ -1842,7 +759,6 @@ def _plan_split_strategies(ranked, limit=MAX_SPLIT_STRATEGIES):
                 "geometry_factor": item["geometry_factor"],
                 "geometric_evidence": item.get("geometric_evidence"),
                 "draft_face_screening": item.get("draft_face_screening"),
-                "accessibility": item.get("accessibility"),
                 "analysis_gate_status": item.get("analysis_gate_status"),
                 "parting_model": item.get("parting_model", "Planar"),
                 "parting_land_width": item.get("parting_land_width", 25.0),
@@ -1855,7 +771,7 @@ def _plan_split_strategies(ranked, limit=MAX_SPLIT_STRATEGIES):
     return strategies
 
 
-def _planner_score(strategy, status, undercut_count, draft_violation_count):
+def _planner_score(strategy, status):
     status_rank = {
         "Pass": 3.0,
         "Warning": 2.0,
@@ -1863,8 +779,7 @@ def _planner_score(strategy, status, undercut_count, draft_violation_count):
     }.get(status, 0.0)
     rank = float(strategy.get("rank", 0) or 0)
     direction_score = float(strategy.get("direction_score", 0.0) or 0.0)
-    penalty = (float(undercut_count) + float(draft_violation_count)) * 10.0
-    return (status_rank * 1000.0) + direction_score - penalty - (rank * 1.0e-3)
+    return (status_rank * 1000.0) + direction_score - (rank * 1.0e-3)
 
 
 def _evaluate_split_strategy_attempt(shape, strategy):
@@ -1873,21 +788,9 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         evidence = _direction_geometric_evidence(shape, strategy["direction"])
 
     draft_face_screening = evidence["draft_face_screening"]
-    accessibility = evidence["accessibility"]
     analysis_gate_status = evidence.get("analysis_gate_status") or _analysis_gate_status(
-        draft_face_screening,
-        accessibility,
+        draft_face_screening
     )
-    refinement = _slice_refinement_payload(
-        shape,
-        strategy["direction"],
-        draft_face_screening,
-        accessibility,
-    )
-    profile = refinement["profile"]
-    violations = refinement["violations"]
-    undercut_count = len(violations)
-    draft_violation_count = len(violations)
 
     parting_model = strategy.get("parting_model", "Planar")
     non_planar_result = None
@@ -1937,14 +840,9 @@ def _evaluate_split_strategy_attempt(shape, strategy):
     validation = validate_mould_result(
         parting["status"],
         mould_halves["status"],
-        undercut_count,
-        draft_violation_count,
         parting["shape"],
         mould_halves["half_a_shape"],
         mould_halves["half_b_shape"],
-        analysis_gate_status=analysis_gate_status,
-        geometric_accuracy_mm=refinement["accuracy_mm"],
-        geometric_accuracy_tolerance_mm=refinement["accuracy_tolerance_mm"],
         withdrawal_clearance_status=withdrawal_clearance["status"],
     )
 
@@ -1958,20 +856,9 @@ def _evaluate_split_strategy_attempt(shape, strategy):
 
     return {
         "strategy": strategy,
-        "profile": profile,
-        "violations": violations,
         "draft_face_screening": draft_face_screening,
-        "accessibility": accessibility,
         "analysis_gate_status": analysis_gate_status,
         "geometric_evidence": evidence,
-        "slice_refinement_required": refinement["refinement_required"],
-        "slice_refinement_summary": refinement["summary"],
-        "geometric_accuracy_mm": refinement["accuracy_mm"],
-        "geometric_accuracy_tolerance_mm": refinement["accuracy_tolerance_mm"],
-        "geometric_accuracy_status": refinement["accuracy_status"],
-        "geometric_accuracy_summary": refinement["accuracy_summary"],
-        "undercut_count": undercut_count,
-        "draft_violation_count": draft_violation_count,
         "parting": parting,
         "mould_halves": mould_halves,
         "withdrawal_clearance": withdrawal_clearance,
@@ -1979,12 +866,7 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         "validation": validation,
         "status": status,
         "reason": reason,
-        "planner_score": _planner_score(
-            strategy,
-            status,
-            undercut_count,
-            draft_violation_count,
-        ),
+        "planner_score": _planner_score(strategy, status),
         "selection_reason": "",
         "exception": "",
     }
@@ -1995,8 +877,6 @@ def _failed_attempt_from_exception(strategy, exc):
     status = "Fail"
     return {
         "strategy": strategy,
-        "profile": [],
-        "violations": [],
         "draft_face_screening": {
             "status": "Fail",
             "summary": "Draft face screening unavailable due to strategy exception.",
@@ -2008,26 +888,7 @@ def _failed_attempt_from_exception(strategy, exc):
             "ambiguous_face_count": 0,
             "face_classifications": [],
         },
-        "accessibility": {
-            "status": "Fail",
-            "summary": "Accessibility screening unavailable due to strategy exception.",
-            "sample_count": 0,
-            "blocked_sample_count": 0,
-            "multi_hit_sample_count": 0,
-            "blocked_fraction": 0.0,
-            "multi_hit_fraction": 0.0,
-            "accessibility_regions": ["None"],
-            "ray_samples": [],
-        },
-        "slice_refinement_required": True,
-        "slice_refinement_summary": "Geometric refinement unavailable due to strategy exception.",
-        "geometric_accuracy_mm": 0.0,
-        "geometric_accuracy_tolerance_mm": GEOMETRIC_ACCURACY_TOLERANCE_MM,
-        "geometric_accuracy_status": "Fail",
-        "geometric_accuracy_summary": "Geometric accuracy unavailable due to strategy exception.",
         "analysis_gate_status": "Fail",
-        "undercut_count": 0,
-        "draft_violation_count": 0,
         "parting": {
             "status": "Fail",
             "summary": "Parting surface generation failed due to strategy exception.",
@@ -2045,6 +906,12 @@ def _failed_attempt_from_exception(strategy, exc):
             "half_a_volume": 0.0,
             "half_b_volume": 0.0,
         },
+        "withdrawal_clearance": {
+            "status": "Fail",
+            "summary": "Withdrawal clearance unavailable due to strategy exception.",
+            "failure_count": 0,
+        },
+        "non_planar_result": None,
         "validation": {
             "status": "Fail",
             "summary": "Validation fail: strategy evaluation raised an exception.",
@@ -2054,7 +921,7 @@ def _failed_attempt_from_exception(strategy, exc):
         },
         "status": status,
         "reason": f"candidate exception: {message}",
-        "planner_score": _planner_score(strategy, status, 0, 0),
+        "planner_score": _planner_score(strategy, status),
         "selection_reason": "",
         "exception": message,
     }
@@ -2071,8 +938,6 @@ def _evaluate_split_strategy_attempts(shape, strategies):
         attempt["planner_score"] = _planner_score(
             attempt["strategy"],
             attempt["status"],
-            attempt.get("undercut_count", 0),
-            attempt.get("draft_violation_count", 0),
         )
         attempts.append(attempt)
 
@@ -2149,11 +1014,6 @@ def _split_strategy_attempt_diagnostics(attempts):
                 "planner_score": attempt["planner_score"],
                 "selection_reason": attempt["selection_reason"],
                 "analysis_gate_status": attempt.get("analysis_gate_status", ""),
-                "slice_refinement_required": attempt.get("slice_refinement_required", False),
-                "slice_refinement_summary": attempt.get("slice_refinement_summary", ""),
-                "accessibility_status": attempt.get("accessibility", {}).get("status", ""),
-                "undercut_count": attempt["undercut_count"],
-                "draft_violation_count": attempt["draft_violation_count"],
                 "parting_status": attempt["parting"]["status"],
                 "mould_halves_status": attempt["mould_halves"]["status"],
                 "validation_summary": attempt["validation"]["summary"],
@@ -2320,375 +1180,17 @@ def _propose_non_planar_parting(
     }
 
 
-def _sample_draw_accessibility(shape, direction, sample_density=0.5):
-    unit = _normalized(direction)
-    bbox = shape.BoundBox
-    center = Vector(
-        0.5 * (bbox.XMin + bbox.XMax),
-        0.5 * (bbox.YMin + bbox.YMax),
-        0.5 * (bbox.ZMin + bbox.ZMax),
-    )
+def _analysis_gate_status(draft_face_screening):
+    """Informational draft-face signal, decoupled from the verdict.
 
-    def _orthogonal_frame(unit_vector):
-        helper = Vector(1.0, 0.0, 0.0)
-        if abs(_dot(unit_vector, helper)) > 0.9:
-            helper = Vector(0.0, 1.0, 0.0)
-        first = unit_vector.cross(helper)
-        if getattr(first, "Length", 0.0) <= 0.0:
-            helper = Vector(0.0, 0.0, 1.0)
-            first = unit_vector.cross(helper)
-        first = _normalized(first)
-        second = _normalized(unit_vector.cross(first))
-        return first, second
-
-    transverse_u, transverse_v = _orthogonal_frame(unit)
-    corners = [
-        Vector(x, y, z)
-        for x in (bbox.XMin, bbox.XMax)
-        for y in (bbox.YMin, bbox.YMax)
-        for z in (bbox.ZMin, bbox.ZMax)
-    ]
-    projected_u = [_dot(corner, unit) for corner in corners]
-    projected_v = [_dot(corner, transverse_u) for corner in corners]
-    projected_w = [_dot(corner, transverse_v) for corner in corners]
-    axis_min = min(projected_u)
-    axis_max = max(projected_u)
-    u_min = min(projected_v)
-    u_max = max(projected_v)
-    v_min = min(projected_w)
-    v_max = max(projected_w)
-
-    axis_extent = max(axis_max - axis_min, 1.0e-6)
-    u_extent = max(u_max - u_min, 1.0e-6)
-    v_extent = max(v_max - v_min, 1.0e-6)
-    density = float(sample_density or 0.0)
-    if density <= 0.0:
-        density = 0.5
-    transverse_count_u = max(3, min(11, int(math.ceil(u_extent * density)) + 1))
-    transverse_count_v = max(3, min(11, int(math.ceil(v_extent * density)) + 1))
-    ray_padding = max(1.0e-3, 0.1 * axis_extent)
-
-    sample_count = transverse_count_u * transverse_count_v
-    blocked_sample_count = 0
-    multi_hit_sample_count = 0
-    accessibility_regions = []
-    ray_samples = []
-
-    def _sample_positions(count, minimum, maximum):
-        if count <= 1:
-            return [0.5 * (minimum + maximum)]
-        return [
-            minimum + ((maximum - minimum) * index / (count - 1))
-            for index in range(count)
-        ]
-
-    sample_index = 0
-    for u_index, u_offset in enumerate(_sample_positions(transverse_count_u, u_min, u_max), start=1):
-        for v_index, v_offset in enumerate(_sample_positions(transverse_count_v, v_min, v_max), start=1):
-            sample_index += 1
-            plane_point = (
-                unit * _dot(center, unit)
-                + transverse_u * u_offset
-                + transverse_v * v_offset
-            )
-            axis_position = _dot(plane_point, unit)
-            ray_start = plane_point - (unit * (0.5 * axis_extent + ray_padding))
-            ray_end = plane_point + (unit * (0.5 * axis_extent + ray_padding))
-            ray = Part.makeLine(ray_start, ray_end)
-
-            try:
-                hit = shape.common(ray)
-            except Exception:
-                hit = Part.Shape()
-
-            hit_edges = len(getattr(hit, "Edges", []))
-            hit_vertices = len(getattr(hit, "Vertexes", []))
-            hit_shape_type = getattr(hit, "ShapeType", "")
-            hit_segments = hit_edges
-            if hit_edges <= 0 and hit_vertices <= 0:
-                classification = "blocked"
-                blocked_sample_count += 1
-            elif hit_segments > 1 or hit_vertices > 2:
-                classification = "multi_hit"
-                multi_hit_sample_count += 1
-            else:
-                classification = "clear"
-
-            if classification != "clear":
-                accessibility_regions.append(
-                    (
-                        f"[{len(accessibility_regions) + 1}] {classification} "
-                        f"grid=({u_index},{v_index}) offsets=({u_offset:.3f}, {v_offset:.3f}) "
-                        f"hits={hit_segments} vertices={hit_vertices} type={hit_shape_type or 'unknown'}"
-                    )
-                )
-                ray_samples.append(
-                    {
-                        "sample_index": sample_index,
-                        "grid_index": (u_index, v_index),
-                        "plane_offsets": (u_offset, v_offset),
-                        "axis_position": axis_position,
-                        "hit_segments": hit_segments,
-                        "hit_vertices": hit_vertices,
-                        "classification": classification,
-                    }
-                )
-
-    if multi_hit_sample_count > 0:
-        status = "Fail"
-        summary_prefix = "accessibility screening fail"
-    elif blocked_sample_count > 0:
-        status = "Warning"
-        summary_prefix = "accessibility screening warning"
-    else:
-        status = "Ready"
-        summary_prefix = "accessibility screening ready"
-
-    summary = (
-        f"{summary_prefix}; samples={sample_count}, blocked={blocked_sample_count}, "
-        f"multi_hit={multi_hit_sample_count}, blocked_fraction={blocked_sample_count / sample_count if sample_count else 0.0:.3f}, "
-        f"multi_hit_fraction={multi_hit_sample_count / sample_count if sample_count else 0.0:.3f}, "
-        f"sample_density={density:.3f}"
-    )
-
-    return {
-        "status": status,
-        "summary": summary,
-        "sample_count": sample_count,
-        "blocked_sample_count": blocked_sample_count,
-        "multi_hit_sample_count": multi_hit_sample_count,
-        "blocked_fraction": blocked_sample_count / sample_count if sample_count else 0.0,
-        "multi_hit_fraction": multi_hit_sample_count / sample_count if sample_count else 0.0,
-        "accessibility_regions": accessibility_regions or ["None"],
-        "ray_samples": ray_samples,
-    }
-
-
-def _analysis_gate_status(draft_face_screening, accessibility):
+    Pass only when every face drafts cleanly away from the draw direction;
+    Warning when any risky or ambiguous face is present (which includes
+    legitimate parting faces — this gate does NOT drive the verdict, it only
+    reports the crude draft signal alongside the authoritative
+    withdrawal-clearance check in validate_mould_result).
+    """
     draft = draft_face_screening or {}
-    access = accessibility or {}
-    draft_status = draft.get("status", "Warning")
-    accessibility_status = access.get("status", "Warning")
-
-    if accessibility_status == "Fail":
-        return "Fail"
-    if accessibility_status == "Warning":
-        return "Warning"
-    if draft_status == "Warning":
-        risky_face_count = int(draft.get("risky_face_count", 0) or 0)
-        return "Warning" if risky_face_count > 0 else "Pass"
-    return "Pass"
-
-
-def _slice_refinement_needed(draft_face_screening, accessibility):
-    return _analysis_gate_status(draft_face_screening, accessibility) == "Warning"
-
-
-def _geometric_accuracy_mm(violations):
-    if not violations:
-        return 0.0
-    return max(float(violation.get("band_width", 0.0) or 0.0) for violation in violations)
-
-
-def _geometric_accuracy_summary(accuracy_mm, tolerance_mm=GEOMETRIC_ACCURACY_TOLERANCE_MM):
-    if accuracy_mm <= tolerance_mm:
-        return (
-            f"geometric accuracy within {tolerance_mm:.3f} mm tolerance "
-            f"(error={accuracy_mm:.3f} mm)"
-        )
-    return (
-        f"geometric accuracy exceeds {tolerance_mm:.3f} mm tolerance "
-        f"(error={accuracy_mm:.3f} mm)"
-    )
-
-
-def _geometric_accuracy_status(accuracy_mm, tolerance_mm=GEOMETRIC_ACCURACY_TOLERANCE_MM):
-    return "Pass" if accuracy_mm <= tolerance_mm else "Fail"
-
-
-def _geometric_refinement_profile_and_violations(
-    shape,
-    direction,
-    draft_face_screening,
-    accessibility,
-):
-    unit = _normalized(direction)
-    axis_min, axis_max = _projection_bounds(shape, unit)
-    span = max(1.0e-6, float(axis_max) - float(axis_min))
-    band = max(1.0e-3, min(GEOMETRIC_ACCURACY_MAX_BAND_MM, 0.01 * span))
-
-    profile = []
-    violations = []
-    seen_keys = set()
-
-    def add_violation(kind, position, detail, area=0.0, classification="warning"):
-        start_position = max(axis_min, position - band)
-        end_position = min(axis_max, position + band)
-        key = (kind, round(start_position, 9), round(end_position, 9), detail)
-        if key in seen_keys:
-            return
-        seen_keys.add(key)
-        violation = {
-            "kind": kind,
-            "classification": classification,
-            "start_position": start_position,
-            "end_position": end_position,
-            "start_area": area,
-            "end_area": area,
-            "detail": detail,
-            "band_width": band,
-        }
-        profile.append(violation)
-        violations.append(violation)
-
-    for face_record in (draft_face_screening or {}).get("face_classifications", []):
-        classification = face_record.get("classification", "")
-        if classification not in ("risky", "ambiguous"):
-            continue
-
-        position = face_record.get("axis_position")
-        if position is None:
-            continue
-
-        area = float(face_record.get("area", 0.0) or 0.0)
-        detail = (
-            f"{face_record.get('face_label', 'face')} {classification} "
-            f"dot={face_record.get('direction_dot')}"
-        )
-        severity = "fail" if classification == "risky" else "warning"
-        add_violation(
-            f"draft_face_{classification}",
-            float(position),
-            detail,
-            area=area,
-            classification=severity,
-        )
-
-    for sample in (accessibility or {}).get("ray_samples", []):
-        classification = sample.get("classification", "")
-        if classification not in ("blocked", "multi_hit"):
-            continue
-
-        position = sample.get("axis_position")
-        if position is None:
-            continue
-
-        hit_segments = int(sample.get("hit_segments", 0) or 0)
-        hit_vertices = int(sample.get("hit_vertices", 0) or 0)
-        detail = (
-            f"sample#{sample.get('sample_index', 0)} {classification} "
-            f"hits={hit_segments} vertices={hit_vertices}"
-        )
-        severity = "fail" if classification == "multi_hit" else "warning"
-        add_violation(
-            f"accessibility_{classification}",
-            float(position),
-            detail,
-            area=float(hit_segments or hit_vertices or 0),
-            classification=severity,
-        )
-
-    return profile, violations
-
-
-def _geometric_refinement_payload(shape, direction, draft_face_screening, accessibility):
-    gate_status = _analysis_gate_status(draft_face_screening, accessibility)
-    refinement_required = _slice_refinement_needed(
-        draft_face_screening,
-        accessibility,
-    )
-    if not refinement_required:
-        if gate_status == "Pass":
-            summary = (
-                "Geometric refinement skipped because draft screening and accessibility were clear."
-            )
-        else:
-            summary = (
-                f"Geometric refinement skipped because the analysis gate was decisive ({gate_status})."
-            )
-        accuracy_mm = 0.0
-        return {
-            "refinement_required": False,
-            "profile": [],
-            "violations": [],
-            "summary": summary,
-            "accuracy_mm": accuracy_mm,
-            "accuracy_tolerance_mm": GEOMETRIC_ACCURACY_TOLERANCE_MM,
-            "accuracy_status": _geometric_accuracy_status(accuracy_mm),
-            "accuracy_summary": _geometric_accuracy_summary(accuracy_mm),
-        }
-
-    profile, violations = _geometric_refinement_profile_and_violations(
-        shape,
-        direction,
-        draft_face_screening,
-        accessibility,
-    )
-    accuracy_mm = _geometric_accuracy_mm(violations)
-    if violations:
-        summary = (
-            f"Geometric refinement found {len(violations)} suspect region(s) from draft and accessibility evidence."
-        )
-    else:
-        summary = "Geometric refinement ran but found no suspect draft or accessibility regions."
-
-    return {
-        "refinement_required": True,
-        "profile": profile,
-        "violations": violations,
-        "summary": summary,
-        "accuracy_mm": accuracy_mm,
-        "accuracy_tolerance_mm": GEOMETRIC_ACCURACY_TOLERANCE_MM,
-        "accuracy_status": _geometric_accuracy_status(accuracy_mm),
-        "accuracy_summary": _geometric_accuracy_summary(accuracy_mm),
-    }
-
-
-def _slice_refinement_payload(shape, direction, draft_face_screening, accessibility):
-    return _geometric_refinement_payload(
-        shape,
-        direction,
-        draft_face_screening,
-        accessibility,
-    )
-
-
-def _format_violation_regions(violations):
-    if not violations:
-        return ["None"]
-    return [
-        (
-            f"[{i + 1}] {v['start_position']:.3f}→{v['end_position']:.3f} "
-            f"area {v['start_area']:.3f}→{v['end_area']:.3f}"
-        )
-        for i, v in enumerate(violations)
-    ]
-
-
-def _format_violations(violations):
-    if not violations:
-        return "No draft or undercut violations detected by the geometric refinement profile."
-    return "; ".join(_format_violation_regions(violations))
-
-
-def _analysis_method_label(slice_refinement_required):
-    return (
-        "geometric_screening_with_geometric_refinement"
-        if slice_refinement_required
-        else "geometric_screening_only"
-    )
-
-
-def _analysis_confidence_label(status, slice_refinement_required, normalization_confidence=None):
-    if status == "Fail":
-        return "Low"
-    if status == "Warning":
-        return "Medium"
-    if normalization_confidence == NORMALIZATION_CONFIDENCE_APPROXIMATE:
-        return "Medium"
-    if slice_refinement_required:
-        return "Medium"
-    return "High"
+    return "Pass" if draft.get("status") == "Ready" else "Warning"
 
 
 def make_mould_halves(shape, surface_normal, surface_offset):
@@ -2817,7 +1319,7 @@ def _withdrawal_clearance_validity_check(
         1.0e-6,
     )
     clearance_step_mm = float(step_mm) if step_mm is not None else max(
-        GEOMETRIC_ACCURACY_TOLERANCE_MM,
+        WITHDRAWAL_CLEARANCE_STEP_MM,
         min(1.0, 0.01 * base_extent),
     )
     clearance_step_mm = max(clearance_step_mm, 1.0e-6)
@@ -2973,14 +1475,9 @@ def _validation_reason_payload(checks):
 def validate_mould_result(
     parting_surface_status,
     mould_halves_status,
-    undercut_count,
-    draft_violation_count,
     parting_surface_shape,
     mould_half_a_shape,
     mould_half_b_shape,
-    analysis_gate_status=None,
-    geometric_accuracy_mm=None,
-    geometric_accuracy_tolerance_mm=GEOMETRIC_ACCURACY_TOLERANCE_MM,
     withdrawal_clearance_status=None,
 ):
     checks = []
@@ -3063,34 +1560,6 @@ def validate_mould_result(
         mould_half_b_valid,
         "second mould half shape is valid",
     )
-    add_check(
-        undercut_count == 0,
-        "no undercut bands detected",
-        detail=f"{undercut_count} undercut band(s) detected",
-        warning=True,
-    )
-    add_check(
-        draft_violation_count == 0,
-        "no draft violations detected",
-        detail=f"{draft_violation_count} draft violation(s) detected",
-        warning=True,
-    )
-
-    if analysis_gate_status == "Fail":
-        add_check(
-            False,
-            "analysis gate is decisive",
-            detail="analysis gate status=Fail",
-        )
-    elif analysis_gate_status == "Warning":
-        add_check(
-            False,
-            "analysis gate needs refinement",
-            detail="analysis gate status=Warning",
-            warning=True,
-        )
-    elif analysis_gate_status == "Pass":
-        add_check(True, "analysis gate is clear")
 
     # Withdrawal clearance is the authoritative necessary test: a mould half
     # that collides with the source on withdrawal makes the mould invalid,
@@ -3104,16 +1573,6 @@ def validate_mould_result(
         )
     elif withdrawal_clearance_status == "Pass":
         add_check(True, "mould withdraws without collision")
-
-    if geometric_accuracy_mm is not None:
-        accuracy_ok = geometric_accuracy_mm <= geometric_accuracy_tolerance_mm
-        add_check(
-            accuracy_ok,
-            "geometric accuracy within tolerance",
-            detail=(
-                f"error={geometric_accuracy_mm:.3f} mm tolerance={geometric_accuracy_tolerance_mm:.3f} mm"
-            ),
-        )
 
     if failures:
         status = "Fail"
@@ -3197,47 +1656,18 @@ def _append_normalization_validation_check(validation, normalization):
 
 
 def _base_analysis_result():
-    decomposition_payload = _decomposition_readiness_payload(
-        "Waiting for source",
-        "Waiting for source",
-        0,
-        0,
-        ["No source shape available."],
-        ["No source shape available."],
-    )
     return {
         "status": "Waiting for source",
-        "summary": (
-            "Select a solid to begin mould analysis. "
-            f"decomposition={decomposition_payload['decomposition_plan_status']}"
-        ),
+        "summary": "Select a solid to begin mould analysis.",
         "shape": Part.Shape(),
         "draw_direction_score": 0.0,
         "best_draw_direction": default_mould_analysis_draw_direction,
         "split_strategy_summary": "No split strategy planned.",
         "split_strategy_diagnostics": [],
         "split_strategy_attempts": [],
-        "slice_refinement_required": False,
-        "slice_refinement_summary": "No source shape available.",
-        "geometric_accuracy_mm": 0.0,
-        "geometric_accuracy_tolerance_mm": GEOMETRIC_ACCURACY_TOLERANCE_MM,
-        "geometric_accuracy_status": "Waiting for source",
-        "geometric_accuracy_summary": "No source shape available.",
         "analysis_gate_status": "Waiting for source",
-        "analysis_method": "analysis_unavailable",
-        "analysis_confidence": "Low",
         "draft_face_summary": "No source shape available.",
         "draft_face_classifications": [],
-        "accessibility_summary": "No source shape available.",
-        "accessibility_checks": [],
-        "profile_summary": "No source shape available.",
-        "profile_violations": [],
-        "undercut_count": 0,
-        "undercut_summary": "No source shape available.",
-        "undercut_regions": ["No source shape available."],
-        "draft_violation_count": 0,
-        "draft_violation_summary": "No source shape available.",
-        "draft_violation_regions": ["No source shape available."],
         "parting_surface_status": "Waiting for source",
         "parting_surface_summary": "No source shape available.",
         "parting_curve_summary": "No source shape available.",
@@ -3264,17 +1694,6 @@ def _base_analysis_result():
         "validation_checks": ["No source shape available."],
         "validation_reasons": [],
         "validation_reason_codes": [],
-        "decomposition_plan_status": decomposition_payload["decomposition_plan_status"],
-        "decomposition_plan_summary": decomposition_payload["decomposition_plan_summary"],
-        "decomposition_plan_candidates": decomposition_payload["decomposition_plan_candidates"],
-        "decomposition_plan_regions": decomposition_payload["decomposition_plan_regions"],
-        "multipart_execution_status": MULTIPART_EXECUTION_STATUS_NOT_APPLICABLE,
-        "multipart_execution_summary": "Multipart prototype not applicable: no source shape available.",
-        "multipart_execution_attempts": [],
-        "multipart_piece_count": 0,
-        **_not_applicable_manufacturability_payload(
-            "no_source_shape_available"
-        ),
         "normalization_confidence": NORMALIZATION_CONFIDENCE_FAIL,
         "normalization_source_type": "none",
         "normalization_summary": "Normalization failed: source shape is missing or null.",
@@ -3508,8 +1927,10 @@ def analyze_source_shape(
 ):
     """Return a lightweight analysis preview for a selected source shape.
 
-    This keeps the top-level orchestration stable while geometric screening
-    decides when the slice-refinement helper needs to explain a borderline case.
+    Analyses the user-specified draw direction only (no auto-ranking). The
+    draft-face gate is a soft Pass/Warning signal; withdrawal clearance is the
+    authoritative necessary test that escalates the verdict to Fail on
+    collision.
     """
     result = _base_analysis_result()
     if shape is None or getattr(shape, "isNull", lambda: True)():
@@ -3536,23 +1957,12 @@ def analyze_source_shape(
         normalization_validation_summary = (
             "Validation fail: normalization did not produce an effective solid."
         )
-        decomposition_payload = _decomposition_readiness_payload(
-            "Fail",
-            "Fail",
-            0,
-            0,
-            [],
-            [],
-            normalization_failure_payload["reason_codes"],
-        )
         result.update(
             {
                 "status": "Fail",
                 "summary": (
                     "Source fail for mould analysis; "
                     f"normalization={normalization['confidence']} ({normalization['summary']}), "
-                    "split_strategy=not_applicable(normalization_failed), "
-                    f"decomposition={decomposition_payload['decomposition_plan_status']}, "
                     f"validation={normalization_validation_summary}"
                 ),
                 "validation_status": "Fail",
@@ -3560,37 +1970,14 @@ def analyze_source_shape(
                 "validation_checks": normalization_failure_checks,
                 "validation_reasons": normalization_failure_payload["reasons"],
                 "validation_reason_codes": normalization_failure_payload["reason_codes"],
-                "decomposition_plan_status": decomposition_payload["decomposition_plan_status"],
-                "decomposition_plan_summary": decomposition_payload["decomposition_plan_summary"],
-                "decomposition_plan_candidates": decomposition_payload["decomposition_plan_candidates"],
-                "decomposition_plan_regions": decomposition_payload["decomposition_plan_regions"],
-                "multipart_execution_status": MULTIPART_EXECUTION_STATUS_NOT_ATTEMPTED,
-                "multipart_execution_summary": (
-                    "Multipart prototype not attempted: normalization failed to produce an effective source shape."
-                ),
-                "multipart_execution_attempts": [],
-                "multipart_piece_count": 0,
-                **_not_applicable_manufacturability_payload(
-                    "normalization_failed"
-                ),
                 "parting_surface_status": "Fail",
                 "parting_surface_summary": "No parting surface generated because normalization failed.",
                 "parting_curve_summary": "No parting surface generated because normalization failed.",
                 "mould_halves_status": "Fail",
                 "mould_halves_summary": "No mould halves generated because normalization failed.",
                 "analysis_gate_status": "Fail",
-                "analysis_method": "normalization_failed",
-                "analysis_confidence": "Low",
                 "draft_face_summary": "Draft face screening unavailable because normalization failed.",
                 "draft_face_classifications": [],
-                "accessibility_summary": "Accessibility screening unavailable because normalization failed.",
-                "accessibility_checks": [],
-                "profile_summary": "Geometric refinement unavailable because normalization failed.",
-                "profile_violations": [],
-                "geometric_accuracy_mm": 0.0,
-                "geometric_accuracy_tolerance_mm": GEOMETRIC_ACCURACY_TOLERANCE_MM,
-                "geometric_accuracy_status": "Fail",
-                "geometric_accuracy_summary": "Geometric accuracy unavailable because normalization failed.",
             }
         )
         return result
@@ -3619,7 +2006,6 @@ def analyze_source_shape(
             "score": preferred_score,
             "normalized_score": 100.0,
             "draft_face_screening": preferred_evidence["draft_face_screening"],
-            "accessibility": preferred_evidence["accessibility"],
             "analysis_gate_status": preferred_evidence["analysis_gate_status"],
             "geometric_evidence": preferred_evidence,
             "parting_model": parting_model,
@@ -3661,8 +2047,6 @@ def analyze_source_shape(
         )
         selected_attempt = {
             "strategy": selected_split_strategy,
-            "profile": [],
-            "violations": [],
             "draft_face_screening": {
                 "status": "Fail",
                 "summary": "Draft face screening unavailable for fallback split strategy.",
@@ -3674,23 +2058,15 @@ def analyze_source_shape(
                 "ambiguous_face_count": 0,
                 "face_classifications": [],
             },
-            "accessibility": {
-                "status": "Fail",
-                "summary": "Accessibility screening unavailable for fallback split strategy.",
-                "sample_count": 0,
-                "blocked_sample_count": 0,
-                "multi_hit_sample_count": 0,
-                "blocked_fraction": 0.0,
-                "multi_hit_fraction": 0.0,
-                "accessibility_regions": ["None"],
-                "ray_samples": [],
-            },
-            "slice_refinement_required": True,
-            "slice_refinement_summary": "Geometric refinement unavailable for fallback split strategy.",
-            "undercut_count": 0,
-            "draft_violation_count": 0,
+            "analysis_gate_status": "Fail",
             "parting": fallback_parting,
             "mould_halves": fallback_mould_halves,
+            "withdrawal_clearance": {
+                "status": "Fail",
+                "summary": "Withdrawal clearance unavailable for fallback split strategy.",
+                "failure_count": 0,
+            },
+            "non_planar_result": None,
             "validation": {
                 "status": "Fail",
                 "summary": "Validation fail: split strategy attempts produced no candidate.",
@@ -3698,7 +2074,7 @@ def analyze_source_shape(
             },
             "status": "Fail",
             "reason": "no split strategy attempt available",
-            "planner_score": _planner_score(selected_split_strategy, "Fail", 0, 0),
+            "planner_score": _planner_score(selected_split_strategy, "Fail"),
             "selection_reason": "selected: only available fallback attempt",
             "exception": "",
         }
@@ -3706,27 +2082,6 @@ def analyze_source_shape(
 
     selected_split_strategy = selected_attempt["strategy"]
     draft_face_screening = selected_attempt["draft_face_screening"]
-    accessibility = selected_attempt["accessibility"]
-    selected_violations = selected_attempt["violations"]
-    analysis_method = _analysis_method_label(
-        selected_attempt.get("slice_refinement_required", False)
-    )
-    undercut_count = selected_attempt["undercut_count"]
-    draft_violation_count = selected_attempt["draft_violation_count"]
-    undercut_regions = _format_violation_regions(selected_violations)
-    draft_violation_regions = _format_violation_regions(selected_violations)
-    undercut_summary = (
-        f"{undercut_count} possible undercut band(s): "
-        f"{_format_violations(selected_violations)}"
-        if undercut_count
-        else "No undercuts detected by the geometric refinement profile."
-    )
-    draft_violation_summary = (
-        f"{draft_violation_count} possible draft violation(s): "
-        f"{_format_violations(selected_violations)}"
-        if draft_violation_count
-        else "No draft violations detected by the geometric refinement profile."
-    )
 
     parting = selected_attempt["parting"]
     mould_halves = selected_attempt["mould_halves"]
@@ -3761,46 +2116,12 @@ def analyze_source_shape(
     else:
         status = "Ready"
 
-    analysis_confidence = _analysis_confidence_label(
-        status,
-        selected_attempt.get("slice_refinement_required", False),
-        normalization["confidence"],
-    )
-
     validation_reasons = validation.get("reasons")
     validation_reason_codes = validation.get("reason_codes")
     if validation_reasons is None or validation_reason_codes is None:
         validation_payload = _validation_reason_payload(validation.get("checks", []))
         validation_reasons = validation_payload["reasons"]
         validation_reason_codes = validation_payload["reason_codes"]
-
-    decomposition_payload = _decomposition_readiness_payload(
-        status,
-        validation["status"],
-        undercut_count,
-        draft_violation_count,
-        undercut_regions,
-        draft_violation_regions,
-        validation_reason_codes,
-    )
-
-    multipart_payload = _multipart_execution_payload(
-        effective_shape,
-        selected_split_strategy["direction"],
-        parting["surface_offset"],
-        selected_violations,
-        decomposition_payload["decomposition_plan_status"],
-    )
-    manufacturability_payload = _manufacturability_payload(
-        effective_shape,
-        selected_split_strategy["direction"],
-        undercut_count,
-        draft_violation_count,
-        undercut_regions,
-        draft_violation_regions,
-        multipart_payload,
-        decomposition_payload["decomposition_plan_status"],
-    )
 
     summary = (
         f"Source {status.lower()} for mould analysis; "
@@ -3810,12 +2131,6 @@ def analyze_source_shape(
         f"direction_score={normalized_preferred_score:.1f}%, "
         f"split_strategy={split_strategy_summary}, "
         f"split_attempts={len(split_strategy_attempt_diagnostics)}, "
-        f"decomposition={decomposition_payload['decomposition_plan_status']}, "
-        f"multipart={multipart_payload['multipart_execution_status']}, "
-        f"manufacturability={manufacturability_payload['manufacturability_status']}, "
-        f"undercuts={undercut_count}, draft_violations={draft_violation_count}, "
-        f"accuracy={selected_attempt.get('geometric_accuracy_summary', 'n/a')}, "
-        f"geometric_refinement={selected_attempt.get('slice_refinement_summary', 'n/a')}, "
         f"parting_surface={parting['summary']}, "
         f"mould_halves={mould_halves['summary']}, "
         f"withdrawal_clearance={withdrawal_clearance['status']}, "
@@ -3832,33 +2147,12 @@ def analyze_source_shape(
             "split_strategy_summary": split_strategy_summary,
             "split_strategy_diagnostics": split_strategy_diagnostics,
             "split_strategy_attempts": split_strategy_attempt_diagnostics,
-            "slice_refinement_required": selected_attempt.get("slice_refinement_required", True),
-            "slice_refinement_summary": selected_attempt.get("slice_refinement_summary", ""),
-            "geometric_accuracy_mm": selected_attempt.get("geometric_accuracy_mm", 0.0),
-            "geometric_accuracy_tolerance_mm": selected_attempt.get(
-                "geometric_accuracy_tolerance_mm",
-                GEOMETRIC_ACCURACY_TOLERANCE_MM,
-            ),
-            "geometric_accuracy_status": selected_attempt.get("geometric_accuracy_status", "Fail"),
-            "geometric_accuracy_summary": selected_attempt.get("geometric_accuracy_summary", ""),
             "analysis_gate_status": selected_attempt.get(
                 "analysis_gate_status",
-                _analysis_gate_status(draft_face_screening, accessibility),
+                _analysis_gate_status(draft_face_screening),
             ),
-            "analysis_method": analysis_method,
-            "analysis_confidence": analysis_confidence,
             "draft_face_summary": draft_face_screening.get("summary", ""),
             "draft_face_classifications": draft_face_screening.get("face_classifications", []),
-            "accessibility_summary": accessibility.get("summary", ""),
-            "accessibility_checks": accessibility.get("ray_samples", []),
-            "profile_summary": selected_attempt.get("slice_refinement_summary", ""),
-            "profile_violations": selected_violations,
-            "undercut_count": undercut_count,
-            "undercut_summary": undercut_summary,
-            "undercut_regions": undercut_regions,
-            "draft_violation_count": draft_violation_count,
-            "draft_violation_summary": draft_violation_summary,
-            "draft_violation_regions": draft_violation_regions,
             "parting_surface_status": parting["status"],
             "parting_surface_summary": parting["summary"],
             "parting_curve_summary": parting["curve_summary"],
@@ -3893,31 +2187,6 @@ def analyze_source_shape(
             "validation_checks": validation["checks"],
             "validation_reasons": validation_reasons,
             "validation_reason_codes": validation_reason_codes,
-            "decomposition_plan_status": decomposition_payload["decomposition_plan_status"],
-            "decomposition_plan_summary": decomposition_payload["decomposition_plan_summary"],
-            "decomposition_plan_candidates": decomposition_payload["decomposition_plan_candidates"],
-            "decomposition_plan_regions": decomposition_payload["decomposition_plan_regions"],
-            "multipart_execution_status": multipart_payload["multipart_execution_status"],
-            "multipart_execution_summary": multipart_payload["multipart_execution_summary"],
-            "multipart_execution_attempts": multipart_payload["multipart_execution_attempts"],
-            "multipart_piece_count": multipart_payload["multipart_piece_count"],
-            "manufacturability_status": manufacturability_payload["manufacturability_status"],
-            "manufacturability_summary": manufacturability_payload["manufacturability_summary"],
-            "manufacturability_metrics": manufacturability_payload["manufacturability_metrics"],
-            "manufacturability_overlay_status": manufacturability_payload["manufacturability_overlay_status"],
-            "manufacturability_overlay_summary": manufacturability_payload["manufacturability_overlay_summary"],
-            "manufacturability_overlay_bands": manufacturability_payload["manufacturability_overlay_bands"],
-            "manufacturability_overlay_groups": manufacturability_payload["manufacturability_overlay_groups"],
-            "manufacturability_overlay_group_count": manufacturability_payload["manufacturability_overlay_group_count"],
-            "manufacturability_overlay_group_summary": manufacturability_payload["manufacturability_overlay_group_summary"],
-            "manufacturability_overlay_cluster_summary": manufacturability_payload["manufacturability_overlay_cluster_summary"],
-            "manufacturability_overlay_top_clusters": manufacturability_payload["manufacturability_overlay_top_clusters"],
-            "manufacturability_pull_direction": manufacturability_payload["manufacturability_pull_direction"],
-            "manufacturability_recommendations": manufacturability_payload["manufacturability_recommendations"],
-            "manufacturability_score_breakdown": manufacturability_payload["manufacturability_score_breakdown"],
-            "manufacturability_calibration_version": manufacturability_payload["manufacturability_calibration_version"],
-            "manufacturability_calibration_inputs": manufacturability_payload["manufacturability_calibration_inputs"],
-            "manufacturability_calibration_weights": manufacturability_payload["manufacturability_calibration_weights"],
         }
     )
     return result
