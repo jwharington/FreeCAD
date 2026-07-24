@@ -25,6 +25,7 @@ import Part
 from Composites.tools.mould_analysis import (
     NORMALIZATION_CONFIDENCE_EXACT,
     NORMALIZATION_CONFIDENCE_FAIL,
+    _analysis_gate_status,
     _candidate_scores,
     _classify_draft_faces,
     _direction_profile_and_violations,
@@ -445,6 +446,181 @@ class TestAccessibilitySampling(unittest.TestCase):
         self.assertTrue(result["accessibility_regions"])
         self.assertTrue(result["ray_samples"])
 
+    def test_side_by_side_solids_pin_blocked_outcome(self):
+        # Two solids separated across the transverse plane leave a gap that a
+        # draw-aligned ray passes through without hitting: that is the
+        # "blocked" classification (hit_segments<=0, hit_vertices<=0),
+        # distinct from "multi_hit" (a ray that hits more than one segment).
+        # The gap is made wide enough that the default transverse grid lands
+        # points squarely inside it (not on box edges), so the blocked
+        # outcome is stable across sample densities. Pinning it completes the
+        # clear / blocked / multi-hit trio so a regression in hit
+        # classification is localized to the accessibility sampler, not
+        # blamed on gating or validation.
+        left = Part.makeBox(3.0, 10.0, 10.0, FreeCAD.Vector(0, 0, 0))
+        right = Part.makeBox(3.0, 10.0, 10.0, FreeCAD.Vector(7, 0, 0))
+        shape = Part.makeCompound([left, right])
+        result = _sample_draw_accessibility(shape, FreeCAD.Vector(0, 0, 1))
+        self.assertEqual(result["status"], "Warning")
+        self.assertGreater(result["blocked_sample_count"], 0)
+        self.assertEqual(result["multi_hit_sample_count"], 0)
+        blocked = next(
+            sample for sample in result["ray_samples"]
+            if sample["classification"] == "blocked"
+        )
+        self.assertLessEqual(blocked["hit_segments"], 0)
+        self.assertLessEqual(blocked["hit_vertices"], 0)
+
+
+class TestAnalysisGateStatus(unittest.TestCase):
+    """_analysis_gate_status: the policy that turns evidence into a verdict.
+
+    Driven directly with crafted evidence dicts, not through the full
+    pipeline, so a status-policy regression is isolated from the geometric
+    evidence gathering. The contract: uncertain evidence stays a Warning
+    (never silently escalates to Fail), a true accessibility failure is a
+    hard Fail, and clean evidence is a Pass.
+    """
+
+    def test_clean_evidence_passes(self):
+        self.assertEqual(
+            _analysis_gate_status(
+                {"status": "Pass"}, {"status": "Ready"},
+            ),
+            "Pass",
+        )
+
+    def test_accessibility_fail_is_a_hard_fail(self):
+        # A true failure (multi-hit access) must return Fail, not Warning.
+        self.assertEqual(
+            _analysis_gate_status(
+                {"status": "Pass"}, {"status": "Fail"},
+            ),
+            "Fail",
+        )
+
+    def test_uncertain_accessibility_stays_warning_not_fail(self):
+        # Blocked access is uncertain (a ray missed), not a proven release
+        # failure, so it must not escalate to Fail.
+        self.assertEqual(
+            _analysis_gate_status(
+                {"status": "Pass"}, {"status": "Warning"},
+            ),
+            "Warning",
+        )
+
+    def test_draft_warning_with_risky_faces_stays_warning(self):
+        self.assertEqual(
+            _analysis_gate_status(
+                {"status": "Warning", "risky_face_count": 3},
+                {"status": "Ready"},
+            ),
+            "Warning",
+        )
+
+    def test_draft_warning_without_risky_faces_is_clean(self):
+        # A draft-screening "Warning" label alone, with zero risky faces, is
+        # not even a warning: the gate trusts clean accessibility over the
+        # draft label.
+        self.assertEqual(
+            _analysis_gate_status(
+                {"status": "Warning", "risky_face_count": 0},
+                {"status": "Ready"},
+            ),
+            "Pass",
+        )
+
+    def test_draft_face_fail_label_does_not_override_clean_access(self):
+        # _classify_draft_faces returns "Fail" for a plain box (its bottom
+        # face is "risky"), yet a box is perfectly mouldable. The gate
+        # therefore treats draft-face status as non-authoritative when
+        # accessibility is clean: a draft "Fail" does NOT gate-fail unless
+        # accessibility also fails. Pinning this policy so a future change to
+        # make draft authoritative is a deliberate, visible decision.
+        self.assertEqual(
+            _analysis_gate_status(
+                {"status": "Fail", "risky_face_count": 1},
+                {"status": "Ready"},
+            ),
+            "Pass",
+        )
+
+
+class TestDiscretizationSensitivity(unittest.TestCase):
+    """_sample_draw_accessibility: evidence must respond to sample density.
+
+    A discretization that returns identical evidence regardless of resolution
+    is cosmetic — the accuracy knob is not plumbed through. The easy shape
+    (box) must stay stable (clear at every density), while a non-box-filling
+    shape (sphere) must show its blocked-sample count grow as the grid
+    tightens. If this fails, the bug is in the scan resolution / density
+    plumbing, not in the evidence interpretation.
+    """
+
+    def test_box_stays_clear_as_density_tightens(self):
+        shape = _box(dx=20.0, dy=10.0, dz=10.0)
+        direction = FreeCAD.Vector(0, 0, 1)
+        densities = (0.05, 0.2, 0.5)
+        counts = []
+        for density in densities:
+            result = _sample_draw_accessibility(shape, direction, sample_density=density)
+            self.assertEqual(result["status"], "Ready")
+            self.assertEqual(result["blocked_sample_count"], 0)
+            self.assertEqual(result["multi_hit_sample_count"], 0)
+            counts.append(result["sample_count"])
+        # Strictly increasing sample count proves density actually feeds the grid.
+        self.assertGreater(counts[1], counts[0])
+        self.assertGreater(counts[2], counts[1])
+
+    def test_sphere_blocked_count_grows_with_density(self):
+        shape = make_sphere()
+        direction = FreeCAD.Vector(0, 0, 1)
+        coarse = _sample_draw_accessibility(shape, direction, sample_density=0.05)
+        fine = _sample_draw_accessibility(shape, direction, sample_density=0.5)
+        self.assertGreater(fine["sample_count"], coarse["sample_count"])
+        # Corner rays miss the sphere at both resolutions, proving the
+        # sampler reports non-trivial evidence; the count grows with density.
+        self.assertGreater(coarse["blocked_sample_count"], 0)
+        self.assertGreater(fine["blocked_sample_count"], coarse["blocked_sample_count"])
+
+
+class TestCandidateDirectionRanking(unittest.TestCase):
+    """_candidate_scores: ranking must weigh geometric evidence, not just extent.
+
+    The score is (1/extent) * (1 - 0.25*backface_ratio). With extent equal,
+    the only differentiator is backface, so the lower-backface (better-
+    releasing) axis must win. This proves geometry participates in ranking.
+    When extents differ, bbox_score dominates (pinned by the existing tall-
+    thin / flat-wide box tests); that extent-dominance is a known design
+    question, not a regression to catch here.
+    """
+
+    @staticmethod
+    def _right_triangular_prism(dz):
+        # Right triangle in XY with a large face on X=0 (normal -X, a backface
+        # for +X draw) and a smaller triangular face on Z=0 (backface for +Z).
+        triangle = Part.makePolygon([
+            FreeCAD.Vector(0, 0, 0),
+            FreeCAD.Vector(10, 0, 0),
+            FreeCAD.Vector(0, 10, 0),
+            FreeCAD.Vector(0, 0, 0),
+        ])
+        return Part.Face(triangle).extrude(FreeCAD.Vector(0, 0, dz))
+
+    def test_equal_extent_ranks_lower_backface_axis_first(self):
+        # dz=10 -> all extents equal (10). +Z has the smallest backface
+        # (one small triangular face) so it must rank above +X (large -X
+        # backface) on geometric evidence alone, not extent.
+        shape = self._right_triangular_prism(10.0)
+        ranked = _candidate_scores(shape)
+        winner = ranked[0]
+        self.assertAlmostEqual(winner["direction"].z, 1.0, places=6)
+        z_candidate = next(item for item in ranked if abs(item["direction"].z - 1.0) < 1e-9)
+        x_candidate = next(item for item in ranked if abs(item["direction"].x - 1.0) < 1e-9)
+        self.assertAlmostEqual(z_candidate["extent"], x_candidate["extent"], places=6)
+        self.assertLess(z_candidate["backface_ratio"], x_candidate["backface_ratio"])
+        self.assertGreater(z_candidate["score"], x_candidate["score"])
+
 
 class TestAnalyzeSourceShape(unittest.TestCase):
     """analyze_source_shape: status, ranking, best direction on a known box."""
@@ -759,6 +935,26 @@ class TestValidateMouldResult(unittest.TestCase):
             analysis_gate_status="Warning",
         )
         self.assertEqual(result["status"], "Warning")
+
+    def test_fail_when_analysis_gate_fails_with_otherwise_clean_mould(self):
+        # Isolation check: with a ready parting surface, valid halves, and zero
+        # undercuts/violations, the ONLY failing signal is the analysis gate.
+        # A gate Fail must escalate validation to Fail (mirroring the Warning
+        # case above, which must NOT). This pins the coupling policy: warning-
+        # grade screening stays a warning, a true gate failure hard-fails.
+        shape = _box()
+        result = validate_mould_result(
+            "Ready",
+            "Ready",
+            0,
+            0,
+            shape,
+            shape,
+            shape,
+            analysis_gate_status="Fail",
+        )
+        self.assertEqual(result["status"], "Fail")
+        self.assertTrue(any("gate" in check.lower() for check in result["checks"]))
 
 
 @unittest.skip("Propblade fixture disabled until later")

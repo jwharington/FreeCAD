@@ -172,8 +172,8 @@ static py::dict pack_result(const nextdrape::DrapeResult& result) {
         py::list bl_list;
         for (const auto& pt : bl) {
             py::list pt_list;
-            pt_list.append(pt.X());
-            pt_list.append(pt.Y());
+            pt_list.append(pt.p.X());
+            pt_list.append(pt.p.Y());
             bl_list.append(pt_list);
         }
         boundary_list.append(bl_list);
