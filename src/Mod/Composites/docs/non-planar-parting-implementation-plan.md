@@ -174,6 +174,15 @@ Nextdrape-side unit tests on synthetic primitives (box, cylinder, cone, sphere) 
 
 These pin the solver's correctness on geometry with analytic answers before blade/loft.
 
+**Plus one coverage-backfill test (asked for by the nextdrape agent):**
+
+- `CrossFaceAdvance` handoff — the lattice fallback that was its only caller
+  was removed in `okish2` (`b64c32e`), leaving `SurfaceProjection::
+  CrossFaceAdvance` with zero coverage. Add a focused unit test: two adjacent
+  faces of a known compound, advance across their shared edge, assert the
+  target point + target face + chirality preservation. Lives in the
+  nextdrape test suite; unblocks confident reuse in the equator march.
+
 ---
 
 ## Phase 2 — wire the real binding + flip the gate
