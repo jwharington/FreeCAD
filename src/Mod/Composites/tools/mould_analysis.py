@@ -1844,6 +1844,10 @@ def _plan_split_strategies(ranked, limit=MAX_SPLIT_STRATEGIES):
                 "draft_face_screening": item.get("draft_face_screening"),
                 "accessibility": item.get("accessibility"),
                 "analysis_gate_status": item.get("analysis_gate_status"),
+                "parting_model": item.get("parting_model", "Planar"),
+                "parting_land_width": item.get("parting_land_width", 25.0),
+                "parting_stock_margin": item.get("parting_stock_margin", 0.1),
+                "parting_stock_footprint": item.get("parting_stock_footprint"),
                 "status": "planned",
                 "reason": "top-ranked draw-direction strategy",
             }
@@ -1885,12 +1889,45 @@ def _evaluate_split_strategy_attempt(shape, strategy):
     undercut_count = len(violations)
     draft_violation_count = len(violations)
 
-    parting = propose_parting_surface(shape, strategy["direction"])
-    mould_halves = make_mould_halves(
-        shape,
-        parting["surface_normal"],
-        parting["surface_offset"],
-    )
+    parting_model = strategy.get("parting_model", "Planar")
+    non_planar_result = None
+    if parting_model == "NonPlanar":
+        non_planar_result = _propose_non_planar_parting(
+            shape,
+            strategy["direction"],
+            land_width=strategy.get("parting_land_width", 25.0),
+            stock_margin=strategy.get("parting_stock_margin", 0.1),
+            stock_footprint=strategy.get("parting_stock_footprint"),
+        )
+    if non_planar_result is not None and non_planar_result["status"] != "NotImplemented":
+        # Real non-planar solver path (Phase 2): the solver returns the parting
+        # surface and both mould halves directly; the split is intrinsic to the
+        # construction, so propose_parting_surface + make_mould_halves are
+        # bypassed. Not yet reachable — the stub always returns NotImplemented.
+        parting = {
+            "status": "Ready" if non_planar_result["status"] == "ready" else non_planar_result["status"],
+            "summary": non_planar_result.get("summary", ""),
+            "curve_summary": "Non-planar marching-equator parting line.",
+            "shape": non_planar_result.get("parting_surface"),
+            "surface_normal": strategy["direction"],
+            "surface_offset": 0.0,
+            "surface_area": 0.0,
+        }
+        mould_halves = {
+            "status": "Ready",
+            "summary": non_planar_result.get("summary", ""),
+            "half_a_shape": non_planar_result["lower_shell"],
+            "half_b_shape": non_planar_result["upper_shell"],
+            "half_a_volume": getattr(non_planar_result["lower_shell"], "Volume", 0.0) or 0.0,
+            "half_b_volume": getattr(non_planar_result["upper_shell"], "Volume", 0.0) or 0.0,
+        }
+    else:
+        parting = propose_parting_surface(shape, strategy["direction"])
+        mould_halves = make_mould_halves(
+            shape,
+            parting["surface_normal"],
+            parting["surface_offset"],
+        )
     withdrawal_clearance = _withdrawal_clearance_validity_check(
         shape,
         mould_halves["half_a_shape"],
@@ -1938,6 +1975,7 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         "parting": parting,
         "mould_halves": mould_halves,
         "withdrawal_clearance": withdrawal_clearance,
+        "non_planar_result": non_planar_result,
         "validation": validation,
         "status": status,
         "reason": reason,
@@ -2248,6 +2286,37 @@ def propose_parting_surface(shape, direction):
         "surface_normal": normal,
         "surface_offset": offset,
         "surface_area": size,
+    }
+
+
+def _propose_non_planar_parting(
+    shape,
+    direction,
+    land_width=25.0,
+    stock_margin=0.1,
+    stock_footprint=None,
+):
+    """Stub for the non-planar marching-equator parting-surface solver.
+
+    Returns a structured "not implemented" result shaped exactly like the
+    real solver's eventual output, so `analyze_source_shape` can route to it
+    when ``PartingModel == "NonPlanar"`` and fall back to the planar path
+    until the nextdrape C++ binding lands. See
+    ``docs/non-planar-parting-implementation-plan.md`` (Phase 1) for the
+    real construction.
+    """
+    return {
+        "status": "NotImplemented",
+        "summary": (
+            "Non-planar parting not yet implemented (nextdrape C++ pending); "
+            "falling back to planar parting."
+        ),
+        "parting_line": None,
+        "upper_shell": None,
+        "lower_shell": None,
+        "skirt_rays": [],
+        "tangent_face_midpoints": [],
+        "error": "non-planar parting not yet implemented (nextdrape C++ pending)",
     }
 
 
@@ -3302,6 +3371,11 @@ def _base_analysis_result():
         "withdrawal_clearance_status": "Waiting for source",
         "withdrawal_clearance_summary": "No source shape available.",
         "withdrawal_clearance_failure_count": 0,
+        "parting_model": "Planar",
+        "parting_line": None,
+        "parting_skirt_rays": [],
+        "non_planar_status": "not_requested",
+        "non_planar_summary": "",
         "validation_status": "Waiting for source",
         "validation_summary": "No source shape available.",
         "validation_checks": ["No source shape available."],
@@ -3544,6 +3618,10 @@ def analyze_source_shape(
     shape,
     draw_direction=default_mould_analysis_draw_direction,
     source_obj=None,
+    parting_model="Planar",
+    parting_land_width=25.0,
+    parting_stock_margin=0.1,
+    parting_stock_footprint=None,
 ):
     """Return a lightweight analysis preview for a selected source shape.
 
@@ -3661,6 +3739,10 @@ def analyze_source_shape(
             "accessibility": preferred_evidence["accessibility"],
             "analysis_gate_status": preferred_evidence["analysis_gate_status"],
             "geometric_evidence": preferred_evidence,
+            "parting_model": parting_model,
+            "parting_land_width": parting_land_width,
+            "parting_stock_margin": parting_stock_margin,
+            "parting_stock_footprint": parting_stock_footprint,
         }
     ]
     split_strategies = _plan_split_strategies(ranked, limit=1)
@@ -3910,6 +3992,19 @@ def analyze_source_shape(
             "withdrawal_clearance_status": withdrawal_clearance["status"],
             "withdrawal_clearance_summary": withdrawal_clearance["summary"],
             "withdrawal_clearance_failure_count": withdrawal_clearance["failure_count"],
+            "parting_model": selected_split_strategy.get("parting_model", "Planar"),
+            "parting_line": (selected_attempt.get("non_planar_result") or {}).get("parting_line"),
+            "parting_skirt_rays": (selected_attempt.get("non_planar_result") or {}).get("skirt_rays", []),
+            "non_planar_status": (
+                (selected_attempt.get("non_planar_result") or {}).get("status")
+                if selected_split_strategy.get("parting_model") == "NonPlanar"
+                else "not_requested"
+            ),
+            "non_planar_summary": (
+                (selected_attempt.get("non_planar_result") or {}).get("summary", "")
+                if selected_split_strategy.get("parting_model") == "NonPlanar"
+                else ""
+            ),
             "validation_status": validation["status"],
             "validation_summary": validation["summary"],
             "validation_checks": validation["checks"],

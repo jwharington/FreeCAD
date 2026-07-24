@@ -245,3 +245,103 @@ class TestMouldAnalysis(TestFreeCADFP):
             self.doc.recompute()
         except Exception as exc:
             self.fail(f"PartPlane recompute raised on null source: {exc}")
+
+
+class TestNonPlanarPartingInterface(TestFreeCADFP):
+    """Phase 0 interface tests for the non-planar parting model.
+
+    These pin the FP properties, the result-dict contract, and the stub's
+    planar fallback — all Python-only, with no nextdrape dependency. They
+    let the interface land and stay observable while the C++ solver is
+    built in parallel (see docs/non-planar-parting-implementation-plan.md).
+    """
+
+    def _make_box_source(self, name="NonPlanarBox"):
+        source = self.doc.addObject("Part::Feature", name)
+        source.Shape = Part.makeBox(20.0, 15.0, 10.0)
+        self.doc.recompute()
+        return source
+
+    def _make_analysis(self, source, name="NonPlanarAnalysis"):
+        from Composites.features.MouldAnalysis import MouldAnalysisFP
+
+        obj = self.doc.addObject("Part::FeaturePython", name)
+        MouldAnalysisFP(obj, source)
+        self.doc.recompute()
+        return obj
+
+    def test_parting_model_properties_present_with_defaults(self):
+        source = self._make_box_source()
+        obj = self._make_analysis(source)
+        self.assertEqual(obj.PartingModel, "Planar")
+        self.assertAlmostEqual(obj.PartingLandWidth, 25.0, places=6)
+        self.assertAlmostEqual(obj.PartingStockMargin, 0.1, places=6)
+        fp = obj.PartingStockFootprint
+        self.assertAlmostEqual(fp.x, 0.0, places=6)
+        self.assertAlmostEqual(fp.y, 0.0, places=6)
+        self.assertAlmostEqual(fp.z, 0.0, places=6)
+
+    def test_planar_model_unchanged_on_box(self):
+        # The planar model must produce the same Ready/Pass verdict as before
+        # the non-planar interface was added (regression guard for Phase 0).
+        source = self._make_box_source()
+        obj = self._make_analysis(source)
+        self.assertEqual(obj.AnalysisStatus, "Ready")
+        self.assertEqual(obj.ValidationStatus, "Pass")
+
+    def test_non_planar_stub_falls_back_to_planar(self):
+        # With PartingModel=NonPlanar, the stub returns NotImplemented and the
+        # analysis must fall back to the planar path (still producing a
+        # verdict) rather than crashing. non_planar_status reflects the stub.
+        source = self._make_box_source()
+        obj = self._make_analysis(source)
+        obj.PartingModel = "NonPlanar"
+        self.doc.recompute()
+        # Planar fallback keeps the box releasable.
+        self.assertEqual(obj.AnalysisStatus, "Ready")
+        self.assertEqual(obj.ValidationStatus, "Pass")
+
+    def test_non_planar_result_keys_present_for_both_models(self):
+        from Composites.tools.mould_analysis import (
+            analyze_source_shape,
+            default_mould_analysis_draw_direction,
+        )
+
+        shape = Part.makeBox(20.0, 15.0, 10.0)
+        for model in ("Planar", "NonPlanar"):
+            with self.subTest(parting_model=model):
+                result = analyze_source_shape(
+                    shape,
+                    default_mould_analysis_draw_direction,
+                    parting_model=model,
+                )
+                self.assertEqual(result["parting_model"], model)
+                self.assertIn("parting_line", result)
+                self.assertIn("parting_skirt_rays", result)
+                self.assertIn("non_planar_status", result)
+                self.assertIn("non_planar_summary", result)
+                if model == "NonPlanar":
+                    self.assertEqual(result["non_planar_status"], "NotImplemented")
+                    self.assertIn("not yet implemented", result["non_planar_summary"])
+                else:
+                    self.assertEqual(result["non_planar_status"], "not_requested")
+
+    def test_non_planar_land_and_footprint_threaded_to_stub(self):
+        from Composites.tools.mould_analysis import (
+            analyze_source_shape,
+            default_mould_analysis_draw_direction,
+        )
+
+        shape = Part.makeBox(20.0, 15.0, 10.0)
+        result = analyze_source_shape(
+            shape,
+            default_mould_analysis_draw_direction,
+            parting_model="NonPlanar",
+            parting_land_width=40.0,
+            parting_stock_margin=0.2,
+            parting_stock_footprint=(50.0, 40.0),
+        )
+        # The stub ignores the params but must not reject them; the analysis
+        # still falls back to planar and produces a verdict.
+        self.assertEqual(result["non_planar_status"], "NotImplemented")
+        self.assertEqual(result["status"], "Ready")

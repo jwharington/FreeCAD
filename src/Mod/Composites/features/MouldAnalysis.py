@@ -42,6 +42,35 @@ class MouldAnalysisFP(CompositePartFP):
         )
 
         obj.addProperty(
+            "App::PropertyEnumeration",
+            "PartingModel",
+            "MouldAnalysis",
+            "Parting-surface model: Planar (midpoint plane) or NonPlanar (marching equator)",
+        ).PartingModel = ["Planar", "NonPlanar"]
+        obj.PartingModel = "Planar"
+
+        obj.addProperty(
+            "App::PropertyFloat",
+            "PartingLandWidth",
+            "MouldAnalysis",
+            "Minimum parting-surface projection width (mm) for the non-planar skirt",
+        ).PartingLandWidth = 25.0
+
+        obj.addProperty(
+            "App::PropertyFloat",
+            "PartingStockMargin",
+            "MouldAnalysis",
+            "Stock-block margin as a fraction of the source bbox",
+        ).PartingStockMargin = 0.1
+
+        obj.addProperty(
+            "App::PropertyVector",
+            "PartingStockFootprint",
+            "MouldAnalysis",
+            "Explicit rectangular stock footprint (dx, dy, 0) in the draw-perpendicular plane; (0,0,0) auto-derives from bbox + margin",
+        ).PartingStockFootprint = Vector(0.0, 0.0, 0.0)
+
+        obj.addProperty(
             "App::PropertyString",
             "AnalysisStatus",
             "MouldAnalysis",
@@ -255,10 +284,20 @@ class MouldAnalysisFP(CompositePartFP):
 
     def execute(self, fp):
         source_shape = fp.Source.Shape if fp.Source else None
+        footprint = fp.PartingStockFootprint
+        stock_footprint = (
+            None
+            if (footprint.x == 0.0 and footprint.y == 0.0 and footprint.z == 0.0)
+            else (footprint.x, footprint.y)
+        )
         result = analyze_source_shape(
             source_shape,
             fp.PreferredDrawDirection,
             source_obj=fp.Source,
+            parting_model=fp.PartingModel,
+            parting_land_width=fp.PartingLandWidth,
+            parting_stock_margin=fp.PartingStockMargin,
+            parting_stock_footprint=stock_footprint,
         )
         fp.AnalysisStatus = result["status"]
         fp.DrawDirectionScore = result["draw_direction_score"]
@@ -289,7 +328,14 @@ class MouldAnalysisFP(CompositePartFP):
         fp.Shape = result["shape"]
 
     def onChanged(self, fp, prop):
-        if prop in ("Source", "PreferredDrawDirection"):
+        if prop in (
+            "Source",
+            "PreferredDrawDirection",
+            "PartingModel",
+            "PartingLandWidth",
+            "PartingStockMargin",
+            "PartingStockFootprint",
+        ):
             fp.recompute()
 
 
