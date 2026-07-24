@@ -70,14 +70,6 @@ class MouldAnalysisFP(CompositePartFP):
         obj.setPropertyStatus("BestDrawDirection", "ReadOnly")
 
         obj.addProperty(
-            "App::PropertyString",
-            "DrawDirectionRanking",
-            "MouldAnalysis",
-            "Ranking of candidate draw directions",
-        ).DrawDirectionRanking = "No candidate directions available."
-        obj.setPropertyStatus("DrawDirectionRanking", "ReadOnly")
-
-        obj.addProperty(
             "App::PropertyInteger",
             "UndercutCount",
             "MouldAnalysis",
@@ -271,7 +263,6 @@ class MouldAnalysisFP(CompositePartFP):
         fp.AnalysisStatus = result["status"]
         fp.DrawDirectionScore = result["draw_direction_score"]
         fp.BestDrawDirection = result["best_draw_direction"]
-        fp.DrawDirectionRanking = result["draw_direction_ranking"]
         fp.UndercutCount = result["undercut_count"]
         fp.UndercutSummary = result["undercut_summary"]
         fp.UndercutRegions = result["undercut_regions"]

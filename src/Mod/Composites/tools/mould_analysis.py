@@ -9,11 +9,6 @@ import Part
 
 
 default_mould_analysis_draw_direction = Vector(0, 0, 1)
-_candidate_draw_directions = (
-    Vector(1, 0, 0),
-    Vector(0, 1, 0),
-    Vector(0, 0, 1),
-)
 
 NORMALIZATION_CONFIDENCE_EXACT = "exact"
 NORMALIZATION_CONFIDENCE_APPROXIMATE = "approximate"
@@ -1833,172 +1828,6 @@ def _direction_geometric_evidence(
     return evidence
 
 
-def _candidate_scores(shape, evidence_cache=None):
-    bbox = shape.BoundBox
-    evidence_cache = {} if evidence_cache is None else evidence_cache
-    raw = []
-    for index, direction in enumerate(_candidate_draw_directions):
-        evidence = _direction_geometric_evidence(
-            shape,
-            direction,
-            cache=evidence_cache,
-        )
-        extent = _extent_along_direction(bbox, direction)
-        bbox_score = 1.0 / extent if extent else 0.0
-        backface_ratio = evidence["backface_ratio"]
-        geometry_factor = max(0.0, 1.0 - (GEOMETRY_BACKFACE_WEIGHT * backface_ratio))
-        score = bbox_score * geometry_factor
-        raw.append(
-            {
-                "index": index,
-                "direction": direction,
-                "extent": extent,
-                "bbox_score": bbox_score,
-                "backface_ratio": backface_ratio,
-                "geometry_factor": geometry_factor,
-                "score": score,
-                "draft_face_screening": evidence["draft_face_screening"],
-                "accessibility": evidence["accessibility"],
-                "analysis_gate_status": evidence["analysis_gate_status"],
-                "geometric_evidence": evidence,
-            }
-        )
-    if not raw:
-        return []
-
-    best_score = max(item["score"] for item in raw) or 1.0
-    ranked = []
-    for item in raw:
-        ranked.append(
-            {
-                **item,
-                "normalized_score": 100.0 * item["score"] / best_score,
-            }
-        )
-    ranked.sort(key=lambda item: (-item["score"], item["index"]))
-    return ranked
-
-
-def _format_ranking(ranked):
-    if not ranked:
-        return "No candidate directions available."
-    return "; ".join(
-        f"{index + 1}. {_format_vector(item['direction'])}"
-        f" ({item['normalized_score']:.1f}%, bf={100.0 * item['backface_ratio']:.1f}%)"
-        for index, item in enumerate(ranked)
-    )
-
-
-def _candidate_diagnostics(ranked):
-    diagnostics = []
-    if not ranked:
-        return diagnostics
-
-    best_normalized = ranked[0]["normalized_score"]
-    for rank, item in enumerate(ranked, start=1):
-        diagnostics.append(
-            {
-                "rank": rank,
-                "is_winner": rank == 1,
-                "margin_to_best_pp": best_normalized - item["normalized_score"],
-                "direction": _format_vector(item["direction"]),
-                "normalized_score": item["normalized_score"],
-                "bbox_score": item["bbox_score"],
-                "backface_ratio": item["backface_ratio"],
-                "geometry_factor": item["geometry_factor"],
-                "composite_score": item["score"],
-            }
-        )
-    return diagnostics
-
-
-def _draw_direction_rationale(ranked):
-    if not ranked:
-        return "No ranked candidate directions were available."
-
-    winner = ranked[0]
-    winner_direction = _format_vector(winner["direction"])
-    winner_score = winner["normalized_score"]
-    winner_backface = 100.0 * winner["backface_ratio"]
-    winner_geometry = winner["geometry_factor"]
-    winner_bbox = winner["bbox_score"]
-
-    if len(ranked) == 1:
-        margin_text = "single candidate"
-    else:
-        runner_up = ranked[1]
-        runner_direction = _format_vector(runner_up["direction"])
-        margin_pp = winner_score - runner_up["normalized_score"]
-        margin_text = f"margin_vs_runner_up={margin_pp:.1f}pp (vs {runner_direction})"
-
-    return (
-        f"winner={winner_direction}; score={winner_score:.1f}%"
-        f"; bbox={winner_bbox:.5f}; backface={winner_backface:.1f}%"
-        f"; geometry_factor={winner_geometry:.3f}; {margin_text}."
-    )
-
-
-def _match_ranked_candidate(ranked, direction, tolerance=1.0e-9):
-    if not ranked:
-        return None
-
-    unit = _normalized(direction)
-    for item in ranked:
-        candidate = _normalized(item["direction"])
-        if _dot(unit, candidate) >= (1.0 - tolerance):
-            return item
-    return None
-
-
-def _preferred_direction_diagnostics(
-    ranked,
-    draw_direction,
-    normalized_preferred_score,
-    preferred_candidate,
-):
-    best_normalized = (
-        ranked[0]["normalized_score"] if ranked else normalized_preferred_score
-    )
-    matched_rank = None
-    matched_backface_ratio = None
-
-    if preferred_candidate is not None:
-        for rank, item in enumerate(ranked, start=1):
-            if item is preferred_candidate:
-                matched_rank = rank
-                break
-        matched_backface_ratio = preferred_candidate["backface_ratio"]
-
-    return {
-        "direction": _format_vector(draw_direction),
-        "matched_candidate": preferred_candidate is not None,
-        "matched_rank": matched_rank,
-        "used_fallback_scoring": preferred_candidate is None,
-        "normalized_score": normalized_preferred_score,
-        "margin_to_best_pp": max(0.0, best_normalized - normalized_preferred_score),
-        "backface_ratio": matched_backface_ratio,
-    }
-
-
-def _format_preferred_direction_diagnostics(diagnostics):
-    basis = "candidate" if diagnostics["matched_candidate"] else "fallback"
-    rank_suffix = (
-        f"rank={diagnostics['matched_rank']}"
-        if diagnostics["matched_rank"] is not None
-        else "rank=none"
-    )
-    backface_suffix = ""
-    if diagnostics["backface_ratio"] is not None:
-        backface_suffix = f", backface={100.0 * diagnostics['backface_ratio']:.1f}%"
-
-    return (
-        f"direction={diagnostics['direction']}, basis={basis}({rank_suffix}), "
-        f"score={diagnostics['normalized_score']:.1f}%, "
-        f"margin_to_best={diagnostics['margin_to_best_pp']:.1f}pp"
-        f"{backface_suffix}"
-    )
-
-
 def _plan_split_strategies(ranked, limit=MAX_SPLIT_STRATEGIES):
     strategies = []
     for rank, item in enumerate(ranked[: max(0, int(limit))], start=1):
@@ -3411,9 +3240,6 @@ def _base_analysis_result():
         "shape": Part.Shape(),
         "draw_direction_score": 0.0,
         "best_draw_direction": default_mould_analysis_draw_direction,
-        "draw_direction_ranking": "No candidate directions available.",
-        "draw_direction_diagnostics": [],
-        "draw_direction_rationale": "No ranked candidate directions were available.",
         "split_strategy_summary": "No split strategy planned.",
         "split_strategy_diagnostics": [],
         "split_strategy_attempts": [],
@@ -3432,15 +3258,6 @@ def _base_analysis_result():
         "accessibility_checks": [],
         "profile_summary": "No source shape available.",
         "profile_violations": [],
-        "preferred_direction_diagnostics": {
-            "direction": _format_vector(default_mould_analysis_draw_direction),
-            "matched_candidate": False,
-            "matched_rank": None,
-            "used_fallback_scoring": False,
-            "normalized_score": 0.0,
-            "margin_to_best_pp": 0.0,
-            "backface_ratio": None,
-        },
         "undercut_count": 0,
         "undercut_summary": "No source shape available.",
         "undercut_regions": ["No source shape available."],
@@ -3794,54 +3611,49 @@ def analyze_source_shape(
 
     effective_shape = normalization["effective_shape"]
     bbox = effective_shape.BoundBox
-    ranked = _candidate_scores(effective_shape)
-    preferred_candidate = _match_ranked_candidate(ranked, draw_direction)
-    if preferred_candidate is not None:
-        preferred_score = preferred_candidate["score"]
-    else:
-        preferred_extent = _extent_along_direction(bbox, draw_direction)
-        preferred_bbox_score = 1.0 / preferred_extent if preferred_extent else 0.0
-        preferred_backface_ratio = _backface_area_ratio(effective_shape, draw_direction)
-        preferred_geometry_factor = max(
-            0.0,
-            1.0 - (GEOMETRY_BACKFACE_WEIGHT * preferred_backface_ratio),
-        )
-        preferred_score = preferred_bbox_score * preferred_geometry_factor
-
-    best_score = ranked[0]["score"] if ranked else preferred_score or 1.0
-    normalized_preferred_score = (
-        100.0 * preferred_score / best_score if best_score else 0.0
+    preferred_evidence = _direction_geometric_evidence(effective_shape, draw_direction)
+    preferred_backface_ratio = preferred_evidence["backface_ratio"]
+    preferred_geometry_factor = max(
+        0.0,
+        1.0 - (GEOMETRY_BACKFACE_WEIGHT * preferred_backface_ratio),
     )
-    best_direction = ranked[0]["direction"] if ranked else draw_direction
-    ranking = _format_ranking(ranked)
-    ranking_diagnostics = _candidate_diagnostics(ranked)
-    draw_direction_rationale = _draw_direction_rationale(ranked)
-    split_strategies = _plan_split_strategies(ranked)
+    preferred_extent = _extent_along_direction(bbox, draw_direction)
+    preferred_bbox_score = 1.0 / preferred_extent if preferred_extent else 0.0
+    preferred_score = preferred_bbox_score * preferred_geometry_factor
+    normalized_preferred_score = 100.0 * preferred_score if preferred_score else 0.0
+    best_direction = draw_direction
+    ranked = [
+        {
+            "index": 0,
+            "direction": _normalized(draw_direction),
+            "extent": preferred_extent,
+            "bbox_score": preferred_bbox_score,
+            "backface_ratio": preferred_backface_ratio,
+            "geometry_factor": preferred_geometry_factor,
+            "score": preferred_score,
+            "normalized_score": 100.0,
+            "draft_face_screening": preferred_evidence["draft_face_screening"],
+            "accessibility": preferred_evidence["accessibility"],
+            "analysis_gate_status": preferred_evidence["analysis_gate_status"],
+            "geometric_evidence": preferred_evidence,
+        }
+    ]
+    split_strategies = _plan_split_strategies(ranked, limit=1)
     if split_strategies:
         selected_split_strategy = split_strategies[0]
     else:
         selected_split_strategy = {
-            "strategy_id": "fallback_draw_direction",
+            "strategy_id": "draw_direction",
             "rank": 1,
             "direction": draw_direction,
             "direction_label": _format_vector(draw_direction),
-            "direction_score": normalized_preferred_score,
-            "backface_ratio": _backface_area_ratio(effective_shape, draw_direction),
-            "geometry_factor": 1.0,
+            "direction_score": 100.0,
+            "backface_ratio": preferred_backface_ratio,
+            "geometry_factor": preferred_geometry_factor,
             "status": "fallback",
-            "reason": "no ranked candidates available",
+            "reason": "draw direction strategy",
         }
         split_strategies = [selected_split_strategy]
-
-    preferred_direction_diagnostics = _preferred_direction_diagnostics(
-        ranked,
-        draw_direction,
-        normalized_preferred_score,
-        preferred_candidate,
-    )
-    preferred_direction_summary = _format_preferred_direction_diagnostics(
-        preferred_direction_diagnostics
-    )
 
     selected_attempt, split_strategy_attempts = _evaluate_split_strategy_attempts(
         effective_shape,
@@ -3948,14 +3760,6 @@ def analyze_source_shape(
     validation = _append_normalization_validation_check(validation, normalization)
     validation = _append_validation_check(
         validation,
-        f"PASS: draw-direction rationale — {draw_direction_rationale}",
-    )
-    validation = _append_validation_check(
-        validation,
-        f"PASS: preferred direction diagnostics — {preferred_direction_summary}",
-    )
-    validation = _append_validation_check(
-        validation,
         f"PASS: split strategy planning — {split_strategy_summary}",
     )
 
@@ -4012,10 +3816,7 @@ def analyze_source_shape(
         f"normalization={normalization['confidence']} ({normalization['summary']}), "
         f"bounds=({bbox.XLength:.3f} x {bbox.YLength:.3f} x {bbox.ZLength:.3f}), "
         f"preferred_direction={_format_vector(draw_direction)}, "
-        f"preferred_score={normalized_preferred_score:.1f}%, "
-        f"best_direction={_format_vector(best_direction)}, "
-        f"draw_rationale={draw_direction_rationale}, "
-        f"preferred_diag={preferred_direction_summary}, "
+        f"direction_score={normalized_preferred_score:.1f}%, "
         f"split_strategy={split_strategy_summary}, "
         f"split_attempts={len(split_strategy_attempt_diagnostics)}, "
         f"decomposition={decomposition_payload['decomposition_plan_status']}, "
@@ -4036,13 +3837,9 @@ def analyze_source_shape(
             "shape": _safe_copy_shape(effective_shape),
             "draw_direction_score": normalized_preferred_score,
             "best_draw_direction": best_direction,
-            "draw_direction_ranking": ranking,
-            "draw_direction_diagnostics": ranking_diagnostics,
-            "draw_direction_rationale": draw_direction_rationale,
             "split_strategy_summary": split_strategy_summary,
             "split_strategy_diagnostics": split_strategy_diagnostics,
             "split_strategy_attempts": split_strategy_attempt_diagnostics,
-            "preferred_direction_diagnostics": preferred_direction_diagnostics,
             "slice_refinement_required": selected_attempt.get("slice_refinement_required", True),
             "slice_refinement_summary": selected_attempt.get("slice_refinement_summary", ""),
             "geometric_accuracy_mm": selected_attempt.get("geometric_accuracy_mm", 0.0),

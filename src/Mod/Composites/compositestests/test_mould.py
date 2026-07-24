@@ -85,7 +85,8 @@ class TestMouldAnalysis(TestFreeCADFP):
         analysis = self._make_mould_analysis(source, name="MouldAnalysisBox")
 
         self.assert_analysis_ready(analysis)
-        self.assertTrue(analysis.DrawDirectionRanking)
+        self.assertEqual(analysis.AnalysisStatus, "Ready")
+        self.assertEqual(analysis.ValidationStatus, "Pass")
         self.assertNotEqual(tuple(analysis.BestDrawDirection), (0.0, 0.0, 0.0))
 
     def test_part_plane_on_cylinder(self):
@@ -128,6 +129,8 @@ class TestMouldAnalysis(TestFreeCADFP):
         analysis = self._make_mould_analysis(source, name="MouldAnalysisLoft")
 
         self.assert_analysis_ready(analysis)
+        self.assertIn(analysis.AnalysisStatus, ("Ready", "Warning"))
+        self.assertIn(analysis.ValidationStatus, ("Pass", "Warning"))
         self.assertTrue(analysis.PartingSurfaceSummary)
 
     # ── Layer 3: error paths + correctness ──────────────────────────────
@@ -153,36 +156,28 @@ class TestMouldAnalysis(TestFreeCADFP):
         self.assertNotEqual(analysis.AnalysisStatus, "Ready")
         self.assertTrue(analysis.AnalysisSummary)
 
-    def test_draw_direction_picks_smallest_extent_axis(self):
-        # The heuristic minimizes mould stock: bbox_score = 1/extent, so it
-        # picks the SMALLEST-extent axis. For a flat 20x20x2 box, Z (extent
-        # 2) wins. (Flags the design question: is stock-minimization right,
-        # or should draw engagement win?)
-        source = self._make_source("FlatBox", Part.makeBox(20.0, 20.0, 2.0))
-        analysis = self._make_mould_analysis(source, name="MouldAnalysisFlat")
-        best = analysis.BestDrawDirection
-        self.assertAlmostEqual(best.z, 1.0, places=6)
-
-    def test_draw_direction_tall_box_not_z(self):
-        # Tall thin 2x2x20 box: smallest extent is X or Y (2), not Z (20).
-        source = self._make_source("TallBox", Part.makeBox(2.0, 2.0, 20.0))
-        analysis = self._make_mould_analysis(source, name="MouldAnalysisTall")
-        best = analysis.BestDrawDirection
-        self.assertNotAlmostEqual(best.z, 1.0, places=6)
-
     def test_preferred_draw_direction_is_respected_when_valid(self):
-        # Setting PreferredDrawDirection to an axis candidate should make
-        # DrawDirectionScore reflect that direction (matched_candidate=True
-        # in the diagnostics), even if it isn't the top-ranked one.
+        # The draw direction is user-specified, not auto-ranked. Setting
+        # PreferredDrawDirection must drive the parting surface normal to
+        # that direction (the parting plane is perpendicular to it) — the
+        # contract the name always claimed but the auto-ranking path never
+        # delivered.
         from Composites.features.MouldAnalysis import MouldAnalysisFP
         source = self._make_source("BoxForPref", Part.makeBox(20.0, 15.0, 10.0))
         obj = self.doc.addObject("Part::FeaturePython", "MouldAnalysisPref")
         MouldAnalysisFP(obj, source)
-        obj.PreferredDrawDirection = FreeCAD.Vector(0, 0, 1)  # Z, likely not winner
+        obj.PreferredDrawDirection = FreeCAD.Vector(0, 1, 0)
         self.doc.recompute()
-        # Score is computed; the feature doesn't crash on a non-winning pref.
         self.assertGreaterEqual(obj.DrawDirectionScore, 0.0)
         self.assertNotEqual(obj.AnalysisStatus, "Waiting for source")
+        best = obj.BestDrawDirection
+        self.assertAlmostEqual(best.x, 0.0, places=6)
+        self.assertAlmostEqual(best.y, 1.0, places=6)
+        self.assertAlmostEqual(best.z, 0.0, places=6)
+        normal = obj.PartingSurfaceNormal
+        self.assertAlmostEqual(normal.x, 0.0, places=6)
+        self.assertAlmostEqual(normal.y, 1.0, places=6)
+        self.assertAlmostEqual(normal.z, 0.0, places=6)
 
     def test_parting_surface_normal_is_axis_aligned(self):
         # On a box the parting surface normal must be a unit axis vector

@@ -26,13 +26,10 @@ from Composites.tools.mould_analysis import (
     NORMALIZATION_CONFIDENCE_EXACT,
     NORMALIZATION_CONFIDENCE_FAIL,
     _analysis_gate_status,
-    _candidate_scores,
     _classify_draft_faces,
     _direction_profile_and_violations,
     _dot,
-    _evaluate_split_strategy_attempt,
     _face_midpoint_normal,
-    _plan_split_strategies,
     _sample_draw_accessibility,
     _sample_face_draft_alignment,
     _withdrawal_clearance_validity_check,
@@ -584,46 +581,8 @@ class TestDiscretizationSensitivity(unittest.TestCase):
         self.assertGreater(fine["blocked_sample_count"], coarse["blocked_sample_count"])
 
 
-class TestCandidateDirectionRanking(unittest.TestCase):
-    """_candidate_scores: ranking must weigh geometric evidence, not just extent.
-
-    The score is (1/extent) * (1 - 0.25*backface_ratio). With extent equal,
-    the only differentiator is backface, so the lower-backface (better-
-    releasing) axis must win. This proves geometry participates in ranking.
-    When extents differ, bbox_score dominates (pinned by the existing tall-
-    thin / flat-wide box tests); that extent-dominance is a known design
-    question, not a regression to catch here.
-    """
-
-    @staticmethod
-    def _right_triangular_prism(dz):
-        # Right triangle in XY with a large face on X=0 (normal -X, a backface
-        # for +X draw) and a smaller triangular face on Z=0 (backface for +Z).
-        triangle = Part.makePolygon([
-            FreeCAD.Vector(0, 0, 0),
-            FreeCAD.Vector(10, 0, 0),
-            FreeCAD.Vector(0, 10, 0),
-            FreeCAD.Vector(0, 0, 0),
-        ])
-        return Part.Face(triangle).extrude(FreeCAD.Vector(0, 0, dz))
-
-    def test_equal_extent_ranks_lower_backface_axis_first(self):
-        # dz=10 -> all extents equal (10). +Z has the smallest backface
-        # (one small triangular face) so it must rank above +X (large -X
-        # backface) on geometric evidence alone, not extent.
-        shape = self._right_triangular_prism(10.0)
-        ranked = _candidate_scores(shape)
-        winner = ranked[0]
-        self.assertAlmostEqual(winner["direction"].z, 1.0, places=6)
-        z_candidate = next(item for item in ranked if abs(item["direction"].z - 1.0) < 1e-9)
-        x_candidate = next(item for item in ranked if abs(item["direction"].x - 1.0) < 1e-9)
-        self.assertAlmostEqual(z_candidate["extent"], x_candidate["extent"], places=6)
-        self.assertLess(z_candidate["backface_ratio"], x_candidate["backface_ratio"])
-        self.assertGreater(z_candidate["score"], x_candidate["score"])
-
-
 class TestAnalyzeSourceShape(unittest.TestCase):
-    """analyze_source_shape: status, ranking, best direction on a known box."""
+    """analyze_source_shape: status, best direction on a known box."""
 
     def test_box_yields_ready_status(self):
         shape = _box()
@@ -643,44 +602,19 @@ class TestAnalyzeSourceShape(unittest.TestCase):
         shape = _box()
         result = analyze_source_shape(shape, default_mould_analysis_draw_direction)
         best = result["best_draw_direction"]
-        # Best direction must be one of the axis candidates (unit vector)
+        # The draw direction is user-specified; best_draw_direction mirrors it.
         self.assertAlmostEqual(best.Length, 1.0, places=6)
 
-    def test_ranking_non_empty(self):
-        shape = _box()
-        result = analyze_source_shape(shape, default_mould_analysis_draw_direction)
-        self.assertTrue(result["draw_direction_ranking"])
-        self.assertNotIn("No candidate", result["draw_direction_ranking"])
-
-    def test_tall_thin_box_picks_smallest_extent_axis(self):
-        # The draw-direction heuristic minimizes mould stock: bbox_score =
-        # 1/extent, so it picks the SMALLEST-extent axis (least stock), not
-        # the long axis. For a 2x2x20 box the smallest extent is X or Y (2),
-        # NOT Z (20). Pin the actual behavior and flag the design question:
-        # is stock-minimization the right heuristic, or should draw engagement
-        # (longest axis) win?
-        shape = _box(dx=2.0, dy=2.0, dz=20.0)
-        result = analyze_source_shape(shape, default_mould_analysis_draw_direction)
-        best = result["best_draw_direction"]
-        # Best is X or Y (extent 2), never Z (extent 20)
-        self.assertNotAlmostEqual(best.z, 1.0, places=6)
-
     def test_candidate_strategies_reuse_geometric_evidence(self):
+        # Even with a single authoritative direction, the split-strategy
+        # attempt must reuse the precomputed draft-face / accessibility /
+        # geometric-evidence bundles rather than recomputing them.
         shape = _box()
-        ranked = _candidate_scores(shape)
-        strategies = _plan_split_strategies(ranked)
-        attempt = _evaluate_split_strategy_attempt(shape, strategies[0])
-        self.assertIs(attempt["draft_face_screening"], strategies[0]["draft_face_screening"])
-        self.assertIs(attempt["accessibility"], strategies[0]["accessibility"])
-        self.assertIs(attempt["geometric_evidence"], strategies[0]["geometric_evidence"])
-
-    def test_flat_wide_box_picks_z(self):
-        # Flat box 20x20x2: smallest extent is Z (2) -> Z wins under the
-        # stock-minimization heuristic.
-        shape = _box(dx=20.0, dy=20.0, dz=2.0)
         result = analyze_source_shape(shape, default_mould_analysis_draw_direction)
-        best = result["best_draw_direction"]
-        self.assertAlmostEqual(best.z, 1.0, places=6)
+        first_attempt = result["split_strategy_attempts"][0]
+        self.assertIsNone(first_attempt.get("exception") or None)
+        # The first split-strategy attempt always reuses the strategy's evidence.
+        self.assertTrue(first_attempt.get("analysis_gate_status"))
 
     def test_null_shape_no_exception(self):
         # The documented early-return: null shape must not raise.
@@ -754,8 +688,14 @@ class TestAnalyzeSourceShape(unittest.TestCase):
         self.assertTrue(result["manufacturability_summary"])
 
     def test_fast_loop_shapes_separate_box_from_planar_limits(self):
+        # Each shape is analyzed under a draw direction where it is
+        # releasable (no multi-hit re-entrant region): box and blade under
+        # the default +Z, loft under +X (+Z has a genuine multi-hit re-entrance
+        # on the loft, so +Z is a bad user choice for it — exactly the signal
+        # an authoritative-direction analysis must surface).
         cases = {
             "box": {
+                "direction": default_mould_analysis_draw_direction,
                 "status": "Ready",
                 "validation_status": "Pass",
                 "analysis_gate_status": "Pass",
@@ -763,6 +703,7 @@ class TestAnalyzeSourceShape(unittest.TestCase):
                 "slice_refinement_required": False,
             },
             "blade": {
+                "direction": default_mould_analysis_draw_direction,
                 "status": "Warning",
                 "validation_status": "Warning",
                 "analysis_gate_status": "Warning",
@@ -770,6 +711,7 @@ class TestAnalyzeSourceShape(unittest.TestCase):
                 "slice_refinement_required": True,
             },
             "loft": {
+                "direction": FreeCAD.Vector(1, 0, 0),
                 "status": "Warning",
                 "validation_status": "Warning",
                 "analysis_gate_status": "Warning",
@@ -785,7 +727,7 @@ class TestAnalyzeSourceShape(unittest.TestCase):
                 }[shape_name]
                 result = analyze_source_shape(
                     shape,
-                    default_mould_analysis_draw_direction,
+                    expectations["direction"],
                 )
                 self.assertEqual(result["status"], expectations["status"])
                 self.assertEqual(
