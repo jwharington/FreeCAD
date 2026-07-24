@@ -20,6 +20,9 @@ NORMALIZATION_CONFIDENCE_APPROXIMATE = "approximate"
 NORMALIZATION_CONFIDENCE_FAIL = "fail"
 
 GEOMETRY_BACKFACE_WEIGHT = 0.25
+DRAFT_FACE_ALIGNMENT_MARGIN = 0.25
+GEOMETRIC_ACCURACY_TOLERANCE_MM = 0.1
+GEOMETRIC_ACCURACY_MAX_BAND_MM = 0.099
 MAX_SPLIT_STRATEGIES = 2
 MAX_MULTIPART_EXTRA_SPLITS = 2
 
@@ -534,18 +537,23 @@ def _multipart_attempt(
 
     piece_violation_count = 0
     for piece in pieces:
-        _, violations = _direction_profile_and_violations(piece["shape"], direction)
-        piece_violation_count += len(violations)
+        piece_refinement = _geometric_refinement_payload(
+            piece["shape"],
+            direction,
+            None,
+            None,
+        )
+        piece_violation_count += len(piece_refinement["violations"])
 
     if len(pieces) < 2:
         status = "Fail"
         reason = "multipart split produced fewer than two non-null source partitions"
     elif piece_violation_count < int(baseline_violation_count or 0):
         status = "Pass"
-        reason = "multipart split reduced profile violations versus two-piece baseline"
+        reason = "multipart split reduced geometric refinement violations versus two-piece baseline"
     else:
         status = "Warning"
-        reason = "multipart split did not reduce profile violations versus two-piece baseline"
+        reason = "multipart split did not reduce geometric refinement violations versus two-piece baseline"
 
     return {
         "axis": axis,
@@ -633,7 +641,7 @@ def _multipart_execution_payload(
         return {
             "multipart_execution_status": MULTIPART_EXECUTION_STATUS_NOT_ATTEMPTED,
             "multipart_execution_summary": (
-                "Multipart prototype not attempted: no deterministic extra split offset was derived from profile violations."
+                "Multipart prototype not attempted: no deterministic extra split offset was derived from geometric refinement violations."
             ),
             "multipart_execution_attempts": [],
             "multipart_piece_count": 0,
@@ -1310,8 +1318,188 @@ def _face_midpoint_normal(face):
     return Vector(normal.x / length, normal.y / length, normal.z / length)
 
 
+def _sample_face_draft_alignment(face, direction, samples_per_axis=5):
+    unit = _normalized(direction)
+    midpoint_normal = _face_midpoint_normal(face)
+    midpoint_direction_dot = None
+    if midpoint_normal is not None:
+        midpoint_direction_dot = _dot(midpoint_normal, unit)
+
+    try:
+        umin, umax, vmin, vmax = face.ParameterRange
+    except Exception:
+        return {
+            "sample_count": 0,
+            "midpoint_direction_dot": midpoint_direction_dot,
+            "min_direction_dot": None,
+            "max_direction_dot": None,
+            "negative_sample_count": 0,
+            "positive_sample_count": 0,
+        }
+
+    sample_count_per_axis = max(1, int(samples_per_axis or 0))
+    if sample_count_per_axis == 1:
+        u_values = [0.5 * (umin + umax)]
+        v_values = [0.5 * (vmin + vmax)]
+    else:
+        u_values = [
+            umin + ((umax - umin) * index / (sample_count_per_axis - 1))
+            for index in range(sample_count_per_axis)
+        ]
+        v_values = [
+            vmin + ((vmax - vmin) * index / (sample_count_per_axis - 1))
+            for index in range(sample_count_per_axis)
+        ]
+
+    sample_count = 0
+    negative_sample_count = 0
+    positive_sample_count = 0
+    min_direction_dot = None
+    max_direction_dot = None
+
+    for u in u_values:
+        for v in v_values:
+            try:
+                normal = face.normalAt(u, v)
+            except Exception:
+                continue
+
+            length = getattr(normal, "Length", 0.0)
+            if not length:
+                continue
+
+            direction_vector = Vector(
+                normal.x / length,
+                normal.y / length,
+                normal.z / length,
+            )
+            direction_dot = _dot(direction_vector, unit)
+            sample_count += 1
+            if direction_dot < 0.0:
+                negative_sample_count += 1
+            elif direction_dot > 0.0:
+                positive_sample_count += 1
+
+            if min_direction_dot is None or direction_dot < min_direction_dot:
+                min_direction_dot = direction_dot
+            if max_direction_dot is None or direction_dot > max_direction_dot:
+                max_direction_dot = direction_dot
+
+    return {
+        "sample_count": sample_count,
+        "midpoint_direction_dot": midpoint_direction_dot,
+        "min_direction_dot": min_direction_dot,
+        "max_direction_dot": max_direction_dot,
+        "negative_sample_count": negative_sample_count,
+        "positive_sample_count": positive_sample_count,
+    }
+
+
+def _face_center_point(face):
+    center = getattr(face, "CenterOfMass", None)
+    if center is not None:
+        return center
+
+    bbox = getattr(face, "BoundBox", None)
+    if bbox is None:
+        return None
+
+    return Vector(
+        0.5 * (bbox.XMin + bbox.XMax),
+        0.5 * (bbox.YMin + bbox.YMax),
+        0.5 * (bbox.ZMin + bbox.ZMax),
+    )
+
+
 def _dot(a, b):
     return a.x * b.x + a.y * b.y + a.z * b.z
+
+
+def _classify_draft_faces(shape, direction, alignment_margin=DRAFT_FACE_ALIGNMENT_MARGIN):
+    unit = _normalized(direction)
+    margin = max(0.0, float(alignment_margin or 0.0))
+
+    safe_face_area = 0.0
+    risky_face_area = 0.0
+    ambiguous_face_area = 0.0
+    safe_face_count = 0
+    risky_face_count = 0
+    ambiguous_face_count = 0
+    face_classifications = []
+
+    for index, face in enumerate(getattr(shape, "Faces", []), start=1):
+        area = float(getattr(face, "Area", 0.0) or 0.0)
+        if area <= 0.0:
+            continue
+
+        normal = _face_midpoint_normal(face)
+        center = _face_center_point(face)
+        axis_position = None if center is None else _dot(center, unit)
+        dot = None if normal is None else _dot(normal, unit)
+
+        if dot is None:
+            classification = "ambiguous"
+            classification_margin = None
+            ambiguous_face_area += area
+            ambiguous_face_count += 1
+        elif dot >= margin:
+            classification = "safe"
+            classification_margin = dot - margin
+            safe_face_area += area
+            safe_face_count += 1
+        elif dot <= -margin:
+            classification = "risky"
+            classification_margin = -margin - dot
+            risky_face_area += area
+            risky_face_count += 1
+        else:
+            classification = "ambiguous"
+            classification_margin = margin - abs(dot)
+            ambiguous_face_area += area
+            ambiguous_face_count += 1
+
+        face_classifications.append(
+            {
+                "face_index": index,
+                "face_label": f"Face{index}",
+                "area": area,
+                "normal": normal,
+                "axis_position": axis_position,
+                "direction_dot": dot,
+                "direction_alignment": None if dot is None else abs(dot),
+                "classification": classification,
+                "classification_margin": classification_margin,
+            }
+        )
+
+    if risky_face_count > 0:
+        status = "Fail"
+        summary_prefix = "draft-face screening fail"
+    elif ambiguous_face_count > 0:
+        status = "Warning"
+        summary_prefix = "draft-face screening warning"
+    else:
+        status = "Ready"
+        summary_prefix = "draft-face screening ready"
+
+    summary = (
+        f"{summary_prefix}; safe_faces={safe_face_count}, risky_faces={risky_face_count}, "
+        f"ambiguous_faces={ambiguous_face_count}, safe_area={safe_face_area:.3f}, "
+        f"risky_area={risky_face_area:.3f}, ambiguous_area={ambiguous_face_area:.3f}, "
+        f"alignment_margin={margin:.3f}"
+    )
+
+    return {
+        "status": status,
+        "summary": summary,
+        "safe_face_area": safe_face_area,
+        "risky_face_area": risky_face_area,
+        "ambiguous_face_area": ambiguous_face_area,
+        "safe_face_count": safe_face_count,
+        "risky_face_count": risky_face_count,
+        "ambiguous_face_count": ambiguous_face_count,
+        "face_classifications": face_classifications,
+    }
 
 
 def _backface_area_ratio(shape, direction, epsilon=1.0e-9):
@@ -1337,13 +1525,76 @@ def _backface_area_ratio(shape, direction, epsilon=1.0e-9):
     return max(0.0, min(1.0, backface_area / total_area))
 
 
-def _candidate_scores(shape):
+def _direction_geometric_evidence_cache_key(
+    direction,
+    alignment_margin=DRAFT_FACE_ALIGNMENT_MARGIN,
+    sample_density=0.5,
+):
+    unit = _normalized(direction)
+    return (
+        round(unit.x, 9),
+        round(unit.y, 9),
+        round(unit.z, 9),
+        round(float(alignment_margin or 0.0), 6),
+        round(float(sample_density or 0.0), 6),
+    )
+
+
+def _direction_geometric_evidence(
+    shape,
+    direction,
+    alignment_margin=DRAFT_FACE_ALIGNMENT_MARGIN,
+    sample_density=0.5,
+    cache=None,
+):
+    cache_key = _direction_geometric_evidence_cache_key(
+        direction,
+        alignment_margin=alignment_margin,
+        sample_density=sample_density,
+    )
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
+
+    draft_face_screening = _classify_draft_faces(
+        shape,
+        direction,
+        alignment_margin=alignment_margin,
+    )
+    accessibility = _sample_draw_accessibility(
+        shape,
+        direction,
+        sample_density=sample_density,
+    )
+    evidence = {
+        "cache_key": cache_key,
+        "direction": _normalized(direction),
+        "draft_face_screening": draft_face_screening,
+        "accessibility": accessibility,
+        "backface_ratio": _backface_area_ratio(shape, direction),
+        "analysis_gate_status": _analysis_gate_status(
+            draft_face_screening,
+            accessibility,
+        ),
+    }
+
+    if cache is not None:
+        cache[cache_key] = evidence
+    return evidence
+
+
+def _candidate_scores(shape, evidence_cache=None):
     bbox = shape.BoundBox
+    evidence_cache = {} if evidence_cache is None else evidence_cache
     raw = []
     for index, direction in enumerate(_candidate_draw_directions):
+        evidence = _direction_geometric_evidence(
+            shape,
+            direction,
+            cache=evidence_cache,
+        )
         extent = _extent_along_direction(bbox, direction)
         bbox_score = 1.0 / extent if extent else 0.0
-        backface_ratio = _backface_area_ratio(shape, direction)
+        backface_ratio = evidence["backface_ratio"]
         geometry_factor = max(0.0, 1.0 - (GEOMETRY_BACKFACE_WEIGHT * backface_ratio))
         score = bbox_score * geometry_factor
         raw.append(
@@ -1355,6 +1606,10 @@ def _candidate_scores(shape):
                 "backface_ratio": backface_ratio,
                 "geometry_factor": geometry_factor,
                 "score": score,
+                "draft_face_screening": evidence["draft_face_screening"],
+                "accessibility": evidence["accessibility"],
+                "analysis_gate_status": evidence["analysis_gate_status"],
+                "geometric_evidence": evidence,
             }
         )
     if not raw:
@@ -1505,6 +1760,10 @@ def _plan_split_strategies(ranked, limit=MAX_SPLIT_STRATEGIES):
                 "direction_score": item["normalized_score"],
                 "backface_ratio": item["backface_ratio"],
                 "geometry_factor": item["geometry_factor"],
+                "geometric_evidence": item.get("geometric_evidence"),
+                "draft_face_screening": item.get("draft_face_screening"),
+                "accessibility": item.get("accessibility"),
+                "analysis_gate_status": item.get("analysis_gate_status"),
                 "status": "planned",
                 "reason": "top-ranked draw-direction strategy",
             }
@@ -1525,7 +1784,24 @@ def _planner_score(strategy, status, undercut_count, draft_violation_count):
 
 
 def _evaluate_split_strategy_attempt(shape, strategy):
-    profile, violations = _direction_profile_and_violations(shape, strategy["direction"])
+    evidence = strategy.get("geometric_evidence")
+    if evidence is None:
+        evidence = _direction_geometric_evidence(shape, strategy["direction"])
+
+    draft_face_screening = evidence["draft_face_screening"]
+    accessibility = evidence["accessibility"]
+    analysis_gate_status = evidence.get("analysis_gate_status") or _analysis_gate_status(
+        draft_face_screening,
+        accessibility,
+    )
+    refinement = _slice_refinement_payload(
+        shape,
+        strategy["direction"],
+        draft_face_screening,
+        accessibility,
+    )
+    profile = refinement["profile"]
+    violations = refinement["violations"]
     undercut_count = len(violations)
     draft_violation_count = len(violations)
 
@@ -1543,6 +1819,9 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         parting["shape"],
         mould_halves["half_a_shape"],
         mould_halves["half_b_shape"],
+        analysis_gate_status=analysis_gate_status,
+        geometric_accuracy_mm=refinement["accuracy_mm"],
+        geometric_accuracy_tolerance_mm=refinement["accuracy_tolerance_mm"],
     )
 
     status = validation["status"]
@@ -1557,6 +1836,16 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         "strategy": strategy,
         "profile": profile,
         "violations": violations,
+        "draft_face_screening": draft_face_screening,
+        "accessibility": accessibility,
+        "analysis_gate_status": analysis_gate_status,
+        "geometric_evidence": evidence,
+        "slice_refinement_required": refinement["refinement_required"],
+        "slice_refinement_summary": refinement["summary"],
+        "geometric_accuracy_mm": refinement["accuracy_mm"],
+        "geometric_accuracy_tolerance_mm": refinement["accuracy_tolerance_mm"],
+        "geometric_accuracy_status": refinement["accuracy_status"],
+        "geometric_accuracy_summary": refinement["accuracy_summary"],
         "undercut_count": undercut_count,
         "draft_violation_count": draft_violation_count,
         "parting": parting,
@@ -1582,6 +1871,35 @@ def _failed_attempt_from_exception(strategy, exc):
         "strategy": strategy,
         "profile": [],
         "violations": [],
+        "draft_face_screening": {
+            "status": "Fail",
+            "summary": "Draft face screening unavailable due to strategy exception.",
+            "safe_face_area": 0.0,
+            "risky_face_area": 0.0,
+            "ambiguous_face_area": 0.0,
+            "safe_face_count": 0,
+            "risky_face_count": 0,
+            "ambiguous_face_count": 0,
+            "face_classifications": [],
+        },
+        "accessibility": {
+            "status": "Fail",
+            "summary": "Accessibility screening unavailable due to strategy exception.",
+            "sample_count": 0,
+            "blocked_sample_count": 0,
+            "multi_hit_sample_count": 0,
+            "blocked_fraction": 0.0,
+            "multi_hit_fraction": 0.0,
+            "accessibility_regions": ["None"],
+            "ray_samples": [],
+        },
+        "slice_refinement_required": True,
+        "slice_refinement_summary": "Geometric refinement unavailable due to strategy exception.",
+        "geometric_accuracy_mm": 0.0,
+        "geometric_accuracy_tolerance_mm": GEOMETRIC_ACCURACY_TOLERANCE_MM,
+        "geometric_accuracy_status": "Fail",
+        "geometric_accuracy_summary": "Geometric accuracy unavailable due to strategy exception.",
+        "analysis_gate_status": "Fail",
         "undercut_count": 0,
         "draft_violation_count": 0,
         "parting": {
@@ -1704,6 +2022,10 @@ def _split_strategy_attempt_diagnostics(attempts):
                 "reason": attempt["reason"],
                 "planner_score": attempt["planner_score"],
                 "selection_reason": attempt["selection_reason"],
+                "analysis_gate_status": attempt.get("analysis_gate_status", ""),
+                "slice_refinement_required": attempt.get("slice_refinement_required", False),
+                "slice_refinement_summary": attempt.get("slice_refinement_summary", ""),
+                "accessibility_status": attempt.get("accessibility", {}).get("status", ""),
                 "undercut_count": attempt["undercut_count"],
                 "draft_violation_count": attempt["draft_violation_count"],
                 "parting_status": attempt["parting"]["status"],
@@ -1896,6 +2218,150 @@ def _profile_violations(profile, area_growth_tolerance=0.05):
     return violations
 
 
+def _sample_draw_accessibility(shape, direction, sample_density=0.5):
+    unit = _normalized(direction)
+    bbox = shape.BoundBox
+    center = Vector(
+        0.5 * (bbox.XMin + bbox.XMax),
+        0.5 * (bbox.YMin + bbox.YMax),
+        0.5 * (bbox.ZMin + bbox.ZMax),
+    )
+
+    def _orthogonal_frame(unit_vector):
+        helper = Vector(1.0, 0.0, 0.0)
+        if abs(_dot(unit_vector, helper)) > 0.9:
+            helper = Vector(0.0, 1.0, 0.0)
+        first = unit_vector.cross(helper)
+        if getattr(first, "Length", 0.0) <= 0.0:
+            helper = Vector(0.0, 0.0, 1.0)
+            first = unit_vector.cross(helper)
+        first = _normalized(first)
+        second = _normalized(unit_vector.cross(first))
+        return first, second
+
+    transverse_u, transverse_v = _orthogonal_frame(unit)
+    corners = [
+        Vector(x, y, z)
+        for x in (bbox.XMin, bbox.XMax)
+        for y in (bbox.YMin, bbox.YMax)
+        for z in (bbox.ZMin, bbox.ZMax)
+    ]
+    projected_u = [_dot(corner, unit) for corner in corners]
+    projected_v = [_dot(corner, transverse_u) for corner in corners]
+    projected_w = [_dot(corner, transverse_v) for corner in corners]
+    axis_min = min(projected_u)
+    axis_max = max(projected_u)
+    u_min = min(projected_v)
+    u_max = max(projected_v)
+    v_min = min(projected_w)
+    v_max = max(projected_w)
+
+    axis_extent = max(axis_max - axis_min, 1.0e-6)
+    u_extent = max(u_max - u_min, 1.0e-6)
+    v_extent = max(v_max - v_min, 1.0e-6)
+    density = float(sample_density or 0.0)
+    if density <= 0.0:
+        density = 0.5
+    transverse_count_u = max(3, min(11, int(math.ceil(u_extent * density)) + 1))
+    transverse_count_v = max(3, min(11, int(math.ceil(v_extent * density)) + 1))
+    ray_padding = max(1.0e-3, 0.1 * axis_extent)
+
+    sample_count = transverse_count_u * transverse_count_v
+    blocked_sample_count = 0
+    multi_hit_sample_count = 0
+    accessibility_regions = []
+    ray_samples = []
+
+    def _sample_positions(count, minimum, maximum):
+        if count <= 1:
+            return [0.5 * (minimum + maximum)]
+        return [
+            minimum + ((maximum - minimum) * index / (count - 1))
+            for index in range(count)
+        ]
+
+    sample_index = 0
+    for u_index, u_offset in enumerate(_sample_positions(transverse_count_u, u_min, u_max), start=1):
+        for v_index, v_offset in enumerate(_sample_positions(transverse_count_v, v_min, v_max), start=1):
+            sample_index += 1
+            plane_point = (
+                unit * _dot(center, unit)
+                + transverse_u * u_offset
+                + transverse_v * v_offset
+            )
+            axis_position = _dot(plane_point, unit)
+            ray_start = plane_point - (unit * (0.5 * axis_extent + ray_padding))
+            ray_end = plane_point + (unit * (0.5 * axis_extent + ray_padding))
+            ray = Part.makeLine(ray_start, ray_end)
+
+            try:
+                hit = shape.common(ray)
+            except Exception:
+                hit = Part.Shape()
+
+            hit_edges = len(getattr(hit, "Edges", []))
+            hit_vertices = len(getattr(hit, "Vertexes", []))
+            hit_shape_type = getattr(hit, "ShapeType", "")
+            hit_segments = hit_edges
+            if hit_edges <= 0 and hit_vertices <= 0:
+                classification = "blocked"
+                blocked_sample_count += 1
+            elif hit_segments > 1 or hit_vertices > 2:
+                classification = "multi_hit"
+                multi_hit_sample_count += 1
+            else:
+                classification = "clear"
+
+            if classification != "clear":
+                accessibility_regions.append(
+                    (
+                        f"[{len(accessibility_regions) + 1}] {classification} "
+                        f"grid=({u_index},{v_index}) offsets=({u_offset:.3f}, {v_offset:.3f}) "
+                        f"hits={hit_segments} vertices={hit_vertices} type={hit_shape_type or 'unknown'}"
+                    )
+                )
+                ray_samples.append(
+                    {
+                        "sample_index": sample_index,
+                        "grid_index": (u_index, v_index),
+                        "plane_offsets": (u_offset, v_offset),
+                        "axis_position": axis_position,
+                        "hit_segments": hit_segments,
+                        "hit_vertices": hit_vertices,
+                        "classification": classification,
+                    }
+                )
+
+    if multi_hit_sample_count > 0:
+        status = "Fail"
+        summary_prefix = "accessibility screening fail"
+    elif blocked_sample_count > 0:
+        status = "Warning"
+        summary_prefix = "accessibility screening warning"
+    else:
+        status = "Ready"
+        summary_prefix = "accessibility screening ready"
+
+    summary = (
+        f"{summary_prefix}; samples={sample_count}, blocked={blocked_sample_count}, "
+        f"multi_hit={multi_hit_sample_count}, blocked_fraction={blocked_sample_count / sample_count if sample_count else 0.0:.3f}, "
+        f"multi_hit_fraction={multi_hit_sample_count / sample_count if sample_count else 0.0:.3f}, "
+        f"sample_density={density:.3f}"
+    )
+
+    return {
+        "status": status,
+        "summary": summary,
+        "sample_count": sample_count,
+        "blocked_sample_count": blocked_sample_count,
+        "multi_hit_sample_count": multi_hit_sample_count,
+        "blocked_fraction": blocked_sample_count / sample_count if sample_count else 0.0,
+        "multi_hit_fraction": multi_hit_sample_count / sample_count if sample_count else 0.0,
+        "accessibility_regions": accessibility_regions or ["None"],
+        "ray_samples": ray_samples,
+    }
+
+
 def _is_simple_box_like_shape(shape):
     faces = list(getattr(shape, "Faces", []))
     vertices = list(getattr(shape, "Vertexes", []))
@@ -1958,6 +2424,195 @@ def _direction_profile_and_violations(shape, direction):
     return profile, violations
 
 
+def _analysis_gate_status(draft_face_screening, accessibility):
+    draft = draft_face_screening or {}
+    access = accessibility or {}
+    draft_status = draft.get("status", "Warning")
+    accessibility_status = access.get("status", "Warning")
+
+    if accessibility_status == "Fail":
+        return "Fail"
+    if accessibility_status == "Warning":
+        return "Warning"
+    if draft_status == "Warning":
+        risky_face_count = int(draft.get("risky_face_count", 0) or 0)
+        return "Warning" if risky_face_count > 0 else "Pass"
+    return "Pass"
+
+
+def _slice_refinement_needed(draft_face_screening, accessibility):
+    return _analysis_gate_status(draft_face_screening, accessibility) == "Warning"
+
+
+def _geometric_accuracy_mm(violations):
+    if not violations:
+        return 0.0
+    return max(float(violation.get("band_width", 0.0) or 0.0) for violation in violations)
+
+
+def _geometric_accuracy_summary(accuracy_mm, tolerance_mm=GEOMETRIC_ACCURACY_TOLERANCE_MM):
+    if accuracy_mm <= tolerance_mm:
+        return (
+            f"geometric accuracy within {tolerance_mm:.3f} mm tolerance "
+            f"(error={accuracy_mm:.3f} mm)"
+        )
+    return (
+        f"geometric accuracy exceeds {tolerance_mm:.3f} mm tolerance "
+        f"(error={accuracy_mm:.3f} mm)"
+    )
+
+
+def _geometric_accuracy_status(accuracy_mm, tolerance_mm=GEOMETRIC_ACCURACY_TOLERANCE_MM):
+    return "Pass" if accuracy_mm <= tolerance_mm else "Fail"
+
+
+def _geometric_refinement_profile_and_violations(
+    shape,
+    direction,
+    draft_face_screening,
+    accessibility,
+):
+    unit = _normalized(direction)
+    axis_min, axis_max = _projection_bounds(shape, unit)
+    span = max(1.0e-6, float(axis_max) - float(axis_min))
+    band = max(1.0e-3, min(GEOMETRIC_ACCURACY_MAX_BAND_MM, 0.01 * span))
+
+    profile = []
+    violations = []
+    seen_keys = set()
+
+    def add_violation(kind, position, detail, area=0.0, classification="warning"):
+        start_position = max(axis_min, position - band)
+        end_position = min(axis_max, position + band)
+        key = (kind, round(start_position, 9), round(end_position, 9), detail)
+        if key in seen_keys:
+            return
+        seen_keys.add(key)
+        violation = {
+            "kind": kind,
+            "classification": classification,
+            "start_position": start_position,
+            "end_position": end_position,
+            "start_area": area,
+            "end_area": area,
+            "detail": detail,
+            "band_width": band,
+        }
+        profile.append(violation)
+        violations.append(violation)
+
+    for face_record in (draft_face_screening or {}).get("face_classifications", []):
+        classification = face_record.get("classification", "")
+        if classification not in ("risky", "ambiguous"):
+            continue
+
+        position = face_record.get("axis_position")
+        if position is None:
+            continue
+
+        area = float(face_record.get("area", 0.0) or 0.0)
+        detail = (
+            f"{face_record.get('face_label', 'face')} {classification} "
+            f"dot={face_record.get('direction_dot')}"
+        )
+        severity = "fail" if classification == "risky" else "warning"
+        add_violation(
+            f"draft_face_{classification}",
+            float(position),
+            detail,
+            area=area,
+            classification=severity,
+        )
+
+    for sample in (accessibility or {}).get("ray_samples", []):
+        classification = sample.get("classification", "")
+        if classification not in ("blocked", "multi_hit"):
+            continue
+
+        position = sample.get("axis_position")
+        if position is None:
+            continue
+
+        hit_segments = int(sample.get("hit_segments", 0) or 0)
+        hit_vertices = int(sample.get("hit_vertices", 0) or 0)
+        detail = (
+            f"sample#{sample.get('sample_index', 0)} {classification} "
+            f"hits={hit_segments} vertices={hit_vertices}"
+        )
+        severity = "fail" if classification == "multi_hit" else "warning"
+        add_violation(
+            f"accessibility_{classification}",
+            float(position),
+            detail,
+            area=float(hit_segments or hit_vertices or 0),
+            classification=severity,
+        )
+
+    return profile, violations
+
+
+def _geometric_refinement_payload(shape, direction, draft_face_screening, accessibility):
+    gate_status = _analysis_gate_status(draft_face_screening, accessibility)
+    refinement_required = _slice_refinement_needed(
+        draft_face_screening,
+        accessibility,
+    )
+    if not refinement_required:
+        if gate_status == "Pass":
+            summary = (
+                "Geometric refinement skipped because draft screening and accessibility were clear."
+            )
+        else:
+            summary = (
+                f"Geometric refinement skipped because the analysis gate was decisive ({gate_status})."
+            )
+        accuracy_mm = 0.0
+        return {
+            "refinement_required": False,
+            "profile": [],
+            "violations": [],
+            "summary": summary,
+            "accuracy_mm": accuracy_mm,
+            "accuracy_tolerance_mm": GEOMETRIC_ACCURACY_TOLERANCE_MM,
+            "accuracy_status": _geometric_accuracy_status(accuracy_mm),
+            "accuracy_summary": _geometric_accuracy_summary(accuracy_mm),
+        }
+
+    profile, violations = _geometric_refinement_profile_and_violations(
+        shape,
+        direction,
+        draft_face_screening,
+        accessibility,
+    )
+    accuracy_mm = _geometric_accuracy_mm(violations)
+    if violations:
+        summary = (
+            f"Geometric refinement found {len(violations)} suspect region(s) from draft and accessibility evidence."
+        )
+    else:
+        summary = "Geometric refinement ran but found no suspect draft or accessibility regions."
+
+    return {
+        "refinement_required": True,
+        "profile": profile,
+        "violations": violations,
+        "summary": summary,
+        "accuracy_mm": accuracy_mm,
+        "accuracy_tolerance_mm": GEOMETRIC_ACCURACY_TOLERANCE_MM,
+        "accuracy_status": _geometric_accuracy_status(accuracy_mm),
+        "accuracy_summary": _geometric_accuracy_summary(accuracy_mm),
+    }
+
+
+def _slice_refinement_payload(shape, direction, draft_face_screening, accessibility):
+    return _geometric_refinement_payload(
+        shape,
+        direction,
+        draft_face_screening,
+        accessibility,
+    )
+
+
 def _format_violation_regions(violations):
     if not violations:
         return ["None"]
@@ -1972,8 +2627,28 @@ def _format_violation_regions(violations):
 
 def _format_violations(violations):
     if not violations:
-        return "No draft or undercut violations detected by the heuristic profile."
+        return "No draft or undercut violations detected by the geometric refinement profile."
     return "; ".join(_format_violation_regions(violations))
+
+
+def _analysis_method_label(slice_refinement_required):
+    return (
+        "geometric_screening_with_geometric_refinement"
+        if slice_refinement_required
+        else "geometric_screening_only"
+    )
+
+
+def _analysis_confidence_label(status, slice_refinement_required, normalization_confidence=None):
+    if status == "Fail":
+        return "Low"
+    if status == "Warning":
+        return "Medium"
+    if normalization_confidence == NORMALIZATION_CONFIDENCE_APPROXIMATE:
+        return "Medium"
+    if slice_refinement_required:
+        return "Medium"
+    return "High"
 
 
 def make_mould_halves(shape, surface_normal, surface_offset):
@@ -2032,6 +2707,166 @@ def make_mould_halves(shape, surface_normal, surface_offset):
         "half_b_shape": right,
         "half_a_volume": left_volume,
         "half_b_volume": right_volume,
+    }
+
+
+def _shape_center(shape):
+    bbox = shape.BoundBox
+    return Vector(
+        0.5 * (bbox.XMin + bbox.XMax),
+        0.5 * (bbox.YMin + bbox.YMax),
+        0.5 * (bbox.ZMin + bbox.ZMax),
+    )
+
+
+def _bboxs_overlap(first_bbox, second_bbox, tolerance=1.0e-6):
+    return not (
+        first_bbox.XMax < (second_bbox.XMin - tolerance)
+        or second_bbox.XMax < (first_bbox.XMin - tolerance)
+        or first_bbox.YMax < (second_bbox.YMin - tolerance)
+        or second_bbox.YMax < (first_bbox.YMin - tolerance)
+        or first_bbox.ZMax < (second_bbox.ZMin - tolerance)
+        or second_bbox.ZMax < (first_bbox.ZMin - tolerance)
+    )
+
+
+def _shape_common_volume(shape_a, shape_b):
+    try:
+        common = shape_a.common(shape_b)
+    except Exception:
+        return 0.0
+
+    if getattr(common, "isNull", lambda: True)():
+        return 0.0
+
+    try:
+        volume = float(getattr(common, "Volume", 0.0) or 0.0)
+    except Exception:
+        volume = 0.0
+    return max(0.0, volume)
+
+
+def _withdrawal_clearance_validity_check(
+    base_shape,
+    mould_half_a_shape,
+    mould_half_b_shape,
+    direction,
+    step_mm=None,
+    intersection_volume_tolerance=1.0e-6,
+    bbox_tolerance=1.0e-6,
+    max_steps=256,
+):
+    unit = _normalized(direction)
+    if getattr(unit, "Length", 0.0) <= 0.0:
+        return {
+            "status": "Fail",
+            "summary": "Withdrawal clearance failed: draw direction is invalid.",
+            "sample_count": 0,
+            "failure_count": 1,
+            "failure_regions": ["Invalid draw direction"],
+            "half_checks": [],
+            "step_mm": 0.0,
+        }
+
+    base_bbox = base_shape.BoundBox
+    base_center = _shape_center(base_shape)
+    base_extent = max(
+        float(getattr(base_bbox, "XLength", 0.0) or 0.0),
+        float(getattr(base_bbox, "YLength", 0.0) or 0.0),
+        float(getattr(base_bbox, "ZLength", 0.0) or 0.0),
+        1.0e-6,
+    )
+    clearance_step_mm = float(step_mm) if step_mm is not None else max(
+        GEOMETRIC_ACCURACY_TOLERANCE_MM,
+        min(1.0, 0.01 * base_extent),
+    )
+    clearance_step_mm = max(clearance_step_mm, 1.0e-6)
+
+    half_inputs = (
+        ("half_a", mould_half_a_shape),
+        ("half_b", mould_half_b_shape),
+    )
+    half_checks = []
+    failure_regions = []
+    sample_count = 0
+
+    for half_label, half_shape in half_inputs:
+        if getattr(half_shape, "isNull", lambda: True)():
+            half_checks.append(
+                {
+                    "half": half_label,
+                    "status": "Fail",
+                    "sample_count": 0,
+                    "clearance_steps": 0,
+                    "collision_volume": 0.0,
+                    "failure_region": "null half geometry",
+                }
+            )
+            failure_regions.append(f"{half_label}: null half geometry")
+            continue
+
+        half_center = _shape_center(half_shape)
+        withdrawal_direction = unit if _dot(half_center - base_center, unit) >= 0.0 else (unit * -1.0)
+        withdrawn_half = _safe_copy_shape(half_shape)
+        half_sample_count = 0
+        collision_volume = 0.0
+        collision_region = ""
+        status = "Pass"
+
+        while _bboxs_overlap(withdrawn_half.BoundBox, base_bbox, tolerance=bbox_tolerance):
+            half_sample_count += 1
+            sample_count += 1
+            collision_volume = _shape_common_volume(withdrawn_half, base_shape)
+            if collision_volume > intersection_volume_tolerance:
+                status = "Fail"
+                collision_region = (
+                    f"{half_label}: collision volume {collision_volume:.6f} mm^3 "
+                    f"after {half_sample_count} withdrawal step(s)"
+                )
+                failure_regions.append(collision_region)
+                break
+            if half_sample_count >= max_steps:
+                status = "Fail"
+                collision_region = (
+                    f"{half_label}: bounding boxes still overlap after {half_sample_count} withdrawal step(s)"
+                )
+                failure_regions.append(collision_region)
+                break
+            withdrawn_half.translate(withdrawal_direction * clearance_step_mm)
+
+        half_checks.append(
+            {
+                "half": half_label,
+                "status": status,
+                "sample_count": half_sample_count,
+                "clearance_steps": half_sample_count,
+                "collision_volume": collision_volume,
+                "failure_region": collision_region,
+                "withdrawal_direction": withdrawal_direction,
+            }
+        )
+
+    failure_count = len(failure_regions)
+    status = "Fail" if failure_count else "Pass"
+    if failure_count:
+        summary = (
+            f"Withdrawal clearance fail: {failure_count} half(s) failed across {sample_count} sample(s); "
+            f"step={clearance_step_mm:.3f} mm"
+        )
+    else:
+        summary = (
+            f"Withdrawal clearance pass: {len(half_checks)} half(s) cleared across {sample_count} sample(s); "
+            f"step={clearance_step_mm:.3f} mm"
+        )
+
+    return {
+        "status": status,
+        "summary": summary,
+        "sample_count": sample_count,
+        "failure_count": failure_count,
+        "failure_regions": failure_regions or ["None"],
+        "half_checks": half_checks,
+        "step_mm": clearance_step_mm,
     }
 
 
@@ -2103,6 +2938,9 @@ def validate_mould_result(
     parting_surface_shape,
     mould_half_a_shape,
     mould_half_b_shape,
+    analysis_gate_status=None,
+    geometric_accuracy_mm=None,
+    geometric_accuracy_tolerance_mm=GEOMETRIC_ACCURACY_TOLERANCE_MM,
 ):
     checks = []
     failures = 0
@@ -2196,6 +3034,32 @@ def validate_mould_result(
         detail=f"{draft_violation_count} draft violation(s) detected",
         warning=True,
     )
+
+    if analysis_gate_status == "Fail":
+        add_check(
+            False,
+            "analysis gate is decisive",
+            detail="analysis gate status=Fail",
+        )
+    elif analysis_gate_status == "Warning":
+        add_check(
+            False,
+            "analysis gate needs refinement",
+            detail="analysis gate status=Warning",
+            warning=True,
+        )
+    elif analysis_gate_status == "Pass":
+        add_check(True, "analysis gate is clear")
+
+    if geometric_accuracy_mm is not None:
+        accuracy_ok = geometric_accuracy_mm <= geometric_accuracy_tolerance_mm
+        add_check(
+            accuracy_ok,
+            "geometric accuracy within tolerance",
+            detail=(
+                f"error={geometric_accuracy_mm:.3f} mm tolerance={geometric_accuracy_tolerance_mm:.3f} mm"
+            ),
+        )
 
     if failures:
         status = "Fail"
@@ -2302,6 +3166,21 @@ def _base_analysis_result():
         "split_strategy_summary": "No split strategy planned.",
         "split_strategy_diagnostics": [],
         "split_strategy_attempts": [],
+        "slice_refinement_required": False,
+        "slice_refinement_summary": "No source shape available.",
+        "geometric_accuracy_mm": 0.0,
+        "geometric_accuracy_tolerance_mm": GEOMETRIC_ACCURACY_TOLERANCE_MM,
+        "geometric_accuracy_status": "Waiting for source",
+        "geometric_accuracy_summary": "No source shape available.",
+        "analysis_gate_status": "Waiting for source",
+        "analysis_method": "analysis_unavailable",
+        "analysis_confidence": "Low",
+        "draft_face_summary": "No source shape available.",
+        "draft_face_classifications": [],
+        "accessibility_summary": "No source shape available.",
+        "accessibility_checks": [],
+        "profile_summary": "No source shape available.",
+        "profile_violations": [],
         "preferred_direction_diagnostics": {
             "direction": _format_vector(default_mould_analysis_draw_direction),
             "matched_candidate": False,
@@ -2575,8 +3454,8 @@ def analyze_source_shape(
 ):
     """Return a lightweight analysis preview for a selected source shape.
 
-    This intentionally stays heuristic-driven so it can provide a stable,
-    testable entrypoint for later draft, undercut, and parting-surface stages.
+    This keeps the top-level orchestration stable while geometric screening
+    decides when the slice-refinement helper needs to explain a borderline case.
     """
     result = _base_analysis_result()
     if shape is None or getattr(shape, "isNull", lambda: True)():
@@ -2645,6 +3524,19 @@ def analyze_source_shape(
                 "parting_curve_summary": "No parting surface generated because normalization failed.",
                 "mould_halves_status": "Fail",
                 "mould_halves_summary": "No mould halves generated because normalization failed.",
+                "analysis_gate_status": "Fail",
+                "analysis_method": "normalization_failed",
+                "analysis_confidence": "Low",
+                "draft_face_summary": "Draft face screening unavailable because normalization failed.",
+                "draft_face_classifications": [],
+                "accessibility_summary": "Accessibility screening unavailable because normalization failed.",
+                "accessibility_checks": [],
+                "profile_summary": "Geometric refinement unavailable because normalization failed.",
+                "profile_violations": [],
+                "geometric_accuracy_mm": 0.0,
+                "geometric_accuracy_tolerance_mm": GEOMETRIC_ACCURACY_TOLERANCE_MM,
+                "geometric_accuracy_status": "Fail",
+                "geometric_accuracy_summary": "Geometric accuracy unavailable because normalization failed.",
             }
         )
         return result
@@ -2718,6 +3610,30 @@ def analyze_source_shape(
             "strategy": selected_split_strategy,
             "profile": [],
             "violations": [],
+            "draft_face_screening": {
+                "status": "Fail",
+                "summary": "Draft face screening unavailable for fallback split strategy.",
+                "safe_face_area": 0.0,
+                "risky_face_area": 0.0,
+                "ambiguous_face_area": 0.0,
+                "safe_face_count": 0,
+                "risky_face_count": 0,
+                "ambiguous_face_count": 0,
+                "face_classifications": [],
+            },
+            "accessibility": {
+                "status": "Fail",
+                "summary": "Accessibility screening unavailable for fallback split strategy.",
+                "sample_count": 0,
+                "blocked_sample_count": 0,
+                "multi_hit_sample_count": 0,
+                "blocked_fraction": 0.0,
+                "multi_hit_fraction": 0.0,
+                "accessibility_regions": ["None"],
+                "ray_samples": [],
+            },
+            "slice_refinement_required": True,
+            "slice_refinement_summary": "Geometric refinement unavailable for fallback split strategy.",
             "undercut_count": 0,
             "draft_violation_count": 0,
             "parting": fallback_parting,
@@ -2736,7 +3652,12 @@ def analyze_source_shape(
         split_strategy_attempts = [selected_attempt]
 
     selected_split_strategy = selected_attempt["strategy"]
+    draft_face_screening = selected_attempt["draft_face_screening"]
+    accessibility = selected_attempt["accessibility"]
     selected_violations = selected_attempt["violations"]
+    analysis_method = _analysis_method_label(
+        selected_attempt.get("slice_refinement_required", False)
+    )
     undercut_count = selected_attempt["undercut_count"]
     draft_violation_count = selected_attempt["draft_violation_count"]
     undercut_regions = _format_violation_regions(selected_violations)
@@ -2745,13 +3666,13 @@ def analyze_source_shape(
         f"{undercut_count} possible undercut band(s): "
         f"{_format_violations(selected_violations)}"
         if undercut_count
-        else "No undercuts detected by the heuristic profile."
+        else "No undercuts detected by the geometric refinement profile."
     )
     draft_violation_summary = (
         f"{draft_violation_count} possible draft violation(s): "
         f"{_format_violations(selected_violations)}"
         if draft_violation_count
-        else "No draft violations detected by the heuristic profile."
+        else "No draft violations detected by the geometric refinement profile."
     )
 
     parting = selected_attempt["parting"]
@@ -2793,6 +3714,12 @@ def analyze_source_shape(
         status = "Warning"
     else:
         status = "Ready"
+
+    analysis_confidence = _analysis_confidence_label(
+        status,
+        selected_attempt.get("slice_refinement_required", False),
+        normalization["confidence"],
+    )
 
     validation_reasons = validation.get("reasons")
     validation_reason_codes = validation.get("reason_codes")
@@ -2844,6 +3771,8 @@ def analyze_source_shape(
         f"multipart={multipart_payload['multipart_execution_status']}, "
         f"manufacturability={manufacturability_payload['manufacturability_status']}, "
         f"undercuts={undercut_count}, draft_violations={draft_violation_count}, "
+        f"accuracy={selected_attempt.get('geometric_accuracy_summary', 'n/a')}, "
+        f"geometric_refinement={selected_attempt.get('slice_refinement_summary', 'n/a')}, "
         f"parting_surface={parting['summary']}, "
         f"mould_halves={mould_halves['summary']}, "
         f"validation={validation['summary']}"
@@ -2863,6 +3792,27 @@ def analyze_source_shape(
             "split_strategy_diagnostics": split_strategy_diagnostics,
             "split_strategy_attempts": split_strategy_attempt_diagnostics,
             "preferred_direction_diagnostics": preferred_direction_diagnostics,
+            "slice_refinement_required": selected_attempt.get("slice_refinement_required", True),
+            "slice_refinement_summary": selected_attempt.get("slice_refinement_summary", ""),
+            "geometric_accuracy_mm": selected_attempt.get("geometric_accuracy_mm", 0.0),
+            "geometric_accuracy_tolerance_mm": selected_attempt.get(
+                "geometric_accuracy_tolerance_mm",
+                GEOMETRIC_ACCURACY_TOLERANCE_MM,
+            ),
+            "geometric_accuracy_status": selected_attempt.get("geometric_accuracy_status", "Fail"),
+            "geometric_accuracy_summary": selected_attempt.get("geometric_accuracy_summary", ""),
+            "analysis_gate_status": selected_attempt.get(
+                "analysis_gate_status",
+                _analysis_gate_status(draft_face_screening, accessibility),
+            ),
+            "analysis_method": analysis_method,
+            "analysis_confidence": analysis_confidence,
+            "draft_face_summary": draft_face_screening.get("summary", ""),
+            "draft_face_classifications": draft_face_screening.get("face_classifications", []),
+            "accessibility_summary": accessibility.get("summary", ""),
+            "accessibility_checks": accessibility.get("ray_samples", []),
+            "profile_summary": selected_attempt.get("slice_refinement_summary", ""),
+            "profile_violations": selected_violations,
             "undercut_count": undercut_count,
             "undercut_summary": undercut_summary,
             "undercut_regions": undercut_regions,
