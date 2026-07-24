@@ -1,6 +1,7 @@
 # Non-Planar Parting Investigation
 
 **Date:** 2026-07-24 (rigorous rewrite)
+**Status (2026-07-25):** The false-confidence seam documented below is now **closed** — withdrawal clearance is wired into `analyze_source_shape` and is the authoritative verdict (WC=Fail escalates to Fail). The accessibility heuristic referenced in §"The false-confidence seam" has been removed; the analysis gate is now draft-only and informational. This doc is retained as the record of *why* planar parting was proven insufficient and *why* the seam existed. The recommended next model has since been superseded by the marching-equator C++ spec — see `non-planar-parting-requirements.md`.
 **Scope:** Determine whether the planar parting model is sufficient for the twisted `blade`/`loft` mould geometry, identify why the solver previously looked acceptable despite that, and recommend the next parting-surface model. Implementation of any non-planar model is explicitly blocked until the model is selected and approved.
 
 ## Conclusion (up front)
@@ -26,7 +27,7 @@ Measured via the committed `inspect_mould_results.py` inspector (`--direction {x
 Two facts stand out:
 
 - **No planar direction releases either shape.** Even the "best" direction leaves the mould halves colliding with the source on withdrawal. Planar parting is therefore insufficient for these geometries — a non-planar parting surface (or a fundamentally different parting model) is required.
-- **The analysis verdict disagrees with the authoritative test.** For 5 of 6 cases the analysis says `Warning` (releasable with caveats) while withdrawal clearance says `Fail` (un-releasable). The loft under +Z is the one case where the analysis gate itself goes `Fail` (a multi-hit accessibility sample — a real re-entrant region).
+- **The analysis verdict (at investigation time) disagreed with the authoritative test.** For 5 of 6 cases the analysis said `Warning` while withdrawal clearance said `Fail`. This was the symptom of the false-confidence seam documented below — now closed: withdrawal clearance is wired into the verdict, so blade/loft now truthfully report `Fail`.
 
 ## The false-confidence seam
 
@@ -35,9 +36,9 @@ Two facts stand out:
 - `compositestests/inspect_mould_results.py` (the inspection CLI)
 - `compositestests/test_mould_geometry.py` (direct unit tests of the helper)
 
-The analysis pipeline that produces `status` / `validation_status` therefore answers a *weaker* question — "do the draft-face screening and accessibility heuristics look plausible?" — not "can the mould actually withdraw?" A shape can pass the heuristics (Warning, not Fail) while being physically un-releasable. That is exactly what happens for blade under every direction and loft under +X/+Y.
+At investigation time, the analysis pipeline that produced `status` / `validation_status` answered a *weaker* question — "do the draft-face screening and accessibility heuristics look plausible?" — not "can the mould actually withdraw?" A shape could pass the heuristics (Warning, not Fail) while being physically un-releasable. That was the root cause of the historical false confidence: the necessary validity test existed but was not in the decision path.
 
-This is the root cause of the historical false confidence: the necessary validity test existed but was not in the decision path. The plan's "Necessary validity test" section already names withdrawal clearance as authoritative; the gap is that the code has not yet made it so.
+**This seam is now closed.** Withdrawal clearance is called per attempt inside `_evaluate_split_strategy_attempt`, its status is passed to `validate_mould_result`, and WC=Fail is a hard validation failure. The accessibility heuristic has been removed; the draft-face gate is informational only. The evidence table above reflects the state at investigation time (analysis=Warning, WC=Fail); under the current code the analysis status for blade/loft is `Fail` (WC-driven).
 
 ## Negative regression (committed)
 
