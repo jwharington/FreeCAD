@@ -1318,6 +1318,22 @@ def _face_midpoint_normal(face):
     return Vector(normal.x / length, normal.y / length, normal.z / length)
 
 
+def _face_parameter_grid(umin, umax, vmin, vmax, samples_per_axis):
+    """Uniform (u,v) sample grid over a face's parameter range."""
+    count = max(1, int(samples_per_axis or 0))
+    if count == 1:
+        return [0.5 * (umin + umax)], [0.5 * (vmin + vmax)]
+    u_values = [
+        umin + ((umax - umin) * index / (count - 1))
+        for index in range(count)
+    ]
+    v_values = [
+        vmin + ((vmax - vmin) * index / (count - 1))
+        for index in range(count)
+    ]
+    return u_values, v_values
+
+
 def _sample_face_draft_alignment(face, direction, samples_per_axis=5):
     unit = _normalized(direction)
     midpoint_normal = _face_midpoint_normal(face)
@@ -1337,19 +1353,7 @@ def _sample_face_draft_alignment(face, direction, samples_per_axis=5):
             "positive_sample_count": 0,
         }
 
-    sample_count_per_axis = max(1, int(samples_per_axis or 0))
-    if sample_count_per_axis == 1:
-        u_values = [0.5 * (umin + umax)]
-        v_values = [0.5 * (vmin + vmax)]
-    else:
-        u_values = [
-            umin + ((umax - umin) * index / (sample_count_per_axis - 1))
-            for index in range(sample_count_per_axis)
-        ]
-        v_values = [
-            vmin + ((vmax - vmin) * index / (sample_count_per_axis - 1))
-            for index in range(sample_count_per_axis)
-        ]
+    u_values, v_values = _face_parameter_grid(umin, umax, vmin, vmax, samples_per_axis)
 
     sample_count = 0
     negative_sample_count = 0
@@ -1392,6 +1396,253 @@ def _sample_face_draft_alignment(face, direction, samples_per_axis=5):
         "max_direction_dot": max_direction_dot,
         "negative_sample_count": negative_sample_count,
         "positive_sample_count": positive_sample_count,
+    }
+
+
+def _whole_side_draft_envelope(
+    shape,
+    direction,
+    samples_per_axis=5,
+    parting_offset=None,
+    max_samples_per_axis=32,
+    stability_epsilon=1.0e-3,
+):
+    """Aggregate worst draft per side of the planar parting split.
+
+    Each sample point is classified by its position relative to the parting
+    offset along the draw direction, not by its face centre, so a face that
+    spans the parting plane contributes to both sides. A side is releasable
+    when its outward normals point with that side's withdrawal direction
+    (+unit for the upper side, -unit for the lower side).
+
+    ``parting_offset`` defaults to the bounding-box midpoint along the draw
+    direction. Passing an explicit value probes off-centre parting planes, so
+    a convex shape (e.g. a sphere) can be shown releasable on both sides only
+    at its centre and on exactly one side elsewhere.
+
+    Sampling is adaptive: a uniform parametric grid can step over a thin
+    undercut band near the parting plane (a real false-negative, proven on an
+    off-centre sphere). The grid is refined, doubling per-axis resolution,
+    until each side's worst releasability stabilises within
+    ``stability_epsilon`` or ``max_samples_per_axis`` is reached. A box's
+    horizontal walls sit at exactly zero at every resolution, so they stabilise
+    on the first pass and trigger no extra work.
+    """
+    unit = _normalized(direction)
+    axis_min, axis_max = _projection_bounds(shape, unit)
+    if parting_offset is None:
+        parting_offset = 0.5 * (axis_min + axis_max)
+
+    def _evaluate(resolution):
+        upper_sample_count = 0
+        lower_sample_count = 0
+        upper_undercut_count = 0
+        lower_undercut_count = 0
+        skipped_sample_count = 0
+        upper_worst_releasability = None
+        lower_worst_releasability = None
+        per_face = []
+
+        for face_index, face in enumerate(getattr(shape, "Faces", []), start=1):
+            try:
+                umin, umax, vmin, vmax = face.ParameterRange
+            except Exception:
+                per_face.append(
+                    {
+                        "face_index": face_index,
+                        "upper_sample_count": 0,
+                        "lower_sample_count": 0,
+                        "skipped_sample_count": 0,
+                        "upper_undercut_count": 0,
+                        "lower_undercut_count": 0,
+                        "upper_worst_releasability": None,
+                        "lower_worst_releasability": None,
+                    }
+                )
+                continue
+            u_values, v_values = _face_parameter_grid(
+                umin, umax, vmin, vmax, resolution,
+            )
+
+            face_upper = 0
+            face_lower = 0
+            face_skipped = 0
+            face_upper_undercut = 0
+            face_lower_undercut = 0
+            face_upper_worst = None
+            face_lower_worst = None
+
+            for u in u_values:
+                for v in v_values:
+                    try:
+                        normal = face.normalAt(u, v)
+                        point = face.valueAt(u, v)
+                    except Exception:
+                        face_skipped += 1
+                        continue
+                    length = getattr(normal, "Length", 0.0)
+                    if not length:
+                        face_skipped += 1
+                        continue
+                    normal_unit = Vector(
+                        normal.x / length,
+                        normal.y / length,
+                        normal.z / length,
+                    )
+                    dot = _dot(normal_unit, unit)
+                    axis_pos = (
+                        point.x * unit.x + point.y * unit.y + point.z * unit.z
+                    )
+
+                    if axis_pos >= parting_offset:
+                        upper_sample_count += 1
+                        face_upper += 1
+                        if dot < 0.0:
+                            upper_undercut_count += 1
+                            face_upper_undercut += 1
+                        if face_upper_worst is None or dot < face_upper_worst:
+                            face_upper_worst = dot
+                    else:
+                        lower_sample_count += 1
+                        face_lower += 1
+                        releasability = -dot
+                        if dot > 0.0:
+                            lower_undercut_count += 1
+                            face_lower_undercut += 1
+                        if (
+                            face_lower_worst is None
+                            or releasability < face_lower_worst
+                        ):
+                            face_lower_worst = releasability
+
+            skipped_sample_count += face_skipped
+            per_face.append(
+                {
+                    "face_index": face_index,
+                    "upper_sample_count": face_upper,
+                    "lower_sample_count": face_lower,
+                    "skipped_sample_count": face_skipped,
+                    "upper_undercut_count": face_upper_undercut,
+                    "lower_undercut_count": face_lower_undercut,
+                    "upper_worst_releasability": face_upper_worst,
+                    "lower_worst_releasability": face_lower_worst,
+                }
+            )
+            if face_upper_worst is not None and (
+                upper_worst_releasability is None
+                or face_upper_worst < upper_worst_releasability
+            ):
+                upper_worst_releasability = face_upper_worst
+            if face_lower_worst is not None and (
+                lower_worst_releasability is None
+                or face_lower_worst < lower_worst_releasability
+            ):
+                lower_worst_releasability = face_lower_worst
+
+        return {
+            "upper_sample_count": upper_sample_count,
+            "lower_sample_count": lower_sample_count,
+            "upper_undercut_count": upper_undercut_count,
+            "lower_undercut_count": lower_undercut_count,
+            "skipped_sample_count": skipped_sample_count,
+            "upper_worst_releasability": upper_worst_releasability,
+            "lower_worst_releasability": lower_worst_releasability,
+            "per_face": per_face,
+        }
+
+    def _stable(prev, cur):
+        for key in ("upper_worst_releasability", "lower_worst_releasability"):
+            before = prev[key]
+            after = cur[key]
+            if before is None and after is None:
+                continue
+            if before is None or after is None:
+                return False
+            if abs(after - before) > stability_epsilon:
+                return False
+        return True
+
+    resolution = max(2, int(samples_per_axis or 0))
+    cap = max(resolution, int(max_samples_per_axis or 0))
+    refinement_trace = [resolution]
+    current = _evaluate(resolution)
+    while resolution < cap:
+        next_resolution = min(resolution * 2, cap)
+        refined = _evaluate(next_resolution)
+        refinement_trace.append(next_resolution)
+        if _stable(current, refined):
+            current = refined
+            break
+        current = refined
+        resolution = next_resolution
+
+    upper_sample_count = current["upper_sample_count"]
+    lower_sample_count = current["lower_sample_count"]
+    upper_undercut_count = current["upper_undercut_count"]
+    lower_undercut_count = current["lower_undercut_count"]
+    skipped_sample_count = current["skipped_sample_count"]
+    upper_worst_releasability = current["upper_worst_releasability"]
+    lower_worst_releasability = current["lower_worst_releasability"]
+    per_face = current["per_face"]
+
+    upper_undercut_fraction = (
+        upper_undercut_count / upper_sample_count if upper_sample_count else 0.0
+    )
+    lower_undercut_fraction = (
+        lower_undercut_count / lower_sample_count if lower_sample_count else 0.0
+    )
+
+    globally_negative_sides = []
+    if (
+        upper_sample_count > 0
+        and upper_worst_releasability is not None
+        and upper_worst_releasability < 0.0
+    ):
+        globally_negative_sides.append("upper")
+    if (
+        lower_sample_count > 0
+        and lower_worst_releasability is not None
+        and lower_worst_releasability < 0.0
+    ):
+        globally_negative_sides.append("lower")
+
+    if globally_negative_sides:
+        status = "Fail"
+        summary_prefix = "whole-side draft envelope fail"
+    elif upper_undercut_count > 0 or lower_undercut_count > 0:
+        status = "Warning"
+        summary_prefix = "whole-side draft envelope warning"
+    else:
+        status = "Pass"
+        summary_prefix = "whole-side draft envelope pass"
+
+    summary = (
+        f"{summary_prefix}; parting_offset={parting_offset:.3f}, "
+        f"upper_samples={upper_sample_count}, upper_undercut={upper_undercut_count}, "
+        f"upper_undercut_fraction={upper_undercut_fraction:.3f}, "
+        f"lower_samples={lower_sample_count}, lower_undercut={lower_undercut_count}, "
+        f"lower_undercut_fraction={lower_undercut_fraction:.3f}, "
+        f"skipped_samples={skipped_sample_count}, "
+        f"refinement_trace={refinement_trace}, "
+        f"globally_negative_sides={globally_negative_sides or ['none']}"
+    )
+
+    return {
+        "status": status,
+        "summary": summary,
+        "parting_offset": parting_offset,
+        "upper_sample_count": upper_sample_count,
+        "lower_sample_count": lower_sample_count,
+        "upper_undercut_count": upper_undercut_count,
+        "lower_undercut_count": lower_undercut_count,
+        "upper_undercut_fraction": upper_undercut_fraction,
+        "lower_undercut_fraction": lower_undercut_fraction,
+        "skipped_sample_count": skipped_sample_count,
+        "refinement_trace": refinement_trace,
+        "upper_worst_releasability": upper_worst_releasability,
+        "lower_worst_releasability": lower_worst_releasability,
+        "globally_negative_sides": globally_negative_sides,
+        "per_face": per_face,
     }
 
 

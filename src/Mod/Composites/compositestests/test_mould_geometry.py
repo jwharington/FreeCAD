@@ -35,6 +35,7 @@ from Composites.tools.mould_analysis import (
     _sample_draw_accessibility,
     _sample_face_draft_alignment,
     _withdrawal_clearance_validity_check,
+    _whole_side_draft_envelope,
     analyze_source_shape,
     default_mould_analysis_draw_direction,
     make_mould_halves,
@@ -45,6 +46,12 @@ from Composites.tools.mould_analysis import (
 from Composites.tools.profile_mould_analysis import (
     _make_blade_shape,
     _make_loft_shape,
+)
+from synthetic_mould_shapes import (
+    make_angled_cone,
+    make_sideways_cone,
+    make_sphere,
+    make_vertical_cone,
 )
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -199,6 +206,221 @@ class TestDraftFaceClassification(unittest.TestCase):
                 )
                 self.assertGreater(evidence["midpoint_dot"], 0.0)
                 self.assertLess(evidence["min_sample_dot"], 0.0)
+
+
+class TestWholeSideDraftEnvelope(unittest.TestCase):
+    """_whole_side_draft_envelope: per-side draft aggregation across the planar split.
+
+    Distinguishes a local midpoint miss (one face hides a local undercut) from
+    a true global parting-model failure (a whole side of the split is
+    unreleasable). Sample points are classified by position relative to the
+    parting offset, so a face spanning the parting plane feeds both sides.
+    """
+
+    def test_box_is_releasable_on_both_sides(self):
+        shape = _box()
+        result = _whole_side_draft_envelope(
+            shape,
+            default_mould_analysis_draw_direction,
+            samples_per_axis=5,
+        )
+        self.assertEqual(result["status"], "Pass")
+        self.assertEqual(result["upper_undercut_count"], 0)
+        self.assertEqual(result["lower_undercut_count"], 0)
+        self.assertEqual(result["globally_negative_sides"], [])
+
+    def test_blade_has_globally_negative_sides(self):
+        shape = _make_blade_shape()
+        result = _whole_side_draft_envelope(
+            shape,
+            default_mould_analysis_draw_direction,
+            samples_per_axis=5,
+        )
+        self.assertEqual(result["status"], "Fail")
+        self.assertEqual(set(result["globally_negative_sides"]), {"upper", "lower"})
+        self.assertGreater(result["upper_undercut_count"], 0)
+        self.assertGreater(result["lower_undercut_count"], 0)
+
+    def test_loft_has_globally_negative_sides(self):
+        shape = _make_loft_shape()
+        result = _whole_side_draft_envelope(
+            shape,
+            default_mould_analysis_draw_direction,
+            samples_per_axis=5,
+        )
+        self.assertEqual(result["status"], "Fail")
+        self.assertEqual(set(result["globally_negative_sides"]), {"upper", "lower"})
+        self.assertGreater(result["upper_undercut_count"], 0)
+        self.assertGreater(result["lower_undercut_count"], 0)
+
+    def test_spanning_face_contributes_to_both_sides(self):
+        # The lofted side wall is one face spanning the parting plane; its
+        # samples must land on both sides, proving per-sample classification
+        # rather than a face-centre split that would assign it to one side.
+        shape = _make_loft_shape()
+        result = _whole_side_draft_envelope(
+            shape,
+            default_mould_analysis_draw_direction,
+            samples_per_axis=5,
+        )
+        spanning = next(
+            face for face in result["per_face"]
+            if face["upper_sample_count"] > 0 and face["lower_sample_count"] > 0
+        )
+        self.assertGreater(spanning["upper_undercut_count"], 0)
+        self.assertGreater(spanning["lower_undercut_count"], 0)
+
+    def test_lower_side_is_the_severer_global_failure(self):
+        # On twisted geometry the camber hooks the lower mould half harder:
+        # lower-side worst releasability is more negative and its undercut
+        # fraction is higher than the upper side. This is the signal that
+        # separates a global parting-model failure from a local midpoint miss.
+        cases = {
+            "blade": _make_blade_shape(),
+            "loft": _make_loft_shape(),
+        }
+        for shape_name, shape in cases.items():
+            with self.subTest(shape=shape_name):
+                result = _whole_side_draft_envelope(
+                    shape,
+                    default_mould_analysis_draw_direction,
+                    samples_per_axis=5,
+                )
+                self.assertLess(
+                    result["lower_worst_releasability"],
+                    result["upper_worst_releasability"],
+                )
+                self.assertGreater(
+                    result["lower_undercut_fraction"],
+                    result["upper_undercut_fraction"],
+                )
+
+
+class TestDraftEnvelopePrimitives(unittest.TestCase):
+    """Cone and sphere primitives pin the envelope's sign logic and sampling.
+
+    The sphere is the canonical correctness probe: convex, so it is releasable
+    on both sides only when the parting plane passes through its centre, and
+    on exactly one side everywhere else. A uniform parametric grid can step
+    over the thin undercut band near an off-centre parting plane (a real
+    false-negative), so these tests also lock in the adaptive refinement that
+    catches it.
+    """
+
+    def test_sphere_center_parting_is_releasable_on_both_sides(self):
+        result = _whole_side_draft_envelope(
+            make_sphere(),
+            default_mould_analysis_draw_direction,
+            parting_offset=0.0,
+        )
+        self.assertEqual(result["status"], "Pass")
+        self.assertEqual(result["globally_negative_sides"], [])
+        self.assertEqual(result["upper_undercut_count"], 0)
+        self.assertEqual(result["lower_undercut_count"], 0)
+
+    def test_sphere_off_center_above_fails_only_lower_side(self):
+        result = _whole_side_draft_envelope(
+            make_sphere(),
+            default_mould_analysis_draw_direction,
+            parting_offset=5.0,
+        )
+        self.assertEqual(result["status"], "Fail")
+        self.assertEqual(result["globally_negative_sides"], ["lower"])
+        self.assertGreater(result["upper_worst_releasability"], 0.0)
+        self.assertLess(result["lower_worst_releasability"], 0.0)
+
+    def test_sphere_off_center_below_fails_only_upper_side(self):
+        result = _whole_side_draft_envelope(
+            make_sphere(),
+            default_mould_analysis_draw_direction,
+            parting_offset=-5.0,
+        )
+        self.assertEqual(result["status"], "Fail")
+        self.assertEqual(result["globally_negative_sides"], ["upper"])
+        self.assertGreater(result["lower_worst_releasability"], 0.0)
+        self.assertLess(result["upper_worst_releasability"], 0.0)
+
+    def test_sphere_at_most_one_side_unreleasable_across_offsets(self):
+        # Convexity invariant: a sphere never hooks both mould halves at once.
+        # The failing side must also flip with the sign of the offset.
+        for offset in (-8.0, -5.0, -2.0, 0.0, 2.0, 5.0, 8.0):
+            with self.subTest(offset=offset):
+                result = _whole_side_draft_envelope(
+                    make_sphere(),
+                    default_mould_analysis_draw_direction,
+                    parting_offset=offset,
+                )
+                self.assertLessEqual(len(result["globally_negative_sides"]), 1)
+                if offset > 0.0:
+                    self.assertEqual(result["globally_negative_sides"], ["lower"])
+                elif offset < 0.0:
+                    self.assertEqual(result["globally_negative_sides"], ["upper"])
+                else:
+                    self.assertEqual(result["globally_negative_sides"], [])
+
+    def test_sphere_off_center_triggers_adaptive_refinement(self):
+        # The thin undercut band near an off-centre parting plane is missed at
+        # the coarse default grid; adaptive refinement must engage to resolve it.
+        result = _whole_side_draft_envelope(
+            make_sphere(),
+            default_mould_analysis_draw_direction,
+            parting_offset=5.0,
+        )
+        self.assertGreater(len(result["refinement_trace"]), 2)
+        self.assertEqual(result["status"], "Fail")
+
+    def test_vertical_cone_fails_only_lower_side(self):
+        # Apex-up cone: side normals point up-and-out, so the lower mould half
+        # hooks withdrawing downward; the upper cap releases.
+        result = _whole_side_draft_envelope(
+            make_vertical_cone(),
+            default_mould_analysis_draw_direction,
+        )
+        self.assertEqual(result["status"], "Fail")
+        self.assertEqual(result["globally_negative_sides"], ["lower"])
+        self.assertGreater(result["upper_worst_releasability"], 0.0)
+
+    def test_sideways_cone_fails_only_upper_side(self):
+        # Cone lying along X with draw +X: the failing side is the upper (X+)
+        # half, proving the envelope attributes failure from real geometry, not
+        # a hardcoded upper/lower assumption.
+        result = _whole_side_draft_envelope(
+            make_sideways_cone(),
+            FreeCAD.Vector(1, 0, 0),
+        )
+        self.assertEqual(result["status"], "Fail")
+        self.assertEqual(result["globally_negative_sides"], ["upper"])
+        self.assertGreater(result["lower_worst_releasability"], 0.0)
+
+    def test_angled_cone_can_fail_both_sides(self):
+        # A cone tilted 45 degrees from the draw direction is convex, yet the
+        # oblique draw hooks both halves. Convexity alone does not guarantee a
+        # single-sided failure when the draw is not axis-aligned.
+        result = _whole_side_draft_envelope(
+            make_angled_cone(45.0),
+            default_mould_analysis_draw_direction,
+        )
+        self.assertEqual(result["status"], "Fail")
+        self.assertEqual(
+            set(result["globally_negative_sides"]), {"upper", "lower"}
+        )
+
+    def test_primitives_have_no_silent_sample_loss(self):
+        # A skipped sample is a swallowed normalAt/valueAt failure that could
+        # hide an undercut. On clean primitives the skipped count must be zero.
+        cases = {
+            "sphere": (make_sphere(), default_mould_analysis_draw_direction),
+            "cone-vertical": (
+                make_vertical_cone(),
+                default_mould_analysis_draw_direction,
+            ),
+            "cone-sideways": (make_sideways_cone(), FreeCAD.Vector(1, 0, 0)),
+            "box": (_box(), default_mould_analysis_draw_direction),
+        }
+        for name, (shape, direction) in cases.items():
+            with self.subTest(shape=name):
+                result = _whole_side_draft_envelope(shape, direction)
+                self.assertEqual(result["skipped_sample_count"], 0)
 
 
 class TestAccessibilitySampling(unittest.TestCase):

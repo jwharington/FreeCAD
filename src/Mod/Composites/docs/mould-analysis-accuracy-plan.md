@@ -448,10 +448,13 @@ Accuracy and performance are coupled here: a solver that leans on repeated `slic
   - Diagnostic use: this test should distinguish true local draft loss from a benign box-like face.
   - Evidence: the new regression helper samples each face on a grid and the test pins the `blade` / `loft` mismatch directly.
 
-- [ ] Add whole-side draft-envelope regressions that catch globally unreleasable mould sides.
+- [x] Add whole-side draft-envelope regressions that catch globally unreleasable mould sides.
   - Required check: sample multiple points on every face and aggregate the worst draft per candidate mould side.
   - Required check: fail when one full side of the planar split remains globally negative draft even if some faces look locally safe at the midpoint.
   - Diagnostic use: this test should distinguish a local midpoint miss from a true global parting-model failure on `blade` / `loft`.
+  - Evidence: `_whole_side_draft_envelope` classifies each sample point by its position relative to the planar parting offset (so a spanning face feeds both sides). `box` passes with zero undercuts on both sides; `blade` and `loft` fail with both sides globally negative. The lower side is the severer failure (blade: 37.5% undercut, worst releasability -0.159; loft: 32.5% undercut, worst -0.151) versus the upper side (blade: 8.6%, -0.035; loft: 17%, -0.039), confirming a global parting-model failure rather than a local midpoint miss.
+  - Robustness fix: the original uniform parametric grid produced a false negative on an off-centre sphere (a thin undercut band near the parting plane was stepped over, reported as Pass). The helper now tracks `skipped_sample_count` so swallowed `normalAt`/`valueAt` failures surface, accepts an explicit `parting_offset` to probe off-centre planes, and adaptively refines the grid (doubling per-axis resolution until each side's worst releasability stabilises) so thin bands are caught. A `refinement_trace` records the resolutions tried.
+  - Sign-logic proof: sphere primitives pin the upper/lower attribution — at centre both sides releasable; offset +R/2 fails only the lower side; offset -R/2 fails only the upper side (the failing side flips with the offset sign). Cone primitives cover draw-aligned single-sided failure (vertical cone fails lower; sideways cone fails upper under +X draw) and an oblique both-sides failure (45° cone), showing convexity alone does not guarantee a single-sided failure when the draw is not axis-aligned.
 
 - [ ] Add direct regression checks or diagnostic hooks for each suspected fault source:
   - Blocked: these checks should be written and run while fixing the quality regressions, but their results are only trustworthy once the fast-loop gate is clean.
