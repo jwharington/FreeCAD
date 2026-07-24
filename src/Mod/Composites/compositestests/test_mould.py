@@ -129,8 +129,14 @@ class TestMouldAnalysis(TestFreeCADFP):
         analysis = self._make_mould_analysis(source, name="MouldAnalysisLoft")
 
         self.assert_analysis_ready(analysis)
-        self.assertIn(analysis.AnalysisStatus, ("Ready", "Warning"))
-        self.assertIn(analysis.ValidationStatus, ("Pass", "Warning"))
+        # This tapered loft (wider base, narrower top) is truthfully un-releasable
+        # under a planar parting at the bbox midpoint: the mould opening at the
+        # parting plane is narrower than the base, so the base cannot withdraw
+        # through it. With withdrawal clearance wired into the verdict, the
+        # analysis reports Fail (not the historical Ready/Warning false
+        # confidence). The parting surface is still produced.
+        self.assertEqual(analysis.AnalysisStatus, "Fail")
+        self.assertEqual(analysis.ValidationStatus, "Fail")
         self.assertTrue(analysis.PartingSurfaceSummary)
 
     # ── Layer 3: error paths + correctness ──────────────────────────────

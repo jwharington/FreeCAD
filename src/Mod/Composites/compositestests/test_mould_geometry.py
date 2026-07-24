@@ -688,11 +688,14 @@ class TestAnalyzeSourceShape(unittest.TestCase):
         self.assertTrue(result["manufacturability_summary"])
 
     def test_fast_loop_shapes_separate_box_from_planar_limits(self):
-        # Each shape is analyzed under a draw direction where it is
-        # releasable (no multi-hit re-entrant region): box and blade under
-        # the default +Z, loft under +X (+Z has a genuine multi-hit re-entrance
-        # on the loft, so +Z is a bad user choice for it — exactly the signal
-        # an authoritative-direction analysis must surface).
+        # With withdrawal clearance wired into the analysis verdict, the
+        # twisted shapes truthfully report Fail under any planar direction:
+        # their mould halves physically collide with the source on withdrawal.
+        # This is the closed false-confidence seam — the analysis no longer
+        # reports Warning for shapes that are un-releasable. box stays Ready
+        # (it withdraws cleanly). The analysis_gate stays Warning/Fail (the
+        # heuristic signal is still reported separately) but the verdict is
+        # driven by the authoritative withdrawal-clearance check.
         cases = {
             "box": {
                 "direction": default_mould_analysis_draw_direction,
@@ -704,16 +707,16 @@ class TestAnalyzeSourceShape(unittest.TestCase):
             },
             "blade": {
                 "direction": default_mould_analysis_draw_direction,
-                "status": "Warning",
-                "validation_status": "Warning",
+                "status": "Fail",
+                "validation_status": "Fail",
                 "analysis_gate_status": "Warning",
                 "analysis_method": "geometric_screening_with_geometric_refinement",
                 "slice_refinement_required": True,
             },
             "loft": {
                 "direction": FreeCAD.Vector(1, 0, 0),
-                "status": "Warning",
-                "validation_status": "Warning",
+                "status": "Fail",
+                "validation_status": "Fail",
                 "analysis_gate_status": "Warning",
                 "analysis_method": "geometric_screening_with_geometric_refinement",
                 "slice_refinement_required": True,

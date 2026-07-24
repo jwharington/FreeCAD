@@ -210,6 +210,8 @@ We need one definitive test that answers only the question: "is this mould proce
 
 **Highest priority: develop this test first.** The mould system is considered entirely broken until this test exists and passes on the supported cases.
 
+**Status: the withdrawal-clearance check is now wired into the analysis verdict.** `_withdrawal_clearance_validity_check` is called inside `_evaluate_split_strategy_attempt` (per attempted draw direction), its status is passed into `validate_mould_result` as `withdrawal_clearance_status`, and WC=Fail is a hard validation failure that escalates the top-level `status` to `Fail`. The result dict surfaces `withdrawal_clearance_status` / `withdrawal_clearance_summary` / `withdrawal_clearance_failure_count`. This closes the false-confidence seam documented in the non-planar investigation: the analysis no longer reports `Warning` for shapes whose mould halves physically collide with the source on withdrawal. Consequence: `blade`/`loft` (and any tapered/twisted shape un-releasable under a planar midpoint parting) now truthfully report `Fail`; `box`/`cylinder` (constant or tapering-up cross-section) stay `Ready`. The heuristic `analysis_gate_status` remains a separate field so the user can see why (e.g. gate=Warning but WC=Fail).
+
 Required properties of the test:
 
 - target the actual mould split, not just helper outputs

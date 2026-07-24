@@ -134,8 +134,8 @@ static py::dict pack_result(const nextdrape::DrapeResult& result) {
     py::array_t<double> tex_coords({n_flat, py::ssize_t(2)});
     auto tc = tex_coords.mutable_unchecked<2>();
     for (ssize_t i = 0; i < n_flat; ++i) {
-        tc(i, 0) = result.texturePlan.flatNodes[i].X();
-        tc(i, 1) = result.texturePlan.flatNodes[i].Y();
+        tc(i, 0) = result.texturePlan.flatNodes[i].p.X();
+        tc(i, 1) = result.texturePlan.flatNodes[i].p.Y();
     }
     res["tex_coords"] = tex_coords;
 

@@ -1891,6 +1891,12 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         parting["surface_normal"],
         parting["surface_offset"],
     )
+    withdrawal_clearance = _withdrawal_clearance_validity_check(
+        shape,
+        mould_halves["half_a_shape"],
+        mould_halves["half_b_shape"],
+        strategy["direction"],
+    )
     validation = validate_mould_result(
         parting["status"],
         mould_halves["status"],
@@ -1902,6 +1908,7 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         analysis_gate_status=analysis_gate_status,
         geometric_accuracy_mm=refinement["accuracy_mm"],
         geometric_accuracy_tolerance_mm=refinement["accuracy_tolerance_mm"],
+        withdrawal_clearance_status=withdrawal_clearance["status"],
     )
 
     status = validation["status"]
@@ -1930,6 +1937,7 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         "draft_violation_count": draft_violation_count,
         "parting": parting,
         "mould_halves": mould_halves,
+        "withdrawal_clearance": withdrawal_clearance,
         "validation": validation,
         "status": status,
         "reason": reason,
@@ -3021,6 +3029,7 @@ def validate_mould_result(
     analysis_gate_status=None,
     geometric_accuracy_mm=None,
     geometric_accuracy_tolerance_mm=GEOMETRIC_ACCURACY_TOLERANCE_MM,
+    withdrawal_clearance_status=None,
 ):
     checks = []
     failures = 0
@@ -3130,6 +3139,19 @@ def validate_mould_result(
         )
     elif analysis_gate_status == "Pass":
         add_check(True, "analysis gate is clear")
+
+    # Withdrawal clearance is the authoritative necessary test: a mould half
+    # that collides with the source on withdrawal makes the mould invalid,
+    # regardless of what the draft/accessibility heuristics said. Fail is hard;
+    # there is no Warning state (the mould either withdraws or it does not).
+    if withdrawal_clearance_status == "Fail":
+        add_check(
+            False,
+            "mould withdraws without collision",
+            detail="withdrawal clearance fail: a mould half collides with the source on withdrawal",
+        )
+    elif withdrawal_clearance_status == "Pass":
+        add_check(True, "mould withdraws without collision")
 
     if geometric_accuracy_mm is not None:
         accuracy_ok = geometric_accuracy_mm <= geometric_accuracy_tolerance_mm
@@ -3277,6 +3299,9 @@ def _base_analysis_result():
         "mould_half_b_shape": Part.Shape(),
         "mould_half_a_volume": 0.0,
         "mould_half_b_volume": 0.0,
+        "withdrawal_clearance_status": "Waiting for source",
+        "withdrawal_clearance_summary": "No source shape available.",
+        "withdrawal_clearance_failure_count": 0,
         "validation_status": "Waiting for source",
         "validation_summary": "No source shape available.",
         "validation_checks": ["No source shape available."],
@@ -3740,6 +3765,7 @@ def analyze_source_shape(
 
     parting = selected_attempt["parting"]
     mould_halves = selected_attempt["mould_halves"]
+    withdrawal_clearance = selected_attempt["withdrawal_clearance"]
     validation = selected_attempt["validation"]
 
     split_strategy_summary = _format_split_strategy_summary(
@@ -3827,6 +3853,7 @@ def analyze_source_shape(
         f"geometric_refinement={selected_attempt.get('slice_refinement_summary', 'n/a')}, "
         f"parting_surface={parting['summary']}, "
         f"mould_halves={mould_halves['summary']}, "
+        f"withdrawal_clearance={withdrawal_clearance['status']}, "
         f"validation={validation['summary']}"
     )
 
@@ -3880,6 +3907,9 @@ def analyze_source_shape(
             "mould_half_b_shape": mould_halves["half_b_shape"],
             "mould_half_a_volume": mould_halves["half_a_volume"],
             "mould_half_b_volume": mould_halves["half_b_volume"],
+            "withdrawal_clearance_status": withdrawal_clearance["status"],
+            "withdrawal_clearance_summary": withdrawal_clearance["summary"],
+            "withdrawal_clearance_failure_count": withdrawal_clearance["failure_count"],
             "validation_status": validation["status"],
             "validation_summary": validation["summary"],
             "validation_checks": validation["checks"],
