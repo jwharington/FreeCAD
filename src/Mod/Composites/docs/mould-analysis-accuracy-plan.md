@@ -472,10 +472,16 @@ Accuracy and performance are coupled here: a solver that leans on repeated `slic
   - validation coupling: warning-grade screening must be isolated from validation so the propagation policy is testable.
     - Evidence: `TestValidateMouldResult.test_fail_when_analysis_gate_fails_with_otherwise_clean_mould` isolates the coupling — with a ready parting surface, valid halves, and zero undercuts/violations, the only failing signal is `analysis_gate_status="Fail"`, which escalates validation to Fail. The existing `test_warning_when_analysis_gate_needs_refinement` pins the mirror case: `analysis_gate_status="Warning"` stays a Warning (not Fail). Together they prove warning-grade screening does not auto-become a hard validation failure unless the gate actually fails. Top-level warning propagation is covered by `test_fast_loop_shapes_separate_box_from_planar_limits` (blade/loft yield Warning via `analyze_source_shape`).
 
-- [ ] Investigate candidate non-planar parting-surface models and choose the best one for twisted geometry.
+- [x] Investigate candidate non-planar parting-surface models and choose the best one for twisted geometry.
   - Required outputs: failing real-geometry examples, model comparison, deterministic testability analysis, and a recommendation for the solver architecture.
   - Required evidence: failing test output, result diffs, or benchmark logs that prove why the solver looked acceptable despite failing quality checks, plus the missing test seam that allowed the false confidence.
   - Required negative regression: twisted blade/loft geometry must prove that no planar parting surface is valid and must not be reported as Ready/Pass.
+  - Done: see `docs/non-planar-parting-investigation-2026-07-24.md` for the full investigation. Summary of findings:
+    - **Planar insufficiency proven, not assumed:** withdrawal clearance fails for every axis-aligned planar direction (+X/+Y/+Z) on both `blade` and `loft`. Evidence table captured via `inspect_mould_results.py --direction`.
+    - **False-confidence seam found:** `_withdrawal_clearance_validity_check` is defined in `mould_analysis.py` but never called by `analyze_source_shape`. The analysis verdict answers a weaker heuristic question, so it reports `Warning` for shapes that are physically un-releasable (WC=Fail). This is the root cause of the historical false confidence.
+    - **Negative regression committed:** `TestPlanarPartingInsufficiency` in `test_mould_geometry.py` pins that blade/loft fail WC under every planar direction and are never Ready/Pass under planar analysis.
+    - **Recommendation:** adopt the existing `make_part_plane` lofted-silhouette parting surface (generalised to the user draw direction) as the primary non-planar model, wired into `analyze_source_shape` behind the WC gate; keep `make_part_plane3` (reflect-line) as a fallback. The highest-leverage independent fix is making withdrawal clearance part of the analysis verdict so the false-confidence seam is closed regardless of parting-model progress.
+    - **Honest limits:** the non-planar builders have not yet been validated by WC (requires surface-based mould-half splitting, which `make_mould_halves` does not currently support), and they are Z-axis-specific (need generalising to an arbitrary draw direction).
   - Blocked: implementation of non-planar support does not start until the model is selected.
 
 - [ ] Benchmark the same shapes at 1.0 mm, 0.1 mm, and 0.01 mm accuracy tolerances and record how runtime scales across that ladder.
