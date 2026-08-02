@@ -138,7 +138,7 @@ PYBIND11_MODULE(Composites_parting, m) {
         py::arg("shape"), py::arg("draw_direction"),
         py::arg("stock_margin_xy") = 5.0,
         py::arg("stock_margin_z") = 5.0,
-        py::arg("part_line_sample_spacing") = 0.5,
+        py::arg("part_line_sample_spacing") = 2.0,
         py::arg("stock_footprint") = py::make_tuple(0.0, 0.0),
         "Compute a non-planar parting surface + mould halves for a FreeCAD "
         "Part.Shape along a user-specified draw direction. Returns a dict; "

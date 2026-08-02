@@ -54,7 +54,7 @@ class MouldAnalysisFP(CompositePartFP):
             "PartLineSampleSpacing",
             "MouldAnalysis",
             "Target spacing (mm) between samples along the part line",
-        ).PartLineSampleSpacing = 0.5
+        ).PartLineSampleSpacing = 2.0
 
         obj.addProperty(
             "App::PropertyFloat",
