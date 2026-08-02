@@ -76,12 +76,12 @@ PYBIND11_MODULE(Composites_parting, m) {
     // The single entry point the Python side calls.
     m.def("compute_non_planar_parting",
         [](py::object shape_obj, py::tuple direction,
-           double land_width, double stock_margin_xy, double stock_margin_z,
-           py::tuple footprint) {
+           double stock_margin_xy, double stock_margin_z,
+           double part_line_sample_spacing, py::tuple footprint) {
             nextdrape::PartingParams params;
-            params.landWidth    = land_width;
             params.stockMarginXY = stock_margin_xy;
             params.stockMarginZ  = stock_margin_z;
+            params.partLineSampleSpacingMm = part_line_sample_spacing;
             if (py::len(footprint) >= 2) {
                 params.stockFootprint.SetX(footprint[0].cast<double>());
                 params.stockFootprint.SetY(footprint[1].cast<double>());
@@ -136,9 +136,9 @@ PYBIND11_MODULE(Composites_parting, m) {
             );
         },
         py::arg("shape"), py::arg("draw_direction"),
-        py::arg("land_width") = 25.0,
         py::arg("stock_margin_xy") = 5.0,
         py::arg("stock_margin_z") = 5.0,
+        py::arg("part_line_sample_spacing") = 0.5,
         py::arg("stock_footprint") = py::make_tuple(0.0, 0.0),
         "Compute a non-planar parting surface + mould halves for a FreeCAD "
         "Part.Shape along a user-specified draw direction. Returns a dict; "

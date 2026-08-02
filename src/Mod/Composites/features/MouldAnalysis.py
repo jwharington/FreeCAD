@@ -51,10 +51,10 @@ class MouldAnalysisFP(CompositePartFP):
 
         obj.addProperty(
             "App::PropertyFloat",
-            "PartingLandWidth",
+            "PartLineSampleSpacing",
             "MouldAnalysis",
-            "Minimum parting-surface projection width (mm) for the non-planar skirt",
-        ).PartingLandWidth = 25.0
+            "Target spacing (mm) between samples along the part line",
+        ).PartLineSampleSpacing = 0.5
 
         obj.addProperty(
             "App::PropertyFloat",
@@ -254,9 +254,9 @@ class MouldAnalysisFP(CompositePartFP):
             fp.PreferredDrawDirection,
             source_obj=fp.Source,
             parting_model=fp.PartingModel,
-            parting_land_width=fp.PartingLandWidth,
             parting_stock_margin_xy=fp.PartingStockMarginXY,
             parting_stock_margin_z=fp.PartingStockMarginZ,
+            parting_sample_spacing=fp.PartLineSampleSpacing,
             parting_stock_footprint=stock_footprint,
         )
         fp.AnalysisStatus = result["status"]
@@ -286,7 +286,7 @@ class MouldAnalysisFP(CompositePartFP):
             "Source",
             "PreferredDrawDirection",
             "PartingModel",
-            "PartingLandWidth",
+            "PartLineSampleSpacing",
             "PartingStockMarginXY",
             "PartingStockMarginZ",
             "PartingStockFootprint",
