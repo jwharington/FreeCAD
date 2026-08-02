@@ -51,10 +51,10 @@ class MouldAnalysisFP(CompositePartFP):
 
         obj.addProperty(
             "App::PropertyFloat",
-            "PartLineSampleSpacing",
+            "PartLineTolerance",
             "MouldAnalysis",
             "Target spacing (mm) between samples along the part line",
-        ).PartLineSampleSpacing = 2.0
+        ).PartLineTolerance = 0.1
 
         obj.addProperty(
             "App::PropertyFloat",
@@ -256,7 +256,7 @@ class MouldAnalysisFP(CompositePartFP):
             parting_model=fp.PartingModel,
             parting_stock_margin_xy=fp.PartingStockMarginXY,
             parting_stock_margin_z=fp.PartingStockMarginZ,
-            parting_sample_spacing=fp.PartLineSampleSpacing,
+            parting_line_tolerance=fp.PartLineTolerance,
             parting_stock_footprint=stock_footprint,
         )
         fp.AnalysisStatus = result["status"]
@@ -286,7 +286,7 @@ class MouldAnalysisFP(CompositePartFP):
             "Source",
             "PreferredDrawDirection",
             "PartingModel",
-            "PartLineSampleSpacing",
+            "PartLineTolerance",
             "PartingStockMarginXY",
             "PartingStockMarginZ",
             "PartingStockFootprint",

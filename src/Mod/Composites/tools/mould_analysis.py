@@ -763,7 +763,7 @@ def _plan_split_strategies(ranked, limit=MAX_SPLIT_STRATEGIES):
                 "draft_face_screening": item.get("draft_face_screening"),
                 "analysis_gate_status": item.get("analysis_gate_status"),
                 "parting_model": item.get("parting_model", "Planar"),
-            "parting_sample_spacing": item.get("parting_sample_spacing", 2.0),
+            "parting_line_tolerance": item.get("parting_line_tolerance", 0.1),
                 "parting_stock_margin_xy": item.get("parting_stock_margin_xy", 5.0),
                 "parting_stock_margin_z": item.get("parting_stock_margin_z", 5.0),
                 "parting_stock_footprint": item.get("parting_stock_footprint"),
@@ -801,7 +801,7 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         non_planar_result = _propose_non_planar_parting(
             shape,
             strategy["direction"],
-            part_line_sample_spacing=strategy.get("parting_sample_spacing", 2.0),
+            part_line_tolerance=strategy.get("parting_line_tolerance", 0.1),
             stock_margin_xy=strategy.get("parting_stock_margin_xy", 5.0),
             stock_margin_z=strategy.get("parting_stock_margin_z", 5.0),
             stock_footprint=strategy.get("parting_stock_footprint"),
@@ -1216,7 +1216,7 @@ def _propose_non_planar_parting(
     direction,
     stock_margin_xy=5.0,
     stock_margin_z=5.0,
-    part_line_sample_spacing=2.0,
+    part_line_tolerance=0.1,
     stock_footprint=None,
 ):
     """Call the C++ marching-equator solver and map to the Phase 0 contract.
@@ -1257,7 +1257,7 @@ def _propose_non_planar_parting(
             (float(direction.x), float(direction.y), float(direction.z)),
             float(stock_margin_xy),
             float(stock_margin_z),
-            float(part_line_sample_spacing),
+            float(part_line_tolerance),
             footprint,
         )
     except Exception as exc:
@@ -2134,7 +2134,7 @@ def analyze_source_shape(
     parting_model="Planar",
     parting_stock_margin_xy=5.0,
     parting_stock_margin_z=5.0,
-    parting_sample_spacing=2.0,
+    parting_line_tolerance=0.1,
     parting_stock_footprint=None,
 ):
     """Return a lightweight analysis preview for a selected source shape.
@@ -2221,7 +2221,7 @@ def analyze_source_shape(
             "analysis_gate_status": preferred_evidence["analysis_gate_status"],
             "geometric_evidence": preferred_evidence,
             "parting_model": parting_model,
-            "parting_sample_spacing": parting_sample_spacing,
+            "parting_line_tolerance": parting_line_tolerance,
             "parting_stock_margin_xy": parting_stock_margin_xy,
             "parting_stock_margin_z": parting_stock_margin_z,
             "parting_stock_footprint": parting_stock_footprint,
