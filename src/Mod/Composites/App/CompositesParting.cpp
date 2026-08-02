@@ -26,9 +26,11 @@
 #include <gp_Dir.hxx>
 #include <gp_XY.hxx>
 #include <sstream>
+#include <vector>
 
 // nextdrape
-#include <nextdrape/NonPlanarPartingSolver.hpp>
+#include <nextdrape/partline/FaceSegment.hpp>
+#include <nextdrape/partline/NonPlanarPartingSolver.hpp>
 
 namespace py = pybind11;
 
@@ -60,16 +62,26 @@ static py::object wrap_shape(const TopoDS_Shape& occ_shape) {
     return py::bytes(stream.str());
 }
 
+static py::list wrap_points3d(const std::vector<gp_Pnt>& points) {
+    py::list result;
+    for (const auto& p : points) {
+        result.append(py::make_tuple(p.X(), p.Y(), p.Z()));
+    }
+    return result;
+}
+
 PYBIND11_MODULE(Composites_parting, m) {
     m.doc() = "Non-planar marching-equator parting solver (nextdrape C++).";
 
     // The single entry point the Python side calls.
     m.def("compute_non_planar_parting",
         [](py::object shape_obj, py::tuple direction,
-           double land_width, double stock_margin, py::tuple footprint) {
+           double land_width, double stock_margin_xy, double stock_margin_z,
+           py::tuple footprint) {
             nextdrape::PartingParams params;
-            params.landWidth   = land_width;
-            params.stockMargin  = stock_margin;
+            params.landWidth    = land_width;
+            params.stockMarginXY = stock_margin_xy;
+            params.stockMarginZ  = stock_margin_z;
             if (py::len(footprint) >= 2) {
                 params.stockFootprint.SetX(footprint[0].cast<double>());
                 params.stockFootprint.SetY(footprint[1].cast<double>());
@@ -91,11 +103,30 @@ PYBIND11_MODULE(Composites_parting, m) {
                     wrap_shape(tfm.face), tfm.zMidpoint));
             }
 
+            // Marshal the UV chain directly: one dict per marched segment.
+            py::list segments;
+            for (const auto& segment : r.partLine) {
+                const auto* faceSegment = dynamic_cast<const nextdrape::FaceSegment*>(segment.get());
+                if (!faceSegment) continue;
+                py::list uvSamples;
+                for (const auto& sample : faceSegment->uvSamples()) {
+                    uvSamples.append(py::make_tuple(sample.X(), sample.Y()));
+                }
+                segments.append(py::dict(
+                    py::arg("face") = wrap_shape(faceSegment->face_),
+                    py::arg("uv_samples") = uvSamples,
+                    py::arg("points_3d") = wrap_points3d(faceSegment->points3d())
+                ));
+            }
+
+            const py::object partLine3d = wrap_shape(r.partLine3d);
+            const py::list partLineSegments = segments;
             return py::dict(
                 py::arg("success")               = ok,
                 py::arg("status")                = nextdrape::PartingStatusToString(r.status),
                 py::arg("summary")               = r.summary,
-                py::arg("part_line_3d")           = wrap_shape(r.partLine3d),
+                py::arg("part_line_3d")           = partLine3d,
+                py::arg("part_line_segments")     = partLineSegments,
                 py::arg("upper_shell")           = wrap_shape(r.upperShell),
                 py::arg("lower_shell")           = wrap_shape(r.lowerShell),
                 py::arg("mould_half_upper")      = wrap_shape(r.mouldHalfUpper),
@@ -105,7 +136,9 @@ PYBIND11_MODULE(Composites_parting, m) {
             );
         },
         py::arg("shape"), py::arg("draw_direction"),
-        py::arg("land_width") = 25.0, py::arg("stock_margin") = 0.1,
+        py::arg("land_width") = 25.0,
+        py::arg("stock_margin_xy") = 5.0,
+        py::arg("stock_margin_z") = 5.0,
         py::arg("stock_footprint") = py::make_tuple(0.0, 0.0),
         "Compute a non-planar parting surface + mould halves for a FreeCAD "
         "Part.Shape along a user-specified draw direction. Returns a dict; "

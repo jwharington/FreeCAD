@@ -58,10 +58,17 @@ class MouldAnalysisFP(CompositePartFP):
 
         obj.addProperty(
             "App::PropertyFloat",
-            "PartingStockMargin",
+            "PartingStockMarginXY",
             "MouldAnalysis",
-            "Stock-block margin as a fraction of the source bbox",
-        ).PartingStockMargin = 0.1
+            "Lateral stock-block margin (mm) in the draw-perpendicular plane",
+        ).PartingStockMarginXY = 5.0
+
+        obj.addProperty(
+            "App::PropertyFloat",
+            "PartingStockMarginZ",
+            "MouldAnalysis",
+            "Draw-direction clearance (mm) between the part bbox and the mould cap",
+        ).PartingStockMarginZ = 5.0
 
         obj.addProperty(
             "App::PropertyVector",
@@ -248,7 +255,8 @@ class MouldAnalysisFP(CompositePartFP):
             source_obj=fp.Source,
             parting_model=fp.PartingModel,
             parting_land_width=fp.PartingLandWidth,
-            parting_stock_margin=fp.PartingStockMargin,
+            parting_stock_margin_xy=fp.PartingStockMarginXY,
+            parting_stock_margin_z=fp.PartingStockMarginZ,
             parting_stock_footprint=stock_footprint,
         )
         fp.AnalysisStatus = result["status"]
@@ -279,7 +287,8 @@ class MouldAnalysisFP(CompositePartFP):
             "PreferredDrawDirection",
             "PartingModel",
             "PartingLandWidth",
-            "PartingStockMargin",
+            "PartingStockMarginXY",
+            "PartingStockMarginZ",
             "PartingStockFootprint",
         ):
             fp.recompute()

@@ -18,6 +18,8 @@ GEOMETRY_BACKFACE_WEIGHT = 0.25
 DRAFT_FACE_ALIGNMENT_MARGIN = 0.25
 MAX_SPLIT_STRATEGIES = 2
 WITHDRAWAL_CLEARANCE_STEP_MM = 0.1
+PARTING_LINE_ATTACHMENT_TOLERANCE_MM = 1.0e-2
+PARTING_LINE_ATTACHMENT_SAMPLES = 8
 
 
 def _safe_copy_shape(shape):
@@ -762,7 +764,8 @@ def _plan_split_strategies(ranked, limit=MAX_SPLIT_STRATEGIES):
                 "analysis_gate_status": item.get("analysis_gate_status"),
                 "parting_model": item.get("parting_model", "Planar"),
                 "parting_land_width": item.get("parting_land_width", 25.0),
-                "parting_stock_margin": item.get("parting_stock_margin", 0.1),
+                "parting_stock_margin_xy": item.get("parting_stock_margin_xy", 5.0),
+                "parting_stock_margin_z": item.get("parting_stock_margin_z", 5.0),
                 "parting_stock_footprint": item.get("parting_stock_footprint"),
                 "status": "planned",
                 "reason": "top-ranked draw-direction strategy",
@@ -799,7 +802,8 @@ def _evaluate_split_strategy_attempt(shape, strategy):
             shape,
             strategy["direction"],
             land_width=strategy.get("parting_land_width", 25.0),
-            stock_margin=strategy.get("parting_stock_margin", 0.1),
+            stock_margin_xy=strategy.get("parting_stock_margin_xy", 5.0),
+            stock_margin_z=strategy.get("parting_stock_margin_z", 5.0),
             stock_footprint=strategy.get("parting_stock_footprint"),
         )
     if non_planar_result is not None and non_planar_result["status"] != "NotImplemented":
@@ -831,12 +835,32 @@ def _evaluate_split_strategy_attempt(shape, strategy):
             parting["surface_normal"],
             parting["surface_offset"],
         )
-    withdrawal_clearance = _withdrawal_clearance_validity_check(
-        shape,
+    essential_validation = validate_mould_result(
+        parting["status"],
+        mould_halves["status"],
+        parting["shape"],
         mould_halves["half_a_shape"],
         mould_halves["half_b_shape"],
-        strategy["direction"],
+        source_shape=shape,
+        parting_line_shape=(non_planar_result or {}).get("parting_line"),
     )
+    if essential_validation["status"] == "Pass":
+        withdrawal_clearance = _withdrawal_clearance_validity_check(
+            shape,
+            mould_halves["half_a_shape"],
+            mould_halves["half_b_shape"],
+            strategy["direction"],
+        )
+    else:
+        withdrawal_clearance = {
+            "status": "Skipped",
+            "summary": "Withdrawal clearance skipped because essential geometry validation failed.",
+            "sample_count": 0,
+            "failure_count": 0,
+            "failure_regions": [],
+            "half_checks": [],
+            "step_mm": 0.0,
+        }
     validation = validate_mould_result(
         parting["status"],
         mould_halves["status"],
@@ -844,6 +868,8 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         mould_halves["half_a_shape"],
         mould_halves["half_b_shape"],
         withdrawal_clearance_status=withdrawal_clearance["status"],
+        source_shape=shape,
+        parting_line_shape=(non_planar_result or {}).get("parting_line"),
     )
 
     status = validation["status"]
@@ -1152,15 +1178,16 @@ def propose_parting_surface(shape, direction):
 def _import_parting_solver():
     """Lazily import the Composites_parting C++ binding.
 
-    Returns the module callable, or None if the binding is unavailable
-    (e.g. FreeCAD built without the C++ extension). Importing lazily keeps
-    `mould_analysis` loadable headless without the .so present.
+    Returns a `(callable, error_message)` pair. The callable is `None` when the
+    binding is unavailable (for example, if FreeCAD was built without the C++
+    extension). Importing lazily keeps `mould_analysis` loadable headless
+    without the .so present.
     """
     try:
         import Composites_parting  # noqa: F401
-        return Composites_parting.compute_non_planar_parting
-    except ImportError:
-        return None
+        return Composites_parting.compute_non_planar_parting, ""
+    except ImportError as exc:
+        return None, str(exc)
 
 
 def _decode_parting_brep(brep_bytes):
@@ -1188,29 +1215,36 @@ def _propose_non_planar_parting(
     shape,
     direction,
     land_width=25.0,
-    stock_margin=0.1,
+    stock_margin_xy=5.0,
+    stock_margin_z=5.0,
     stock_footprint=None,
 ):
     """Call the C++ marching-equator solver and map to the Phase 0 contract.
 
     Returns a dict shaped for `_evaluate_split_strategy_attempt`'s
     non-planar path: `status` ("ready" | "not_implemented" | "fork_degenerate"
-    | ...), `summary`, `parting_surface` (the 3D part line), `lower_shell` /
-    `upper_shell` (the split source halves), `skirt_rays`, and
-    `tangent_face_midpoints` diagnostics. On any non-ready status the caller
-    falls back to the planar path.
+    | ...), `summary`, `parting_line` (the 3D part line),
+    `parting_line_segments` (the face-attached UV chain), `parting_surface`
+    (alias for the part line), `lower_shell` / `upper_shell` (the split source
+    halves), `skirt_rays`, and `tangent_face_midpoints` diagnostics. On any
+    non-ready status the caller falls back to the planar path.
     """
-    compute = _import_parting_solver()
+    compute, import_error = _import_parting_solver()
     if compute is None:
+        summary = "Composites_parting binding unavailable"
+        if import_error:
+            summary = f"{summary}: {import_error}"
         return {
             "status": "NotImplemented",
-            "summary": "Composites_parting binding unavailable (nextdrape C++ pending).",
+            "summary": summary,
+            "parting_line": None,
             "parting_surface": None,
+            "parting_line_segments": [],
             "lower_shell": None,
             "upper_shell": None,
             "skirt_rays": [],
             "tangent_face_midpoints": [],
-            "error": "Composites_parting binding unavailable",
+            "error": summary,
         }
 
     footprint = (0.0, 0.0)
@@ -1222,14 +1256,17 @@ def _propose_non_planar_parting(
             shape,
             (float(direction.x), float(direction.y), float(direction.z)),
             float(land_width),
-            float(stock_margin),
+            float(stock_margin_xy),
+            float(stock_margin_z),
             footprint,
         )
     except Exception as exc:
         return {
             "status": "NotImplemented",
             "summary": f"Composites_parting binding raised: {exc}",
+            "parting_line": None,
             "parting_surface": None,
+            "parting_line_segments": [],
             "lower_shell": None,
             "upper_shell": None,
             "skirt_rays": [],
@@ -1253,7 +1290,9 @@ def _propose_non_planar_parting(
         return {
             "status": normalized,
             "summary": raw["summary"],
+            "parting_line": None,
             "parting_surface": None,
+            "parting_line_segments": raw.get("part_line_segments", []),
             "lower_shell": None,
             "upper_shell": None,
             "skirt_rays": [],
@@ -1262,13 +1301,15 @@ def _propose_non_planar_parting(
         }
 
     # success: decode the BREP bytes back into Part shapes.
-    parting_surface = _decode_parting_brep(raw.get("part_line_3d"))
+    parting_line = _decode_parting_brep(raw.get("part_line_3d"))
     lower_shell = _decode_parting_brep(raw.get("mould_half_lower"))
     upper_shell = _decode_parting_brep(raw.get("mould_half_upper"))
     return {
         "status": "ready",
         "summary": raw["summary"],
-        "parting_surface": parting_surface,
+        "parting_line": parting_line,
+        "parting_surface": parting_line,
+        "parting_line_segments": raw.get("part_line_segments", []),
         "lower_shell": lower_shell,
         "upper_shell": upper_shell,
         "skirt_rays": [],
@@ -1383,6 +1424,61 @@ def _shape_common_volume(shape_a, shape_b):
     except Exception:
         volume = 0.0
     return max(0.0, volume)
+
+
+def _sample_shape_points(shape, samples_per_edge=PARTING_LINE_ATTACHMENT_SAMPLES):
+    points = []
+    for edge in getattr(shape, "Edges", []):
+        try:
+            edge_points = edge.discretize(samples_per_edge)
+        except Exception:
+            continue
+        points.extend(edge_points)
+    if points:
+        return points
+
+    for vertex in getattr(shape, "Vertexes", []):
+        point = getattr(vertex, "Point", None)
+        if point is not None:
+            points.append(point)
+    return points
+
+
+def _point_distance_to_shape(shape, point):
+    try:
+        distance, _, _ = shape.distToShape(Part.Vertex(point))
+    except Exception:
+        return None
+    try:
+        return float(distance)
+    except Exception:
+        return None
+
+
+def _parting_line_stays_on_source(parting_line_shape, source_shape,
+                                  tolerance_mm=PARTING_LINE_ATTACHMENT_TOLERANCE_MM):
+    if getattr(source_shape, "isNull", lambda: True)():
+        return False, "source shape is unavailable"
+
+    sample_points = _sample_shape_points(parting_line_shape)
+    if not sample_points:
+        return False, "parting line has no sampleable geometry"
+
+    measured = False
+    for point in sample_points:
+        distance = _point_distance_to_shape(source_shape, point)
+        if distance is None:
+            continue
+        measured = True
+        if distance > tolerance_mm:
+            return False, (
+                f"sampled point is {distance:.4f} mm from the source surface "
+                f"(tolerance {tolerance_mm:.4f} mm)"
+            )
+
+    if not measured:
+        return False, "could not measure parting line attachment to source"
+    return True, ""
 
 
 def _withdrawal_clearance_validity_check(
@@ -1576,6 +1672,8 @@ def validate_mould_result(
     mould_half_a_shape,
     mould_half_b_shape,
     withdrawal_clearance_status=None,
+    source_shape=None,
+    parting_line_shape=None,
 ):
     checks = []
     failures = 0
@@ -1639,6 +1737,22 @@ def validate_mould_result(
         parting_shape_valid,
         "parting surface shape is valid",
     )
+    if source_shape is not None and parting_line_shape is not None:
+        parting_line_valid = shape_is_non_null_and_valid(parting_line_shape)
+        add_check(
+            parting_line_valid,
+            "parting line shape is valid",
+        )
+        if parting_line_valid:
+            parting_line_attached, attachment_detail = _parting_line_stays_on_source(
+                parting_line_shape,
+                source_shape,
+            )
+            add_check(
+                parting_line_attached,
+                "parting line stays on source shape",
+                detail=attachment_detail or "detached from source surface",
+            )
     add_check(
         not mould_half_a_is_null,
         "mould half A geometry is non-null",
@@ -2019,7 +2133,8 @@ def analyze_source_shape(
     source_obj=None,
     parting_model="Planar",
     parting_land_width=25.0,
-    parting_stock_margin=0.1,
+    parting_stock_margin_xy=5.0,
+    parting_stock_margin_z=5.0,
     parting_stock_footprint=None,
 ):
     """Return a lightweight analysis preview for a selected source shape.
@@ -2107,7 +2222,8 @@ def analyze_source_shape(
             "geometric_evidence": preferred_evidence,
             "parting_model": parting_model,
             "parting_land_width": parting_land_width,
-            "parting_stock_margin": parting_stock_margin,
+            "parting_stock_margin_xy": parting_stock_margin_xy,
+            "parting_stock_margin_z": parting_stock_margin_z,
             "parting_stock_footprint": parting_stock_footprint,
         }
     ]
@@ -2268,6 +2384,7 @@ def analyze_source_shape(
             "withdrawal_clearance_failure_count": withdrawal_clearance["failure_count"],
             "parting_model": selected_split_strategy.get("parting_model", "Planar"),
             "parting_line": (selected_attempt.get("non_planar_result") or {}).get("parting_line"),
+            "parting_line_segments": (selected_attempt.get("non_planar_result") or {}).get("parting_line_segments", []),
             "parting_skirt_rays": (selected_attempt.get("non_planar_result") or {}).get("skirt_rays", []),
             "non_planar_status": (
                 (selected_attempt.get("non_planar_result") or {}).get("status")

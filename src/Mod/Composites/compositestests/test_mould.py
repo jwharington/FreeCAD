@@ -273,7 +273,8 @@ class TestNonPlanarPartingInterface(TestFreeCADFP):
         obj = self._make_analysis(source)
         self.assertEqual(obj.PartingModel, "Planar")
         self.assertAlmostEqual(obj.PartingLandWidth, 25.0, places=6)
-        self.assertAlmostEqual(obj.PartingStockMargin, 0.1, places=6)
+        self.assertAlmostEqual(obj.PartingStockMarginXY, 5.0, places=6)
+        self.assertAlmostEqual(obj.PartingStockMarginZ, 5.0, places=6)
         fp = obj.PartingStockFootprint
         self.assertAlmostEqual(fp.x, 0.0, places=6)
         self.assertAlmostEqual(fp.y, 0.0, places=6)
@@ -341,7 +342,8 @@ class TestNonPlanarPartingInterface(TestFreeCADFP):
             default_mould_analysis_draw_direction,
             parting_model="NonPlanar",
             parting_land_width=40.0,
-            parting_stock_margin=0.2,
+            parting_stock_margin_xy=5.0,
+            parting_stock_margin_z=5.0,
             parting_stock_footprint=(50.0, 40.0),
         )
         # The params thread through to the C++ solver; a box is degenerate
