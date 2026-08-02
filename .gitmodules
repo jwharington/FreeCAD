@@ -24,3 +24,6 @@
 [submodule "src/3rdParty/nextdrape"]
 	path = src/3rdParty/nextdrape
 	url = https://github.com/jwharington/nextdrape.git
+[submodule "src/3rdParty/AnalysisSitus"]
+	path = src/3rdParty/AnalysisSitus
+	url = https://gitlab.com/ssv/AnalysisSitus.git
