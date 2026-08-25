@@ -1190,27 +1190,6 @@ def _import_parting_solver():
         return None, str(exc)
 
 
-def _decode_parting_brep(brep_bytes):
-    """Decode BREP bytes from the binding into a Part.Shape (None if empty)."""
-    import os
-    import tempfile
-    import Part
-
-    if not isinstance(brep_bytes, (bytes, bytearray)):
-        return None
-    fd, path = tempfile.mkstemp(suffix=".brep")
-    try:
-        os.write(fd, brep_bytes)
-        os.close(fd)
-        fd = -1
-        shape = Part.read(path)
-        return shape if (shape is not None and not shape.isNull()) else None
-    finally:
-        if fd >= 0:
-            os.close(fd)
-        os.unlink(path)
-
-
 def _propose_non_planar_parting(
     shape,
     direction,
@@ -1252,6 +1231,18 @@ def _propose_non_planar_parting(
         footprint = (float(stock_footprint.x), float(stock_footprint.y))
 
     try:
+        # Reproduction aid for the nextdrape mould_cli --load-shapefile harness:
+        # when FC_PARTING_DUMP_DIR is set, write the EXACT shape + draw direction
+        # that feed the binding, so the solver can be debugged at the nextdrape
+        # level on byte-identical geometry.
+        import os as _os
+        _dump = _os.environ.get("FC_PARTING_DUMP_DIR")
+        if _dump:
+            _bbox = shape.BoundBox
+            _tag = f"{_bbox.XLength:.0f}x{_bbox.YLength:.0f}x{_bbox.ZLength:.0f}_{_bbox.Center.x:.0f}_{_bbox.Center.y:.0f}_{_bbox.Center.z:.0f}"
+            shape.exportBrep(_os.path.join(_dump, f"{_tag}.brep"))
+            with open(_os.path.join(_dump, f"{_tag}.dir"), "w") as f:
+                f.write(f"{float(direction.x)},{float(direction.y)},{float(direction.z)}\n")
         raw = compute(
             shape,
             (float(direction.x), float(direction.y), float(direction.z)),
@@ -1300,10 +1291,10 @@ def _propose_non_planar_parting(
             "error": raw["summary"],
         }
 
-    # success: decode the BREP bytes back into Part shapes.
-    parting_line = _decode_parting_brep(raw.get("part_line_3d"))
-    lower_shell = _decode_parting_brep(raw.get("mould_half_lower"))
-    upper_shell = _decode_parting_brep(raw.get("mould_half_upper"))
+    # success: shapes are already live Part.Shape objects from the binding.
+    parting_line = raw.get("part_line_3d")
+    lower_shell = raw.get("mould_half_lower")
+    upper_shell = raw.get("mould_half_upper")
     return {
         "status": "ready",
         "summary": raw["summary"],

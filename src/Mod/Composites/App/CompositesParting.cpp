@@ -1,9 +1,10 @@
 // Composites_parting.cpp — pybind11 binding for the non-planar parting solver.
 //
-// Mirrors CompositesDrape.cpp's conventions:
-//   - zero-copy TopoDS_Shape extraction via static_cast<Part::TopoShapePy*>
-//   - BREP-serialize (BRepTools::Write) for returning shapes to Python
-//   - a thin free function over a temporary solver instance
+// Mirrors CompositesDrape.cpp's conventions where possible, except that shapes
+// are returned to Python directly as live Part.Shape objects (constructing a
+// Part::TopoShapePy in C++) rather than as BREP bytes. This avoids the
+// serialize-to-bytes / temp-file / Part.read round-trip entirely — both sides
+// already speak OCCT, so the pybind boundary hands over the Python object.
 //
 // The Python side (_propose_non_planar_parting in tools/mould_analysis.py)
 // calls compute_non_planar_parting(), maps the result dict to the Phase 0
@@ -21,16 +22,16 @@
 #include <Mod/Part/App/TopoShape.h>
 
 // OpenCASCADE
-#include <BRepTools.hxx>
 #include <TopoDS_Shape.hxx>
+#include <TopoDS_Compound.hxx>
 #include <gp_Dir.hxx>
 #include <gp_XY.hxx>
-#include <sstream>
 #include <vector>
 
 // nextdrape
 #include <nextdrape/partline/FaceSegment.hpp>
-#include <nextdrape/partline/NonPlanarPartingSolver.hpp>
+#include <nextdrape/partline/HLRPartingSolver.hpp>
+#include <nextdrape/mould/MouldHelper.hpp>
 
 namespace py = pybind11;
 
@@ -52,14 +53,21 @@ static TopoDS_Shape extract_topods_shape(PyObject* obj) {
     return topo->getShape();
 }
 
-// BREP-serialize a TopoDS_Shape back to Python as bytes. Python decodes via
-// Part.read (temp file) — same pattern as CompositesDrape::extract_seam and
-// tools/seam_extraction.py::_decode_brep.
+// Hand a TopoDS_Shape to Python directly as a live Part.Shape object (None if
+// empty). Builds the FreeCAD Python wrapper in C++ — the same object
+// Py::asObject(new TopoShapePy(...)) produces — and transfers ONE owned
+// reference to pybind. The PyCXX PythonExtensionBase starts at refcount 0, so
+// the pointer must be bumped to 1 (_XINCREF, as Py::new_reference_to does)
+// before reinterpret_steal hands ownership to Python. Without that increment
+// the object is handed over at refcount 0 and the dict fill corrupts/frees it.
 static py::object wrap_shape(const TopoDS_Shape& occ_shape) {
     if (occ_shape.IsNull()) return py::none();
-    std::ostringstream stream;
-    BRepTools::Write(occ_shape, stream);
-    return py::bytes(stream.str());
+    // `new` already yields refcount 1 (FreeCAD's Base::PyObjectBase
+    // re-initializes it after PyCXX's base sets 0), so reinterpret_steal hands
+    // that one owned reference to pybind directly. A manual incref here would
+    // over-reference by 1 and free the object while Python still holds it.
+    PyObject* obj = new Part::TopoShapePy(new Part::TopoShape(occ_shape));
+    return py::reinterpret_steal<py::object>(obj);
 }
 
 static py::list wrap_points3d(const std::vector<gp_Pnt>& points) {
@@ -92,41 +100,60 @@ PYBIND11_MODULE(Composites_parting, m) {
                      direction[1].cast<double>(),
                      direction[2].cast<double>());
 
-            nextdrape::NonPlanarPartingSolver solver;
+            nextdrape::HLRPartingSolver solver;
             bool ok = solver.Solve(source, D, params);
             const auto& r = solver.Result();
 
-            // Marshal tangent_face_midpoints: list of (face_brep_bytes, z_mid).
+            // Marshal tangent_face_midpoints: list of (face_shape, z_mid).
             py::list midpoints;
             for (const auto& tfm : r.tangentFaceMidpoints) {
                 midpoints.append(py::make_tuple(
                     wrap_shape(tfm.face), tfm.zMidpoint));
             }
 
-            // Marshal the UV chain directly: one dict per marched segment.
+            // Derive the part-line 3D shape on demand from the canonical
+            // segment chain (never a cached duplicate; partLine3d was removed).
+            // Inlined in the dict so the returned shape's lifetime is owned by
+            // the dict -> Python (a separate named local would be decref'd at
+            // lambda exit, freeing the object the returned dict still holds).
+
+            // Marshal the part line: one dict per marched segment. Every segment
+            // kind is included (face-crossing FaceSegment and edge/silhouette
+            // EdgeSegment), tagged by type, so the list is a uniform per-segment
+            // contract across all shapes — not only the face segments.
             py::list segments;
             for (const auto& segment : r.partLine) {
-                const auto* faceSegment = dynamic_cast<const nextdrape::FaceSegment*>(segment.get());
-                if (!faceSegment) continue;
+                if (!segment) continue;
                 py::list uvSamples;
-                for (const auto& sample : faceSegment->uvSamples()) {
-                    uvSamples.append(py::make_tuple(sample.X(), sample.Y()));
+                if (const auto* fs = dynamic_cast<const nextdrape::FaceSegment*>(segment.get())) {
+                    for (const auto& sample : fs->uvSamples()) {
+                        uvSamples.append(py::make_tuple(sample.X(), sample.Y()));
+                    }
+                    segments.append(py::dict(
+                        py::arg("type") = "face",
+                        py::arg("face") = wrap_shape(fs->face_),
+                        py::arg("uv_samples") = uvSamples,
+                        py::arg("points_3d") = wrap_points3d(fs->points3d())
+                    ));
+                } else {
+                    // Edge segment (silhouette / boundary edge). No face UV:
+                    // carry the 3D points and leave face/uv_samples unset.
+                    segments.append(py::dict(
+                        py::arg("type") = "edge",
+                        py::arg("face") = py::none(),
+                        py::arg("uv_samples") = uvSamples,
+                        py::arg("points_3d") = wrap_points3d(segment->points3d())
+                    ));
                 }
-                segments.append(py::dict(
-                    py::arg("face") = wrap_shape(faceSegment->face_),
-                    py::arg("uv_samples") = uvSamples,
-                    py::arg("points_3d") = wrap_points3d(faceSegment->points3d())
-                ));
             }
 
-            const py::object partLine3d = wrap_shape(r.partLine3d);
-            const py::list partLineSegments = segments;
             return py::dict(
                 py::arg("success")               = ok,
                 py::arg("status")                = nextdrape::PartingStatusToString(r.status),
                 py::arg("summary")               = r.summary,
-                py::arg("part_line_3d")           = partLine3d,
-                py::arg("part_line_segments")     = partLineSegments,
+                py::arg("part_line_3d")           = wrap_shape(nextdrape::BuildSegmentCurveCompound(
+                    r.partLine, params.linearTolMm)),
+                py::arg("part_line_segments")     = segments,
                 py::arg("upper_shell")           = wrap_shape(r.upperShell),
                 py::arg("lower_shell")           = wrap_shape(r.lowerShell),
                 py::arg("mould_half_upper")      = wrap_shape(r.mouldHalfUpper),
@@ -143,5 +170,5 @@ PYBIND11_MODULE(Composites_parting, m) {
         "Compute a non-planar parting surface + mould halves for a FreeCAD "
         "Part.Shape along a user-specified draw direction. Returns a dict; "
         "success=True iff the mould halves are valid (status == ready). "
-        "Shapes are returned as BREP bytes; decode via Part.read.");
+        "Shapes are returned as live Part.Shape objects directly.");
 }

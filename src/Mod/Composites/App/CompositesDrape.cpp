@@ -23,10 +23,10 @@
 #include <sstream>
 
 // nextdrape
-#include <nextdrape/DrapeEngine.hpp>
-#include <nextdrape/Types.hpp>
-#include <nextdrape/Utilities.hpp>
-#include <nextdrape/SeamOverlapSolver.hpp>
+#include <nextdrape/drape/DrapeEngine.hpp>
+#include <nextdrape/shared/Types.hpp>
+#include <nextdrape/shared/Utilities.hpp>
+#include <nextdrape/seam/SeamOverlapSolver.hpp>
 
 namespace py = pybind11;
 

@@ -61,12 +61,29 @@ if(COMPOSITES_BUILD_CPP)
             ${CMAKE_CURRENT_SOURCE_DIR}
             ${CMAKE_CURRENT_BINARY_DIR}
             ${CMAKE_SOURCE_DIR}/src/3rdParty/libkdtree
+            ${CMAKE_SOURCE_DIR}/src/3rdParty/nextdrape/include
     )
+
+    # nextdrape_core links the prebuilt Analysis Situs libs (libasiAlgo.so et
+    # al), which live outside the install prefix. cmake --install rewrites the
+    # build-tree RPATH to the install lib dir only, dropping the AS lib dir and
+    # leaving the installed module unable to find libasiAlgo.so at runtime. Re-
+    # apply it via INSTALL_RPATH on each module that links nextdrape_core so the
+    # installed .so still resolves Analysis Situs (mirrors the standalone
+    # nextdrape CLI, which ships its AS RPATH).
+    if(NEXTDRAPE_ANALYSIS_SITUS_LIB_DIR)
+        set(Composites_AS_RPATH
+            "${CMAKE_INSTALL_PREFIX}/lib;${NEXTDRAPE_ANALYSIS_SITUS_LIB_DIR}")
+    else()
+        set(Composites_AS_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+    endif()
 
     # ── Composites_drape: the draping solver + seam extraction binding ──
     add_library(Composites_drape MODULE App/CompositesDrape.cpp)
     target_include_directories(Composites_drape ${Composites_CPP_INC})
     target_link_libraries(Composites_drape ${Composites_LIBS})
+    set_target_properties(Composites_drape PROPERTIES
+        INSTALL_RPATH "${Composites_AS_RPATH}")
     SET_BIN_DIR(Composites_drape Composites_drape)
     SET_PYTHON_PREFIX_SUFFIX(Composites_drape)
     install(TARGETS Composites_drape
@@ -81,7 +98,9 @@ if(COMPOSITES_BUILD_CPP)
     # No Qt in this target — disable AUTOMOC/AUTOUIC so it doesn't collide with
     # Composites_drape's autogen output paths (both would otherwise generate
     # the same ui_*.h under the shared Composites autogen dir).
-    set_target_properties(Composites_parting PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+    set_target_properties(Composites_parting PROPERTIES
+        AUTOMOC OFF AUTOUIC OFF AUTORCC OFF
+        INSTALL_RPATH "${Composites_AS_RPATH}")
     target_include_directories(Composites_parting ${Composites_CPP_INC})
     target_link_libraries(Composites_parting ${Composites_LIBS})
     SET_BIN_DIR(Composites_parting Composites_parting)

@@ -16,6 +16,7 @@ analysis status/ranking) — not just 'shape not null'. Uses programmatic
 primitives with known geometry plus the 'propblade' real-world fixture.
 """
 
+import math
 import os
 import unittest
 
@@ -58,6 +59,24 @@ def _box(dx=20.0, dy=15.0, dz=10.0):
     """A solid box centered on the origin is NOT what these helpers expect;
     they read shape.BoundBox, so place at origin for predictable bounds."""
     return Part.makeBox(dx, dy, dz, FreeCAD.Vector(0, 0, 0))
+
+
+def _make_twisted_loft_shape():
+    def make_rect(z, width, height, twist_rad):
+        points = []
+        for index in range(4):
+            cx = -width / 2.0 if index in (0, 3) else width / 2.0
+            cy = -height / 2.0 if index < 2 else height / 2.0
+            x = cx * math.cos(twist_rad) - cy * math.sin(twist_rad)
+            y = cx * math.sin(twist_rad) + cy * math.cos(twist_rad)
+            points.append(FreeCAD.Vector(x, y, z))
+        points.append(points[0])
+        return Part.makePolygon(points)
+
+    return Part.makeLoft([
+        make_rect(0.0, 20.0, 6.0, 0.0),
+        make_rect(20.0, 14.0, 4.0, math.pi / 6.0),
+    ], solid=True)
 
 
 class TestProposePartingSurface(unittest.TestCase):
@@ -711,41 +730,73 @@ class TestPlanarPartingInsufficiency(unittest.TestCase):
 
 
 class TestNonPlanarPartingSolver(unittest.TestCase):
-    """Phase 2 acceptance: the non-planar solver on the blade/loft freeforms.
+    """Phase 2 acceptance: the non-planar solver on the baseline shapes.
 
-    The planar model fails WC on blade/loft under every direction (pinned by
-    TestPlanarPartingInsufficiency). The non-planar solver should release them
-    for at least one direction (WC=Pass). These tests are the acceptance gate
-    for the C++ marching-equator solver wired through the Composites_parting
-    binding.
+    The part-line contract is checked at the lowest level first: the solver
+    must return Ready, expose a part line, and surface UV-chain diagnostics
+    for the freeform cases.
     """
 
     def _analyze(self, shape, direction):
-        return analyze_source_shape(
-            shape, direction, parting_model="NonPlanar"
-        )
+        return analyze_source_shape(shape, direction, parting_model="NonPlanar")
+
+    def _assert_uv_segments(self, label, result):
+        segments = result.get("parting_line_segments", [])
+        self.assertIsInstance(segments, list, msg=f"{label}: parting_line_segments must be a list")
+        self.assertGreater(len(segments), 0, msg=f"{label}: expected part-line segments")
+        for segment in segments:
+            # Every segment carries a type tag and its 3D samples; face segments
+            # additionally carry face + matching uv_samples.
+            self.assertIn("type", segment, msg=f"{label}: segment is missing type")
+            self.assertIn(segment["type"], ("face", "edge"), msg=f"{label}: bad segment type")
+            self.assertIn("points_3d", segment, msg=f"{label}: segment is missing 3D samples")
+            self.assertGreaterEqual(len(segment["points_3d"]), 2, msg=f"{label}: too few 3D samples")
+            if segment["type"] == "face":
+                self.assertIn("face", segment, msg=f"{label}: face segment is missing face geometry")
+                self.assertIn("uv_samples", segment, msg=f"{label}: face segment is missing UV samples")
+                self.assertEqual(len(segment["uv_samples"]), len(segment["points_3d"]),
+                                 msg=f"{label}: UV/3D sample counts must match")
+
+    def _assert_parting_geometry(self, shape, direction, label):
+        result = self._analyze(shape, direction)
+        self.assertEqual(result["non_planar_status"], "ready",
+                         msg=f"{label}: {result.get('non_planar_summary', '')}")
+        self.assertEqual(result["withdrawal_clearance_status"], "Pass",
+                         msg=f"{label} WC: {result.get('non_planar_summary', '')}")
+        self._assert_uv_segments(label, result)
 
     def test_box_non_planar_releases(self):
-        # Control: a box is releasable under NonPlanar (degenerate path).
-        result = self._analyze(_box(), default_mould_analysis_draw_direction)
-        self.assertEqual(result["status"], "Ready")
-        self.assertEqual(result["withdrawal_clearance_status"], "Pass")
+        self._assert_parting_geometry(_box(), default_mould_analysis_draw_direction, "box")
 
-    def test_blade_non_planar_releases(self):
-        # The blade under NonPlanar — the load-bearing case. The planar model
-        # fails WC under +Z; the non-planar solver should release it.
-        result = self._analyze(_make_blade_shape(), default_mould_analysis_draw_direction)
-        self.assertEqual(result["non_planar_status"], "ready",
-                         msg=f"blade: {result.get('non_planar_summary', '')}")
-        self.assertEqual(result["withdrawal_clearance_status"], "Pass",
-                         msg=f"blade WC: {result.get('non_planar_summary', '')}")
+    def test_cylinder_non_planar_releases(self):
+        self._assert_parting_geometry(Part.makeCylinder(5.0, 20.0),
+                                   default_mould_analysis_draw_direction, "cylinder")
+
+    def test_sphere_non_planar_releases(self):
+        self._assert_parting_geometry(make_sphere(), default_mould_analysis_draw_direction, "sphere")
+
+    def test_cone_on_side_non_planar_releases(self):
+        self._assert_parting_geometry(make_sideways_cone(), FreeCAD.Vector(1, 0, 0), "cone-on-side")
+
+    def test_cone_non_planar_releases(self):
+        self._assert_parting_geometry(make_vertical_cone(), default_mould_analysis_draw_direction, "cone")
+
+    def test_side_cone_non_planar_releases(self):
+        self._assert_parting_geometry(make_sideways_cone(), FreeCAD.Vector(1, 0, 0), "side-cone")
 
     def test_loft_non_planar_releases(self):
-        result = self._analyze(_make_loft_shape(), FreeCAD.Vector(1, 0, 0))
+        self._assert_parting_geometry(_make_loft_shape(), default_mould_analysis_draw_direction, "loft")
+
+    def test_blade_non_planar_releases(self):
+        self._assert_parting_geometry(_make_blade_shape(), default_mould_analysis_draw_direction, "blade")
+
+    def test_twisted_loft_non_planar_releases(self):
+        result = self._analyze(_make_twisted_loft_shape(), default_mould_analysis_draw_direction)
         self.assertEqual(result["non_planar_status"], "ready",
-                         msg=f"loft: {result.get('non_planar_summary', '')}")
+                         msg=f"twisted loft: {result.get('non_planar_summary', '')}")
         self.assertEqual(result["withdrawal_clearance_status"], "Pass",
-                         msg=f"loft WC: {result.get('non_planar_summary', '')}")
+                         msg=f"twisted loft WC: {result.get('non_planar_summary', '')}")
+        self._assert_uv_segments("twisted loft", result)
 
 
 class TestValidateMouldResult(unittest.TestCase):
@@ -789,6 +840,43 @@ class TestValidateMouldResult(unittest.TestCase):
             withdrawal_clearance_status="Pass",
         )
         self.assertEqual(result["status"], "Pass")
+
+    def test_withdrawal_clearance_skipped_on_invalid_geometry(self):
+        source = _box()
+        detached_parting = Part.makePolygon([
+            FreeCAD.Vector(100.0, 100.0, 100.0),
+            FreeCAD.Vector(110.0, 100.0, 100.0),
+        ])
+        result = validate_mould_result(
+            "Ready",
+            "Ready",
+            source,
+            source,
+            source,
+            withdrawal_clearance_status="Skipped",
+            source_shape=source,
+            parting_line_shape=detached_parting,
+        )
+        self.assertEqual(result["status"], "Fail")
+        self.assertFalse(any("withdraw" in check.lower() for check in result["checks"]))
+
+    def test_fail_on_detached_parting_surface(self):
+        source = _box()
+        detached_parting = Part.makePolygon([
+            FreeCAD.Vector(100.0, 100.0, 100.0),
+            FreeCAD.Vector(110.0, 100.0, 100.0),
+        ])
+        result = validate_mould_result(
+            "Ready",
+            "Ready",
+            source,
+            source,
+            source,
+            source_shape=source,
+            parting_line_shape=detached_parting,
+        )
+        self.assertEqual(result["status"], "Fail")
+        self.assertTrue(any("parting line stays on source shape" in check for check in result["checks"]))
 
 
 @unittest.skip("Propblade fixture disabled until later")

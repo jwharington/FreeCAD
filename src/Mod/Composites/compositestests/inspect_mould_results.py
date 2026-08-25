@@ -27,6 +27,11 @@ from Composites.tools.profile_mould_analysis import (
     _make_blade_shape,
     _make_loft_shape,
 )
+from Composites.compositestests.synthetic_mould_shapes import (
+    make_sideways_cone,
+    make_sphere,
+    make_vertical_cone,
+)
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -57,6 +62,14 @@ def _make_shape(shape_name: str):
     doc = App.newDocument(f"inspect_mould_{shape_name}")
     if shape_name == "box":
         shape = Part.makeBox(20.0, 15.0, 10.0)
+    elif shape_name == "cylinder":
+        shape = Part.makeCylinder(10.0, 20.0)
+    elif shape_name == "sphere":
+        shape = make_sphere()
+    elif shape_name == "cone":
+        shape = make_vertical_cone()
+    elif shape_name == "cone_side":
+        shape = make_sideways_cone()
     elif shape_name == "blade":
         shape = _make_blade_shape()
     elif shape_name == "loft":
@@ -95,6 +108,7 @@ def _build_inspection_report(shape_name: str, shape, direction, source_obj=None)
 
     return {
         "shape_name": shape_name,
+        "shape": shape,
         "document_name": document_name,
         "object_name": object_name,
         "analysis": result,
@@ -150,7 +164,7 @@ def build_parser():
     parser.add_argument(
         "--shape",
         default="box",
-        choices=("box", "blade", "loft", "propblade"),
+        choices=("box", "cylinder", "sphere", "cone", "cone_side", "blade", "loft", "propblade"),
         help="Named benchmark shape to inspect.",
     )
     parser.add_argument(
@@ -165,11 +179,42 @@ def build_parser():
         choices=sorted(_DIRECTION_PRESETS),
         help="Draw direction to probe (x/y/z). Defaults to z.",
     )
+    parser.add_argument(
+        "--dump-shape",
+        default=None,
+        metavar="OUT.brep",
+        help="Instead of inspecting, write the exact benchmark shape to OUT.brep "
+             "for the nextdrape mould_cli --load-shapefile harness.",
+    )
     return parser
+
+
+def _dump_shape_brep(shape_name, out_path, fixture_path):
+    """Write the exact benchmark shape (same builder the tests feed the binding)
+    to a BREP file that mould_cli --load-shapefile can read."""
+    doc = None
+    try:
+        if shape_name == "propblade":
+            if not fixture_path.is_file():
+                raise SystemExit(f"fixture not found: {fixture_path}")
+            doc, obj, shape = _load_fixture_shape(fixture_path)
+        else:
+            doc, obj, shape = _make_shape(shape_name)
+    finally:
+        if doc is not None:
+            try:
+                App.closeDocument(doc.Name)
+            except Exception:
+                pass
+    shape.exportBrep(str(out_path))
+    print(f"dumped {shape_name} -> {out_path}")
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    if args.dump_shape:
+        _dump_shape_brep(args.shape, Path(args.dump_shape), fixture_path=args.fixture)
+        return 0
     direction = _DIRECTION_PRESETS[args.direction]
     report = inspect_benchmark_shape(args.shape, direction=direction, fixture_path=args.fixture)
 
