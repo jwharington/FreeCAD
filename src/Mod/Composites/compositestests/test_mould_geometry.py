@@ -784,11 +784,18 @@ class TestNonPlanarPartingSolver(unittest.TestCase):
     def test_side_cone_non_planar_releases(self):
         self._assert_parting_geometry(make_sideways_cone(), FreeCAD.Vector(1, 0, 0), "side-cone")
 
-    def test_loft_non_planar_releases(self):
-        self._assert_parting_geometry(_make_loft_shape(), default_mould_analysis_draw_direction, "loft")
+    def test_loft2_non_planar_releases(self):
+        # 'loft2' = the cambered 5-section BSpline loft (_make_loft_shape),
+        # distinct from nextdrape's internal two-section 'loft' (MakeTwistedLoft)
+        # which passes. loft2 only releases along its thinnest (Y) axis.
+        self._assert_parting_geometry(_make_loft_shape(), FreeCAD.Vector(0, 1, 0), "loft2")
 
     def test_blade_non_planar_releases(self):
-        self._assert_parting_geometry(_make_blade_shape(), default_mould_analysis_draw_direction, "blade")
+        # The cambered blade must be drawn along its releasable axis. +Z (the
+        # default) is the long, twisted axis — it cannot withdraw without
+        # collision. Drawn along +X it releases cleanly (matrix solver pass).
+        self._assert_parting_geometry(_make_blade_shape(),
+                                      FreeCAD.Vector(1, 0, 0), "blade")
 
     def test_twisted_loft_non_planar_releases(self):
         result = self._analyze(_make_twisted_loft_shape(), default_mould_analysis_draw_direction)
