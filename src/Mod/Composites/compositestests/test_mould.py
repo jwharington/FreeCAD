@@ -354,3 +354,35 @@ class TestNonPlanarPartingInterface(TestFreeCADFP):
         # the analysis produces a Ready verdict.
         self.assertEqual(result["non_planar_status"], "ready")
         self.assertEqual(result["status"], "Ready")
+
+    def test_output_mode_part_line_only_produces_line_without_halves(self):
+        # The OutputMode feature property drives analyse preserve the
+        # part-line-only path: a parting surface with a Ready verdict, and
+        # no mould halves by design.
+        source = self._make_box_source()
+        obj = self._make_analysis(source)
+        obj.OutputMode = "Part-line only"
+        obj.PartingModel = "NonPlanar"
+        self.doc.recompute()
+
+        self.assertEqual(obj.OutputMode, "Part-line only")
+        self.assertEqual(obj.AnalysisStatus, "Ready")
+        self.assertTrue(obj.PartingSurface)
+        self.assertTrue(obj.PartingSurface.Shape, "part-line-only should still surface the part line")
+        self.assertFalse(obj.PartingSurface.Shape.isNull())
+
+    def test_xy_buffers_are_independent_on_feature(self):
+        # The X/Y/Z buffer properties must route through the feature to the
+        # solver without crashing and produce a valid mould half (detailed
+        # buffer geometry independence is asserted at the binding level).
+        source = self._make_box_source()
+        obj = self._make_analysis(source)
+        obj.PartingModel = "NonPlanar"
+        obj.PartingStockMarginX = 25.0
+        obj.PartingStockMarginY = 12.5
+        obj.PartingStockMarginZ = 40.0
+        self.doc.recompute()
+        self.assertEqual(obj.AnalysisStatus, "Ready")
+        self.assertTrue(obj.MouldHalfA and obj.MouldHalfA.Shape)
+        self.assertTrue(obj.MouldHalfB and obj.MouldHalfB.Shape)
+

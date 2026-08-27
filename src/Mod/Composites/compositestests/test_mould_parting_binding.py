@@ -62,6 +62,40 @@ class NonPlanarPartingBindingTest(unittest.TestCase):
         vol = result["upper_shell"].Volume
         self.assertGreater(vol, 0.0, "upper mould half has no volume")
 
+    def test_part_line_only_stops_before_mould_halves(self):
+        """Part-line-only mode produces the parting line but skips mould halves."""
+        result = _propose_non_planar_parting(
+            _box(),
+            FreeCAD.Vector(0.0, 0.0, 1.0),
+            part_line_only=True,
+        )
+        self.assertEqual(result["status"], "ready", result.get("error", result["summary"]))
+        self.assertTrue(result["part_line_only"])
+        self.assertIsInstance(result["parting_line"], Part.Shape)
+        self.assertFalse(result["parting_line"].isNull())
+        # No mould halves are expected in part-line-only mode.
+        for key in ("upper_shell", "lower_shell"):
+            self.assertIsNone(result[key], f"part-line-only unexpectedly produced {key}")
+
+    def test_independent_xy_buffers_change_mould_half_size(self):
+        """A larger X buffer must grow the mould block in X but keep Y the same."""
+        box = _box()
+        base = _propose_non_planar_parting(box, FreeCAD.Vector(0.0, 0.0, 1.0))
+        wide = _propose_non_planar_parting(
+            box, FreeCAD.Vector(0.0, 0.0, 1.0),
+            stock_margin_x=25.0,
+        )
+        base_x = base["upper_shell"].BoundBox.XLength
+        base_y = base["upper_shell"].BoundBox.YLength
+        wide_x = wide["upper_shell"].BoundBox.XLength
+        wide_y = wide["upper_shell"].BoundBox.YLength
+        # Growing X by 20 mm (2 sides) must widen the block in X only.
+        self.assertAlmostEqual(wide_x - base_x, 40.0, delta=1.0,
+                               msg="mould X buffer did not grow accordingly")
+        self.assertAlmostEqual(wide_y, base_y, delta=0.01,
+                               msg="mould Y buffer should be unaffected by X margin")
+
+
 
 if __name__ == "__main__":
     unittest.main()
