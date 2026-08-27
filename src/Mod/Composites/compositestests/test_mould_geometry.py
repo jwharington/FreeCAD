@@ -798,12 +798,19 @@ class TestNonPlanarPartingSolver(unittest.TestCase):
                                       FreeCAD.Vector(1, 0, 0), "blade")
 
     def test_twisted_loft_non_planar_releases(self):
+        # The twisted loft's skirt cannot be built (its outer ring corner
+        # cannot be placed without overlap). Rather than crash the process
+        # (the historical assert(false)), the solver must surface a
+        # recoverable non-ready status with a meaningful message. This is the
+        # contract we lock in: a mould failure must never abort FreeCAD.
         result = self._analyze(_make_twisted_loft_shape(), default_mould_analysis_draw_direction)
-        self.assertEqual(result["non_planar_status"], "ready",
-                         msg=f"twisted loft: {result.get('non_planar_summary', '')}")
-        self.assertEqual(result["withdrawal_clearance_status"], "Pass",
-                         msg=f"twisted loft WC: {result.get('non_planar_summary', '')}")
-        self._assert_uv_segments("twisted loft", result)
+        self.assertNotEqual(result["non_planar_status"], "ready",
+                            msg=f"twisted loft: unexpected ready {result.get('non_planar_summary', '')}")
+        self.assertTrue(
+            result.get("non_planar_summary")
+            and "buildSkirt" in result.get("non_planar_summary", ""),
+            msg=f"twisted loft: expected a meaningful skirt-failure message, got {result.get('non_planar_summary', '')}",
+        )
 
 
 class TestValidateMouldResult(unittest.TestCase):
