@@ -763,10 +763,12 @@ def _plan_split_strategies(ranked, limit=MAX_SPLIT_STRATEGIES):
                 "draft_face_screening": item.get("draft_face_screening"),
                 "analysis_gate_status": item.get("analysis_gate_status"),
                 "parting_model": item.get("parting_model", "Planar"),
-            "parting_line_tolerance": item.get("parting_line_tolerance", 0.1),
-                "parting_stock_margin_xy": item.get("parting_stock_margin_xy", 5.0),
+                "parting_line_tolerance": item.get("parting_line_tolerance", 0.1),
+                "parting_stock_margin_x": item.get("parting_stock_margin_x", 5.0),
+                "parting_stock_margin_y": item.get("parting_stock_margin_y", 5.0),
                 "parting_stock_margin_z": item.get("parting_stock_margin_z", 5.0),
                 "parting_stock_footprint": item.get("parting_stock_footprint"),
+                "part_line_only": item.get("part_line_only", False),
                 "status": "planned",
                 "reason": "top-ranked draw-direction strategy",
             }
@@ -796,15 +798,18 @@ def _evaluate_split_strategy_attempt(shape, strategy):
     )
 
     parting_model = strategy.get("parting_model", "Planar")
+    part_line_only = bool(strategy.get("part_line_only", False))
     non_planar_result = None
     if parting_model == "NonPlanar":
         non_planar_result = _propose_non_planar_parting(
             shape,
             strategy["direction"],
             part_line_tolerance=strategy.get("parting_line_tolerance", 0.1),
-            stock_margin_xy=strategy.get("parting_stock_margin_xy", 5.0),
+            stock_margin_x=strategy.get("parting_stock_margin_x", 5.0),
+            stock_margin_y=strategy.get("parting_stock_margin_y", 5.0),
             stock_margin_z=strategy.get("parting_stock_margin_z", 5.0),
             stock_footprint=strategy.get("parting_stock_footprint"),
+            part_line_only=part_line_only,
         )
     if non_planar_result is not None and non_planar_result["status"] != "NotImplemented":
         # Real non-planar solver path (Phase 2): the solver returns the parting
@@ -828,6 +833,18 @@ def _evaluate_split_strategy_attempt(shape, strategy):
             "half_a_volume": getattr(non_planar_result["lower_shell"], "Volume", 0.0) or 0.0,
             "half_b_volume": getattr(non_planar_result["upper_shell"], "Volume", 0.0) or 0.0,
         }
+        if part_line_only:
+            # Part-line-only mode: the solver stops at AfterPartLine, so there
+            # are no mould halves by design. Mark them so, and skip the mould
+            # validations that would fail on the absent halves.
+            mould_halves = {
+                "status": "N/A",
+                "summary": "Part-line only mode: mould halves not generated.",
+                "half_a_shape": None,
+                "half_b_shape": None,
+                "half_a_volume": 0.0,
+                "half_b_volume": 0.0,
+            }
     else:
         parting = propose_parting_surface(shape, strategy["direction"])
         mould_halves = make_mould_halves(
@@ -835,6 +852,40 @@ def _evaluate_split_strategy_attempt(shape, strategy):
             parting["surface_normal"],
             parting["surface_offset"],
         )
+    if part_line_only and non_planar_result is not None and non_planar_result.get("status") == "ready":
+        # Part-line-only: the part line is the deliverable. Bypass the mould
+        # validation / withdrawal clearance checks (they gate mould halves).
+        status = "Ready" if parting.get("shape") is not None and not getattr(parting.get("shape"), "isNull", lambda: True)() else "Fail"
+        return {
+            "strategy": strategy,
+            "draft_face_screening": draft_face_screening,
+            "analysis_gate_status": analysis_gate_status,
+            "geometric_evidence": evidence,
+            "parting": parting,
+            "mould_halves": mould_halves,
+            "withdrawal_clearance": {
+                "status": "N/A",
+                "summary": "Part-line only: no withdrawal clearance check.",
+                "sample_count": 0,
+                "failure_count": 0,
+                "failure_regions": [],
+                "half_checks": [],
+                "step_mm": 0.0,
+            },
+            "non_planar_result": non_planar_result,
+            "validation": {
+                "status": status,
+                "summary": "Part-line only: parting line generated; mould halves N/A.",
+                "checks": ["INFO: part-line only mode"],
+                "reasons": [],
+                "reason_codes": [],
+            },
+            "status": status,
+            "reason": "part-line only candidate",
+            "planner_score": _planner_score(strategy, status),
+            "selection_reason": "",
+            "exception": "",
+        }
     essential_validation = validate_mould_result(
         parting["status"],
         mould_halves["status"],
@@ -1193,10 +1244,12 @@ def _import_parting_solver():
 def _propose_non_planar_parting(
     shape,
     direction,
-    stock_margin_xy=5.0,
+    stock_margin_x=5.0,
+    stock_margin_y=5.0,
     stock_margin_z=5.0,
     part_line_tolerance=0.1,
     stock_footprint=None,
+    part_line_only=False,
 ):
     """Call the C++ marching-equator solver and map to the Phase 0 contract.
 
@@ -1246,10 +1299,12 @@ def _propose_non_planar_parting(
         raw = compute(
             shape,
             (float(direction.x), float(direction.y), float(direction.z)),
-            float(stock_margin_xy),
+            float(stock_margin_x),
+            float(stock_margin_y),
             float(stock_margin_z),
             float(part_line_tolerance),
             footprint,
+            part_line_only,
         )
     except Exception as exc:
         return {
@@ -1263,6 +1318,7 @@ def _propose_non_planar_parting(
             "skirt_rays": [],
             "tangent_face_midpoints": [],
             "error": str(exc),
+            "part_line_only": part_line_only,
         }
 
     status = raw["status"]
@@ -1289,6 +1345,7 @@ def _propose_non_planar_parting(
             "skirt_rays": [],
             "tangent_face_midpoints": raw.get("tangent_face_midpoints", []),
             "error": raw["summary"],
+            "part_line_only": part_line_only,
         }
 
     # success: shapes are already live Part.Shape objects from the binding.
@@ -1306,6 +1363,7 @@ def _propose_non_planar_parting(
         "skirt_rays": [],
         "tangent_face_midpoints": raw.get("tangent_face_midpoints", []),
         "error": "",
+        "part_line_only": part_line_only,
     }
 
 
@@ -2123,10 +2181,12 @@ def analyze_source_shape(
     draw_direction=default_mould_analysis_draw_direction,
     source_obj=None,
     parting_model="Planar",
-    parting_stock_margin_xy=5.0,
+    parting_stock_margin_x=5.0,
+    parting_stock_margin_y=5.0,
     parting_stock_margin_z=5.0,
     parting_line_tolerance=0.1,
     parting_stock_footprint=None,
+    part_line_only=False,
 ):
     """Return a lightweight analysis preview for a selected source shape.
 
@@ -2213,9 +2273,11 @@ def analyze_source_shape(
             "geometric_evidence": preferred_evidence,
             "parting_model": parting_model,
             "parting_line_tolerance": parting_line_tolerance,
-            "parting_stock_margin_xy": parting_stock_margin_xy,
+            "parting_stock_margin_x": parting_stock_margin_x,
+            "parting_stock_margin_y": parting_stock_margin_y,
             "parting_stock_margin_z": parting_stock_margin_z,
             "parting_stock_footprint": parting_stock_footprint,
+            "part_line_only": part_line_only,
         }
     ]
     split_strategies = _plan_split_strategies(ranked, limit=1)

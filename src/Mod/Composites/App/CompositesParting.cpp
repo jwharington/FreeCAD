@@ -84,10 +84,11 @@ PYBIND11_MODULE(Composites_parting, m) {
     // The single entry point the Python side calls.
     m.def("compute_non_planar_parting",
         [](py::object shape_obj, py::tuple direction,
-           double stock_margin_xy, double stock_margin_z,
-           double part_line_tolerance, py::tuple footprint) {
+           double stock_margin_x, double stock_margin_y, double stock_margin_z,
+           double part_line_tolerance, py::tuple footprint, bool part_line_only) {
             nextdrape::PartingParams params;
-            params.stockMarginXY = stock_margin_xy;
+            params.stockMarginX = stock_margin_x;
+            params.stockMarginY = stock_margin_y;
             params.stockMarginZ  = stock_margin_z;
             params.partLineToleranceMm = part_line_tolerance;
             if (py::len(footprint) >= 2) {
@@ -101,7 +102,10 @@ PYBIND11_MODULE(Composites_parting, m) {
                      direction[2].cast<double>());
 
             nextdrape::HLRPartingSolver solver;
-            bool ok = solver.Solve(source, D, params);
+            const auto stopAt = part_line_only
+                ? nextdrape::SolveStopStage::AfterPartLine
+                : nextdrape::SolveStopStage::FullPipeline;
+            bool ok = solver.Solve(source, D, params, stopAt);
             const auto& r = solver.Result();
 
             // Marshal tangent_face_midpoints: list of (face_shape, z_mid).
@@ -163,12 +167,16 @@ PYBIND11_MODULE(Composites_parting, m) {
             );
         },
         py::arg("shape"), py::arg("draw_direction"),
-        py::arg("stock_margin_xy") = 5.0,
+        py::arg("stock_margin_x") = 5.0,
+        py::arg("stock_margin_y") = 5.0,
         py::arg("stock_margin_z") = 5.0,
         py::arg("part_line_tolerance") = 0.1,
         py::arg("stock_footprint") = py::make_tuple(0.0, 0.0),
+        py::arg("part_line_only") = false,
         "Compute a non-planar parting surface + mould halves for a FreeCAD "
         "Part.Shape along a user-specified draw direction. Returns a dict; "
-        "success=True iff the mould halves are valid (status == ready). "
+        "success=True iff the pipeline reached `ready` (full mould) or the "
+        "part line only (part_line_only=True, solver stops at AfterPartLine). "
+        "stock_margin_x/y/z set the independent mould block margins. "
         "Shapes are returned as live Part.Shape objects directly.");
 }

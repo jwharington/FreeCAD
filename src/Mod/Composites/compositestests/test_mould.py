@@ -272,8 +272,10 @@ class TestNonPlanarPartingInterface(TestFreeCADFP):
         source = self._make_box_source()
         obj = self._make_analysis(source)
         self.assertEqual(obj.PartingModel, "Planar")
+        self.assertEqual(obj.OutputMode, "Full mould")
         self.assertAlmostEqual(obj.PartLineTolerance, 0.1, places=6)
-        self.assertAlmostEqual(obj.PartingStockMarginXY, 5.0, places=6)
+        self.assertAlmostEqual(obj.PartingStockMarginX, 5.0, places=6)
+        self.assertAlmostEqual(obj.PartingStockMarginY, 5.0, places=6)
         self.assertAlmostEqual(obj.PartingStockMarginZ, 5.0, places=6)
         fp = obj.PartingStockFootprint
         self.assertAlmostEqual(fp.x, 0.0, places=6)
@@ -341,7 +343,8 @@ class TestNonPlanarPartingInterface(TestFreeCADFP):
             shape,
             default_mould_analysis_draw_direction,
             parting_model="NonPlanar",
-            parting_stock_margin_xy=5.0,
+            parting_stock_margin_x=5.0,
+            parting_stock_margin_y=5.0,
             parting_stock_margin_z=5.0,
             parting_line_tolerance=0.1,
             parting_stock_footprint=(50.0, 40.0),

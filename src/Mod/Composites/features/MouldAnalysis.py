@@ -50,6 +50,14 @@ class MouldAnalysisFP(CompositePartFP):
         obj.PartingModel = "Planar"
 
         obj.addProperty(
+            "App::PropertyEnumeration",
+            "OutputMode",
+            "MouldAnalysis",
+            "What to produce: Full mould (part line + split + skirt + halves) or part line only",
+        ).OutputMode = ["Full mould", "Part-line only"]
+        obj.OutputMode = "Full mould"
+
+        obj.addProperty(
             "App::PropertyFloat",
             "PartLineTolerance",
             "MouldAnalysis",
@@ -58,10 +66,17 @@ class MouldAnalysisFP(CompositePartFP):
 
         obj.addProperty(
             "App::PropertyFloat",
-            "PartingStockMarginXY",
+            "PartingStockMarginX",
             "MouldAnalysis",
-            "Lateral stock-block margin (mm) in the draw-perpendicular plane",
-        ).PartingStockMarginXY = 5.0
+            "+X/-X mould block margin (mm)",
+        ).PartingStockMarginX = 5.0
+
+        obj.addProperty(
+            "App::PropertyFloat",
+            "PartingStockMarginY",
+            "MouldAnalysis",
+            "+Y/-Y mould block margin (mm)",
+        ).PartingStockMarginY = 5.0
 
         obj.addProperty(
             "App::PropertyFloat",
@@ -254,10 +269,12 @@ class MouldAnalysisFP(CompositePartFP):
             fp.PreferredDrawDirection,
             source_obj=fp.Source,
             parting_model=fp.PartingModel,
-            parting_stock_margin_xy=fp.PartingStockMarginXY,
+            parting_stock_margin_x=fp.PartingStockMarginX,
+            parting_stock_margin_y=fp.PartingStockMarginY,
             parting_stock_margin_z=fp.PartingStockMarginZ,
             parting_line_tolerance=fp.PartLineTolerance,
             parting_stock_footprint=stock_footprint,
+            part_line_only=(fp.OutputMode == "Part-line only"),
         )
         fp.AnalysisStatus = result["status"]
         fp.DrawDirectionScore = result["draw_direction_score"]
@@ -286,8 +303,10 @@ class MouldAnalysisFP(CompositePartFP):
             "Source",
             "PreferredDrawDirection",
             "PartingModel",
+            "OutputMode",
             "PartLineTolerance",
-            "PartingStockMarginXY",
+            "PartingStockMarginX",
+            "PartingStockMarginY",
             "PartingStockMarginZ",
             "PartingStockFootprint",
         ):
