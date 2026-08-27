@@ -151,6 +151,31 @@ PYBIND11_MODULE(Composites_parting, m) {
                 }
             }
 
+            // Marshal the native withdrawal-clearance result so the Python
+            // layer can consume it instead of re-running the (Python) check.
+            py::list wcHalfChecks;
+            for (const auto& hc : r.withdrawalClearance.halfChecks) {
+                wcHalfChecks.append(py::dict(
+                    py::arg("half")            = hc.half,
+                    py::arg("status")          = hc.status,
+                    py::arg("sample_count")    = hc.sampleCount,
+                    py::arg("clearance_steps") = hc.clearanceSteps,
+                    py::arg("collision_volume")= hc.collisionVolume,
+                    py::arg("failure_region")  = hc.failureRegion));
+            }
+            py::list wcFailureRegions;
+            for (const auto& r_ : r.withdrawalClearance.failureRegions) {
+                wcFailureRegions.append(r_);
+            }
+            py::dict withdrawalClearance = py::dict(
+                py::arg("status")        = r.withdrawalClearance.status,
+                py::arg("summary")       = r.withdrawalClearance.summary,
+                py::arg("sample_count")  = r.withdrawalClearance.sampleCount,
+                py::arg("failure_count") = r.withdrawalClearance.failureCount,
+                py::arg("failure_regions") = wcFailureRegions,
+                py::arg("half_checks")   = wcHalfChecks,
+                py::arg("step_mm")       = r.withdrawalClearance.stepMm);
+
             return py::dict(
                 py::arg("success")               = ok,
                 py::arg("status")                = nextdrape::PartingStatusToString(r.status),
@@ -163,6 +188,7 @@ PYBIND11_MODULE(Composites_parting, m) {
                 py::arg("mould_half_upper")      = wrap_shape(r.mouldHalfUpper),
                 py::arg("mould_half_lower")      = wrap_shape(r.mouldHalfLower),
                 py::arg("skirt")                 = wrap_shape(r.skirt),
+                py::arg("withdrawal_clearance")  = withdrawalClearance,
                 py::arg("tangent_face_midpoints") = midpoints
             );
         },

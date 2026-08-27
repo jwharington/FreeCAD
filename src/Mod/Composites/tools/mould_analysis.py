@@ -895,7 +895,14 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         source_shape=shape,
         parting_line_shape=(non_planar_result or {}).get("parting_line"),
     )
-    if essential_validation["status"] == "Pass":
+    # Prefer the native C++ withdrawal-clearance result (computed by the
+    # solver at FullPipeline when the mould halves are valid). Fall back to
+    # the pure-Python check only when the native solver did not produce one
+    # (e.g. a non-ready status, or an older binding without the field).
+    native_wc = (non_planar_result or {}).get("withdrawal_clearance")
+    if native_wc and native_wc.get("status"):
+        withdrawal_clearance = native_wc
+    elif essential_validation["status"] == "Pass":
         withdrawal_clearance = _withdrawal_clearance_validity_check(
             shape,
             mould_halves["half_a_shape"],
@@ -1362,6 +1369,7 @@ def _propose_non_planar_parting(
         "upper_shell": upper_shell,
         "skirt_rays": [],
         "tangent_face_midpoints": raw.get("tangent_face_midpoints", []),
+        "withdrawal_clearance": raw.get("withdrawal_clearance"),
         "error": "",
         "part_line_only": part_line_only,
     }
