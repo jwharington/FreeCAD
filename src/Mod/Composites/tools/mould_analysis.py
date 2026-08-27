@@ -1341,11 +1341,19 @@ def _propose_non_planar_parting(
             "split_failed": "split_failed",
             "invalid_solid_result": "invalid_solid_result",
         }.get(status, status)
+        # A non-ready verdict does not imply there is no part line. Several
+        # late-stage failures (skirt_failed, split_failed, invalid_solid_result)
+        # occur after the march has already closed a valid part line, and the
+        # binding surfaces it via part_line_3d. Surface it when one was really
+        # built, so a mould that cannot finish still shows its parting line.
+        part_line = raw.get("part_line_3d")
+        if part_line is None or getattr(part_line, "isNull", lambda: True)():
+            part_line = None
         return {
             "status": normalized,
             "summary": raw["summary"],
-            "parting_line": None,
-            "parting_surface": None,
+            "parting_line": part_line,
+            "parting_surface": part_line,
             "parting_line_segments": raw.get("part_line_segments", []),
             "lower_shell": None,
             "upper_shell": None,

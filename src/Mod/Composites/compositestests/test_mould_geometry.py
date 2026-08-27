@@ -811,6 +811,17 @@ class TestNonPlanarPartingSolver(unittest.TestCase):
             and "buildSkirt" in result.get("non_planar_summary", ""),
             msg=f"twisted loft: expected a meaningful skirt-failure message, got {result.get('non_planar_summary', '')}",
         )
+        # Even though the mould cannot finish, the part line is a valid
+        # deliverable: it is fully marched before the skirt stage fails, and
+        # the analysis must surface it rather than discarding it (it used to
+        # be dropped on any non-ready verdict).
+        part_line = result.get("parting_surface_shape")
+        self.assertTrue(
+            part_line is not None and not part_line.isNull(),
+            msg="twisted loft: part line should still surface despite skirt_failed",
+        )
+        self.assertGreater(len(part_line.Edges), 0,
+                           msg="twisted loft: surfaced part line is empty")
 
 
 class TestValidateMouldResult(unittest.TestCase):
