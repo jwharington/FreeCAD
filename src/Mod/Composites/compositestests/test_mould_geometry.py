@@ -337,7 +337,7 @@ class TestDraftEnvelopePrimitives(unittest.TestCase):
         result = _whole_side_draft_envelope(
             make_sphere(),
             default_mould_analysis_draw_direction,
-            parting_offset=5.0,
+            parting_offset=3.0,
         )
         self.assertEqual(result["status"], "Fail")
         self.assertEqual(result["globally_negative_sides"], ["lower"])
@@ -348,7 +348,7 @@ class TestDraftEnvelopePrimitives(unittest.TestCase):
         result = _whole_side_draft_envelope(
             make_sphere(),
             default_mould_analysis_draw_direction,
-            parting_offset=-5.0,
+            parting_offset=-3.0,
         )
         self.assertEqual(result["status"], "Fail")
         self.assertEqual(result["globally_negative_sides"], ["upper"])
@@ -357,8 +357,10 @@ class TestDraftEnvelopePrimitives(unittest.TestCase):
 
     def test_sphere_at_most_one_side_unreleasable_across_offsets(self):
         # Convexity invariant: a sphere never hooks both mould halves at once.
-        # The failing side must also flip with the sign of the offset.
-        for offset in (-8.0, -5.0, -2.0, 0.0, 2.0, 5.0, 8.0):
+        # The failing side must also flip with the sign of the offset. The
+        # offsets stay interior to the r=5 sphere; at/outside the pole (±5, ±8)
+        # one side has zero samples and no meaningful worst releasability.
+        for offset in (-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0):
             with self.subTest(offset=offset):
                 result = _whole_side_draft_envelope(
                     make_sphere(),
@@ -379,7 +381,7 @@ class TestDraftEnvelopePrimitives(unittest.TestCase):
         result = _whole_side_draft_envelope(
             make_sphere(),
             default_mould_analysis_draw_direction,
-            parting_offset=5.0,
+            parting_offset=3.0,
         )
         self.assertGreater(len(result["refinement_trace"]), 2)
         self.assertEqual(result["status"], "Fail")
