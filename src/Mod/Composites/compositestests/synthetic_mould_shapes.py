@@ -37,7 +37,7 @@ def make_angled_cone(angle_deg):
     return cone
 
 
-def make_sphere(radius=10.0):
+def make_sphere(radius=5.0):
     """Sphere centred at the origin. Convex: releasable on both sides only at
     the centre parting plane, on exactly one side elsewhere."""
     return Part.makeSphere(radius)
