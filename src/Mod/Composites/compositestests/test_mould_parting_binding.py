@@ -97,6 +97,28 @@ class NonPlanarPartingBindingTest(unittest.TestCase):
 
 
 
+    def test_native_withdrawal_clearance_reaches_python(self):
+        """The C++ withdrawal-clearance result must arrive as a populated dict.
+
+        The Python analysis gate consumes this dict instead of re-running its
+        own collision check, so the port is only real if the field crosses the
+        binding with a verdict and one entry per mould half.
+        """
+        result = _propose_non_planar_parting(
+            _box(),
+            FreeCAD.Vector(0.0, 0.0, 1.0),
+        )
+        wc = result["withdrawal_clearance"]
+        self.assertIn(wc["status"], ("Pass", "Fail"), f"no WC verdict: {wc}")
+        self.assertEqual(wc["status"], "Pass",
+                         msg=f"clean box should clear withdrawal: {wc['summary']}")
+        self.assertGreater(wc["sample_count"], 0, "WC sampled nothing")
+        self.assertEqual(len(wc["half_checks"]), 2, "expected one check per mould half")
+        for half_check in wc["half_checks"]:
+            self.assertEqual(half_check["status"], "Pass",
+                             msg=f"{half_check['half']} collided: {half_check}")
+
+
 if __name__ == "__main__":
     unittest.main()
 
