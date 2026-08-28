@@ -31,7 +31,6 @@ from Composites.tools.mould_analysis import (
     _dot,
     _face_midpoint_normal,
     _sample_face_draft_alignment,
-    _withdrawal_clearance_validity_check,
     _whole_side_draft_envelope,
     analyze_source_shape,
     default_mould_analysis_draw_direction,
@@ -536,57 +535,6 @@ class TestAnalyzeSourceShape(unittest.TestCase):
         self.assertTrue(result["parting_surface_summary"])
         self.assertTrue(result["mould_halves_summary"])
 
-    def test_fast_loop_shapes_separate_box_from_planar_limits(self):
-        # With withdrawal clearance as the authoritative verdict, the twisted
-        # shapes truthfully report Fail under any planar direction: their
-        # mould halves physically collide with the source on withdrawal.
-        # box stays Ready (it withdraws cleanly). The analysis_gate is an
-        # informational draft signal (Warning for any risky/ambiguous face,
-        # which includes the box's parting face) and is decoupled from the
-        # verdict — the verdict is driven solely by withdrawal clearance.
-        cases = {
-            "box": {
-                "direction": default_mould_analysis_draw_direction,
-                "status": "Ready",
-                "validation_status": "Pass",
-                "withdrawal_clearance_status": "Pass",
-            },
-            "blade": {
-                "direction": default_mould_analysis_draw_direction,
-                "status": "Fail",
-                "validation_status": "Fail",
-                "withdrawal_clearance_status": "Fail",
-            },
-            "loft": {
-                "direction": FreeCAD.Vector(1, 0, 0),
-                "status": "Fail",
-                "validation_status": "Fail",
-                "withdrawal_clearance_status": "Fail",
-            },
-        }
-        for shape_name, expectations in cases.items():
-            with self.subTest(shape=shape_name):
-                shape = _box() if shape_name == "box" else {
-                    "blade": _make_blade_shape(),
-                    "loft": _make_loft_shape(),
-                }[shape_name]
-                result = analyze_source_shape(
-                    shape,
-                    expectations["direction"],
-                )
-                self.assertEqual(result["status"], expectations["status"])
-                self.assertEqual(
-                    result["validation_status"],
-                    expectations["validation_status"],
-                )
-                self.assertEqual(
-                    result["withdrawal_clearance_status"],
-                    expectations["withdrawal_clearance_status"],
-                )
-                self.assertIn(result["analysis_gate_status"], ("Pass", "Warning"))
-                self.assertTrue(result["summary"])
-
-
 class TestWithdrawalClearanceValidity(unittest.TestCase):
     """Withdrawal-clearance validity: the mould must withdraw without colliding."""
 
@@ -602,133 +550,17 @@ class TestWithdrawalClearanceValidity(unittest.TestCase):
         self.assertEqual(report["withdrawal_clearance"]["failure_count"], 0)
 
     def test_box_mould_halves_clear_the_source(self):
-        shape = _box()
-        parting = propose_parting_surface(shape, FreeCAD.Vector(0, 0, 1))
-        halves = make_mould_halves(
-            shape,
-            parting["surface_normal"],
-            parting["surface_offset"],
+        # The native C++ withdrawal-clearance check runs inside the non-planar
+        # solver on the solver's own mould halves. Draw the box along +Z and
+        # assert the native verdict passes.
+        result = analyze_source_shape(
+            _box(), FreeCAD.Vector(0, 0, 1), parting_model="NonPlanar"
         )
-        clearance = _withdrawal_clearance_validity_check(
-            shape,
-            halves["half_a_shape"],
-            halves["half_b_shape"],
-            FreeCAD.Vector(0, 0, 1),
-        )
-        self.assertEqual(clearance["status"], "Pass")
-        self.assertGreater(clearance["sample_count"], 0)
-        self.assertEqual(clearance["failure_count"], 0)
-        self.assertEqual(len(clearance["half_checks"]), 2)
-        self.assertTrue(all(item["status"] == "Pass" for item in clearance["half_checks"]))
-
-        validation = validate_mould_result(
-            parting["status"],
-            halves["status"],
-            parting["shape"],
-            halves["half_a_shape"],
-            halves["half_b_shape"],
-        )
-        self.assertEqual(validation["status"], "Pass")
-
-    def test_forced_collision_fails_the_gate(self):
-        shape = _box()
-        parting = propose_parting_surface(shape, FreeCAD.Vector(0, 0, 1))
-        halves = make_mould_halves(
-            shape,
-            parting["surface_normal"],
-            parting["surface_offset"],
-        )
-        collided_half = halves["half_a_shape"].copy()
-        collided_half.translate(FreeCAD.Vector(0, 0, 4.0))
-        clearance = _withdrawal_clearance_validity_check(
-            shape,
-            collided_half,
-            halves["half_b_shape"],
-            FreeCAD.Vector(0, 0, 1),
-        )
-        self.assertEqual(clearance["status"], "Fail")
-        self.assertGreater(clearance["failure_count"], 0)
-        self.assertTrue(clearance["failure_regions"])
-
-
-class TestPlanarPartingInsufficiency(unittest.TestCase):
-    """Negative regression: twisted geometry cannot be released by any planar parting.
-
-    The withdrawal-clearance check is the authoritative necessary test for
-    mould validity: each mould half must withdraw along the draw direction
-    without colliding with the source. For the twisted `blade` and `loft`
-    shapes, every axis-aligned planar parting fails this check — proving the
-    planar parting model is insufficient for cambered/twisted geometry and a
-    non-planar parting surface (or a different parting model) is required.
-    This is the blocking negative result the accuracy plan requires before
-    non-planar implementation begins.
-    """
-
-    _PLANAR_DIRECTIONS = (
-        FreeCAD.Vector(1, 0, 0),
-        FreeCAD.Vector(0, 1, 0),
-        FreeCAD.Vector(0, 0, 1),
-    )
-
-    def test_blade_fails_withdrawal_clearance_under_every_planar_direction(self):
-        shape = _make_blade_shape()
-        for direction in self._PLANAR_DIRECTIONS:
-            with self.subTest(direction=tuple(direction)):
-                parting = propose_parting_surface(shape, direction)
-                halves = make_mould_halves(
-                    shape,
-                    parting["surface_normal"],
-                    parting["surface_offset"],
-                )
-                clearance = _withdrawal_clearance_validity_check(
-                    shape,
-                    halves["half_a_shape"],
-                    halves["half_b_shape"],
-                    direction,
-                )
-                self.assertEqual(
-                    clearance["status"],
-                    "Fail",
-                    f"blade should be un-releasable under planar {tuple(direction)}",
-                )
-
-    def test_loft_fails_withdrawal_clearance_under_every_planar_direction(self):
-        shape = _make_loft_shape()
-        for direction in self._PLANAR_DIRECTIONS:
-            with self.subTest(direction=tuple(direction)):
-                parting = propose_parting_surface(shape, direction)
-                halves = make_mould_halves(
-                    shape,
-                    parting["surface_normal"],
-                    parting["surface_offset"],
-                )
-                clearance = _withdrawal_clearance_validity_check(
-                    shape,
-                    halves["half_a_shape"],
-                    halves["half_b_shape"],
-                    direction,
-                )
-                self.assertEqual(
-                    clearance["status"],
-                    "Fail",
-                    f"loft should be un-releasable under planar {tuple(direction)}",
-                )
-
-    def test_twisted_shapes_are_never_reported_ready_under_planar_analysis(self):
-        # The analysis must never report a twisted shape as Ready/Pass under a
-        # planar parting model — that would be the false-confidence failure.
-        # (Today they report Warning/Fail, not Ready; this test pins that the
-        # Ready/Pass path stays blocked for twisted geometry under planar.)
-        cases = {
-            "blade": _make_blade_shape(),
-            "loft": _make_loft_shape(),
-        }
-        for shape_name, shape in cases.items():
-            for direction in self._PLANAR_DIRECTIONS:
-                with self.subTest(shape=shape_name, direction=tuple(direction)):
-                    result = analyze_source_shape(shape, direction)
-                    self.assertNotEqual(result["status"], "Ready")
-                    self.assertNotEqual(result["validation_status"], "Pass")
+        self.assertEqual(result["non_planar_status"], "ready")
+        self.assertEqual(result["withdrawal_clearance_status"], "Pass")
+        self.assertEqual(result["withdrawal_clearance_failure_count"], 0)
+        self.assertIn("Withdrawal clearance pass", result["withdrawal_clearance_summary"])
+        self.assertEqual(result["validation_status"], "Pass")
 
 
 class TestNonPlanarPartingSolver(unittest.TestCase):

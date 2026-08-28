@@ -17,7 +17,6 @@ import FreeCAD as App
 import Part
 
 from Composites.tools.mould_analysis import (
-    _withdrawal_clearance_validity_check,
     analyze_source_shape,
     default_mould_analysis_draw_direction,
     make_mould_halves,
@@ -88,6 +87,7 @@ def _build_inspection_report(shape_name: str, shape, direction, source_obj=None)
         shape,
         direction,
         source_obj=source_obj,
+        parting_model="NonPlanar",
     )
     parting = propose_parting_surface(shape, direction)
     halves = make_mould_halves(
@@ -95,12 +95,17 @@ def _build_inspection_report(shape_name: str, shape, direction, source_obj=None)
         parting["surface_normal"],
         parting["surface_offset"],
     )
-    clearance = _withdrawal_clearance_validity_check(
-        shape,
-        halves["half_a_shape"],
-        halves["half_b_shape"],
-        direction,
-    )
+    # Native C++ withdrawal-clearance verdict, re-surfaced from the flattened
+    # top-level analysis fields (there is no pure-Python fallback any more).
+    clearance = {
+        "status": result.get("withdrawal_clearance_status"),
+        "summary": result.get("withdrawal_clearance_summary"),
+        "sample_count": 0,
+        "failure_count": result.get("withdrawal_clearance_failure_count", 0),
+        "failure_regions": [],
+        "half_checks": [],
+        "step_mm": 0.0,
+    }
 
     source_document = getattr(source_obj, "Document", None) if source_obj is not None else None
     document_name = source_document.Name if source_document is not None else ""
