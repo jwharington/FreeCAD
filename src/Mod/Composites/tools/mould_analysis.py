@@ -896,19 +896,20 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         parting_line_shape=(non_planar_result or {}).get("parting_line"),
     )
     # Prefer the native C++ withdrawal-clearance result (computed by the
-    # solver at FullPipeline when the mould halves are valid). Fall back to
-    # the pure-Python check only when the native solver did not produce one
-    # (e.g. a non-ready status, or an older binding without the field).
+    # solver at FullPipeline when the mould halves are valid).
     native_wc = (non_planar_result or {}).get("withdrawal_clearance")
     if native_wc and native_wc.get("status"):
         withdrawal_clearance = native_wc
     elif essential_validation["status"] == "Pass":
-        withdrawal_clearance = _withdrawal_clearance_validity_check(
-            shape,
-            mould_halves["half_a_shape"],
-            mould_halves["half_b_shape"],
-            strategy["direction"],
-        )
+        withdrawal_clearance = {
+            "status": "Unimplemented",
+            "summary": "Native C++ withdrawal clearance result not available; pure-Python fallback removed.",
+            "sample_count": 0,
+            "failure_count": 0,
+            "failure_regions": ["Withdrawal clearance: C++ result absent, Python fallback removed."],
+            "half_checks": [],
+            "step_mm": 0.0,
+        }
     else:
         withdrawal_clearance = {
             "status": "Skipped",
@@ -1544,130 +1545,6 @@ def _parting_line_stays_on_source(parting_line_shape, source_shape,
     if not measured:
         return False, "could not measure parting line attachment to source"
     return True, ""
-
-
-def _withdrawal_clearance_validity_check(
-    base_shape,
-    mould_half_a_shape,
-    mould_half_b_shape,
-    direction,
-    step_mm=None,
-    intersection_volume_tolerance=1.0e-6,
-    bbox_tolerance=1.0e-6,
-    max_steps=256,
-):
-    unit = _normalized(direction)
-    if getattr(unit, "Length", 0.0) <= 0.0:
-        return {
-            "status": "Fail",
-            "summary": "Withdrawal clearance failed: draw direction is invalid.",
-            "sample_count": 0,
-            "failure_count": 1,
-            "failure_regions": ["Invalid draw direction"],
-            "half_checks": [],
-            "step_mm": 0.0,
-        }
-
-    base_bbox = base_shape.BoundBox
-    base_center = _shape_center(base_shape)
-    base_extent = max(
-        float(getattr(base_bbox, "XLength", 0.0) or 0.0),
-        float(getattr(base_bbox, "YLength", 0.0) or 0.0),
-        float(getattr(base_bbox, "ZLength", 0.0) or 0.0),
-        1.0e-6,
-    )
-    clearance_step_mm = float(step_mm) if step_mm is not None else max(
-        WITHDRAWAL_CLEARANCE_STEP_MM,
-        min(1.0, 0.01 * base_extent),
-    )
-    clearance_step_mm = max(clearance_step_mm, 1.0e-6)
-
-    half_inputs = (
-        ("half_a", mould_half_a_shape),
-        ("half_b", mould_half_b_shape),
-    )
-    half_checks = []
-    failure_regions = []
-    sample_count = 0
-
-    for half_label, half_shape in half_inputs:
-        if getattr(half_shape, "isNull", lambda: True)():
-            half_checks.append(
-                {
-                    "half": half_label,
-                    "status": "Fail",
-                    "sample_count": 0,
-                    "clearance_steps": 0,
-                    "collision_volume": 0.0,
-                    "failure_region": "null half geometry",
-                }
-            )
-            failure_regions.append(f"{half_label}: null half geometry")
-            continue
-
-        half_center = _shape_center(half_shape)
-        withdrawal_direction = unit if _dot(half_center - base_center, unit) >= 0.0 else (unit * -1.0)
-        withdrawn_half = _safe_copy_shape(half_shape)
-        half_sample_count = 0
-        collision_volume = 0.0
-        collision_region = ""
-        status = "Pass"
-
-        while _bboxs_overlap(withdrawn_half.BoundBox, base_bbox, tolerance=bbox_tolerance):
-            half_sample_count += 1
-            sample_count += 1
-            collision_volume = _shape_common_volume(withdrawn_half, base_shape)
-            if collision_volume > intersection_volume_tolerance:
-                status = "Fail"
-                collision_region = (
-                    f"{half_label}: collision volume {collision_volume:.6f} mm^3 "
-                    f"after {half_sample_count} withdrawal step(s)"
-                )
-                failure_regions.append(collision_region)
-                break
-            if half_sample_count >= max_steps:
-                status = "Fail"
-                collision_region = (
-                    f"{half_label}: bounding boxes still overlap after {half_sample_count} withdrawal step(s)"
-                )
-                failure_regions.append(collision_region)
-                break
-            withdrawn_half.translate(withdrawal_direction * clearance_step_mm)
-
-        half_checks.append(
-            {
-                "half": half_label,
-                "status": status,
-                "sample_count": half_sample_count,
-                "clearance_steps": half_sample_count,
-                "collision_volume": collision_volume,
-                "failure_region": collision_region,
-                "withdrawal_direction": withdrawal_direction,
-            }
-        )
-
-    failure_count = len(failure_regions)
-    status = "Fail" if failure_count else "Pass"
-    if failure_count:
-        summary = (
-            f"Withdrawal clearance fail: {failure_count} half(s) failed across {sample_count} sample(s); "
-            f"step={clearance_step_mm:.3f} mm"
-        )
-    else:
-        summary = (
-            f"Withdrawal clearance pass: {len(half_checks)} half(s) cleared across {sample_count} sample(s); "
-            f"step={clearance_step_mm:.3f} mm"
-        )
-
-    return {
-        "status": status,
-        "summary": summary,
-        "sample_count": sample_count,
-        "failure_count": failure_count,
-        "failure_regions": failure_regions or ["None"],
-        "half_checks": half_checks,
-        "step_mm": clearance_step_mm,
-    }
 
 
 def _validation_reason_code(severity, label):
