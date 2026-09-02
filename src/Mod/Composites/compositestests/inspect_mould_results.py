@@ -145,7 +145,18 @@ def _print_report(report: dict):
     print("mould_halves_summary:", halves["summary"])
 
 
-def inspect_benchmark_shape(shape_name: str, direction=None, fixture_path: Path = _DEFAULT_FIXTURE):
+def _scale_shape(shape, scale):
+    """Uniformly scale a loaded shape (returns a new Part.Shape)."""
+    return shape.transformGeometry(
+        App.Matrix(scale, 0, 0, 0,
+                   0, scale, 0, 0,
+                   0, 0, scale, 0),
+        True,
+    )
+
+
+def inspect_benchmark_shape(shape_name: str, direction=None, fixture_path: Path = _DEFAULT_FIXTURE,
+                            scale: float = 1.0):
     draw_direction = direction or default_mould_analysis_draw_direction
     doc = None
     try:
@@ -153,8 +164,11 @@ def inspect_benchmark_shape(shape_name: str, direction=None, fixture_path: Path 
             if not fixture_path.is_file():
                 raise SystemExit(f"fixture not found: {fixture_path}")
             doc, obj, shape = _load_fixture_shape(fixture_path)
+            obj = None  # the scaled shape no longer lives in this document object
+            shape = _scale_shape(shape, scale)
         else:
             doc, obj, shape = _make_shape(shape_name)
+            shape = _scale_shape(shape, scale)
         return _build_inspection_report(shape_name, shape, draw_direction, source_obj=obj)
     finally:
         if doc is not None:
@@ -185,6 +199,14 @@ def build_parser():
         help="Draw direction to probe (x/y/z). Defaults to z.",
     )
     parser.add_argument(
+        "--scale",
+        type=float,
+        default=1.0,
+        help="Uniform scale applied to the shape before inspection. The propblade "
+             "fixture is authored in meters (bbox ~0.07x0.06x0.48); use 1000 to "
+             "probe it at mm scale.",
+    )
+    parser.add_argument(
         "--dump-shape",
         default=None,
         metavar="OUT.brep",
@@ -194,7 +216,7 @@ def build_parser():
     return parser
 
 
-def _dump_shape_brep(shape_name, out_path, fixture_path):
+def _dump_shape_brep(shape_name, out_path, fixture_path, scale: float = 1.0):
     """Write the exact benchmark shape (same builder the tests feed the binding)
     to a BREP file that mould_cli --load-shapefile can read."""
     doc = None
@@ -203,8 +225,10 @@ def _dump_shape_brep(shape_name, out_path, fixture_path):
             if not fixture_path.is_file():
                 raise SystemExit(f"fixture not found: {fixture_path}")
             doc, obj, shape = _load_fixture_shape(fixture_path)
+            shape = _scale_shape(shape, scale)
         else:
             doc, obj, shape = _make_shape(shape_name)
+            shape = _scale_shape(shape, scale)
     finally:
         if doc is not None:
             try:
@@ -218,10 +242,12 @@ def _dump_shape_brep(shape_name, out_path, fixture_path):
 def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.dump_shape:
-        _dump_shape_brep(args.shape, Path(args.dump_shape), fixture_path=args.fixture)
+        _dump_shape_brep(args.shape, Path(args.dump_shape), fixture_path=args.fixture,
+                         scale=args.scale)
         return 0
     direction = _DIRECTION_PRESETS[args.direction]
-    report = inspect_benchmark_shape(args.shape, direction=direction, fixture_path=args.fixture)
+    report = inspect_benchmark_shape(args.shape, direction=direction, fixture_path=args.fixture,
+                                     scale=args.scale)
 
     if args.shape == "propblade":
         print(f"fixture: {args.fixture}")
