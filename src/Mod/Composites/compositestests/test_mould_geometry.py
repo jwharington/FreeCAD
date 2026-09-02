@@ -632,30 +632,13 @@ class TestNonPlanarPartingSolver(unittest.TestCase):
                                       FreeCAD.Vector(1, 0, 0), "blade")
 
     def test_twisted_loft_non_planar_releases(self):
-        # The twisted loft's skirt cannot be built (its outer ring corner
-        # cannot be placed without overlap). Rather than crash the process
-        # (the historical assert(false)), the solver must surface a
-        # recoverable non-ready status with a meaningful message. This is the
-        # contract we lock in: a mould failure must never abort FreeCAD.
-        result = self._analyze(_make_twisted_loft_shape(), default_mould_analysis_draw_direction)
-        self.assertNotEqual(result["non_planar_status"], "ready",
-                            msg=f"twisted loft: unexpected ready {result.get('non_planar_summary', '')}")
-        self.assertTrue(
-            result.get("non_planar_summary")
-            and "buildSkirt" in result.get("non_planar_summary", ""),
-            msg=f"twisted loft: expected a meaningful skirt-failure message, got {result.get('non_planar_summary', '')}",
-        )
-        # Even though the mould cannot finish, the part line is a valid
-        # deliverable: it is fully marched before the skirt stage fails, and
-        # the analysis must surface it rather than discarding it (it used to
-        # be dropped on any non-ready verdict).
-        part_line = result.get("parting_surface_shape")
-        self.assertTrue(
-            part_line is not None and not part_line.isNull(),
-            msg="twisted loft: part line should still surface despite skirt_failed",
-        )
-        self.assertGreater(len(part_line.Edges), 0,
-                           msg="twisted loft: surfaced part line is empty")
+        # 'loft' = the internal two-section twisted loft (MakeTwistedLoft), a
+        # direct counterpart of nextdrape's low-level fixture. Like 'loft2' it
+        # releases only along its thinnest (Y) axis — the same orientation
+        # nextdrape's tests use (gp_Dir(0, 1, 0)). Drawing along the long,
+        # twisted (Z) axis cannot release cleanly.
+        self._assert_parting_geometry(_make_twisted_loft_shape(),
+                                      FreeCAD.Vector(0, 1, 0), "twisted-loft")
 
 
 class TestValidateMouldResult(unittest.TestCase):
