@@ -19,11 +19,10 @@ import Part
 
 from Composites.tools.mould_analysis import (
     _classify_draft_faces,
+    _propose_non_planar_parting,
     analyze_source_shape,
     default_mould_analysis_draw_direction,
-    make_mould_halves,
     normalize_source_shape,
-    propose_parting_surface,
 )
 
 
@@ -223,34 +222,23 @@ def _profile_analyze(shape, source_obj, profile_lines):
 def _benchmark_helpers(shape, checks):
     selected_checks = [check.strip() for check in checks if check.strip()]
     if not selected_checks:
-        selected_checks = ["normalize", "parting", "halves"]
+        selected_checks = ["normalize", "parting"]
 
     print(f"shape_type: {shape.ShapeType}", flush=True)
     print(f"volume: {getattr(shape, 'Volume', 0.0):.6f}", flush=True)
     print(f"checks: {', '.join(selected_checks)}", flush=True)
 
     normalize_result = None
-    parting = None
+    non_planar_result = None
 
     if "normalize" in selected_checks:
         normalize_result = _bench("normalize_source_shape", lambda: normalize_source_shape(shape))
     if "parting" in selected_checks:
-        parting = _bench(
-            "propose_parting_surface",
-            lambda: propose_parting_surface(shape, default_mould_analysis_draw_direction),
-        )
-    if "halves" in selected_checks:
-        if parting is None:
-            parting = propose_parting_surface(
+        non_planar_result = _bench(
+            "_propose_non_planar_parting",
+            lambda: _propose_non_planar_parting(
                 shape,
                 default_mould_analysis_draw_direction,
-            )
-        _bench(
-            "make_mould_halves",
-            lambda: make_mould_halves(
-                shape,
-                parting["surface_normal"],
-                parting["surface_offset"],
             ),
         )
     if "draft" in selected_checks:
@@ -265,6 +253,8 @@ def _benchmark_helpers(shape, checks):
     if normalize_result is not None:
         print(f"normalize_confidence: {normalize_result['confidence']}", flush=True)
         print(f"normalize_source_type: {normalize_result['source_type']}", flush=True)
+    if non_planar_result is not None:
+        print(f"non_planar_status: {non_planar_result.get('status')}", flush=True)
 
 
 def _profile_fast_loop():

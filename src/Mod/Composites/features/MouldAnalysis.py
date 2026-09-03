@@ -43,14 +43,6 @@ class MouldAnalysisFP(CompositePartFP):
 
         obj.addProperty(
             "App::PropertyEnumeration",
-            "PartingModel",
-            "MouldAnalysis",
-            "Parting-surface model: Planar (midpoint plane) or NonPlanar (marching equator)",
-        ).PartingModel = ["Planar", "NonPlanar"]
-        obj.PartingModel = "Planar"
-
-        obj.addProperty(
-            "App::PropertyEnumeration",
             "OutputMode",
             "MouldAnalysis",
             "What to produce: Full mould (part line + split + skirt + halves) or part line only",
@@ -268,7 +260,6 @@ class MouldAnalysisFP(CompositePartFP):
             source_shape,
             fp.PreferredDrawDirection,
             source_obj=fp.Source,
-            parting_model=fp.PartingModel,
             parting_stock_margin_x=fp.PartingStockMarginX,
             parting_stock_margin_y=fp.PartingStockMarginY,
             parting_stock_margin_z=fp.PartingStockMarginZ,
@@ -302,7 +293,6 @@ class MouldAnalysisFP(CompositePartFP):
         if prop in (
             "Source",
             "PreferredDrawDirection",
-            "PartingModel",
             "OutputMode",
             "PartLineTolerance",
             "PartingStockMarginX",
@@ -315,6 +305,8 @@ class MouldAnalysisFP(CompositePartFP):
 
 class ViewProviderMouldAnalysis(VPCompositePart):
     def claimChildren(self):
+        if not hasattr(self, "Object"):
+            return []
         children = []
         for name in ("PartingSurface", "MouldHalfA", "MouldHalfB"):
             child = getattr(self.Object, name, None)

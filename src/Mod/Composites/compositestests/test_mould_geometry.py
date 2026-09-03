@@ -3,15 +3,12 @@
 
 """Geometry-behavior tests for mould_analysis.py public functions.
 
-Targets the 5 public functions that take/return Part.Shape:
-- propose_parting_surface
-- make_mould_halves
+Targets the public functions that take/return Part.Shape:
 - normalize_source_shape
 - analyze_source_shape
 - validate_mould_result
 
-Asserts their actual contracts (parting plane at bbox midpoint, mould
-halves on the correct side of the parting plane, normalization confidence,
+Asserts their actual contracts (normalization confidence,
 analysis status/ranking) — not just 'shape not null'. Uses programmatic
 primitives with known geometry plus the 'propblade' real-world fixture.
 """
@@ -34,9 +31,7 @@ from Composites.tools.mould_analysis import (
     _whole_side_draft_envelope,
     analyze_source_shape,
     default_mould_analysis_draw_direction,
-    make_mould_halves,
     normalize_source_shape,
-    propose_parting_surface,
     validate_mould_result,
 )
 from Composites.tools.profile_mould_analysis import (
@@ -76,75 +71,6 @@ def _make_twisted_loft_shape():
         make_rect(0.0, 20.0, 6.0, 0.0),
         make_rect(20.0, 14.0, 4.0, math.pi / 6.0),
     ], solid=True)
-
-
-class TestProposePartingSurface(unittest.TestCase):
-    """propose_parting_surface: plane at bbox midpoint along dominant axis."""
-
-    def test_x_direction_plane_at_midpoint(self):
-        shape = _box(dx=20.0, dy=10.0, dz=10.0)
-        result = propose_parting_surface(shape, FreeCAD.Vector(1, 0, 0))
-        self.assertEqual(result["status"], "Ready")
-        self.assertFalse(result["shape"].isNull())
-        # Parting plane at X midpoint = 10.0
-        self.assertAlmostEqual(result["surface_offset"], 10.0, places=6)
-        # Surface normal is the X axis
-        n = result["surface_normal"]
-        self.assertAlmostEqual(n.x, 1.0, places=6)
-        self.assertAlmostEqual(abs(n.y) + abs(n.z), 0.0, places=6)
-
-    def test_y_direction_plane_at_midpoint(self):
-        shape = _box(dx=10.0, dy=20.0, dz=10.0)
-        result = propose_parting_surface(shape, FreeCAD.Vector(0, 1, 0))
-        self.assertEqual(result["status"], "Ready")
-        self.assertAlmostEqual(result["surface_offset"], 10.0, places=6)
-        n = result["surface_normal"]
-        self.assertAlmostEqual(n.y, 1.0, places=6)
-
-    def test_z_direction_plane_at_midpoint(self):
-        shape = _box(dx=10.0, dy=10.0, dz=20.0)
-        result = propose_parting_surface(shape, FreeCAD.Vector(0, 0, 1))
-        self.assertEqual(result["status"], "Ready")
-        self.assertAlmostEqual(result["surface_offset"], 10.0, places=6)
-        n = result["surface_normal"]
-        self.assertAlmostEqual(n.z, 1.0, places=6)
-
-    def test_returns_valid_face_shape(self):
-        shape = _box()
-        result = propose_parting_surface(shape, FreeCAD.Vector(0, 0, 1))
-        self.assertTrue(result["shape"].isValid())
-
-
-class TestMakeMouldHalves(unittest.TestCase):
-    """make_mould_halves: two non-null solids split at the parting plane."""
-
-    def test_two_halves_non_null(self):
-        shape = _box(dx=10.0, dy=10.0, dz=20.0)
-        # Parting at Z=10 (midpoint)
-        result = make_mould_halves(shape, FreeCAD.Vector(0, 0, 1), 10.0)
-        self.assertIn(result["status"], ("Ready", "Degraded"))
-        self.assertFalse(result["half_a_shape"].isNull())
-        self.assertFalse(result["half_b_shape"].isNull())
-        self.assertGreater(result["half_a_volume"], 0.0)
-        self.assertGreater(result["half_b_volume"], 0.0)
-
-    def test_halves_lie_on_opposite_sides_of_parting(self):
-        shape = _box(dx=10.0, dy=10.0, dz=20.0)
-        result = make_mould_halves(shape, FreeCAD.Vector(0, 0, 1), 10.0)
-        # half_a is below the parting plane (Z < 10), half_b above (Z > 10)
-        a = result["half_a_shape"]
-        b = result["half_b_shape"]
-        self.assertLessEqual(a.BoundBox.ZMax, 10.0 + 1e-6)
-        self.assertGreaterEqual(b.BoundBox.ZMin, 10.0 - 1e-6)
-
-    def test_each_half_has_positive_stock_volume(self):
-        # The mould halves are stock blanks with the source cut out (cavity),
-        # so their combined volume is NOT necessarily > source. The meaningful
-        # contract is that each half is a real, positive-volume solid.
-        shape = _box(dx=10.0, dy=10.0, dz=20.0)
-        result = make_mould_halves(shape, FreeCAD.Vector(0, 0, 1), 10.0)
-        self.assertGreater(result["half_a_volume"], 0.0)
-        self.assertGreater(result["half_b_volume"], 0.0)
 
 
 class TestNormalizeSourceShape(unittest.TestCase):
@@ -554,7 +480,7 @@ class TestWithdrawalClearanceValidity(unittest.TestCase):
         # solver on the solver's own mould halves. Draw the box along +Z and
         # assert the native verdict passes.
         result = analyze_source_shape(
-            _box(), FreeCAD.Vector(0, 0, 1), parting_model="NonPlanar"
+            _box(), FreeCAD.Vector(0, 0, 1)
         )
         self.assertEqual(result["non_planar_status"], "ready")
         self.assertEqual(result["withdrawal_clearance_status"], "Pass")
@@ -572,7 +498,7 @@ class TestNonPlanarPartingSolver(unittest.TestCase):
     """
 
     def _analyze(self, shape, direction):
-        return analyze_source_shape(shape, direction, parting_model="NonPlanar")
+        return analyze_source_shape(shape, direction)
 
     def _assert_uv_segments(self, label, result):
         segments = result.get("parting_line_segments", [])
@@ -772,11 +698,13 @@ class TestPropbladeFixture(unittest.TestCase):
 
     def test_propblade_mould_halves_are_real_solids(self):
         result = self._analyze()
-        halves = make_mould_halves(
-            result["shape"],
-            result["parting_surface_normal"],
-            result["parting_surface_offset"],
-        )
+        halves = {
+            "status": result.get("mould_halves_status"),
+            "half_a_shape": result.get("mould_half_a_shape"),
+            "half_b_shape": result.get("mould_half_b_shape"),
+            "half_a_volume": result.get("mould_half_a_volume", 0.0),
+            "half_b_volume": result.get("mould_half_b_volume", 0.0),
+        }
         self.assertIn(halves["status"], ("Ready", "Degraded"))
         self.assertFalse(halves["half_a_shape"].isNull())
         self.assertFalse(halves["half_b_shape"].isNull())

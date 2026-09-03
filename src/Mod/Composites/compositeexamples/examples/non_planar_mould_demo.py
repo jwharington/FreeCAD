@@ -58,7 +58,6 @@ def _run_analysis(doc, label, shape, draw_dir):
         source.Shape,
         draw_direction=FreeCAD.Vector(*draw_dir),
         source_obj=source,
-        parting_model="NonPlanar",
     )
 
     status = result.get("non_planar_status", "n/a")
@@ -110,5 +109,7 @@ def main():
     _run_demo("MouldDemo_blade", "blade", _make_blade_shape(), (0, 1, 0))
 
 
-if __name__ == "__main__":
-    main()
+# Run under both direct execution (``python non_planar_mould_demo.py``) and
+# MCP/``exec`` (where ``__name__`` is not ``"__main__"``). Without this,
+# ``exec(open(...).read())`` silently defines functions and nothing happens.
+main()

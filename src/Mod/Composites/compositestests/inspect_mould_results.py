@@ -19,8 +19,6 @@ import Part
 from Composites.tools.mould_analysis import (
     analyze_source_shape,
     default_mould_analysis_draw_direction,
-    make_mould_halves,
-    propose_parting_surface,
 )
 from Composites.tools.profile_mould_analysis import (
     _make_blade_shape,
@@ -87,13 +85,6 @@ def _build_inspection_report(shape_name: str, shape, direction, source_obj=None)
         shape,
         direction,
         source_obj=source_obj,
-        parting_model="NonPlanar",
-    )
-    parting = propose_parting_surface(shape, direction)
-    halves = make_mould_halves(
-        shape,
-        parting["surface_normal"],
-        parting["surface_offset"],
     )
     # Native C++ withdrawal-clearance verdict, re-surfaced from the flattened
     # top-level analysis fields (there is no pure-Python fallback any more).
@@ -117,8 +108,8 @@ def _build_inspection_report(shape_name: str, shape, direction, source_obj=None)
         "document_name": document_name,
         "object_name": object_name,
         "analysis": result,
-        "parting": parting,
-        "halves": halves,
+        "parting": {"summary": result.get("parting_surface_summary", "")},
+        "halves": {"summary": result.get("mould_halves_summary", "")},
         "withdrawal_clearance": clearance,
     }
 

@@ -27,6 +27,10 @@ EXAMPLES = {
         "module": ".examples.conical_panel_segment",
         "name": "Conical panel segment",
     },
+    "mould_analysis": {
+        "module": ".examples.mould_analysis",
+        "name": "Parametric mould analysis (MouldAnalysis feature)",
+    },
 }
 
 

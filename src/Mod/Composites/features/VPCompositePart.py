@@ -14,8 +14,7 @@ class VPCompositePart(VPCompositeBase):
         self.ViewObject = vobj
 
     def getDisplayModes(self, obj):
-        modes = []
-        return modes
+        return ["Flat Lines"]
 
     def getDefaultDisplayMode(self) -> str:
         return "Flat Lines"
