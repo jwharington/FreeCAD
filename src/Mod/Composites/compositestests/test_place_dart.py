@@ -184,3 +184,35 @@ class TestPlaceDartFP(TestFreeCADFP):
         self._simulate_command_activation(shell, [wire])
         self.assertEqual(len(shell.DrapeCuts), first_count)
         self.assertEqual(shell.DrapeCuts[0], projected_obj)
+
+    def test_place_dart_projected_wire_lies_on_support(self):
+        """The projected wire must lie on the support surface (distance ~0)."""
+        shell = self._make_shell()
+        wire = self._make_wire_source("Wire", Part.makePolygon([
+            FreeCAD.Vector(-5.0, -5.0, 0.0),
+            FreeCAD.Vector(5.0, -5.0, 0.0),
+            FreeCAD.Vector(5.0, 5.0, 0.0),
+            FreeCAD.Vector(-5.0, 5.0, 0.0),
+            FreeCAD.Vector(-5.0, -5.0, 0.0),
+        ]))
+
+        self._simulate_command_activation(shell, [wire])
+        projected = shell.DrapeCuts[0]
+        support_shape = shell.Support.Shape
+        for edge in projected.Shape.Edges:
+            for point in edge.discretize(5):
+                distance, _, _ = support_shape.distToShape(Part.Vertex(point))
+                self.assertLess(
+                    distance,
+                    1e-3,
+                    "projected wire point should lie on the support surface",
+                )
+
+    def test_example_build(self):
+        """The registered place_dart example builds and projects a wire."""
+        from Composites.compositeexamples import runner
+
+        result = runner.run("place_dart", run_solver=False)
+        self.assertEqual(len(result["drape_cuts"]), 1)
+        self.assertFalse(result["drape_cuts"][0].Shape.isNull())
+        self.assertTrue(result["drape_cuts"][0].Shape.isClosed())

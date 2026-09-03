@@ -68,7 +68,6 @@ class StiffenerFP(CompositePartFP):
         super().__init__(obj)
 
     def execute(self, fp):
-        print(f"DEBUG StiffenerFP.execute: MirrorX={fp.MirrorX}, MirrorY={fp.MirrorY}")
         alignment = StiffenerAlignment(
             direction=fp.Direction,
             flip_x=fp.MirrorX,

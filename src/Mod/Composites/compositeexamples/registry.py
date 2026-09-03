@@ -31,6 +31,18 @@ EXAMPLES = {
         "module": ".examples.mould_analysis",
         "name": "Parametric mould analysis (MouldAnalysis feature)",
     },
+    "place_dart": {
+        "module": ".examples.place_dart",
+        "name": "Place dart (project wire cut onto shell)",
+    },
+    "seam_extraction": {
+        "module": ".examples.seam_extraction",
+        "name": "Seam extraction (two-panel overlap)",
+    },
+    "stiffener": {
+        "module": ".examples.stiffener",
+        "name": "Stiffener (sweep profile along plan)",
+    },
 }
 
 

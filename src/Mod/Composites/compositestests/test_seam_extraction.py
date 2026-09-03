@@ -69,6 +69,14 @@ def _make_two_adjacent_shells(doc):
     return ms, as_, lam
 
 
+def _face(pts):
+    """Create a planar face from a list of vertices."""
+    import Part
+
+    wire = Part.makePolygon(pts + [pts[0]])
+    return Part.Face(wire)
+
+
 class TestSeamGeometryFP(TestFreeCADFP):
     """Tests for SeamGeometryFP."""
 
@@ -422,6 +430,75 @@ class TestSeamGeometryFPExecuteFingerprint(TestFreeCADFP):
             fp2,
             "execute() should update fingerprint when shape changes",
         )
+
+
+class TestSeamExtractionGeometry(TestFreeCADFP):
+    """End-to-end seam extraction geometry on two adjacent panels."""
+
+    def _make_extraction(self):
+        from Composites.features.SeamExtraction import SeamShellFP
+
+        master, att, _ = _make_two_adjacent_shells(self.doc)
+        ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
+        SeamShellFP(ext, master, att)
+        self.doc.recompute()
+        return ext
+
+    def test_seam_surface_is_non_null(self):
+        ext = self._make_extraction()
+        self.assertIsNotNone(ext.Seam, "Seam should be set on success")
+        self.assertFalse(ext.Seam.Shape.isNull())
+
+    def test_seam_surface_spans_shared_edge(self):
+        # The seam is a strip along the shared edge (x=0), spanning the panel
+        # length (y in [-25, 25]).
+        ext = self._make_extraction()
+        bb = ext.Seam.Shape.BoundBox
+        self.assertGreater(bb.YLength, 40.0, "seam should span the panel length")
+        self.assertGreater(bb.XLength, 0.0, "seam should have non-zero width")
+
+    def test_remainder_is_non_null(self):
+        ext = self._make_extraction()
+        self.assertIsNotNone(ext.Remainder, "Remainder should be set on success")
+        self.assertFalse(ext.Remainder.Shape.isNull())
+
+    def test_seamfp_part_feature_path(self):
+        # SeamFP works with plain Part::Feature inputs (no composite shells).
+        from Composites.features.SeamExtraction import SeamFP
+
+        master_sup = self.doc.addObject("Part::Feature", "MasterSup")
+        master_sup.Shape = _face([
+            FreeCAD.Vector(0, -25, 0),
+            FreeCAD.Vector(50, -25, 0),
+            FreeCAD.Vector(50, 25, 0),
+            FreeCAD.Vector(0, 25, 0),
+        ])
+        att_sup = self.doc.addObject("Part::Feature", "AttSup")
+        att_sup.Shape = _face([
+            FreeCAD.Vector(-50, -25, 0),
+            FreeCAD.Vector(0, -25, 0),
+            FreeCAD.Vector(0, 25, 0),
+            FreeCAD.Vector(-50, 25, 0),
+        ])
+
+        ext = self.doc.addObject("Part::FeaturePython", "SeamExtraction")
+        SeamFP(ext)
+        ext.Master = master_sup
+        ext.Attachment = att_sup
+        ext.Width = "10.0 mm"
+        self.doc.recompute()
+
+        self.assertIsNotNone(ext.Seam, "SeamFP should produce a seam surface")
+        self.assertFalse(ext.Seam.Shape.isNull())
+        self.assertIsNotNone(ext.Remainder)
+
+    def test_example_build(self):
+        from Composites.compositeexamples import runner
+
+        result = runner.run("seam_extraction", run_solver=False)
+        self.assertIsNotNone(result["seam_surface"])
+        self.assertFalse(result["seam_surface"].Shape.isNull())
+        self.assertIsNotNone(result["remainder"])
 
 
 if __name__ == "__main__":

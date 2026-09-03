@@ -152,6 +152,29 @@ class TestStiffenerFP(TestFreeCADFP):
         self.assert_valid_stiffener(stiffener)
         self.assertEqual(stiffener.Direction, FreeCAD.Vector(0.0, 1.0, 1.0))
 
+    def test_stiffener_geometry_is_non_degenerate(self):
+        # The compound must have non-zero extent in every direction.
+        support = self._make_support("PlanarSupport", Part.makePlane(120.0, 60.0))
+        stiffener, _, _, _ = self._build_stiffener(
+            support,
+            self._plan_points(),
+            self._rect_profile_points(),
+        )
+
+        bb = stiffener.Shape.BoundBox
+        self.assertGreater(bb.XLength, 0.0)
+        self.assertGreater(bb.YLength, 0.0)
+        self.assertGreater(bb.ZLength, 0.0)
+
+    def test_example_build(self):
+        """The registered stiffener example builds a valid compound."""
+        from Composites.compositeexamples import runner
+
+        result = runner.run("stiffener", run_solver=False)
+        shape = result["shape"]
+        self.assertFalse(shape.isNull())
+        self.assertEqual(shape.ShapeType, "Compound")
+
     @unittest.skip("Known issue: Shell support with bent plan produces null input shape during projection")
     def test_shell_support_with_bent_plan(self):
         support = self._create_shell("ShellSupport")
