@@ -11,7 +11,7 @@ profile is swept along the plan to produce the stiffener compound.
 import FreeCAD
 import Part
 
-from ...features.Stiffener import StiffenerFP
+from ...features.Stiffener import StiffenerFP, ViewProviderStiffener
 
 DOCUMENT_NAME = "Composites_Stiffener"
 
@@ -71,6 +71,10 @@ def build(doc=None, run_solver=False):
 
     stiffener = doc.addObject("Part::FeaturePython", "Stiffener")
     StiffenerFP(stiffener, support=support, plan=plan, profile=profile)
+    # Attach the real ViewProvider (as the workbench command does); deriving
+    # the FP alone leaves the generic dimmed ViewProvider.
+    if FreeCAD.GuiUp:
+        ViewProviderStiffener(stiffener.ViewObject)
 
     doc.recompute()
 
