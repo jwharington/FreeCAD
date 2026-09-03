@@ -9,9 +9,18 @@ from dataclasses import (
 )
 
 import Part
-from FreeCAD import Vector
+from FreeCAD import Console, Vector
 
 from . import splitAPI
+
+
+debug = False
+
+
+def _debug(message):
+    """Emit a debug trace when :data:`debug` is enabled."""
+    if debug:
+        Console.PrintLog(message + "\n")
 
 
 def _safe_normal(edge, tangent: Vector, preferred: Vector) -> Vector:
@@ -82,12 +91,12 @@ class StiffenerAlignment:
         y0 = y0.normalize()
         x1, y1, z1, o1 = get_axes(origin_wire, self)
         align = deepcopy(self)
-        print(f"DEBUG adjust: y0={y0}, y1={y1}, dot={y0.dot(y1)}, self.flip_x={self.flip_x}")
+        _debug(f"adjust: y0={y0}, y1={y1}, dot={y0.dot(y1)}, self.flip_x={self.flip_x}")
         if (y0.dot(y1) < 0) == align.flip_x:
             align.flip_x = not align.flip_x
-            print(f"DEBUG adjust: toggled flip_x to {align.flip_x}")
+            _debug(f"adjust: toggled flip_x to {align.flip_x}")
         else:
-            print(f"DEBUG adjust: no toggle")
+            _debug("adjust: no toggle")
         return align
 
 
@@ -134,15 +143,18 @@ def generate_origin_wire(
     base_wire: Part.Wire,
     alignment: StiffenerAlignment,
 ):
-    print(f"DEBUG generate_origin_wire: base_wire first point={base_wire.Edges[0].firstVertex().Point}, last point={base_wire.Edges[-1].lastVertex().Point}")
+    _debug(
+        f"generate_origin_wire: base_wire first point={base_wire.Edges[0].firstVertex().Point}, "
+        f"last point={base_wire.Edges[-1].lastVertex().Point}"
+    )
     shape = support.makeParallelProjection(
         base_wire,
         alignment.direction,
     )
-    print(f"DEBUG generate_origin_wire: projected shape null={shape.isNull()}")
+    _debug(f"generate_origin_wire: projected shape null={shape.isNull()}")
     if not shape.isNull():
         wire = Part.Wire(shape.Edges)
-        print(f"DEBUG generate_origin_wire: wire first point={wire_first_point(wire)}")
+        _debug(f"generate_origin_wire: wire first point={wire_first_point(wire)}")
         return wire
     else:
         return Part.Wire()
@@ -158,17 +170,17 @@ def generate_surface_edge(
         origin_wire=origin_wire,
         alignment=alignment,
     )
-    print(f"DEBUG generate_surface_edge: offset={offset}, y={y}")
+    _debug(f"generate_surface_edge: offset={offset}, y={y}")
     wire = origin_wire.copy()
     p0 = wire.Edges[0].firstVertex().Point
     p1 = wire.Edges[0].lastVertex().Point
-    print(f"  origin_wire: {p0} to {p1}")
+    _debug(f"  origin_wire: {p0} to {p1}")
     wire.Placement.move(y * offset)
     p0m = wire.Edges[0].firstVertex().Point
     p1m = wire.Edges[0].lastVertex().Point
-    print(f"  moved wire: {p0m} to {p1m}")
+    _debug(f"  moved wire: {p0m} to {p1m}")
     result = support.makeParallelProjection(wire, alignment.direction)
-    print(f"  projection result null={result.isNull()}")
+    _debug(f"  projection result null={result.isNull()}")
     return result
 
 
@@ -244,11 +256,14 @@ def generate_free_edge(
     coord: Vector,
     alignment: StiffenerAlignment,
 ):
-    print(f"DEBUG generate_free_edge: coord={coord}, align.flip_x={alignment.flip_x}, align.flip_y={alignment.flip_y}")
+    _debug(
+        f"generate_free_edge: coord={coord}, align.flip_x={alignment.flip_x}, "
+        f"align.flip_y={alignment.flip_y}"
+    )
     if coord.y == 0:
-        print(f"  coord.y==0, coord.x={coord.x}")
+        _debug(f"  coord.y==0, coord.x={coord.x}")
         if coord.x == 0:
-            print(f"  returning origin_wire")
+            _debug("  returning origin_wire")
             return origin_wire
         result = generate_surface_edge(
             support=support,
@@ -256,10 +271,10 @@ def generate_free_edge(
             offset=coord.x,
             alignment=alignment,
         )
-        print(f"  generate_surface_edge returned null={result.isNull()}")
+        _debug(f"  generate_surface_edge returned null={result.isNull()}")
         return result
     else:
-        print(f"  coord.y!=0, calling makePipeShell logic")
+        _debug("  coord.y!=0, calling makePipeShell logic")
         # Rest of the function continues...
         # (will add debug later if needed)
 
@@ -301,10 +316,14 @@ def generate_stiffener(
     alignment: StiffenerAlignment,
 ):
     p_edges = find_surface_edges(xsect, invert=True)
-    print(f"DEBUG generate_stiffener: p_edges count={len(p_edges)}")
+    _debug(f"generate_stiffener: p_edges count={len(p_edges)}")
     shapes = []
     for p_edge in p_edges:
-        print(f"DEBUG: processing p_edge from {p_edge.firstVertex().Point} to {p_edge.lastVertex().Point}")
+        _debug(
+            f"processing p_edge from {p_edge.firstVertex().Point} to "
+            f"{p_edge.lastVertex().Point}"
+        )
+
         def get_edge(p):
             edge = generate_free_edge(
                 support=support,
@@ -312,7 +331,7 @@ def generate_stiffener(
                 coord=p,
                 alignment=alignment,
             )
-            print(f"DEBUG get_edge: coord={p}, edge is null={edge.isNull()}")
+            _debug(f"get_edge: coord={p}, edge is null={edge.isNull()}")
             return edge
 
         p0 = p_edge.firstVertex().Point
@@ -329,7 +348,7 @@ def generate_stiffener(
         shapes.append(shape)
 
     result = Part.makeCompound(shapes)
-    print(f"DEBUG generate_stiffener: compound is null={result.isNull()}")
+    _debug(f"generate_stiffener: compound is null={result.isNull()}")
     return result
 
 
@@ -375,9 +394,9 @@ def make_stiffener(
 ):
     edges = get_edges(plan)
     xsect = get_xsect(profile)
-    print(f"DEBUG make_stiffener: edges count={len(edges)}, xsect count={len(xsect)}")
+    _debug(f"make_stiffener: edges count={len(edges)}, xsect count={len(xsect)}")
     for i, e in enumerate(edges):
-        print(f"  edge {i}: {e}")
+        _debug(f"  edge {i}: {e}")
 
     def process_edge(e):
         origin_wire = generate_origin_wire(
@@ -385,23 +404,26 @@ def make_stiffener(
             base_wire=Part.Wire(e),
             alignment=alignment,
         )
-        print(f"DEBUG process_edge: origin_wire null={origin_wire.isNull()}")
+        _debug(f"process_edge: origin_wire null={origin_wire.isNull()}")
         align = alignment.adjust(e, origin_wire)
-        print(f"DEBUG process_edge: after adjust, align.flip_x={align.flip_x}, align.flip_y={align.flip_y}")
+        _debug(
+            f"process_edge: after adjust, align.flip_x={align.flip_x}, "
+            f"align.flip_y={align.flip_y}"
+        )
         tool = generate_surface_tool(
             support=support,
             origin_wire=origin_wire,
             xsect=xsect,
             alignment=align,
         )
-        print(f"DEBUG process_edge: tool count={len(tool)}")
+        _debug(f"process_edge: tool count={len(tool)}")
         stiffener = generate_stiffener(
             support=support,
             origin_wire=origin_wire,
             xsect=xsect,
             alignment=align,
         )
-        print(f"DEBUG process_edge: stiffener null={stiffener.isNull()}")
+        _debug(f"process_edge: stiffener null={stiffener.isNull()}")
         return (stiffener, tool)
 
     parts = [process_edge(e) for e in edges]
