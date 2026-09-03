@@ -181,6 +181,10 @@ def generate_surface_edge(
     _debug(f"  moved wire: {p0m} to {p1m}")
     result = support.makeParallelProjection(wire, alignment.direction)
     _debug(f"  projection result null={result.isNull()}")
+    # On a curved support the projection can split into several edges and
+    # come back as a Compound; Part.makeLoft needs a single Wire/Edge.
+    if not result.isNull() and result.ShapeType != "Wire":
+        result = Part.Wire(result.Edges)
     return result
 
 
@@ -362,12 +366,17 @@ def get_xsect(sketch):
     for geo in sketch.Geometry:
 
         def add_vertex(v):
+            p = v.Point
             for k, pp in points.items():
-                if v.Point.distanceToPoint(pp) < 1.0e-3:
+                if p.distanceToPoint(pp) < 1.0e-3:
                     return k
-            hash = v.hashCode()
-            points[hash] = v.Point
-            return hash
+            # Key by coordinates, not hashCode(): OCCT vertex hashes are not
+            # stable per point (the same point can hash differently across
+            # edges, and distinct points can collide), which corrupted the
+            # profile for Z-sections.
+            key = (round(p.x, 6), round(p.y, 6), round(p.z, 6))
+            points[key] = p
+            return key
 
         e = geo.toShape()
 
