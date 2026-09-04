@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Build conical panel and dump shader state to /tmp/shader_state.json."""
 import sys, json
-sys.path.insert(0, '/home/jmw/opt/FreeCAD/build/pixi-debug/Mod/Composites')
-from compositeexamples.examples.conical_panel_segment import build
+from Composites.compositeexamples.examples.conical_panel_segment import build
 
 result = build(run_solver=False)
 shell = result['feature_stack']['shell']
