@@ -339,11 +339,12 @@ class TestStiffenerFP(TestFreeCADFP):
         self.assertTrue(stiffener.Shape.isNull())
 
     def test_example_build(self):
-        """The registered stiffener example builds valid compounds."""
+        """The registered stiffener example builds one document of valid compounds."""
         from Composites.compositeexamples import runner
 
         result = runner.run("stiffener", run_solver=False)
-        for key, case in result.items():
+        self.assertIsNotNone(result["doc"])
+        for key, case in result["cases"].items():
             self.assertFalse(case["shape"].isNull(), f"{key} should be non-null")
             self.assertEqual(case["shape"].ShapeType, "Compound", f"{key} should be a compound")
 

@@ -4,8 +4,10 @@
 """Stiffener examples — sweep profiles along the path an intersecting surface
 cuts from a support.
 
-Each stiffener lives in its own document (avoids cross-object clutter and the
-stale-document issues that a single shared document causes). Builds:
+All four stiffeners share one document, as the other examples do: the runner
+and its smoke test expect a single ``doc`` in the result.
+
+Builds:
 
 1. ``Composites_Stiffener_RectPlate`` — rectangular section on a planar plate,
    path cut by a surface standing on the plate.
@@ -113,19 +115,17 @@ def _add_stiffener(doc, name, support, cut_surface, profile_points):
     if FreeCAD.GuiUp:
         ViewProviderStiffener(stiffener.ViewObject)
     doc.recompute()
-    return {"doc": doc, "stiffener": stiffener, "shape": stiffener.Shape}
+    return {"stiffener": stiffener, "shape": stiffener.Shape}
 
 
-def _build_on_plate(doc, name, document_name, profile_points):
-    """A stiffener on a planar plate, in its own document."""
-    doc = _new_document(doc, document_name)
-    support = _make_shape_object(doc, "PlateSupport", Part.makePlane(PLATE_LENGTH, PLATE_WIDTH))
+def _build_on_plate(doc, name, profile_points):
+    """A stiffener on a planar plate."""
+    support = _make_shape_object(doc, f"{name}Support", Part.makePlane(PLATE_LENGTH, PLATE_WIDTH))
     return _add_stiffener(doc, name, support, plate_cut_surface(), profile_points)
 
 
-def _build_ring(doc, name, document_name, kind, profile_points):
-    """An annular frame swept around a cylinder or cone, in its own document."""
-    doc = _new_document(doc, document_name)
+def _build_ring(doc, name, kind, profile_points):
+    """An annular frame swept around a cylinder or cone."""
     shell = (
         Part.makeCylinder(CYLINDER_RADIUS, SHELL_HEIGHT)
         if kind == "cylinder"
@@ -136,46 +136,36 @@ def _build_ring(doc, name, document_name, kind, profile_points):
 
 
 def build(doc=None, run_solver=False):
-    """Build the stiffener examples, one document per stiffener.
+    """Build the stiffener examples into one document.
 
     Parameters
     ----------
     doc
-        Optional FreeCAD document; when given, the first stiffener
-        (rect plate) is built into it. The others still use their own documents.
+        Optional FreeCAD document; a new one is opened when omitted.
     run_solver
         Accepted for runner parity.
 
     Returns
     -------
     dict
-        One entry per stiffener, each with ``doc``, ``stiffener`` and ``shape``.
+        ``doc`` for the document, and ``cases`` with one entry per stiffener,
+        each holding its ``stiffener`` feature and swept ``shape``.
     """
+    doc = _new_document(doc, "Composites_Stiffener")
     return {
-        "rect_plate": _build_on_plate(
-            doc, "RectOnPlate", "Composites_Stiffener_RectPlate", _rect_profile()
-        ),
-        "z_plate": _build_on_plate(None, "ZOnPlate", "Composites_Stiffener_ZPlate", _z_profile()),
-        "z_cylinder_ring": _build_ring(
-            None,
-            "ZCylRing",
-            "Composites_Stiffener_ZCylRing",
-            "cylinder",
-            _z_profile(),
-        ),
-        "z_cone_ring": _build_ring(
-            None,
-            "ZConeRing",
-            "Composites_Stiffener_ZConeRing",
-            "cone",
-            _z_profile(),
-        ),
+        "doc": doc,
+        "cases": {
+            "rect_plate": _build_on_plate(doc, "RectOnPlate", _rect_profile()),
+            "z_plate": _build_on_plate(doc, "ZOnPlate", _z_profile()),
+            "z_cylinder_ring": _build_ring(doc, "ZCylRing", "cylinder", _z_profile()),
+            "z_cone_ring": _build_ring(doc, "ZConeRing", "cone", _z_profile()),
+        },
     }
 
 
 def main():
     """Run the stiffener examples."""
-    for key, case in build().items():
+    for key, case in build()["cases"].items():
         shape = case["shape"]
         box = shape.BoundBox
         print(
