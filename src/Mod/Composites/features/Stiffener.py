@@ -3,13 +3,11 @@
 
 import FreeCAD
 
-from FreeCAD import Vector
-
 from .. import (
     STIFFENER_TOOL_ICON,
 )
 from ..tools.stiffener import (
-    StiffenerAlignment,
+    ProfileMirror,
     make_stiffener,
 )
 from .Command import BaseCommand
@@ -20,7 +18,7 @@ from .VPCompositePart import (
 
 
 class StiffenerFP(CompositePartFP):
-    def __init__(self, obj, support=None, plan=None, profile=None):
+    def __init__(self, obj, support=None, cut_surface=None, profile=None):
         obj.addProperty(
             "App::PropertyLink",
             "Support",
@@ -31,31 +29,24 @@ class StiffenerFP(CompositePartFP):
 
         obj.addProperty(
             "App::PropertyLink",
-            "Plan",
+            "IntersectSurface",
             "Layout",
-            "Plan layout",
+            "Surface whose intersection with the support sweeps the path",
             locked=True,
-        ).Plan = plan
-
-        obj.addProperty(
-            "App::PropertyVector",
-            "Direction",
-            "Layout",
-            "Projection direction",
-        ).Direction = Vector(0, 0, 1)
+        ).IntersectSurface = cut_surface
 
         obj.addProperty(
             "App::PropertyBool",
             "MirrorX",
             "Layout",
-            "Mirror profile in X direction",
+            "Mirror profile along the cut-surface normal",
         ).MirrorX = False
 
         obj.addProperty(
             "App::PropertyBool",
             "MirrorY",
             "Layout",
-            "Mirror profile in Y direction",
+            "Mirror profile across the support surface",
         ).MirrorY = False
 
         obj.addProperty(
@@ -68,22 +59,16 @@ class StiffenerFP(CompositePartFP):
         super().__init__(obj)
 
     def execute(self, fp):
-        alignment = StiffenerAlignment(
-            direction=fp.Direction,
-            flip_x=fp.MirrorX,
-            flip_y=fp.MirrorY,
-        )
-
         shape, tools = make_stiffener(
             support=fp.Support.Shape,
-            plan=fp.Plan,
+            cut_surface=fp.IntersectSurface.Shape,
             profile=fp.Profile,
-            alignment=alignment,
+            mirror=ProfileMirror(flip_x=fp.MirrorX, flip_y=fp.MirrorY),
         )
         fp.Shape = shape
         self.tools = tools
 
-        fp.Plan.Visibility = False
+        fp.IntersectSurface.Visibility = False
         fp.Support.Visibility = False
         fp.Profile.Visibility = False
 
@@ -93,7 +78,7 @@ class ViewProviderStiffener(VPCompositePart):
         obj = getattr(self, "Object", None)
         if obj is None:
             return []
-        return [obj.Support, obj.Plan, obj.Profile]
+        return [obj.Support, obj.IntersectSurface, obj.Profile]
 
     def getIcon(self):
         return STIFFENER_TOOL_ICON
@@ -103,16 +88,16 @@ class CompositeStiffenerCommand(BaseCommand):
     icon = STIFFENER_TOOL_ICON
     menu_text = "Stiffener"
     tool_tip = """Generate stiffener.
-        Select a sketch for the plan layout, support feature,
-        and profile sketch.
+        Select the support feature, the surface that cuts the sweep path
+        from it, and the profile sketch.
         WORK-IN-PROGRESS"""
     sel_args = [
         {
-            "key": "plan",
-            "type": "Sketcher::SketchObject",
+            "key": "support",
+            "type": "Part::Feature",
         },
         {
-            "key": "support",
+            "key": "cut_surface",
             "type": "Part::Feature",
         },
         {

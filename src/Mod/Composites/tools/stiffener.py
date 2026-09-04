@@ -1,20 +1,30 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
+"""Sweep geometry for the Stiffener feature.
 
-from copy import deepcopy
-from dataclasses import (
-    dataclass,
-    field,
-)
+The path is where the intersecting surface cuts the support — never a
+projection of separate plan geometry. The profile rides a moving frame along
+that path: tangent t, cut-surface normal N, and height b = t x N. Profile
+abscissa x runs along N, ordinate y along b, so the y = 0 row lies on the
+support surface. See docs/stiffener-design.md.
+"""
+
+from dataclasses import dataclass
 
 import Part
 from FreeCAD import Console, Vector
 
-from . import splitAPI
-
 
 debug = False
+
+PATH_SAMPLES = 72
+TRAVEL_AXIS_EPSILON = 1e-12
+DEGENERATE_AREA_FRACTION = 1e-9
+SURFACE_TOLERANCE = 1e-9
+OFFSET_DIRECTION_TOLERANCE = 1e-6
+COORD_PRECISION = 6
+DIRECTION_PROBE_SAMPLES = 3
 
 
 def _debug(message):
@@ -23,353 +33,302 @@ def _debug(message):
         Console.PrintLog(message + "\n")
 
 
-def _safe_normal(edge, tangent: Vector, preferred: Vector) -> Vector:
-    try:
-        normal = edge.normalAt(edge.FirstParameter)
-        if normal.Length > 1e-9:
-            return normal
-    except Exception:
-        pass
-
-    if abs(tangent.dot(preferred)) < 1.0 - 1e-9:
-        return preferred
-
-    fallback = Vector(0, 1, 0)
-    if abs(tangent.dot(fallback)) >= 1.0 - 1e-9:
-        fallback = Vector(1, 0, 0)
-    return fallback
-
-#
-#
-# class StiffenerSectionType(Enum):
-#     L = auto()  # or J
-#     Z = auto()  # or S
-#     T = auto()
-
-#     I = auto()  # or H
-#
-#     C = auto()
-#
-#     Omega = auto()  # or Semicircular, pi
-#     Hat = auto()
-#     Trapezoid = auto()
-#
-#     Box = auto()
-
-
 @dataclass
-class StiffenerAlignment:
-    direction: Vector = field(default_factory=lambda: Vector(0, 0, 1))
+class ProfileMirror:
+    """Which profile axes the user has flipped."""
+
     flip_x: bool = False
     flip_y: bool = False
 
-    def apply(
-        self,
-        x: Vector,
-        y: Vector,
-        z: Vector,
-    ):
-        if self.flip_x:
-            y = -y
-        if self.flip_y:
-            z = -z
-        return x, y, z
-
-    def adjust(
-        self,
-        edge,
-        origin_wire,
-    ):
-        e0 = edge.Edges[0]
-        x0 = e0.tangentAt(e0.FirstParameter)
-        z0 = self.direction
-        y0 = x0.cross(z0)
-        if y0.Length < 1e-9:
-            y0 = x0.cross(Vector(0, 1, 0))
-            if y0.Length < 1e-9:
-                y0 = x0.cross(Vector(1, 0, 0))
-        y0 = y0.normalize()
-        x1, y1, z1, o1 = get_axes(origin_wire, self)
-        align = deepcopy(self)
-        _debug(f"adjust: y0={y0}, y1={y1}, dot={y0.dot(y1)}, self.flip_x={self.flip_x}")
-        if (y0.dot(y1) < 0) == align.flip_x:
-            align.flip_x = not align.flip_x
-            _debug(f"adjust: toggled flip_x to {align.flip_x}")
-        else:
-            _debug("adjust: no toggle")
-        return align
+    def apply(self, coord: Vector) -> Vector:
+        return Vector(
+            -coord.x if self.flip_x else coord.x,
+            -coord.y if self.flip_y else coord.y,
+            0.0,
+        )
 
 
-def wire_first_point(wire: Part.Wire):
-    return wire.Edges[0].firstVertex().Point
+@dataclass
+class Station:
+    """The frame at one point of the path."""
+
+    point: Vector
+    tangent: Vector
+    normal: Vector
+    height: Vector
+
+    @classmethod
+    def at(cls, point, tangent, normal):
+        return cls(point, tangent, normal, tangent.cross(normal))
 
 
-def wire_last_point(wire: Part.Wire):
-    return wire.Edges[-1].lastVertex().Point
+def _area_vector(points):
+    """Newell normal of the polygon the points trace (chord-closed when open)."""
+    ordered = list(points) + points[:1]
+    total = Vector()
+    for point, following in zip(ordered, ordered[1:]):
+        total += Vector(
+            point.y * following.z - following.y * point.z,
+            point.z * following.x - following.z * point.x,
+            point.x * following.y - following.x * point.y,
+        )
+    return total
 
 
-def get_axes(
-    origin_wire: Part.Wire,
-    alignment: StiffenerAlignment,
-):
-    e0 = origin_wire.Edges[0]
-    o = wire_first_point(origin_wire)
-    x = e0.tangentAt(e0.FirstParameter)
-    z = _safe_normal(e0, x, alignment.direction)
-    y = x.cross(z)
-    if y.Length < 1e-9:
-        y = x.cross(Vector(0, 1, 0))
-        if y.Length < 1e-9:
-            y = x.cross(Vector(1, 0, 0))
-    y = y.normalize()
-    x, y, z = alignment.apply(x, y, z)
-    return x, y, z, o
+def _first_axis_delta_is_positive(delta: Vector) -> bool:
+    """True when the first non-zero component of delta, in x/y/z order, is positive."""
+    for component in (delta.x, delta.y, delta.z):
+        if abs(component) > TRAVEL_AXIS_EPSILON:
+            return component > 0.0
+    return True
 
 
-def get_spaced_point(
-    origin_wire: Part.Wire,
-    coord: Vector,
-    alignment: StiffenerAlignment,
-):
-    _, y, z, o = get_axes(
-        origin_wire=origin_wire,
-        alignment=alignment,
-    )
-    return Vector(coord.x * y + coord.y * z + o)
+def _travels_counter_clockwise(path: Part.Wire, normal: Vector) -> bool:
+    """Whether travel along `path` winds counter-clockwise about `normal`.
+
+    A path enclosing no area — a straight run across a plate — has no winding
+    sense, so it travels in positive axis order instead.
+    """
+    points = path.discretize(PATH_SAMPLES)
+    area = _area_vector(points)
+    if area.Length > DEGENERATE_AREA_FRACTION * path.Length**2:
+        return area.dot(normal) > 0.0
+    return _first_axis_delta_is_positive(points[1] - points[0])
 
 
-def generate_origin_wire(
-    support: Part.Shape,
-    base_wire: Part.Wire,
-    alignment: StiffenerAlignment,
-):
-    _debug(
-        f"generate_origin_wire: base_wire first point={base_wire.Edges[0].firstVertex().Point}, "
-        f"last point={base_wire.Edges[-1].lastVertex().Point}"
-    )
-    shape = support.makeParallelProjection(
-        base_wire,
-        alignment.direction,
-    )
-    _debug(f"generate_origin_wire: projected shape null={shape.isNull()}")
-    if not shape.isNull():
-        wire = Part.Wire(shape.Edges)
-        _debug(f"generate_origin_wire: wire first point={wire_first_point(wire)}")
-        return wire
+def plane_normal(cut_surface: Part.Shape):
+    """The one normal of a planar cut surface, or None when the surface is bent."""
+    faces = cut_surface.Faces
+    if len(faces) != 1 or not isinstance(faces[0].Surface, Part.Plane):
+        return None
+    return cut_surface_normal(cut_surface, faces[0].CenterOfMass)
+
+
+def cut_surface_normal(cut_surface: Part.Shape, point: Vector) -> Vector:
+    """The normal of the cut surface at `point`, in its own orientation."""
+    faces = cut_surface.Faces
+    if not faces:
+        raise ValueError("the intersecting surface has no faces to intersect with")
+    return faces[0].normalAt(*faces[0].Surface.parameter(point)).normalize()
+
+
+def intersection_paths(support: Part.Shape, cut_surface: Part.Shape):
+    """Every continuous curve where `cut_surface` cuts `support`, oriented.
+
+    Curves that meet are joined into one path — that is how a path bends over a
+    fold between two faces. Curves that do not meet are separate paths, each
+    swept in its own right, which is what a support of several disjoint faces
+    asks for.
+
+    Travel is oriented counter-clockwise about the cut surface's normal, which
+    fixes the sign of the tangent t and so of the frame's height direction
+    b = t x N.
+    """
+    paths = []
+    for group in _section_groups(support, cut_surface):
+        path = Part.Wire(group)
+        start = min(path.discretize(PATH_SAMPLES), key=_coordinate_order)
+        paths.append(_oriented_by_travel(path, cut_surface_normal(cut_surface, start)))
+    _debug(f"intersection_paths: {len(paths)} paths")
+    return paths
+
+
+def _section_groups(support: Part.Shape, cut_surface: Part.Shape):
+    """The edge groups where `cut_surface` cuts `support`, joined into chains.
+
+    A solid or a single face is sectioned in one go — sectioning a solid face by
+    face would duplicate the curve wherever the cut runs along a cap plane. An
+    open support built of several faces cannot be sectioned in one go, so its
+    faces are cut one at a time and the pieces joined at their shared edges,
+    which is where the path bends.
+    """
+    if support.ShapeType in ("Solid", "Face"):
+        edges = support.section(cut_surface).Edges
     else:
-        return Part.Wire()
+        edges = [edge for face in support.Faces for edge in face.section(cut_surface).Edges]
+    _debug(f"_section_groups: section edges={len(edges)}")
+    return Part.sortEdges(edges)
 
 
-def generate_surface_edge(
-    support: Part.Shape,
-    origin_wire: Part.Wire,
-    offset: float,
-    alignment: StiffenerAlignment,
-):
-    _, y, _, _ = get_axes(
-        origin_wire=origin_wire,
-        alignment=alignment,
-    )
-    _debug(f"generate_surface_edge: offset={offset}, y={y}")
-    wire = origin_wire.copy()
-    p0 = wire.Edges[0].firstVertex().Point
-    p1 = wire.Edges[0].lastVertex().Point
-    _debug(f"  origin_wire: {p0} to {p1}")
-    wire.Placement.move(y * offset)
-    p0m = wire.Edges[0].firstVertex().Point
-    p1m = wire.Edges[0].lastVertex().Point
-    _debug(f"  moved wire: {p0m} to {p1m}")
-    result = support.makeParallelProjection(wire, alignment.direction)
-    _debug(f"  projection result null={result.isNull()}")
-    # On a curved support the projection can split into several edges and
-    # come back as a Compound; Part.makeLoft needs a single Wire/Edge.
-    if not result.isNull() and result.ShapeType != "Wire":
-        result = Part.Wire(result.Edges)
-    return result
+def generate_intersection_path(support: Part.Shape, cut_surface: Part.Shape) -> Part.Wire:
+    """The sweep path when the cut surface yields one curve, else an empty wire.
 
-
-def find_surface_edges(xsect: list, invert: bool = False):
-    def include(edge):
-        is_surface = (edge.firstVertex().Point.y == 0) and (
-            edge.lastVertex().Point.y == 0
+    Raises when the cut yields several, because one of them would be chosen
+    silently — call `intersection_paths` to sweep them all.
+    """
+    paths = intersection_paths(support, cut_surface)
+    if len(paths) > 1:
+        raise ValueError(
+            f"the cut surface meets the support in {len(paths)} paths; they are swept"
+            " separately by make_stiffener"
         )
-        return invert != is_surface
-        # if invert:
-        #    return not is_surface
-        # return is_surface and edge.firstVertex().Point.x != 0
-
-    return [e for e in xsect if include(e)]
+    return paths[0] if paths else Part.Wire()
 
 
-def generate_surface_tool(
-    support: Part.Shape,
-    origin_wire: Part.Wire,
-    xsect: list,
-    alignment: StiffenerAlignment,
-):
-    _, y, _, _ = get_axes(
-        origin_wire=origin_wire,
-        alignment=alignment,
-    )
-    # scan points for lines on surface
-    p_edges = find_surface_edges(xsect, invert=False)
-
-    tools = []
-    for p_edge in p_edges:
-        # get moved line
-        # stitch into closed shape
-        # project to support
-        def make_wire(p):
-            wire = origin_wire.copy()
-            wire.Placement.move(y * p.x)
-            return wire
-
-        wires = [
-            make_wire(p_edge.firstVertex().Point),
-            make_wire(p_edge.lastVertex().Point),
-        ]
-
-        p00 = wire_first_point(wires[0])
-        p01 = wire_first_point(wires[1])
-        p10 = wire_last_point(wires[0])
-        p11 = wire_last_point(wires[1])
-
-        if p00.distanceToPoint(p10) > 0:
-            wires.append(Part.Wire(Part.LineSegment(p00, p01).toShape()))
-            wires.append(Part.Wire(Part.LineSegment(p10, p11).toShape()))
-
-        def add_tool(w, sign):
-            shape = support.makeParallelProjection(
-                w,
-                sign * alignment.direction,
-            )
-            if not shape.isNull():
-                tools.append(shape)
-
-        for w in wires:
-            # add_tool(w, 1)
-            # add_tool(w, -1)
-            tools.append(w)
-
-    return tools
+def _oriented_by_travel(curve: Part.Wire, normal: Vector) -> Part.Wire:
+    """`curve`, oriented so travel winds counter-clockwise about `normal`."""
+    if not _travels_counter_clockwise(curve, normal):
+        curve.reverse()
+    return curve
 
 
-def generate_free_edge(
-    support: Part.Shape,
-    origin_wire: Part.Wire,
-    coord: Vector,
-    alignment: StiffenerAlignment,
-):
-    _debug(
-        f"generate_free_edge: coord={coord}, align.flip_x={alignment.flip_x}, "
-        f"align.flip_y={alignment.flip_y}"
-    )
-    if coord.y == 0:
-        _debug(f"  coord.y==0, coord.x={coord.x}")
-        if coord.x == 0:
-            _debug("  returning origin_wire")
-            return origin_wire
-        result = generate_surface_edge(
-            support=support,
-            origin_wire=origin_wire,
-            offset=coord.x,
-            alignment=alignment,
-        )
-        _debug(f"  generate_surface_edge returned null={result.isNull()}")
-        return result
-    else:
-        _debug("  coord.y!=0, calling makePipeShell logic")
-        # Rest of the function continues...
-        # (will add debug later if needed)
+def _coordinate_order(point: Vector):
+    return (point.x, point.y, point.z)
 
 
-    def make_section(flip):
-        delta = Vector(1.0, 1.0, 0.0)
-
-        p0 = get_spaced_point(
-            origin_wire,
-            coord,
-            alignment=alignment,
-        )
-        if flip:
-            p1 = get_spaced_point(
-                origin_wire,
-                coord - delta,
-                alignment=alignment,
-            )
-        else:
-            p1 = get_spaced_point(
-                origin_wire,
-                coord + delta,
-                alignment=alignment,
-            )
-        line_segment = Part.LineSegment(p0, p1)
-        return Part.Wire([line_segment.toShape()])
-
-    makeSolid = False
-    isFrenet = True
-    s0 = origin_wire.makePipeShell([make_section(True)], makeSolid, isFrenet)
-    s1 = origin_wire.makePipeShell([make_section(False)], makeSolid, isFrenet)
-    return Part.Wire(s0.section(s1).Edges)
-
-
-def generate_stiffener(
-    support: Part.Shape,
-    origin_wire: Part.Wire,
-    xsect: list,
-    alignment: StiffenerAlignment,
-):
-    p_edges = find_surface_edges(xsect, invert=True)
-    _debug(f"generate_stiffener: p_edges count={len(p_edges)}")
-    shapes = []
-    for p_edge in p_edges:
-        _debug(
-            f"processing p_edge from {p_edge.firstVertex().Point} to "
-            f"{p_edge.lastVertex().Point}"
-        )
-
-        def get_edge(p):
-            edge = generate_free_edge(
-                support=support,
-                origin_wire=origin_wire,
-                coord=p,
-                alignment=alignment,
-            )
-            _debug(f"get_edge: coord={p}, edge is null={edge.isNull()}")
+def _edge_holding(path: Part.Wire, point: Vector) -> Part.Edge:
+    vertex = Part.Vertex(point)
+    for edge in path.Edges:
+        if edge.distToShape(vertex)[0] < SURFACE_TOLERANCE:
             return edge
+    raise ValueError(f"no path edge passes through {point}")
 
-        p0 = p_edge.firstVertex().Point
-        p1 = p_edge.lastVertex().Point
-        e1 = get_edge(p0)
-        e2 = get_edge(p1)
-        if e1.isNull() or e2.isNull():
-            raise ValueError(f"Null edge generated for p_edge {p0} -> {p1}")
-        shape = Part.makeLoft(
-            [e1, e2],
-            solid=False,
-            ruled=True,
+
+def frames_along(path: Part.Wire, cut_surface: Part.Shape, samples: int = PATH_SAMPLES):
+    """The frame at each station of `path`, in the direction of travel."""
+    frames = []
+    for point in path.discretize(samples):
+        edge = _edge_holding(path, point)
+        tangent = edge.tangentAt(edge.Curve.parameter(point))
+        if edge.Orientation == "Reversed":
+            tangent = -tangent
+        frames.append(
+            Station.at(point, tangent.normalize(), cut_surface_normal(cut_surface, point))
         )
-        shapes.append(shape)
-
-    result = Part.makeCompound(shapes)
-    _debug(f"generate_stiffener: compound is null={result.isNull()}")
-    return result
+    return frames
 
 
-def get_edges(sketch):
-    return [e.toShape() for e in sketch.Geometry]
+def _coordinate_key(coord: Vector):
+    return (round(coord.x, COORD_PRECISION), round(coord.y, COORD_PRECISION))
+
+
+def _profile_coords(xsect, mirror: ProfileMirror):
+    """The distinct profile vertices, mirrored into the frame's axes."""
+    coords = {}
+    for edge in xsect:
+        for vertex in (edge.firstVertex(), edge.lastVertex()):
+            coord = mirror.apply(vertex.Point)
+            coords[_coordinate_key(coord)] = coord
+    return coords
+
+
+def _row_groups(support: Part.Shape, cut_surface: Part.Shape, normal: Vector, abscissa: float):
+    """The base rows `abscissa` along the cut normal.
+
+    Rows are cut the same way the path is: by moving the cut surface along its
+    own normal and intersecting again. That keeps a point travelling along the
+    normal on the surface curve rather than on a chord.
+    """
+    moved = cut_surface.copy()
+    moved.translate(normal * abscissa)
+    return _section_groups(support, moved)
+
+
+def _row_for(path: Part.Wire, groups, normal: Vector, abscissa: float) -> Part.Wire:
+    """The row belonging to `path` — of the rows cut at this abscissa, the one
+    nearest the path, since each path has its own."""
+    if not groups:
+        raise ValueError(f"the profile leaves the support {abscissa:g} mm along the cut normal")
+    rows = [_oriented_by_travel(Part.Wire(group), normal) for group in groups]
+    if len(rows) == 1:
+        return rows[0]
+    return min(rows, key=lambda row: path.distToShape(row)[0])
+
+
+def _height_at(curve: Part.Wire, point: Vector, normal: Vector) -> Vector:
+    """The height direction b = t x N at `point`, in `curve`'s direction of travel."""
+    edge = _edge_holding(curve, point)
+    tangent = edge.tangentAt(edge.Curve.parameter(point))
+    if edge.Orientation == "Reversed":
+        tangent = -tangent
+    return Station.at(point, tangent.normalize(), normal).height
+
+
+def _sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire:
+    """The row moved `ordinate` sideways along b = t x N, staying in its plane."""
+    if abs(ordinate) <= SURFACE_TOLERANCE:
+        return row
+    if len(row.Edges) == 1 and isinstance(row.Edges[0].Curve, Part.Line):
+        return _translated_sideways(row, ordinate, normal)
+    return _offset_sideways(row, ordinate, normal)
+
+
+def _translated_sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire:
+    """A straight row lifted sideways: b is constant, so this is a rigid move."""
+    lifted = row.copy()
+    lifted.translate(_height_at(row, row.discretize(2)[0], normal) * ordinate)
+    return lifted
+
+
+def _offset_sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire:
+    """Offset by ordinate in the row's plane, taking the sign that runs along b.
+
+    OCCT offsets by expanding or shrinking the enclosed area, which agrees with
+    b = t x N for a closed curve but not necessarily for an open one, so the
+    direction is read back rather than assumed.
+    """
+    probe = row.discretize(DIRECTION_PROBE_SAMPLES)[0]
+    expected = probe + _height_at(row, probe, normal) * ordinate
+    for sign in (1.0, -1.0):
+        lifted = row.makeOffset2D(sign * ordinate, openResult=True)
+        if lifted.distToShape(Part.Vertex(expected))[0] < OFFSET_DIRECTION_TOLERANCE:
+            return _oriented_by_travel(lifted, normal)
+    raise ValueError("offsetting the profile row did not move it along the height direction")
+
+
+def _loci_over_plane(
+    support: Part.Shape, cut_surface: Part.Shape, path: Part.Wire, coords, normal: Vector
+):
+    """One locus curve per distinct profile vertex, for one path and a planar cut surface."""
+    rows = {
+        abscissa: _row_for(
+            path, _row_groups(support, cut_surface, normal, abscissa), normal, abscissa
+        )
+        for abscissa in sorted({key[0] for key in coords})
+    }
+    return {key: _sideways(rows[key[0]], key[1], normal) for key in coords}
+
+
+def _loci_over_surface(support: Part.Shape, cut_surface: Part.Shape, path, coords):
+    """One locus curve per distinct profile vertex, for a bent cut surface.
+
+    Without a single cut-plane normal the rows are not plane curves, so they
+    are sampled along the path and snapped back onto the support.
+    """
+    frames = frames_along(path, cut_surface)
+    loci = {}
+    for coord in coords.values():
+        points = []
+        for station in frames:
+            offset = station.point + station.normal * coord.x
+            if support.distToShape(Part.Vertex(offset))[0] > SURFACE_TOLERANCE:
+                offset = _nearest_surface_point(support, offset)
+            points.append(offset + station.height * coord.y)
+        loci[_coordinate_key(coord)] = Part.Wire([_curve_through(points)])
+    return loci
+
+
+def _nearest_surface_point(support: Part.Shape, point: Vector) -> Vector:
+    return support.distToShape(Part.Vertex(point))[1][0][0]
+
+
+def _curve_through(points):
+    curve = Part.BSplineCurve()
+    curve.interpolate(points)
+    return curve.toShape()
 
 
 def get_xsect(sketch):
+    """The profile's edges, with repeated vertices merged."""
     points = {}
     links = []
     for geo in sketch.Geometry:
 
         def add_vertex(v):
             p = v.Point
-            for k, pp in points.items():
-                if p.distanceToPoint(pp) < 1.0e-3:
-                    return k
+            for key, existing in points.items():
+                if p.distanceToPoint(existing) < 1.0e-3:
+                    return key
             # Key by coordinates, not hashCode(): OCCT vertex hashes are not
             # stable per point (the same point can hash differently across
             # edges, and distinct points can collide), which corrupted the
@@ -378,80 +337,55 @@ def get_xsect(sketch):
             points[key] = p
             return key
 
-        e = geo.toShape()
+        edge = geo.toShape()
+        links.append([add_vertex(edge.firstVertex()), add_vertex(edge.lastVertex())])
 
-        link = [
-            add_vertex(e.firstVertex()),
-            add_vertex(e.lastVertex()),
-        ]
-        links.append(link)
+    return [
+        Part.LineSegment(points[start], points[end]).toShape() for start, end in links
+    ]
 
-    for k in points.keys():
-        points[k] += Vector(1.0e-3 * points[k].y, 0, 0)
 
-    def make_element(link):
-        return Part.LineSegment(points[link[0]], points[link[1]]).toShape()
-
-    return [make_element(link) for link in links]
+def _loft_profile(xsect, loci, mirror: ProfileMirror):
+    """One lofted face per profile edge, ruled between its two vertex loci."""
+    return [
+        Part.makeLoft(
+            [loci[_coordinate_key(mirror.apply(vertex.Point))] for vertex in edge.Vertexes],
+            solid=False,
+            ruled=True,
+        )
+        for edge in xsect
+    ]
 
 
 def make_stiffener(
     support: Part.Shape,
-    plan,
+    cut_surface: Part.Shape,
     profile,
-    alignment: StiffenerAlignment = StiffenerAlignment(),
+    mirror: ProfileMirror = ProfileMirror(),
 ):
-    edges = get_edges(plan)
+    """The stiffener shell swept along the intersection path, with its tool curves.
+
+    Every profile edge is lofted along the whole path into a face, whatever the
+    profile's topology, so the result is an open shell rather than a solid.
+    Each profile vertex traces a locus: the row at its abscissa, moved sideways
+    by its ordinate.
+    """
+    paths = intersection_paths(support, cut_surface)
+    if not paths:
+        raise ValueError("the cut surface does not meet the support — no path to sweep along")
+
     xsect = get_xsect(profile)
-    _debug(f"make_stiffener: edges count={len(edges)}, xsect count={len(xsect)}")
-    for i, e in enumerate(edges):
-        _debug(f"  edge {i}: {e}")
+    _debug(f"make_stiffener: paths={len(paths)} profile edges={len(xsect)}")
 
-    def process_edge(e):
-        origin_wire = generate_origin_wire(
-            support=support,
-            base_wire=Part.Wire(e),
-            alignment=alignment,
-        )
-        _debug(f"process_edge: origin_wire null={origin_wire.isNull()}")
-        align = alignment.adjust(e, origin_wire)
-        _debug(
-            f"process_edge: after adjust, align.flip_x={align.flip_x}, "
-            f"align.flip_y={align.flip_y}"
-        )
-        tool = generate_surface_tool(
-            support=support,
-            origin_wire=origin_wire,
-            xsect=xsect,
-            alignment=align,
-        )
-        _debug(f"process_edge: tool count={len(tool)}")
-        stiffener = generate_stiffener(
-            support=support,
-            origin_wire=origin_wire,
-            xsect=xsect,
-            alignment=align,
-        )
-        _debug(f"process_edge: stiffener null={stiffener.isNull()}")
-        return (stiffener, tool)
+    coords = _profile_coords(xsect, mirror)
+    normal = plane_normal(cut_surface)
+    faces, surface_rows = [], []
+    for path in paths:
+        if normal is None:
+            loci = _loci_over_surface(support, cut_surface, path, coords)
+        else:
+            loci = _loci_over_plane(support, cut_surface, path, coords, normal)
+        faces.extend(_loft_profile(xsect, loci, mirror))
+        surface_rows.extend(locus for key, locus in loci.items() if key[1] == 0.0)
 
-    parts = [process_edge(e) for e in edges]
-    stiffeners = [p[0] for p in parts]
-    # return stiffeners[0]
-    tools = []
-    for p in parts:
-        tools.extend(p[1])
-    ptools = support.project(tools)
-    sections = splitAPI.booleanFragments([support, ptools], "Split", 1e-6)
-    return Part.makeCompound(stiffeners + [sections]), ptools
-    # return Part.makeCompound(stiffeners + [support, support.project(tools)]), tools
-
-    # foo.project([tools])
-
-    # sections = splitAPI.booleanFragments([support] + tools, "Split", 1e-6)
-    # return Part.makeCompound(stiffeners + [sections])
-
-    # sections = splitAPI.slice(support, tools, "Split", 1e-6)
-    # sections.SubShapes
-    # return Part.Wire(sections.SubShapes[1].Edges)
-    # return common([support] + tools)
+    return Part.makeCompound(faces), surface_rows

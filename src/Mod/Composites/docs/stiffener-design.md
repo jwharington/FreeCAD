@@ -58,8 +58,9 @@
   (sketch x → cut-plane normal N), **MirrorY** flips the height direction
   (sketch y → in-plane b). Support-agnostic.
 - **Face selection**: when the whole support object is selected (no specific
-  face), the tool works on **all faces one by one** — one stiffener per
-  face. When a specific face is selected, just that face.
+  face), every face the cut surface meets is swept. Curves that meet are joined
+  into one path (this is what bends a path over a fold); curves that do not meet
+  are swept as separate paths. When a specific face is selected, just that face.
 - **Curved-panel / annular-frame stiffeners are essential scope** for
   `StiffenerFP` — not a "known failure" to ship around.
 - **Profile topology is irrelevant to assembly.** Open or closed profile,
@@ -115,9 +116,27 @@ open shell output).
   path vertex, edge orientations follow the wire
 
 ### Base row
-- `y = 0` always hugs the actual support surface: `x,0` is the surface point
-  found by travelling `x` mm along the cut-plane normal and snapping back
-  onto the surface. `x=0,y=0` is the origin that follows the path.
+- The row at abscissa `x` is **cut the same way the path is**: the intersecting
+  surface moved `x` mm along its own normal, sectioned against the support. So
+  `y = 0` is the surface curve, not a chord, and the row is an exact curve
+  (a circle on a cylinder, a line on a plate) rather than a fitted one.
+- Where the cut surface is bent it has no single normal, so rows are sampled
+  along the path and snapped back onto the support instead.
+- `x = 0, y = 0` is the origin that follows the path.
+
+### Lifting by y
+- The row is moved sideways by `y` along `b`, staying in its own plane: a rigid
+  translation where the row is a single straight line, an exact planar offset
+  otherwise.
+- OCCT's offset expands or shrinks by area, which agrees with `b = t × N` for a
+  closed curve but not necessarily for an open one, so the sign is read back
+  from the result and flipped if it ran the wrong way.
+
+### Orientation of travel
+- Closed or curved paths: travel follows the right-hand rule about `N`, decided
+  from the sign of the path's area vector.
+- Straight (zero-area) paths have no winding sense, so travel uses positive
+  axis order.
 
 ## Mirror control
 
@@ -148,35 +167,58 @@ open shell output).
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Cut-plane/support intersection fails or splits on complex surfaces | High | Validate support & surface; handle a no-result/partial path cleanly |
+| Cut-plane/support intersection fails or splits on complex surfaces | High | Validate support & surface; handle a no-result/partial path cleanly; section an open multi-face support one face at a time |
 | Local frame becomes hard to reason about | Medium | Factor out frame construction + add tests |
 | Output shape unstable across recompute | Medium | Keep output deterministic; pinned path traversal rule fixes the sign of t, hence b |
 | Feature becomes too composite-specific | Medium | Preserve generic Part output |
+| Rows and loci fitted through sampled points drift (~1e-4 mm over a ring) | Medium | Rows come from an exact re-intersection, lifts from exact offsets; sampling is left to bent cut surfaces only |
 
-## Implementation phases
+## Known limitations
 
-#### Phase 1: Intersection path
-- Compute the sweep path as `IntersectSurface` ∩ support
-- Replace `generate_origin_wire` (projected wire) with the intersection path
+- Where the section **branches** — one face of the support running through
+  another, say — the branches are swept as separate paths, since no single path
+  can take both routes.
+- A bent (non-planar) cut surface has no single `N`, so its rows and loci are
+  sampled and fitted rather than exact.
+- A `Part::Plane` cut surface is finite: sized to span the support it cuts a
+  closed ring, sized shorter it deliberately cuts a partial ring (an open arc).
+  Both are supported; the plane's extent is the control for the arc's extent.
 
-#### Phase 2: Frame construction
-- Build the moving (t, N, b) frame per station; map profile (x, y) per the
-  agreed convention
-- Surface-conformal y=0 base row (normal-offset + snap to surface)
+## Implementation
 
-#### Phase 3: Sweep to open shell
-- Loft each profile edge along the path into a face; assemble the compound
-- Preserve MirrorX / MirrorY
+The four phases below landed together in one change: the path was the part
+worth pinning down first, but a path with nothing swept along it proves little,
+so the frame, the sweep and the tests went in as one.
 
-#### Phase 4: Testing
-- Unit: frame construction, surface-conformal base, default handedness (ring
-  `+y` = outward radial)
-- Geometry: rect + Z on plate; rect + Z as a ring on cylinder/cone
-- Integration: command execution; mirror; save/load
-- Replace the current "known failure" curved tests with passing ring tests
+#### Phase 1: Intersection path — done
+- `intersection_paths` sections the cut surface against the support; the
+  projected wire and its plan sketch are gone, as is `Direction`
+- A multi-face open support is sectioned face by face; pieces that meet are
+  joined into one path, pieces that do not are swept separately
+
+#### Phase 2: Frame construction — done
+- `Station` carries `point, tangent, normal, height` with `height = t × N`
+- Base rows come from re-sectioning the support with the cut surface moved
+  along its normal; lifts are exact offsets read back against `b`
+
+#### Phase 3: Sweep to open shell — done
+- One lofted face per profile edge along the whole path; `MirrorX` /
+  `MirrorY` negate the profile abscissa / ordinate before the mapping
+- Support fragments are no longer glued into the result (leftover from the
+  projected-sweep prototype, where they inflated every bounding box)
+
+#### Phase 4: Testing — done
+- Path level: closed ring vs partial arc, ring lies on the surface (curve, not
+  chord), cone ring radius, default `b` outward, straight path on a plate,
+  path over a fold between two faces, a path per piece of a split support,
+  cut surface clear of the support
+- Feature level: rect and Z sections on a plate, ring on a cylinder (radii to
+  1e-6), Z ring on a cylinder and on a shell panel, oblique cut on a cone,
+  mirror sides, no-path error state, save/load, the example build
+- The former "known failure" curved tests are now passing ring tests
 
 ## Related files
 
 - `features/Stiffener.py` - feature definition
-- `tools/stiffener.py` - geometry logic (to be reworked per this design)
+- `tools/stiffener.py` - geometry logic
 - `features/VPCompositePart.py` - shared view-provider base

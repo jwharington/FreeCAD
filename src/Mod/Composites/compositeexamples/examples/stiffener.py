@@ -1,27 +1,37 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
-"""Stiffener examples — sweep profiles along plans on supports.
+"""Stiffener examples — sweep profiles along the path an intersecting surface
+cuts from a support.
 
-Each stiffener lives in its own document (avoids cross-object clutter and
-the stale-document issues that a single shared document causes). Builds:
+Each stiffener lives in its own document (avoids cross-object clutter and the
+stale-document issues that a single shared document causes). Builds:
 
-1. ``Composites_Stiffener_RectPlate`` — rectangular section on a planar
-   plate (the basic case).
-2. ``Composites_Stiffener_ZPlate`` — Z-section on a planar plate. The Z is
-   an OPEN polyline (bottom flange, web, top flange), so the stiffener is
-   the web + top flange (an L), distinct from the closed rect box.
-3. ``Composites_Stiffener_ZCylShell`` / ``Composites_Stiffener_ZConePanel``
-   — Z-section on a cylindrical/conical shell panel. These are KNOWN
-   FAILURES: the tool's makeParallelProjection cannot produce a correct
-   circumferential stiffener on a curved surface (it sweeps the full shell
-   height). They are attempted and the failure is reported, not raised.
+1. ``Composites_Stiffener_RectPlate`` — rectangular section on a planar plate,
+   path cut by a surface standing on the plate.
+2. ``Composites_Stiffener_ZPlate`` — Z-section on a planar plate. The Z is an
+   OPEN polyline (base flange, web, top flange), so the stiffener is the web +
+   top flange (an L), distinct from the closed rect box.
+3. ``Composites_Stiffener_ZCylRing`` / ``Composites_Stiffener_ZConeRing`` —
+   Z-section as an annular frame, swept around a cylinder / cone. The path is
+   the ring the cut surface intersects from the curved surface, and the
+   profile's base row stays on that surface.
 """
 
 import FreeCAD
 import Part
 
 from ...features.Stiffener import StiffenerFP, ViewProviderStiffener
+
+
+PLATE_LENGTH = 120.0
+PLATE_WIDTH = 60.0
+CYLINDER_RADIUS = 40.0
+CONE_BASE_RADIUS = 45.0
+CONE_TOP_RADIUS = 20.0
+SHELL_HEIGHT = 120.0
+CUT_Z = 60.0
+CUT_SIDE = 120.0
 
 
 def _new_document(doc, name):
@@ -41,8 +51,14 @@ def _make_sketch(doc, name, points):
     return sketch
 
 
+def _make_shape_object(doc, name, shape):
+    object_with_shape = doc.addObject("Part::Feature", name)
+    object_with_shape.Shape = shape
+    return object_with_shape
+
+
 def _rect_profile():
-    """A rectangular section: surface edge at y=0, free edges at y=10."""
+    """A rectangular section: base row at y=0, rising to y=10."""
     return [
         FreeCAD.Vector(0.0, 0.0, 0.0),
         FreeCAD.Vector(0.0, 10.0, 0.0),
@@ -53,11 +69,11 @@ def _rect_profile():
 
 
 def _z_profile():
-    """A Z-section as an OPEN polyline: bottom flange, web, top flange.
+    """A Z-section as an OPEN polyline: base flange, web, top flange.
 
-    The bottom flange (y=0) is the surface edge; the web and top flange are
-    the free edges swept along the plan. No closing edge — a closing edge
-    would create a spurious wall and collapse the Z into a box.
+    The base flange (y=0) rides the support surface; the web and top flange are
+    free edges. No closing edge — one would create a spurious wall and collapse
+    the Z into a box.
     """
     return [
         FreeCAD.Vector(0.0, 0.0, 0.0),
@@ -67,112 +83,56 @@ def _z_profile():
     ]
 
 
-def _plan_line():
-    """A straight plan line (plate case), at z=0."""
-    return [
-        FreeCAD.Vector(10.0, 10.0, 0.0),
-        FreeCAD.Vector(80.0, 10.0, 0.0),
+def plate_cut_surface():
+    """A surface standing on the plate, cutting a straight path across it."""
+    corners = [
+        FreeCAD.Vector(-10.0, PLATE_WIDTH / 2.0, -20.0),
+        FreeCAD.Vector(PLATE_LENGTH + 10.0, PLATE_WIDTH / 2.0, -20.0),
+        FreeCAD.Vector(PLATE_LENGTH + 10.0, PLATE_WIDTH / 2.0, 80.0),
+        FreeCAD.Vector(-10.0, PLATE_WIDTH / 2.0, 80.0),
     ]
+    return Part.Face(Part.makePolygon(corners + corners[:1]))
 
 
-def _tangential_plan_line(outboard=50.0, z=60.0):
-    """A straight plan line, tangential to the axis, outboard and centered.
-
-    The line runs along X at y=``outboard`` (outside the surface) and height
-    ``z``, with its midpoint at (0, outboard, z) — directly outboard of the
-    near-face point. The tool projects it radially onto the surface.
-    """
-    return [
-        FreeCAD.Vector(-10.0, outboard, z),
-        FreeCAD.Vector(10.0, outboard, z),
-    ]
+def ring_cut_surface():
+    """A surface square enough to cut a complete ring from the shell."""
+    return Part.makePlane(
+        CUT_SIDE,
+        CUT_SIDE,
+        FreeCAD.Vector(-CUT_SIDE / 2.0, -CUT_SIDE / 2.0, CUT_Z),
+        FreeCAD.Vector(0, 0, 1),
+    )
 
 
-def _curved_panel(kind):
-    """A partial cylindrical/conical shell panel (curved face only)."""
-    if kind == "cylinder":
-        solid = Part.makeCylinder(
-            40.0, 120.0, FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(0, 0, 1), 270.0
-        )
-        curved = [f for f in solid.Faces if "Cylinder" in str(f.Surface)]
-    else:
-        solid = Part.makeCone(
-            45.0, 20.0, 120.0, FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(0, 0, 1), 270.0
-        )
-        curved = [f for f in solid.Faces if "Cone" in str(f.Surface)]
-    return Part.makeShell([curved[0]])
-
-
-def _add_stiffener(doc, name, support, plan_points, profile_points):
-    """Create a StiffenerFP feature in ``doc`` with support/plan/profile."""
-    plan = _make_sketch(doc, f"{name}Plan", plan_points)
+def _add_stiffener(doc, name, support, cut_surface, profile_points):
+    """Create a StiffenerFP feature in ``doc`` with support/cut-surface/profile."""
+    surface = _make_shape_object(doc, f"{name}CutSurface", cut_surface)
     profile = _make_sketch(doc, f"{name}Profile", profile_points)
     stiffener = doc.addObject("Part::FeaturePython", name)
-    StiffenerFP(stiffener, support=support, plan=plan, profile=profile)
+    StiffenerFP(stiffener, support=support, cut_surface=surface, profile=profile)
     if FreeCAD.GuiUp:
         ViewProviderStiffener(stiffener.ViewObject)
-    return stiffener
-
-
-def _build_rect_plate(doc):
-    """Rect section on a planar plate, in its own document."""
-    doc = _new_document(doc, "Composites_Stiffener_RectPlate")
-    support = doc.addObject("Part::Feature", "PlateSupport")
-    support.Shape = Part.makePlane(120.0, 60.0)
-    stiffener = _add_stiffener(doc, "RectOnPlate", support, _plan_line(), _rect_profile())
     doc.recompute()
     return {"doc": doc, "stiffener": stiffener, "shape": stiffener.Shape}
 
 
-def _build_z_plate(doc):
-    """Z-section on a planar plate, in its own document."""
-    doc = _new_document(doc, "Composites_Stiffener_ZPlate")
-    support = doc.addObject("Part::Feature", "PlateSupport")
-    support.Shape = Part.makePlane(120.0, 60.0)
-    stiffener = _add_stiffener(doc, "ZOnPlate", support, _plan_line(), _z_profile())
-    doc.recompute()
-    return {"doc": doc, "stiffener": stiffener, "shape": stiffener.Shape}
+def _build_on_plate(doc, name, document_name, profile_points):
+    """A stiffener on a planar plate, in its own document."""
+    doc = _new_document(doc, document_name)
+    support = _make_shape_object(doc, "PlateSupport", Part.makePlane(PLATE_LENGTH, PLATE_WIDTH))
+    return _add_stiffener(doc, name, support, plate_cut_surface(), profile_points)
 
 
-def _build_z_curved(doc, kind):
-    """Z-section on a curved panel. Known failure — returns the error, not raises.
-
-    Returns a dict with ``doc``, ``ok`` and ``error``.
-    """
-    name = "ZCylShell" if kind == "cylinder" else "ZConePanel"
-    docname = "Composites_Stiffener_ZCylShell" if kind == "cylinder" else "Composites_Stiffener_ZConePanel"
-    doc = _new_document(doc, docname)
-    try:
-        support = doc.addObject("Part::Feature", f"{name}Support")
-        support.Shape = _curved_panel(kind)
-        # Plan: 3D wire line, tangential to the axis, outboard (10 mm outside
-        # the surface at mid-height), centered at (0, outboard, 60).
-        outboard = 50.0 if kind == "cylinder" else 42.5
-        plan = doc.addObject("Part::Feature", f"{name}Plan")
-        plan.Shape = Part.makePolygon(_tangential_plan_line(outboard=outboard, z=60.0))
-        profile = _make_sketch(doc, f"{name}Profile", _z_profile())
-        stiffener = doc.addObject("Part::FeaturePython", name)
-        StiffenerFP(stiffener, support=support, plan=plan, profile=profile)
-        stiffener.Direction = FreeCAD.Vector(0.0, -1.0, 0.0)
-        if FreeCAD.GuiUp:
-            ViewProviderStiffener(stiffener.ViewObject)
-        doc.recompute()
-        shape = stiffener.Shape
-        if shape.isNull():
-            return {"doc": doc, "ok": False, "error": "stiffener shape is null"}
-        bb = shape.BoundBox
-        zlen = bb.ZLength
-        if zlen <= 0.0 or not (bb.XLength > 0.0 and bb.YLength > 0.0):
-            return {"doc": doc, "ok": False, "error": f"degenerate shape (z-span {zlen:.1f} mm)"}
-        if zlen < 50.0:
-            return {"doc": doc, "ok": True, "error": ""}
-        return {
-            "doc": doc,
-            "ok": False,
-            "error": f"projection swept the full height (z-span {zlen:.1f} mm instead of ~10 mm)",
-        }
-    except Exception as exc:
-        return {"doc": doc, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+def _build_ring(doc, name, document_name, kind, profile_points):
+    """An annular frame swept around a cylinder or cone, in its own document."""
+    doc = _new_document(doc, document_name)
+    shell = (
+        Part.makeCylinder(CYLINDER_RADIUS, SHELL_HEIGHT)
+        if kind == "cylinder"
+        else Part.makeCone(CONE_BASE_RADIUS, CONE_TOP_RADIUS, SHELL_HEIGHT)
+    )
+    support = _make_shape_object(doc, f"{name}Support", shell)
+    return _add_stiffener(doc, name, support, ring_cut_surface(), profile_points)
 
 
 def build(doc=None, run_solver=False):
@@ -182,44 +142,46 @@ def build(doc=None, run_solver=False):
     ----------
     doc
         Optional FreeCAD document; when given, the first stiffener
-        (rect plate) is built into it. The Z and curved cases still use
-        their own documents.
+        (rect plate) is built into it. The others still use their own documents.
     run_solver
         Accepted for runner parity.
 
     Returns
     -------
     dict
-        The working stiffeners (rect_plate, z_plate) and the curved
-        attempts with their failure descriptions.
+        One entry per stiffener, each with ``doc``, ``stiffener`` and ``shape``.
     """
-
-    rect = _build_rect_plate(doc)
-    zplate = _build_z_plate(None)
-    zcyl = _build_z_curved(None, "cylinder")
-    zcone = _build_z_curved(None, "cone")
-
     return {
-        "rect_plate": rect,
-        "z_plate": zplate,
-        "z_cylinder_shell": zcyl,
-        "z_cone_panel": zcone,
+        "rect_plate": _build_on_plate(
+            doc, "RectOnPlate", "Composites_Stiffener_RectPlate", _rect_profile()
+        ),
+        "z_plate": _build_on_plate(None, "ZOnPlate", "Composites_Stiffener_ZPlate", _z_profile()),
+        "z_cylinder_ring": _build_ring(
+            None,
+            "ZCylRing",
+            "Composites_Stiffener_ZCylRing",
+            "cylinder",
+            _z_profile(),
+        ),
+        "z_cone_ring": _build_ring(
+            None,
+            "ZConeRing",
+            "Composites_Stiffener_ZConeRing",
+            "cone",
+            _z_profile(),
+        ),
     }
 
 
 def main():
     """Run the stiffener examples."""
-    result = build()
-    for key in ("rect_plate", "z_plate"):
-        shape = result[key]["shape"]
-        bb = shape.BoundBox
-        print(f"{key}: {shape.ShapeType} | null={shape.isNull()} | bbox={round(bb.XLength,1)}x{round(bb.YLength,1)}x{round(bb.ZLength,1)}")
-    for key in ("z_cylinder_shell", "z_cone_panel"):
-        item = result[key]
-        if item["ok"]:
-            print(f"{key}: built")
-        else:
-            print(f"{key}: KNOWN FAILURE — {item['error']}")
+    for key, case in build().items():
+        shape = case["shape"]
+        box = shape.BoundBox
+        print(
+            f"{key}: {shape.ShapeType} | null={shape.isNull()} | "
+            f"bbox={round(box.XLength, 1)}x{round(box.YLength, 1)}x{round(box.ZLength, 1)}"
+        )
 
 
 if __name__ == "__main__":

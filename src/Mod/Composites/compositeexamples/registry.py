@@ -41,7 +41,7 @@ EXAMPLES = {
     },
     "stiffener": {
         "module": ".examples.stiffener",
-        "name": "Stiffener (sweep profile along plan)",
+        "name": "Stiffener (sweep profile along an intersected path)",
     },
 }
 
