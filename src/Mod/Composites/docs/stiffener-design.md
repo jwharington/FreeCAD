@@ -150,6 +150,26 @@ The main work is to improve robustness and maintainability rather than redesign 
 - `tools/stiffener.py` - geometry logic
 - `features/VPCompositePart.py` - shared view-provider base
 
+### Examples and Tests
+
+Runnable example (registered in `compositeexamples/registry.py` as `stiffener`):
+- `compositeexamples/examples/stiffener.py` - builds one stiffener per
+  document:
+  - `Composites_Stiffener_RectPlate` - rectangular section on a planar plate
+  - `Composites_Stiffener_ZPlate` - Z-section (open polyline) on a planar
+    plate, producing the intended L (web + top flange)
+  - `Composites_Stiffener_ZCylShell` / `Composites_Stiffener_ZConePanel` -
+    Z-section on a cylindrical/conical shell panel with a tangential,
+    outboard, centered plan line; reported as **known failures** (the tool's
+    projection cannot yet produce a circumferential stiffener on a curved
+    surface) rather than raised
+
+Tests:
+- `compositestests/test_stiffener.py` - covers creation, mirror X/Y, planar
+  and curved supports, Z-section on plate (passes), Z-section on cylindrical
+  shell and conical panel (documented failures), save/load round trip, and
+  the registered example build
+
 ### Open Questions
 
 1. Should stiffener output always be a solid, or may it also be a shell/compound?
