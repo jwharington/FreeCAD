@@ -363,13 +363,23 @@ def make_stiffener(
     profile,
     mirror: ProfileMirror = ProfileMirror(),
 ):
-    """The stiffener shell swept along the intersection path, with its tool curves.
+    """The stiffener shell, the cut support, and the tool curves.
+
+    The support must be a shell or a face — the stiffener is a shell laid on a
+    shell, and a solid is rejected outright.
 
     Every profile edge is lofted along the whole path into a face, whatever the
-    profile's topology, so the result is an open shell rather than a solid.
+    profile's topology, so the stiffener is an open shell rather than a solid.
     Each profile vertex traces a locus: the row at its abscissa, moved sideways
     by its ordinate.
+
+    Returns the stiffener as one compound, then the remainders of the support
+    with the stiffener cut away — one shape per piece — then the surface rows.
     """
+    if support.ShapeType == "Solid":
+        raise ValueError(
+            "the support must be a shell or a face, not a solid — the stiffener is laid on a shell"
+        )
     paths = intersection_paths(support, cut_surface)
     if not paths:
         raise ValueError("the cut surface does not meet the support — no path to sweep along")
@@ -388,4 +398,20 @@ def make_stiffener(
         faces.extend(_loft_profile(xsect, loci, mirror))
         surface_rows.extend(locus for key, locus in loci.items() if key[1] == 0.0)
 
-    return Part.makeCompound(faces), surface_rows
+    stiffener = Part.makeCompound(faces)
+    return stiffener, _support_remainders(support, stiffener), surface_rows
+
+
+def _support_remainders(support: Part.Shape, stiffener: Part.Shape):
+    """The support with the stiffener cut away, one shape per piece.
+
+    The cut removes the strip the stiffener sits on and splits what is left:
+    a plate falls into the regions beside the stiffener, a cylinder into the
+    bands above and below a ring. Each face is cut on its own, which is also
+    what an open support of several faces needs; the cut faces are returned
+    individually.
+    """
+    pieces = []
+    for face in support.Faces:
+        pieces.extend(face.cut(stiffener).Faces)
+    return pieces

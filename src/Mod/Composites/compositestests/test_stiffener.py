@@ -43,6 +43,20 @@ def vertical_cut(y, x_min, x_max, z_min, z_max):
     return Part.Face(Part.makePolygon(corners + corners[:1]))
 
 
+def open_cylinder(radius, height, angle=360.0):
+    """The cylinder's lateral face alone — an open panel, not a capped solid."""
+    solid = Part.makeCylinder(
+        radius, height, FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(0, 0, 1), angle
+    )
+    return next(face for face in solid.Faces if isinstance(face.Surface, Part.Cylinder))
+
+
+def open_cone(base_radius, top_radius, height):
+    """The cone's lateral face alone — an open panel, not a capped solid."""
+    solid = Part.makeCone(base_radius, top_radius, height)
+    return next(face for face in solid.Faces if isinstance(face.Surface, Part.Cone))
+
+
 PLATE_CUT_Y = 30.0
 
 
@@ -195,7 +209,7 @@ class TestStiffenerFP(TestFreeCADFP):
     def test_ring_stiffener_on_a_cylinder(self):
         """A cut surface across a cylinder sweeps a closed ring frame."""
         radius, height, cut_z = 40.0, 120.0, 60.0
-        support = self._make_support("CylinderSupport", Part.makeCylinder(radius, height))
+        support = self._make_support("CylinderSupport", open_cylinder(radius, height))
         stiffener, _, _, _ = self._build_stiffener(
             support,
             horizontal_cut(120.0, -60.0, cut_z),
@@ -208,9 +222,29 @@ class TestStiffenerFP(TestFreeCADFP):
         self.assertAlmostEqual(farthest, radius + 10.0, delta=1e-6)
         self.assertAlmostEqual(stiffener.Shape.BoundBox.ZLength, 20.0, delta=1e-6)
 
+    def test_support_is_left_with_the_stiffener_cut_away(self):
+        """The remainders are the support split around the stiffener's seat."""
+        radius, height, cut_z = 40.0, 120.0, 60.0
+        support = self._make_support("CylinderSupport", open_cylinder(radius, height))
+        stiffener, _, _, _ = self._build_stiffener(
+            support,
+            horizontal_cut(120.0, -60.0, cut_z),
+            self._rect_profile_points(),
+        )
+
+        remainders = stiffener.Proxy.remainders
+        self.assertEqual(len(remainders), 2)
+        low, high = sorted(remainders, key=lambda remainder: remainder.BoundBox.ZMin)
+        self.assertAlmostEqual(low.BoundBox.ZMin, 0.0, delta=1e-6)
+        self.assertAlmostEqual(low.BoundBox.ZMax, cut_z, delta=1e-6)
+        self.assertAlmostEqual(high.BoundBox.ZMin, cut_z + 20.0, delta=1e-6)
+        self.assertAlmostEqual(high.BoundBox.ZMax, height, delta=1e-6)
+        for remainder in remainders:
+            self.assertTrue(remainder.isValid())
+
     def test_oblique_cut_surface_on_a_cone(self):
         """An oblique cut surface still sweeps the whole section it cuts."""
-        support = self._make_support("ConeSupport", Part.makeCone(45.0, 20.0, 120.0))
+        support = self._make_support("ConeSupport", open_cone(45.0, 20.0, 120.0))
         slanted = centred_rectangle(
             FreeCAD.Vector(0.0, 0.0, 60.0), FreeCAD.Vector(0.0, 0.6, 0.8), 160.0
         )
@@ -253,7 +287,7 @@ class TestStiffenerFP(TestFreeCADFP):
     def test_z_section_ring_on_a_cylinder(self):
         """A Z-section swept as an annular frame on a cylindrical shell."""
         radius, height, cut_z = 40.0, 120.0, 60.0
-        support = self._make_support("CylinderSupport", Part.makeCylinder(radius, height))
+        support = self._make_support("CylinderSupport", open_cylinder(radius, height))
 
         stiffener, _, _, _ = self._build_stiffener(
             support,
@@ -269,15 +303,7 @@ class TestStiffenerFP(TestFreeCADFP):
     def test_z_section_on_a_cylindrical_panel(self):
         """A Z-section swept around part of a cylindrical shell panel."""
         radius, height = 40.0, 120.0
-        panel = Part.makeShell(
-            [
-                face
-                for face in Part.makeCylinder(
-                    radius, height, FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(0, 0, 1), 270.0
-                ).Faces
-                if "Cylinder" in str(face.Surface)
-            ]
-        )
+        panel = Part.makeShell([open_cylinder(radius, height, angle=270.0)])
         support = self._make_support("CylPanelSupport", panel)
 
         stiffener, _, _, _ = self._build_stiffener(
@@ -325,10 +351,25 @@ class TestStiffenerFP(TestFreeCADFP):
 
     def test_cut_surface_clear_of_the_support_raises(self):
         """An intersecting surface that misses the support is reported, not crashed."""
-        support = self._make_support("CylinderSupport", Part.makeCylinder(40.0, 120.0))
+        support = self._make_support("CylinderSupport", open_cylinder(40.0, 120.0))
         profile = self._make_sketch("MissProfile", self._rect_profile_points())
         surface = self._make_support("MissCutSurface", horizontal_cut(120.0, -60.0, 200.0))
         stiffener = self.doc.addObject("Part::FeaturePython", "MissStiffener")
+
+        from Composites.features.Stiffener import StiffenerFP
+
+        StiffenerFP(stiffener, support=support, cut_surface=surface, profile=profile)
+        self.doc.recompute()
+
+        self.assertIn("Invalid", stiffener.State)
+        self.assertTrue(stiffener.Shape.isNull())
+
+    def test_a_solid_support_is_rejected(self):
+        """The stiffener is laid on a shell; a solid support is refused."""
+        support = self._make_support("SolidSupport", Part.makeCylinder(40.0, 120.0))
+        profile = self._make_sketch("SolidProfile", self._rect_profile_points())
+        surface = self._make_support("SolidCutSurface", horizontal_cut(120.0, -60.0, 60.0))
+        stiffener = self.doc.addObject("Part::FeaturePython", "SolidStiffener")
 
         from Composites.features.Stiffener import StiffenerFP
 
@@ -413,7 +454,7 @@ class TestStiffenerPath(TestFreeCADFP):
 
     def test_cut_wide_enough_gives_a_closed_ring(self):
         """A cut surface spanning the full diameter cuts a complete ring."""
-        support = Part.makeCylinder(self.RADIUS, self.HEIGHT)
+        support = open_cylinder(self.RADIUS, self.HEIGHT)
 
         path = self.path_of(support, horizontal_cut(self.CUT_SIDE, -self.CUT_SIDE / 2.0, self.CUT_Z))
 
@@ -426,7 +467,7 @@ class TestStiffenerPath(TestFreeCADFP):
 
     def test_narrower_cut_gives_a_partial_ring(self):
         """A cut surface reaching only part way across cuts an open arc."""
-        support = Part.makeCylinder(self.RADIUS, self.HEIGHT)
+        support = open_cylinder(self.RADIUS, self.HEIGHT)
 
         path = self.path_of(support, horizontal_cut(self.CUT_SIDE, self.RADIUS / 2.0, self.CUT_Z))
 
@@ -436,7 +477,7 @@ class TestStiffenerPath(TestFreeCADFP):
 
     def test_ring_path_lies_on_the_cylinder_surface(self):
         """Every path point sits on the surface at the cylinder radius, not on a chord."""
-        support = Part.makeCylinder(self.RADIUS, self.HEIGHT)
+        support = open_cylinder(self.RADIUS, self.HEIGHT)
 
         path = self.path_of(support, horizontal_cut(self.CUT_SIDE, -self.CUT_SIDE / 2.0, self.CUT_Z))
 
@@ -449,7 +490,7 @@ class TestStiffenerPath(TestFreeCADFP):
     def test_ring_path_around_a_cone(self):
         """The ring radius is the cone's own radius at the cut height."""
         base_radius, top_radius = 45.0, 20.0
-        support = Part.makeCone(base_radius, top_radius, self.HEIGHT)
+        support = open_cone(base_radius, top_radius, self.HEIGHT)
         radius_at_cut = base_radius + (top_radius - base_radius) * self.CUT_Z / self.HEIGHT
 
         path = self.path_of(support, horizontal_cut(self.CUT_SIDE, -self.CUT_SIDE / 2.0, self.CUT_Z))
@@ -463,7 +504,7 @@ class TestStiffenerPath(TestFreeCADFP):
         """Travel follows the right-hand rule about the cut normal, so b = t x N is outward."""
         from Composites.tools.stiffener import cut_surface_normal, frames_along
 
-        support = Part.makeCylinder(self.RADIUS, self.HEIGHT)
+        support = open_cylinder(self.RADIUS, self.HEIGHT)
         cut_surface = horizontal_cut(self.CUT_SIDE, -self.CUT_SIDE / 2.0, self.CUT_Z)
 
         path = self.path_of(support, cut_surface)
@@ -508,7 +549,7 @@ class TestStiffenerPath(TestFreeCADFP):
 
     def test_cut_surface_clear_of_the_support_gives_no_path(self):
         """An intersecting surface that misses the support yields an empty path, not a crash."""
-        support = Part.makeCylinder(self.RADIUS, self.HEIGHT)
+        support = open_cylinder(self.RADIUS, self.HEIGHT)
 
         path = self.path_of(support, horizontal_cut(self.CUT_SIDE, -self.CUT_SIDE / 2.0, 200.0))
 

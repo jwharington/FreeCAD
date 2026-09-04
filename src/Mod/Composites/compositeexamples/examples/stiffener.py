@@ -108,7 +108,12 @@ def ring_cut_surface():
 
 
 def _add_stiffener(doc, name, support, cut_surface, profile_points):
-    """Create a StiffenerFP feature in ``doc`` with support/cut-surface/profile."""
+    """Create a StiffenerFP feature in ``doc`` with support/cut-surface/profile.
+
+    The support is shown cut: its remainder — the support with the stiffener's
+    seat removed — replaces the pristine support on screen, which it otherwise
+    coincides with.
+    """
     surface = _make_shape_object(doc, f"{name}CutSurface", cut_surface)
     profile = _make_sketch(doc, f"{name}Profile", profile_points)
     stiffener = doc.addObject("Part::FeaturePython", name)
@@ -116,7 +121,20 @@ def _add_stiffener(doc, name, support, cut_surface, profile_points):
     if FreeCAD.GuiUp:
         ViewProviderStiffener(stiffener.ViewObject)
     doc.recompute()
-    return {"doc": doc, "stiffener": stiffener, "shape": stiffener.Shape}
+
+    remainders = stiffener.Proxy.remainders
+    remainder = None
+    if remainders:
+        remainder = _make_shape_object(doc, f"{name}Remainder", Part.makeCompound(remainders))
+        if FreeCAD.GuiUp:
+            support.ViewObject.Visibility = False
+    return {
+        "doc": doc,
+        "stiffener": stiffener,
+        "shape": stiffener.Shape,
+        "remainders": remainders,
+        "remainder": remainder,
+    }
 
 
 def _build_on_plate(doc, name, document_name, profile_points):
@@ -184,7 +202,8 @@ def main():
         box = shape.BoundBox
         print(
             f"{key}: {shape.ShapeType} | null={shape.isNull()} | "
-            f"bbox={round(box.XLength, 1)}x{round(box.YLength, 1)}x{round(box.ZLength, 1)}"
+            f"bbox={round(box.XLength, 1)}x{round(box.YLength, 1)}x{round(box.ZLength, 1)} | "
+            f"remainders={len(case['remainders'])}"
         )
 
 

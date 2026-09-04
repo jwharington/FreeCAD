@@ -59,13 +59,14 @@ class StiffenerFP(CompositePartFP):
         super().__init__(obj)
 
     def execute(self, fp):
-        shape, tools = make_stiffener(
+        shape, remainders, tools = make_stiffener(
             support=fp.Support.Shape,
             cut_surface=fp.IntersectSurface.Shape,
             profile=fp.Profile,
             mirror=ProfileMirror(flip_x=fp.MirrorX, flip_y=fp.MirrorY),
         )
         fp.Shape = shape
+        self.remainders = remainders
         self.tools = tools
 
         fp.IntersectSurface.Visibility = False

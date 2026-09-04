@@ -78,8 +78,8 @@
 **Command:** `Composites_Stiffener`
 
 **Inputs:**
-- `Support` (`Part::Feature`) - support geometry (an object, a face, or a
-  surface that a sweep path can be intersected from)
+- `Support` (`Part::Feature`) - the shell being stiffened: a face, a shell, or
+  a compound of faces. A solid is rejected — the stiffener is laid on a shell.
 - `IntersectSurface` (`Part::Plane`, or any surface/face intersectable with
   the support) - the cut surface that produces the sweep path
 - `Profile` (`Sketcher::SketchObject`) - the 2D stiffener cross-section
@@ -154,8 +154,13 @@ open shell output).
 - **Output type:** `Part::FeaturePython`
 - **Result:** an open surface shell — a compound of faces (one lofted face
   per profile edge along the path). Not a closed solid.
+- **Support remainder:** a copy of the support with the stiffener cut away
+  (boolean difference), returned as one shape per piece — a plate falls into
+  the regions beside the stiffener, a cylinder into the bands above and below
+  a ring. The feature keeps it alongside the tool curves; the examples give it
+  its own object in the document.
 - Auxiliary tool geometry stays internal; the public result is the face
-  compound.
+  compound and the support remainders.
 
 ## Success criteria
 
