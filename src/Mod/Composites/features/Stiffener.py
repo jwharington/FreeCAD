@@ -2,6 +2,7 @@
 # Copyright 2025 John Wharington jwharington@gmail.com
 
 import FreeCAD
+import Part
 
 from .. import (
     STIFFENER_TOOL_ICON,
@@ -65,12 +66,36 @@ class StiffenerFP(CompositePartFP):
             profile=fp.Profile,
             mirror=ProfileMirror(flip_x=fp.MirrorX, flip_y=fp.MirrorY),
         )
-        fp.Shape = shape
+        # The shape carries the stiffener and the remainder of the cut support
+        # as its two children, for CompoundFilters to pick apart.
+        fp.Shape = Part.makeCompound([shape, Part.makeCompound(remainders)])
         self.remainders = remainders
         self.tools = tools
 
         fp.IntersectSurface.Visibility = False
         fp.Profile.Visibility = False
+
+
+def add_stiffener_filters(doc, stiffener):
+    """The stiffener and the support remainder, as CompoundFilters on `stiffener`.
+
+    The stiffener's shape holds both as its children; each filter picks one out
+    and recomputes whenever the stiffener does. The stiffener feature itself is
+    left hidden — it draws everything the two filters draw between them.
+    """
+    from CompoundTools import CompoundFilter
+
+    filters = {}
+    for name, items in (("Parts", "0"), ("Remainder", "1")):
+        compound_filter = CompoundFilter.makeCompoundFilter(
+            f"{stiffener.Name}{name}", into_group=doc
+        )
+        compound_filter.Base = stiffener
+        compound_filter.FilterType = "specific items"
+        compound_filter.items = items
+        filters[name.lower()] = compound_filter
+    stiffener.Visibility = False
+    return filters
 
 
 class ViewProviderStiffener(VPCompositePart):
@@ -109,6 +134,9 @@ class CompositeStiffenerCommand(BaseCommand):
     instance_name = "Stiffener"
     cls_fp = StiffenerFP
     cls_vp = ViewProviderStiffener
+
+    def post_create(self, obj):
+        add_stiffener_filters(obj.Document, obj)
 
 
 # Command registration moved to InitGui.py to avoid FreeCADGui dependency

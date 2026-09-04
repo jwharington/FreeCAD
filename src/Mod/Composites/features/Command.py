@@ -24,6 +24,9 @@ class BaseCommand:
 
     debug: bool = False
 
+    def post_create(self, obj):
+        """Hook for subclasses to add companion objects after creation."""
+
     def GetResources(self):
         return {
             "Pixmap": self.icon,
@@ -122,6 +125,7 @@ class BaseCommand:
         )
         cls = self.cls_fp
         cls(obj, **sel)
+        self.post_create(obj)
         if FreeCAD.GuiUp:
             import FreeCADGui
             cls = self.cls_vp

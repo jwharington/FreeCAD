@@ -24,7 +24,7 @@ Builds:
 import FreeCAD
 import Part
 
-from ...features.Stiffener import StiffenerFP, ViewProviderStiffener
+from ...features.Stiffener import StiffenerFP, ViewProviderStiffener, add_stiffener_filters
 
 
 PLATE_LENGTH = 120.0
@@ -110,9 +110,9 @@ def ring_cut_surface():
 def _add_stiffener(doc, name, support, cut_surface, profile_points):
     """Create a StiffenerFP feature in ``doc`` with support/cut-surface/profile.
 
-    The support is shown cut: its remainder — the support with the stiffener's
-    seat removed — replaces the pristine support on screen, which it otherwise
-    coincides with.
+    The stiffener's parts and the remainder of the cut support are exposed as
+    CompoundFilters on the feature; the remainder replaces the pristine support
+    on screen, which it otherwise coincides with.
     """
     surface = _make_shape_object(doc, f"{name}CutSurface", cut_surface)
     profile = _make_sketch(doc, f"{name}Profile", profile_points)
@@ -122,18 +122,16 @@ def _add_stiffener(doc, name, support, cut_surface, profile_points):
         ViewProviderStiffener(stiffener.ViewObject)
     doc.recompute()
 
-    remainders = stiffener.Proxy.remainders
-    remainder = None
-    if remainders:
-        remainder = _make_shape_object(doc, f"{name}Remainder", Part.makeCompound(remainders))
-        if FreeCAD.GuiUp:
-            support.ViewObject.Visibility = False
+    filters = add_stiffener_filters(doc, stiffener)
+    support.Visibility = False
+    doc.recompute()
     return {
         "doc": doc,
         "stiffener": stiffener,
+        "parts": filters["parts"],
+        "remainder": filters["remainder"],
         "shape": stiffener.Shape,
-        "remainders": remainders,
-        "remainder": remainder,
+        "remainders": stiffener.Proxy.remainders,
     }
 
 

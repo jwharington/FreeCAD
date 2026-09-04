@@ -57,12 +57,17 @@ def open_cone(base_radius, top_radius, height):
     return next(face for face in solid.Faces if isinstance(face.Surface, Part.Cone))
 
 
+def stiffener_part(stiffener):
+    """The stiffener's own faces — the first child of its combined shape."""
+    return stiffener.Shape.childShapes()[0]
+
+
 PLATE_CUT_Y = 30.0
 
 
 def side_of(shape, axis, plane):
     """Which side of the coordinate `plane` the shape's centre lies on."""
-    box = shape.Shape.BoundBox
+    box = getattr(shape, "Shape", shape).BoundBox
     centre = (getattr(box, f"{axis}Min") + getattr(box, f"{axis}Max")) / 2.0
     return centre > plane
 
@@ -193,7 +198,8 @@ class TestStiffenerFP(TestFreeCADFP):
         self.assertTrue(mirrored.MirrorX)
         self.assertFalse(mirrored.MirrorY)
         self.assertNotEqual(
-            side_of(as_built, "Y", PLATE_CUT_Y), side_of(mirrored, "Y", PLATE_CUT_Y)
+            side_of(stiffener_part(as_built), "Y", PLATE_CUT_Y),
+            side_of(stiffener_part(mirrored), "Y", PLATE_CUT_Y),
         )
 
     def test_mirror_y_flips_the_shell_across_the_support(self):
@@ -217,10 +223,10 @@ class TestStiffenerFP(TestFreeCADFP):
         )
 
         self.assert_valid_stiffener(stiffener)
-        nearest, farthest = radius_span(stiffener.Shape)
+        nearest, farthest = radius_span(stiffener_part(stiffener))
         self.assertAlmostEqual(nearest, radius, delta=1e-6)
         self.assertAlmostEqual(farthest, radius + 10.0, delta=1e-6)
-        self.assertAlmostEqual(stiffener.Shape.BoundBox.ZLength, 20.0, delta=1e-6)
+        self.assertAlmostEqual(stiffener_part(stiffener).BoundBox.ZLength, 20.0, delta=1e-6)
 
     def test_support_is_left_with_the_stiffener_cut_away(self):
         """The remainders are the support split around the stiffener's seat."""
@@ -241,6 +247,27 @@ class TestStiffenerFP(TestFreeCADFP):
         self.assertAlmostEqual(high.BoundBox.ZMax, height, delta=1e-6)
         for remainder in remainders:
             self.assertTrue(remainder.isValid())
+
+    def test_remainder_filter_tracks_the_stiffener(self):
+        """Moving the cut surface moves the remainder the filter shows."""
+        from Composites.features.Stiffener import add_stiffener_filters
+
+        support = self._make_support("CylinderSupport", open_cylinder(40.0, 120.0))
+        stiffener, _, surface, _ = self._build_stiffener(
+            support,
+            horizontal_cut(120.0, -60.0, 60.0),
+            self._rect_profile_points(),
+        )
+        remainder_filter = add_stiffener_filters(self.doc, stiffener)["remainder"]
+
+        self.doc.recompute()
+        bands = sorted(face.BoundBox.ZMin for face in remainder_filter.Shape.Faces)
+        self.assertAlmostEqual(bands[1], 80.0, delta=1e-6)
+
+        surface.Placement = FreeCAD.Placement(FreeCAD.Vector(0, 0, 10), FreeCAD.Rotation())
+        self.doc.recompute()
+        bands = sorted(face.BoundBox.ZMin for face in remainder_filter.Shape.Faces)
+        self.assertAlmostEqual(bands[1], 90.0, delta=1e-6)
 
     def test_oblique_cut_surface_on_a_cone(self):
         """An oblique cut surface still sweeps the whole section it cuts."""
@@ -347,7 +374,7 @@ class TestStiffenerFP(TestFreeCADFP):
         )
 
         self.assert_valid_stiffener(stiffener)
-        self.assertEqual(len(stiffener.Shape.Faces), 8)
+        self.assertEqual(len(stiffener_part(stiffener).Faces), 8)
 
     def test_cut_surface_clear_of_the_support_raises(self):
         """An intersecting surface that misses the support is reported, not crashed."""

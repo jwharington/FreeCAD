@@ -152,15 +152,17 @@ open shell output).
 ## Output structure
 
 - **Output type:** `Part::FeaturePython`
-- **Result:** an open surface shell — a compound of faces (one lofted face
-  per profile edge along the path). Not a closed solid.
+- **Result:** the feature's shape carries the stiffener and the remainder of
+  the cut support as its two children, and two `Part::CompoundFilter` objects
+  pick them apart — one for the stiffener parts, one for the remainder. The
+  filters recompute with the feature, so both parts stay current through any
+  edit of the support, cut surface or profile. The feature itself is left
+  hidden: it draws everything the two filters draw between them.
 - **Support remainder:** a copy of the support with the stiffener cut away
-  (boolean difference), returned as one shape per piece — a plate falls into
-  the regions beside the stiffener, a cylinder into the bands above and below
-  a ring. The feature keeps it alongside the tool curves; the examples give it
-  its own object in the document.
-- Auxiliary tool geometry stays internal; the public result is the face
-  compound and the support remainders.
+  (boolean difference), one face per piece — a plate falls into the regions
+  beside the stiffener, a cylinder into the bands above and below a ring.
+  Each support face is cut on its own, which is also what an open support of
+  several faces needs.
 
 ## Success criteria
 
