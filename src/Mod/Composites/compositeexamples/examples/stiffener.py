@@ -4,8 +4,9 @@
 """Stiffener examples — sweep profiles along the path an intersecting surface
 cuts from a support.
 
-All four stiffeners share one document, as the other examples do: the runner
-and its smoke test expect a single ``doc`` in the result.
+Each stiffener lives in its own document, one example per document. The result
+still names a single ``doc`` — the first case's — because that is what the
+example runner and its smoke test read.
 
 Builds:
 
@@ -115,52 +116,65 @@ def _add_stiffener(doc, name, support, cut_surface, profile_points):
     if FreeCAD.GuiUp:
         ViewProviderStiffener(stiffener.ViewObject)
     doc.recompute()
-    return {"stiffener": stiffener, "shape": stiffener.Shape}
+    return {"doc": doc, "stiffener": stiffener, "shape": stiffener.Shape}
 
 
-def _build_on_plate(doc, name, profile_points):
-    """A stiffener on a planar plate."""
-    support = _make_shape_object(doc, f"{name}Support", Part.makePlane(PLATE_LENGTH, PLATE_WIDTH))
+def _build_on_plate(doc, name, document_name, profile_points):
+    """A stiffener on a planar plate, in its own document."""
+    doc = _new_document(doc, document_name)
+    support = _make_shape_object(doc, "PlateSupport", Part.makePlane(PLATE_LENGTH, PLATE_WIDTH))
     return _add_stiffener(doc, name, support, plate_cut_surface(), profile_points)
 
 
-def _build_ring(doc, name, kind, profile_points):
-    """An annular frame swept around a cylinder or cone."""
-    shell = (
+def _build_ring(doc, name, document_name, kind, profile_points):
+    """An annular frame swept around a cylinder or cone, in its own document.
+
+    The support is the lateral face alone — an open shell without end caps,
+    as a real panel would be.
+    """
+    doc = _new_document(doc, document_name)
+    solid = (
         Part.makeCylinder(CYLINDER_RADIUS, SHELL_HEIGHT)
         if kind == "cylinder"
         else Part.makeCone(CONE_BASE_RADIUS, CONE_TOP_RADIUS, SHELL_HEIGHT)
     )
+    surface = Part.Cylinder if kind == "cylinder" else Part.Cone
+    shell = next(face for face in solid.Faces if isinstance(face.Surface, surface))
     support = _make_shape_object(doc, f"{name}Support", shell)
     return _add_stiffener(doc, name, support, ring_cut_surface(), profile_points)
 
 
 def build(doc=None, run_solver=False):
-    """Build the stiffener examples into one document.
+    """Build the stiffener examples, one document per example.
 
     Parameters
     ----------
     doc
-        Optional FreeCAD document; a new one is opened when omitted.
+        Optional FreeCAD document; when given, the first stiffener
+        (rect plate) is built into it. The others use their own documents.
     run_solver
         Accepted for runner parity.
 
     Returns
     -------
     dict
-        ``doc`` for the document, and ``cases`` with one entry per stiffener,
-        each holding its ``stiffener`` feature and swept ``shape``.
+        ``doc`` names the document the first case went into, and ``cases``
+        holds one entry per stiffener with its own ``doc``, ``stiffener``
+        feature and swept ``shape``.
     """
-    doc = _new_document(doc, "Composites_Stiffener")
-    return {
-        "doc": doc,
-        "cases": {
-            "rect_plate": _build_on_plate(doc, "RectOnPlate", _rect_profile()),
-            "z_plate": _build_on_plate(doc, "ZOnPlate", _z_profile()),
-            "z_cylinder_ring": _build_ring(doc, "ZCylRing", "cylinder", _z_profile()),
-            "z_cone_ring": _build_ring(doc, "ZConeRing", "cone", _z_profile()),
-        },
+    cases = {
+        "rect_plate": _build_on_plate(
+            doc, "RectOnPlate", "Composites_Stiffener_RectPlate", _rect_profile()
+        ),
+        "z_plate": _build_on_plate(None, "ZOnPlate", "Composites_Stiffener_ZPlate", _z_profile()),
+        "z_cylinder_ring": _build_ring(
+            None, "ZCylRing", "Composites_Stiffener_ZCylRing", "cylinder", _z_profile()
+        ),
+        "z_cone_ring": _build_ring(
+            None, "ZConeRing", "Composites_Stiffener_ZConeRing", "cone", _z_profile()
+        ),
     }
+    return {"doc": cases["rect_plate"]["doc"], "cases": cases}
 
 
 def main():

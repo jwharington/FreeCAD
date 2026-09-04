@@ -155,7 +155,7 @@ class TestStiffenerFP(TestFreeCADFP):
         )
 
         self.assert_valid_stiffener(stiffener)
-        self.assertFalse(support.Visibility)
+        self.assertTrue(support.Visibility)
         self.assertFalse(surface.Visibility)
         self.assertFalse(profile.Visibility)
 
@@ -339,7 +339,7 @@ class TestStiffenerFP(TestFreeCADFP):
         self.assertTrue(stiffener.Shape.isNull())
 
     def test_example_build(self):
-        """The registered stiffener example builds one document of valid compounds."""
+        """The registered stiffener example builds one document per example."""
         from Composites.compositeexamples import runner
 
         result = runner.run("stiffener", run_solver=False)
@@ -347,6 +347,8 @@ class TestStiffenerFP(TestFreeCADFP):
         for key, case in result["cases"].items():
             self.assertFalse(case["shape"].isNull(), f"{key} should be non-null")
             self.assertEqual(case["shape"].ShapeType, "Compound", f"{key} should be a compound")
+        documents = [case["doc"].Name for case in result["cases"].values()]
+        self.assertEqual(len(set(documents)), len(documents))
 
     def test_save_load_round_trip(self):
         support = self._make_support("SaveLoadSupport", Part.makePlane(120.0, 60.0))

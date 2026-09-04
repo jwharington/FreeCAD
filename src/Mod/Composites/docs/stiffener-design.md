@@ -89,6 +89,10 @@
 - The sweep path = the intersection of `IntersectSurface` with the support
 - The profile is swept along that path (each profile edge lofted to a face)
 - The result is an open surface shell (compound of faces)
+- **Visibility:** the stiffener and its support stay visible; the intersecting
+  surface and the profile are hidden after each recompute
+- **Example documents:** one example per document; curved supports are open
+  shells — the lateral face alone, no end caps
 
 There is no `Plan` and no directional projection.
 

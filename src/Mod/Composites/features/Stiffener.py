@@ -69,7 +69,6 @@ class StiffenerFP(CompositePartFP):
         self.tools = tools
 
         fp.IntersectSurface.Visibility = False
-        fp.Support.Visibility = False
         fp.Profile.Visibility = False
 
 
