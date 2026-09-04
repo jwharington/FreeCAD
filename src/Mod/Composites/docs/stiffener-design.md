@@ -71,7 +71,9 @@
   solid. Each profile edge is lofted along the path into a face (e.g. the Z's
   bottom-flange/web/top-flange edges → three lofted faces), grouped into a
   compound. (This answers the old draft's "solid vs shell/compound" open
-  question.)
+  question.) Since then the shape has taken on the remainder of the cut
+  support as a second child, with CompoundFilters picking the two apart —
+  see Output structure.
 
 ## User interface
 
@@ -88,9 +90,12 @@
 **Behavior:**
 - The sweep path = the intersection of `IntersectSurface` with the support
 - The profile is swept along that path (each profile edge lofted to a face)
-- The result is an open surface shell (compound of faces)
-- **Visibility:** the stiffener and its support stay visible; the intersecting
-  surface and the profile are hidden after each recompute
+- The feature's shape carries the stiffener and the remainder of the cut
+  support; `Part::CompoundFilter` objects expose each part (see Output
+  structure)
+- **Visibility:** the two filters are visible; the feature itself, the
+  intersecting surface and the profile stay hidden, and in the examples the
+  pristine support yields to its remainder on screen
 - **Example documents:** one example per document; curved supports are open
   shells — the lateral face alone, no end caps
 
