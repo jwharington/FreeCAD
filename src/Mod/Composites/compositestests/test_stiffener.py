@@ -136,6 +136,20 @@ class TestStiffenerFP(TestFreeCADFP):
             FreeCAD.Vector(0.0, 0.0, 0.0),
         ]
 
+    def _t_profile_points(self):
+        """A T-section, closed: web (6 wide) rising to a top flange (20 x 4)."""
+        return [
+            FreeCAD.Vector(-3.0, 0.0, 0.0),
+            FreeCAD.Vector(3.0, 0.0, 0.0),
+            FreeCAD.Vector(3.0, 15.0, 0.0),
+            FreeCAD.Vector(10.0, 15.0, 0.0),
+            FreeCAD.Vector(10.0, 19.0, 0.0),
+            FreeCAD.Vector(-10.0, 19.0, 0.0),
+            FreeCAD.Vector(-10.0, 15.0, 0.0),
+            FreeCAD.Vector(-3.0, 15.0, 0.0),
+            FreeCAD.Vector(-3.0, 0.0, 0.0),
+        ]
+
     def _asymmetric_profile_points(self):
         return [
             FreeCAD.Vector(0.0, 0.0, 0.0),
@@ -326,6 +340,106 @@ class TestStiffenerFP(TestFreeCADFP):
         nearest, farthest = radius_span(stiffener.Shape)
         self.assertAlmostEqual(nearest, radius, delta=1e-6)
         self.assertAlmostEqual(farthest, radius + 10.0, delta=1e-6)
+
+    def test_t_section_on_plate(self):
+        """A T-section on a planar plate: web on the surface, flange at the top."""
+        support = self._make_support("PlanarSupport", Part.makePlane(120.0, 60.0))
+        stiffener, _, _, _ = self._build_stiffener(
+            support,
+            vertical_cut(PLATE_CUT_Y, -10.0, 130.0, -20.0, 80.0),
+            self._t_profile_points(),
+        )
+
+        self.assert_valid_stiffener(stiffener)
+        section = stiffener_part(stiffener)
+        self.assertEqual(len(section.Faces), 8)
+        bounding_box = section.BoundBox
+        self.assertAlmostEqual(bounding_box.XLength, 120.0, delta=1e-6)
+        self.assertAlmostEqual(bounding_box.YLength, 20.0, delta=1e-6)
+        self.assertAlmostEqual(bounding_box.ZLength, 19.0, delta=1e-6)
+        self.assertEqual(len(stiffener.Proxy.remainders), 2)
+
+    def test_t_section_ring_on_a_cylinder(self):
+        """A T-section swept as an annular frame on a cylindrical shell."""
+        radius = 40.0
+        support = self._make_support("CylinderSupport", open_cylinder(radius, 120.0))
+        stiffener, _, _, _ = self._build_stiffener(
+            support,
+            horizontal_cut(120.0, -60.0, 60.0),
+            self._t_profile_points(),
+        )
+
+        self.assert_valid_stiffener(stiffener)
+        nearest, farthest = radius_span(stiffener_part(stiffener))
+        self.assertAlmostEqual(nearest, radius, delta=1e-6)
+        self.assertAlmostEqual(farthest, radius + 19.0, delta=1e-6)
+        self.assertAlmostEqual(stiffener_part(stiffener).BoundBox.ZLength, 20.0, delta=1e-6)
+
+    def test_t_section_on_an_oblique_cut_of_a_cone(self):
+        """A T-section on an oblique cut surface of a cone."""
+        support = self._make_support("ConeSupport", open_cone(45.0, 20.0, 120.0))
+        slanted = centred_rectangle(
+            FreeCAD.Vector(0.0, 0.0, 60.0), FreeCAD.Vector(0.0, 0.6, 0.8), 160.0
+        )
+
+        stiffener, _, _, _ = self._build_stiffener(support, slanted, self._t_profile_points())
+
+        self.assert_valid_stiffener(stiffener)
+        nearest, farthest = radius_span(stiffener_part(stiffener))
+        self.assertGreater(farthest, nearest)
+
+    def test_t_section_on_a_cylindrical_panel(self):
+        """A T-section swept around part of a cylindrical shell panel."""
+        radius = 40.0
+        panel = Part.makeShell([open_cylinder(radius, 120.0, angle=270.0)])
+        support = self._make_support("CylPanelSupport", panel)
+
+        stiffener, _, _, _ = self._build_stiffener(
+            support,
+            horizontal_cut(120.0, -60.0, 60.0),
+            self._t_profile_points(),
+        )
+
+        self.assert_valid_stiffener(stiffener)
+        nearest, farthest = radius_span(stiffener_part(stiffener))
+        self.assertAlmostEqual(nearest, radius, delta=1e-6)
+        self.assertAlmostEqual(farthest, radius + 19.0, delta=1e-6)
+
+    def test_t_section_over_a_folded_shell(self):
+        """A T-section following a path bent over a fold between two faces."""
+        folded, bent_cut = folded_shell()
+        support = self._make_support("FoldedShell", folded)
+
+        stiffener, _, _, _ = self._build_stiffener(
+            support, centred_rectangle(*bent_cut), self._t_profile_points()
+        )
+
+        self.assert_valid_stiffener(stiffener)
+        # Each profile edge lofts into at least one face; a locus crossing the
+        # fold is a two-edge wire, so its lofts subdivide there.
+        self.assertGreaterEqual(len(stiffener_part(stiffener).Faces), 8)
+        self.assertEqual(len(stiffener.Proxy.remainders), 4)
+
+    def test_t_section_runs_on_every_path_of_a_split_support(self):
+        """A T-section on a support in two pieces: a run on each piece."""
+        support = self._make_support(
+            "TwoPlateSupport",
+            Part.makeCompound(
+                [
+                    Part.makePlane(40.0, 40.0),
+                    Part.makePlane(40.0, 40.0, FreeCAD.Vector(0.0, 0.0, 60.0)),
+                ]
+            ),
+        )
+
+        stiffener, _, _, _ = self._build_stiffener(
+            support,
+            vertical_cut(20.0, -10.0, 50.0, -20.0, 80.0),
+            self._t_profile_points(),
+        )
+
+        self.assert_valid_stiffener(stiffener)
+        self.assertEqual(len(stiffener_part(stiffener).Faces), 16)
 
     def test_z_section_on_a_cylindrical_panel(self):
         """A Z-section swept around part of a cylindrical shell panel."""
