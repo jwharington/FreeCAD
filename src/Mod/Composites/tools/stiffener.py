@@ -97,11 +97,20 @@ def _travels_counter_clockwise(path: Part.Wire, normal: Vector) -> bool:
 
 
 def plane_normal(cut_surface: Part.Shape):
-    """The one normal of a planar cut surface, or None when the surface is bent."""
+    """The one normal of a planar cut surface, or None when the surface is bent.
+
+    A tool of several faces is fine when they are parallel planes — two offset
+    planes cut several paths that all share the same profile-x direction.
+    """
     faces = cut_surface.Faces
-    if len(faces) != 1 or not isinstance(faces[0].Surface, Part.Plane):
+    if not faces or not all(isinstance(face.Surface, Part.Plane) for face in faces):
         return None
-    return cut_surface_normal(cut_surface, faces[0].CenterOfMass)
+    normal = cut_surface_normal(cut_surface, faces[0].CenterOfMass)
+    for face in faces[1:]:
+        other = cut_surface_normal(cut_surface, face.CenterOfMass)
+        if (normal - other).Length > 1e-7:
+            return None
+    return normal
 
 
 def cut_surface_normal(cut_surface: Part.Shape, point: Vector) -> Vector:

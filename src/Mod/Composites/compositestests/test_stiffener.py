@@ -441,6 +441,26 @@ class TestStiffenerFP(TestFreeCADFP):
         self.assert_valid_stiffener(stiffener)
         self.assertEqual(len(stiffener_part(stiffener).Faces), 6)
 
+    def test_two_offset_cut_planes_give_two_stiffeners(self):
+        """A tool of two offset planes sweeps a stiffener along each path."""
+        support = self._make_support("PlanarSupport", Part.makePlane(120.0, 60.0))
+        tool = Part.makeCompound(
+            [
+                vertical_cut(20.0, -10.0, 130.0, -20.0, 80.0),
+                vertical_cut(45.0, -10.0, 130.0, -20.0, 80.0),
+            ]
+        )
+
+        stiffener, _, _, _ = self._build_stiffener(support, tool, self._t_profile_points())
+
+        self.assert_valid_stiffener(stiffener)
+        section = stiffener_part(stiffener)
+        self.assertEqual(len(section.Faces), 6)
+        bounding_box = section.BoundBox
+        self.assertAlmostEqual(bounding_box.XLength, 120.0, delta=1e-6)
+        self.assertAlmostEqual(bounding_box.YLength, 45.0, delta=1e-6)
+        self.assertAlmostEqual(bounding_box.ZLength, 15.0, delta=1e-6)
+
     def test_z_section_on_a_cylindrical_panel(self):
         """A Z-section swept around part of a cylindrical shell panel."""
         radius, height = 40.0, 120.0
