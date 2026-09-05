@@ -389,6 +389,30 @@ class TestStiffenerFP(TestFreeCADFP):
         nearest, farthest = radius_span(stiffener_part(stiffener))
         self.assertGreater(farthest, nearest)
 
+    def test_t_section_on_a_tilted_cut_of_a_conical_panel(self):
+        """A thin T on a 270-degree conical panel, swept along a tilted ellipse.
+
+        The one thing this adds over the full-cone oblique test is the open
+        path: the tilted plane's ellipse is truncated by the panel's two radial
+        edges into a single open arc.
+        """
+        solid = Part.makeCone(
+            45.0, 20.0, 120.0, FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(0, 0, 1), 270.0
+        )
+        panel = next(face for face in solid.Faces if isinstance(face.Surface, Part.Cone))
+        support = self._make_support("ConePanelSupport", panel)
+        tilted = centred_rectangle(
+            FreeCAD.Vector(0.0, 0.0, 60.0), FreeCAD.Vector(0.0, 0.6, 0.8), 160.0
+        )
+
+        stiffener, _, _, _ = self._build_stiffener(support, tilted, self._t_profile_points())
+
+        self.assert_valid_stiffener(stiffener)
+        # The arms' loci are offsets of a tilted conic, which OCCT splits into
+        # several edges, so each arm lofts into more than one face.
+        self.assertGreaterEqual(len(stiffener_part(stiffener).Faces), 3)
+        self.assertEqual(len(stiffener.Proxy.remainders), 2)
+
     def test_t_section_on_a_cylindrical_panel(self):
         """A T-section swept around part of a cylindrical shell panel."""
         radius = 40.0

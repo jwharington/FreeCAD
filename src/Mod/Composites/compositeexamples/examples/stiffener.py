@@ -19,6 +19,8 @@ Builds:
    Z-section as an annular frame, swept around a cylinder / cone. The path is
    the ring the cut surface intersects from the curved surface, and the
    profile's base row stays on that surface.
+4. ``Composites_Stiffener_TConePanel`` — thin T on a 270-degree conical
+   panel, swept along the open ellipse a tilted cut plane traces on it.
 """
 
 import FreeCAD
@@ -33,6 +35,8 @@ CYLINDER_RADIUS = 40.0
 CONE_BASE_RADIUS = 45.0
 CONE_TOP_RADIUS = 20.0
 SHELL_HEIGHT = 120.0
+PANEL_ANGLE = 270.0
+TILT_NORMAL = FreeCAD.Vector(0.0, 0.6, 0.8)
 CUT_Z = 60.0
 CUT_SIDE = 120.0
 
@@ -47,9 +51,13 @@ def _new_document(doc, name):
 
 
 def _make_sketch(doc, name, points):
-    """Create a sketch from a list of points (line segments)."""
+    """Create a sketch from polyline points, or explicit (start, end) strokes."""
     sketch = doc.addObject("Sketcher::SketchObject", name)
-    for start, end in zip(points, points[1:]):
+    if points and isinstance(points[0], (tuple, list)):
+        strokes = points
+    else:
+        strokes = list(zip(points, points[1:]))
+    for start, end in strokes:
         sketch.addGeometry(Part.LineSegment(start, end), False)
     return sketch
 
@@ -68,6 +76,15 @@ def _rect_profile():
         FreeCAD.Vector(20.0, 10.0, 0.0),
         FreeCAD.Vector(20.0, 0.0, 0.0),
         FreeCAD.Vector(0.0, 0.0, 0.0),
+    ]
+
+
+def _t_profile():
+    """A thin T as three strokes: stem plus two flange arms (branched)."""
+    return [
+        (FreeCAD.Vector(0.0, 0.0, 0.0), FreeCAD.Vector(0.0, 15.0, 0.0)),
+        (FreeCAD.Vector(-10.0, 15.0, 0.0), FreeCAD.Vector(0.0, 15.0, 0.0)),
+        (FreeCAD.Vector(0.0, 15.0, 0.0), FreeCAD.Vector(10.0, 15.0, 0.0)),
     ]
 
 
@@ -160,6 +177,28 @@ def _build_ring(doc, name, document_name, kind, profile_points):
     return _add_stiffener(doc, name, support, ring_cut_surface(), profile_points)
 
 
+def _build_tilted_t_on_conical_panel(doc, name, document_name):
+    """A thin T on a conical panel, swept along a tilted cut plane's ellipse."""
+    doc = _new_document(doc, document_name)
+    solid = Part.makeCone(
+        CONE_BASE_RADIUS,
+        CONE_TOP_RADIUS,
+        SHELL_HEIGHT,
+        FreeCAD.Vector(0, 0, 0),
+        FreeCAD.Vector(0, 0, 1),
+        PANEL_ANGLE,
+    )
+    panel = next(face for face in solid.Faces if isinstance(face.Surface, Part.Cone))
+    support = _make_shape_object(doc, f"{name}Support", panel)
+    cut = Part.makePlane(
+        CUT_SIDE, CUT_SIDE, FreeCAD.Vector(-CUT_SIDE / 2, -CUT_SIDE / 2, 0), FreeCAD.Vector(0, 0, 1)
+    )
+    cut.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(0, 0, CUT_Z), FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), TILT_NORMAL)
+    )
+    return _add_stiffener(doc, name, support, cut, _t_profile())
+
+
 def build(doc=None, run_solver=False):
     """Build the stiffener examples, one document per example.
 
@@ -188,6 +227,9 @@ def build(doc=None, run_solver=False):
         ),
         "z_cone_ring": _build_ring(
             None, "ZConeRing", "Composites_Stiffener_ZConeRing", "cone", _z_profile()
+        ),
+        "t_cone_panel": _build_tilted_t_on_conical_panel(
+            None, "TConePanel", "Composites_Stiffener_TConePanel"
         ),
     }
     return {"doc": cases["rect_plate"]["doc"], "cases": cases}
