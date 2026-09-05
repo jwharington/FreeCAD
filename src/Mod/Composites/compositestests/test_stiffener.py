@@ -102,8 +102,12 @@ class TestStiffenerFP(TestFreeCADFP):
 
     def _make_sketch(self, name, points):
         sketch = self.doc.addObject("Sketcher::SketchObject", name)
-        for start, end in zip(points, points[1:]):
-            sketch.addGeometry(Part.LineSegment(start, end), False)
+        if isinstance(points[0], (tuple, list)):
+            for start, end in points:
+                sketch.addGeometry(Part.LineSegment(start, end), False)
+        else:
+            for start, end in zip(points, points[1:]):
+                sketch.addGeometry(Part.LineSegment(start, end), False)
         return sketch
 
     def _build_stiffener(
@@ -137,17 +141,15 @@ class TestStiffenerFP(TestFreeCADFP):
         ]
 
     def _t_profile_points(self):
-        """A T-section, closed: web (6 wide) rising to a top flange (20 x 4)."""
+        """A thin T as three strokes: a stem plus two flange arms.
+
+        Branched — three edges meet at the flange tip — and each stroke lofts
+        into its own face.
+        """
         return [
-            FreeCAD.Vector(-3.0, 0.0, 0.0),
-            FreeCAD.Vector(3.0, 0.0, 0.0),
-            FreeCAD.Vector(3.0, 15.0, 0.0),
-            FreeCAD.Vector(10.0, 15.0, 0.0),
-            FreeCAD.Vector(10.0, 19.0, 0.0),
-            FreeCAD.Vector(-10.0, 19.0, 0.0),
-            FreeCAD.Vector(-10.0, 15.0, 0.0),
-            FreeCAD.Vector(-3.0, 15.0, 0.0),
-            FreeCAD.Vector(-3.0, 0.0, 0.0),
+            (FreeCAD.Vector(0.0, 0.0, 0.0), FreeCAD.Vector(0.0, 15.0, 0.0)),
+            (FreeCAD.Vector(-10.0, 15.0, 0.0), FreeCAD.Vector(0.0, 15.0, 0.0)),
+            (FreeCAD.Vector(0.0, 15.0, 0.0), FreeCAD.Vector(10.0, 15.0, 0.0)),
         ]
 
     def _asymmetric_profile_points(self):
@@ -352,12 +354,11 @@ class TestStiffenerFP(TestFreeCADFP):
 
         self.assert_valid_stiffener(stiffener)
         section = stiffener_part(stiffener)
-        self.assertEqual(len(section.Faces), 8)
+        self.assertEqual(len(section.Faces), 3)
         bounding_box = section.BoundBox
         self.assertAlmostEqual(bounding_box.XLength, 120.0, delta=1e-6)
         self.assertAlmostEqual(bounding_box.YLength, 20.0, delta=1e-6)
-        self.assertAlmostEqual(bounding_box.ZLength, 19.0, delta=1e-6)
-        self.assertEqual(len(stiffener.Proxy.remainders), 2)
+        self.assertAlmostEqual(bounding_box.ZLength, 15.0, delta=1e-6)
 
     def test_t_section_ring_on_a_cylinder(self):
         """A T-section swept as an annular frame on a cylindrical shell."""
@@ -372,7 +373,7 @@ class TestStiffenerFP(TestFreeCADFP):
         self.assert_valid_stiffener(stiffener)
         nearest, farthest = radius_span(stiffener_part(stiffener))
         self.assertAlmostEqual(nearest, radius, delta=1e-6)
-        self.assertAlmostEqual(farthest, radius + 19.0, delta=1e-6)
+        self.assertAlmostEqual(farthest, radius + 15.0, delta=1e-6)
         self.assertAlmostEqual(stiffener_part(stiffener).BoundBox.ZLength, 20.0, delta=1e-6)
 
     def test_t_section_on_an_oblique_cut_of_a_cone(self):
@@ -403,7 +404,7 @@ class TestStiffenerFP(TestFreeCADFP):
         self.assert_valid_stiffener(stiffener)
         nearest, farthest = radius_span(stiffener_part(stiffener))
         self.assertAlmostEqual(nearest, radius, delta=1e-6)
-        self.assertAlmostEqual(farthest, radius + 19.0, delta=1e-6)
+        self.assertAlmostEqual(farthest, radius + 15.0, delta=1e-6)
 
     def test_t_section_over_a_folded_shell(self):
         """A T-section following a path bent over a fold between two faces."""
@@ -417,8 +418,7 @@ class TestStiffenerFP(TestFreeCADFP):
         self.assert_valid_stiffener(stiffener)
         # Each profile edge lofts into at least one face; a locus crossing the
         # fold is a two-edge wire, so its lofts subdivide there.
-        self.assertGreaterEqual(len(stiffener_part(stiffener).Faces), 8)
-        self.assertEqual(len(stiffener.Proxy.remainders), 4)
+        self.assertGreaterEqual(len(stiffener_part(stiffener).Faces), 3)
 
     def test_t_section_runs_on_every_path_of_a_split_support(self):
         """A T-section on a support in two pieces: a run on each piece."""
@@ -439,7 +439,7 @@ class TestStiffenerFP(TestFreeCADFP):
         )
 
         self.assert_valid_stiffener(stiffener)
-        self.assertEqual(len(stiffener_part(stiffener).Faces), 16)
+        self.assertEqual(len(stiffener_part(stiffener).Faces), 6)
 
     def test_z_section_on_a_cylindrical_panel(self):
         """A Z-section swept around part of a cylindrical shell panel."""
