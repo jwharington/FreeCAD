@@ -43,6 +43,14 @@ EXAMPLES = {
         "module": ".examples.stiffener",
         "name": "Stiffener (sweep profile along an intersected path)",
     },
+    "rosettes": {
+        "module": ".examples.rosettes",
+        "name": "Rosettes (aligned and transferred fibre orientations)",
+    },
+    "texture_plan": {
+        "module": ".examples.texture_plan",
+        "name": "Texture plan (ply boundaries unwrapped from a shell)",
+    },
 }
 
 

@@ -120,6 +120,11 @@ class AlignFibreRosetteFP(RosetteFP):
             case "Angle":
                 fp.recompute()
 
+    def execute(self, fp):
+        if getattr(self, "solve_error", None):
+            raise RuntimeError(f"rosette alignment failed: {self.solve_error}")
+        super().execute(fp)
+
     def _solve(self, fp):
         """Iteratively solve ``fp.Angle`` so the warp fibre (v=0) passes
         through ``fp.SecondPoint`` on the draped ``fp.CompositeShell``.
@@ -133,14 +138,26 @@ class AlignFibreRosetteFP(RosetteFP):
         if fp.SecondPoint is None:
             raise ValueError("SecondPoint must be set")
 
+        self.solve_error = None  # a retry starts clean; _eval re-runs execute
+
         def error_fn(angle: float) -> float:
             vert = _vertex_from_link_sub(fp.SecondPoint)
             draper = shell.Proxy.get_draper()
             tc = draper.get_tex_coord_at_point(vert.Point, 0)
             return float(tc[1])  # v-coordinate; drive to 0
 
-        angle = solve_rosette_angle(shell, fp, error_fn)
+        previous_angle = fp.Angle
+        try:
+            angle = solve_rosette_angle(shell, fp, error_fn)
+        except Exception as exc:  # noqa: BLE001 - any solve failure must be loud
+            # A failed solve must not silently keep the last bracket probe's
+            # angle: restore the previous orientation and remember the error,
+            # so execute() raises and the feature shows as Invalid.
+            fp.Angle = previous_angle
+            self.solve_error = str(exc)
+            raise
         fp.Angle = angle  # written while _solving=True (swallowed by guard)
+        self.solve_error = None
 
 
 class ViewProviderAlignFibreRosette(ViewProviderRosette):

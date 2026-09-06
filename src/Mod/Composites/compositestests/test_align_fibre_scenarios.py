@@ -177,3 +177,52 @@ class TestAlignFibreRosetteScenarios(TestFreeCADFP):
         align.SecondPoint = (pt, ["Vertex1"])
         self.doc.recompute()
         self.assertTrue(math.isfinite(float(align.Angle)))
+    def test_align_fibre_rosette_solves_to_the_picked_point(self):
+        """With the align rosette seeding the drape, the angle is solved, not
+        defaulted: a point at 45 degrees from the rosette origin must land the
+        warp fibre on 45."""
+        from Composites.features.CompositeShell import CompositeShellFP
+
+        plate = self.doc.addObject("Part::Feature", "PlateSupport")
+        plate.Shape = Part.makePlane(100.0, 100.0)
+        align = self._make_align_fibre_rosette(support=(plate, ["Face1"]), composite_shell=None)
+        shell = self.doc.addObject("Part::FeaturePython", "Shell")
+        CompositeShellFP(
+            shell, support=plate, laminate=self._make_laminate(), rosette=align
+        )
+        self.doc.recompute()
+
+        align.CompositeShell = shell
+        self.doc.recompute()
+        point = self._make_point("Point1", FreeCAD.Vector(60.0, 60.0, 0.0))
+        align.SecondPoint = (point, ["Vertex1"])
+        self.doc.recompute()
+
+        self.assertAlmostEqual(float(align.Angle), 45.0, delta=0.5)
+        self.assertNotIn("Invalid", align.State)
+
+    def test_unreachable_second_point_fails_loud(self):
+        """A second point the solver cannot align to leaves the feature
+        Invalid — never a silently kept or defaulted angle."""
+        from Composites.features.CompositeShell import CompositeShellFP
+
+        plate = self.doc.addObject("Part::Feature", "PlateSupport")
+        plate.Shape = Part.makePlane(100.0, 100.0)
+        align = self._make_align_fibre_rosette(support=(plate, ["Face1"]), composite_shell=None)
+        shell = self.doc.addObject("Part::FeaturePython", "Shell")
+        CompositeShellFP(
+            shell, support=plate, laminate=self._make_laminate(), rosette=align
+        )
+        self.doc.recompute()
+
+        align.CompositeShell = shell
+        self.doc.recompute()
+        # Break the drape: with an undrapeable support the draper is invalid
+        # and the alignment cannot even be evaluated.
+        shell.Support.Shape = Part.Compound()
+        self.doc.recompute()
+        point = self._make_point("Point2", FreeCAD.Vector(60.0, 60.0, 0.0))
+        align.SecondPoint = (point, ["Vertex1"])
+        self.doc.recompute()
+
+        self.assertIn("Invalid", align.State)
