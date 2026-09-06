@@ -43,9 +43,17 @@ EXAMPLES = {
         "module": ".examples.stiffener",
         "name": "Stiffener (sweep profile along an intersected path)",
     },
-    "rosettes": {
-        "module": ".examples.rosettes",
-        "name": "Rosettes (aligned and transferred fibre orientations)",
+    "rosette": {
+        "module": ".examples.rosette",
+        "name": "Rosette (fibre orientation datum on a draped shell)",
+    },
+    "align_fibre_rosette": {
+        "module": ".examples.align_fibre_rosette",
+        "name": "AlignFibreRosette (fibre angle solved through a picked point)",
+    },
+    "transfer_rosette": {
+        "module": ".examples.transfer_rosette",
+        "name": "TransferRosette (master orientation carried to another shell)",
     },
     "texture_plan": {
         "module": ".examples.texture_plan",
