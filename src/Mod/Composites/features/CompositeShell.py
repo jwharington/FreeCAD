@@ -453,6 +453,9 @@ class CompositeShellFP(CompositeBaseFP):
             return False
         if abs(current_angle - float(getattr(self, "_cached_rosette_angle", 0.0) or 0.0)) > 0.001:
             return False
+        current_rosette_key = self._rosette_cache_key(fp)
+        if current_rosette_key != getattr(self, "_cached_rosette_key", None):
+            return False
         try:
             current_pitch = float(fp.DrapePitch)
         except Exception:
@@ -468,10 +471,28 @@ class CompositeShellFP(CompositeBaseFP):
             return False
         return True
 
+    def _rosette_cache_key(self, fp):
+        """Identity of the rosette seed: object plus LCS placement.
+
+        The drape is seeded from the rosette's LCS, so swapping to a
+        different rosette (or moving it) must invalidate the cached drape
+        even when the Angle property is unchanged.
+        """
+        rosette = getattr(fp, "Rosette", None)
+        if rosette is None:
+            return None
+        lcs = getattr(rosette, "LocalCoordinateSystem", None)
+        base = getattr(lcs, "Placement", None)
+        base = base.Base if base is not None else None
+        if base is None:
+            return (rosette.Name, None)
+        return (rosette.Name, round(base.x, 6), round(base.y, 6), round(base.z, 6))
+
     def _store_cache_state(self, fp) -> None:
         """Store the live backend cache state on the proxy only."""
         self._cached_shape_fingerprint = self._shape_fingerprint(fp.Support.Shape)
         self._cached_rosette_angle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
+        self._cached_rosette_key = self._rosette_cache_key(fp)
         self._cached_drape_pitch = float(fp.DrapePitch)
         self._cached_drape_cuts_fingerprint = self._drape_cuts_fingerprint(fp)
 
