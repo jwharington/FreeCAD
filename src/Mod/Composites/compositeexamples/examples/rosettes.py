@@ -147,6 +147,13 @@ def build(doc=None, run_solver=False):
     )
     doc.recompute()
 
+    # The attachment shell drapes from the transferred orientation: without a
+    # rosette the drape seed falls back to a surface projection of the face
+    # centre of mass, which is degenerate for a closed cylinder and leaves the
+    # shell undraped (no fibre render).
+    attachment.Rosette = transfer
+    doc.recompute()
+
     return {
         "doc": doc,
         "rosette": rosette,
