@@ -30,24 +30,30 @@ from ._shell_example_common import (
 LEG_LENGTH = 100.0  # along X — the bend line direction
 LEG_WIDTH = 80.0  # along Y, ending at the bend line
 BEND_RADIUS = 30.0
-DRAPE_PITCH = 5.0  # fine enough that the 47 mm arc is many pitches wide
+# Fine pitch so the arc is many cells wide. This works around a nextdrape
+# boundary-snapping weakness: at some grid alignments the snapped boundary
+# rows duplicate and their degenerate quads are dropped, leaving gaps
+# (coverage < 1.0 with gap_fraction failures). Solver-side fix is a
+# follow-up; the right answer is not "tune the pitch".
+DRAPE_PITCH = 2.5
 
 
 def _bend_face():
-    """Quarter-cylinder radius rising from the leg's far edge.
+    """Quarter-cylinder radius extending the leg's far edge upward.
 
-    Starts at the leg edge (y = LEG_WIDTH, z = 0) tangent to the leg and
-    curls up through 90 degrees to a vertical tangent.
+    Starts at the leg edge (y = LEG_WIDTH, z = 0) tangent to the leg —
+    continuing in the leg's own +y direction — and curves up through 90
+    degrees to a vertical tangent at (y = LEG_WIDTH + BEND_RADIUS).
     """
     mid = math.radians(45.0)
     arc = Part.Arc(
         FreeCAD.Vector(0.0, LEG_WIDTH, 0.0),
         FreeCAD.Vector(
             0.0,
-            LEG_WIDTH - BEND_RADIUS * math.sin(mid),
+            LEG_WIDTH + BEND_RADIUS * math.sin(mid),
             BEND_RADIUS * (1.0 - math.cos(mid)),
         ),
-        FreeCAD.Vector(0.0, LEG_WIDTH - BEND_RADIUS, BEND_RADIUS),
+        FreeCAD.Vector(0.0, LEG_WIDTH + BEND_RADIUS, BEND_RADIUS),
     ).toShape()
     return arc.extrude(FreeCAD.Vector(LEG_LENGTH, 0.0, 0.0))
 

@@ -77,6 +77,13 @@ class TransferRosetteFP(RosetteFP):
             doc="Attachment composite shell whose rosette this is",
         ).AttachmentShell = attachment_shell
         self._solving = False
+        if master_shell is not None and attachment_shell is not None:
+            # The property-set onChanged calls above were suppressed by the
+            # _solving guard, so the initial wiring and angle solve never
+            # ran. Run them now, exactly as the deferred onChanged would.
+            self._ensure_wired(obj)
+            self._solve(obj)
+            obj.recompute()
 
     def execute(self, fp):
         # Place the LCS from Support + Angle only; the iterative solve is
@@ -125,7 +132,9 @@ class TransferRosetteFP(RosetteFP):
         # (e.g. a glued assembly with no common edge), this is a misuse of
         # the feature — raise a clear error rather than silently solving
         # against a zero residual.
-        edge = self._shared_edge(master.Shape, attachment.Shape)
+        edge = self._shared_edge(
+            self._shape_of(master), self._shape_of(attachment)
+        )
         if edge is None:
             raise ValueError(
                 "TransferRosette: master and attachment shells share no "
@@ -149,7 +158,9 @@ class TransferRosetteFP(RosetteFP):
         if master_draper is None or attachment_draper is None:
             return 0.0
 
-        edge = self._shared_edge(master.Shape, attachment.Shape)
+        edge = self._shared_edge(
+            self._shape_of(master), self._shape_of(attachment)
+        )
         if edge is None:
             return 0.0
 
@@ -173,6 +184,19 @@ class TransferRosetteFP(RosetteFP):
         if not residuals:
             return 0.0
         return sum(residuals) / len(residuals)
+
+    @staticmethod
+    def _shape_of(shell):
+        """The shell's live support geometry.
+
+        The shell feature's own ``Shape`` is a cached snapshot that does not
+        necessarily track a moved support; the support's shape is the
+        authoritative geometry for shared-edge discovery.
+        """
+        support = getattr(shell, "Support", None)
+        if support is not None:
+            return support.Shape
+        return shell.Shape
 
     @staticmethod
     def _shared_edge(master_shape, attachment_shape):

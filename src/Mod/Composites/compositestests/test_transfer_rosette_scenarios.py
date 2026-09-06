@@ -67,12 +67,20 @@ class TestTransferRosetteScenarios(TestFreeCADFP):
 
     def test_transfer_rosette_with_master(self):
         from Composites.features.Rosette import RosetteFP
-        master_shell = self._make_shell(self._make_flat_plate())
+        # Two plates sharing one edge, like a sheet with a joint line.
+        master_shell = self._make_shell(self._make_flat_plate(), "Master")
+        attachment_shape = self._make_flat_plate()
+        attachment_shape.translate(FreeCAD.Vector(100.0, 0.0, 0.0))
+        attachment_shell = self._make_shell(attachment_shape, "Attachment")
         master_rosette = self._make_rosette()
         master_rosette.Support = (master_shell.Support, ["Face1"])
         master_shell.Rosette = master_rosette
         self.doc.recompute()
-        tr = self._make_transfer_rosette(support=(master_shell.Support, ["Face1"]), master_shell=master_shell, attachment_shell=master_shell)
+        tr = self._make_transfer_rosette(
+            support=(master_shell.Support, ["Face1"]),
+            master_shell=master_shell,
+            attachment_shell=attachment_shell,
+        )
         self.doc.recompute()
         self.assertIsNotNone(tr)
 
@@ -101,14 +109,21 @@ class TestTransferRosetteScenarios(TestFreeCADFP):
             if os.path.exists(filepath):
                 os.remove(filepath)
 
-    def test_transfer_rosette_multiple_attachments(self):
+    def test_transfer_rosette_without_shared_edge_raises(self):
+        """Shells that share no boundary edge cannot transfer warp — the
+        constructor must say so loudly, not silently skip the solve."""
         from Composites.features.Rosette import RosetteFP
         shell1 = self._make_shell(self._make_flat_plate(), "Shell1")
-        shell2 = self._make_shell(self._make_flat_plate(), "Shell2")
+        far_shape = self._make_flat_plate()
+        far_shape.translate(FreeCAD.Vector(500.0, 0.0, 0.0))
+        shell2 = self._make_shell(far_shape, "Shell2")
         master_rosette = self._make_rosette("MasterRosette")
         master_rosette.Support = (shell1.Support, ["Face1"])
         shell1.Rosette = master_rosette
         self.doc.recompute()
-        tr = self._make_transfer_rosette(support=(shell1.Support, ["Face1"]), master_shell=shell1, attachment_shell=shell2)
-        self.doc.recompute()
-        self.assertIsNotNone(tr)
+        with self.assertRaises(ValueError):
+            self._make_transfer_rosette(
+                support=(shell1.Support, ["Face1"]),
+                master_shell=shell1,
+                attachment_shell=shell2,
+            )
