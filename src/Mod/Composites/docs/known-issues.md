@@ -41,7 +41,7 @@ drape test failures resolved. Remaining caveat: the spherical cap at
 pitch 2.5 still shows a small seam-edge gap (0.887 → now higher, verify
 per geometry); pitch tuning for very small arcs still applies.
 
-## 2. Intermittent `solver_failure` at fine pitches
+## 2. Intermittent `solver_failure` at fine pitches — RESOLVED (nextdrape 93a6b79)
 
 **Symptom:** identical geometry, seed and params occasionally return
 `Drape status: solver_failure` — observed 2 failures in 10 solves at pitch
@@ -49,14 +49,15 @@ per geometry); pitch tuning for very small arcs still applies.
 mid-transfer-solve left the draper invalid and, before the hardening below,
 leaked an `AssertionError` out of `TransferRosette._edge_angle_error`.
 
-**Workaround in place:** examples avoid the flaky pitches;
-`TransferRosette._edge_angle_error` now converts an invalid draper into a
-handled `RosetteSolveError` (loud feature `Invalid` state) instead of an
-assertion leak.
-
-**Fix direction:** find the nondeterminism in the C++ drape solve at fine
-pitches (suspect an iteration/step budget interacting with mesh rounding).
-Add a repeat-solve regression test at the failing pitch.
+**Resolution (2026-07-15, nextdrape 93a6b79):** the failures were the old
+count-based face budget at borderline capacity — at pitch 1.0 the quad
+count sat almost exactly at the budget, so small geometry differences
+between sessions flipped it. The area-weighted budget (issue 1) resolves
+the borderline by construction. Verified: 6 fresh-process repeats of the
+transfer example and 5 CLI repeats of the cyl baseline at pitch 1.0 —
+all succeed with identical coverage. The `RosetteSolveError` hardening
+in `TransferRosette._edge_angle_error` stays: a genuinely failed drape
+must still surface as a loud feature `Invalid`, never an assertion.
 
 ## 3. No wrap-around stopping on closed surfaces — MITIGATED (nextdrape 5b4ef50)
 
