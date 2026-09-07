@@ -24,7 +24,10 @@ import math
 import FreeCAD
 import Part
 
-from ...features.TransferRosette import TransferRosetteFP
+from ...features.TransferRosette import (
+    TransferRosetteFP,
+    ViewProviderTransferRosette,
+)
 from ._shell_example_common import (
     create_composite_feature_stack,
     create_support_feature,
@@ -106,6 +109,8 @@ def build(doc=None, run_solver=False):
         master_shell=shell["shell"],
         attachment_shell=cap["shell"],
     )
+    if transfer.ViewObject is not None:
+        ViewProviderTransferRosette(transfer.ViewObject)
     doc.recompute()
 
     # The stack's placeholder rosette is superseded by the transfer rosette.

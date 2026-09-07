@@ -90,6 +90,15 @@ class RosetteSymbol:
         offset.translation.setValue(0.0, 0.0, z_offset)
         side.addChild(offset)
 
+        # Render in Coin's deferred (transparent) pass: the symbol then
+        # draws after every opaque shell geometry — including the injected
+        # drape shader — so it is never occluded by the surface it sits on.
+        # Depth testing stays on, so the mirrored far-side copy is correctly
+        # hidden by the surface.
+        transparency = coin.SoTransparencyType()
+        transparency.mode = coin.SoTransparencyType.DELAYED_BLEND
+        side.addChild(transparency)
+
         # Thin line style for all geometry on this side.
         draw_style = coin.SoDrawStyle()
         draw_style.lineWidth = _LINE_WIDTH

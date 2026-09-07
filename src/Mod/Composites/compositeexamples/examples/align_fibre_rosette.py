@@ -16,7 +16,10 @@ tree; a failed alignment is never silent.
 import FreeCAD
 import Part
 
-from ...features.AlignFibreRosette import AlignFibreRosetteFP
+from ...features.AlignFibreRosette import (
+    AlignFibreRosetteFP,
+    ViewProviderAlignFibreRosette,
+)
 from ._shell_example_common import (
     create_composite_feature_stack,
     create_support_feature,
@@ -42,6 +45,8 @@ def build(doc=None, run_solver=False):
     doc.removeObject(stack["rosette"].Name)
     align = doc.addObject("Part::FeaturePython", "AlignFibreRosette")
     AlignFibreRosetteFP(align, support=(support, ["Face1"]), composite_shell=None)
+    if align.ViewObject is not None:
+        ViewProviderAlignFibreRosette(align.ViewObject)
     doc.recompute()
     shell.Rosette = align
     align.CompositeShell = shell

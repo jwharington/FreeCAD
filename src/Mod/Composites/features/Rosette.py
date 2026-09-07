@@ -177,12 +177,22 @@ class ViewProviderRosette(VPCompositeBase):
 
         The coloured RosetteSymbol replaces it — the grey datum display is
         nearly invisible against the shell surfaces and gets mistaken for
-        the rosette itself.
+        the rosette itself. The LCS's Origin sub-objects (axes, planes) are
+        hidden too: they draw as coloured translucent flags right where the
+        symbol sits.
         """
         lcs = getattr(self.Object, "LocalCoordinateSystem", None)
-        vobj = getattr(lcs, "ViewObject", None)
-        if vobj is not None:
-            vobj.Visibility = False
+        if lcs is None:
+            return
+        to_hide = [lcs]
+        origin = getattr(lcs, "Origin", None)
+        if origin is not None:
+            to_hide.extend(getattr(origin, "OriginFeatures", []) or [])
+            to_hide.append(origin)
+        for obj in to_hide:
+            vobj = getattr(obj, "ViewObject", None)
+            if vobj is not None and vobj.Visibility:
+                vobj.Visibility = False
 
     def _update_symbol(self):
         fp = self.Object
