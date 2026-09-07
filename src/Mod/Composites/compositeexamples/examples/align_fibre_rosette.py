@@ -57,8 +57,6 @@ def build(doc=None, run_solver=False):
     doc.recompute()
     align.SecondPoint = (point, ["Vertex1"])
     doc.recompute()
-    if getattr(align.ViewObject, "Proxy", None) is not None:
-        align.ViewObject.Proxy.raise_render_order()
 
     return {
         "doc": doc,

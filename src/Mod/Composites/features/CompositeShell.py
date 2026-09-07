@@ -337,6 +337,11 @@ class CompositeShellFP(CompositeBaseFP):
 
         vp.Proxy.reload_shader()
         vp.Proxy._set_shell_transparency(vp)
+        # The weave shader draws in the deferred pass, after anything that
+        # sits earlier in the scene graph — re-raise rosettes linked to this
+        # shell so their coloured symbols stay on top of the weave.
+        if hasattr(vp.Proxy, "_raise_rosette_render_order"):
+            vp.Proxy._raise_rosette_render_order(vp)
         # Re-sync DisplayMode now that the shader is attached. On reload,
         # attach() ran update_visibility before the shader was ready
         # (has_shader=False -> "Shaded"), leaving the native Part shape

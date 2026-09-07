@@ -31,8 +31,6 @@ def build(doc=None, run_solver=False):
         doc, "Plate", Part.makePlane(PLATE_SIDE, PLATE_SIDE)
     )
     stack = create_composite_feature_stack(doc, support, name_prefix="Rosette")
-    if getattr(stack["rosette"].ViewObject, "Proxy", None) is not None:
-        stack["rosette"].ViewObject.Proxy.raise_render_order()
     return {
         "doc": doc,
         "rosette": stack["rosette"],

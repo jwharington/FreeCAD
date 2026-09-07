@@ -218,6 +218,12 @@ class ViewProviderCompositeShell:
         self.onChanged(obj, "Color")
         self.update_visibility(obj)
 
+        # Rosettes linked to this shell must sit above its weave shader;
+        # re-raise them once this shell's scene node exists.
+        try:
+            self._raise_rosette_render_order(obj.ViewObject)
+        except Exception:
+            pass
     def _find_switch(self, node):
         """Find the first Coin3D Switch node under *node* recursively."""
         if node is None:
@@ -460,6 +466,29 @@ class ViewProviderCompositeShell:
     def onDelete(self, vobj, sub):
         self.remove_shader()
         return True
+
+    def _raise_rosette_render_order(self, vobj):
+        """Re-raise rosettes linked to this shell above the weave shader.
+
+        Rosettes created before this shell sit earlier in the scene graph,
+        and the weave shader (rendered in the deferred pass, later in scene
+        order) blends over their coloured symbol and reduces it to grey.
+        Moving every linked rosette's scene node to the end of the viewer's
+        scene graph puts their symbols back on top.  Runs after every shader
+        (re)attach so the ordering holds whichever shell injects last.
+        """
+        doc = getattr(getattr(vobj, "Object", None), "Document", None)
+        if doc is None:
+            return
+        # Raise every rosette in the document: symbols are small overlays
+        # that must sit above any weave, including weaves of shells they are
+        # not linked to (a later shell's weave can overlap an earlier
+        # rosette on screen even across shells).
+        for other in doc.Objects:
+            vo = getattr(other, "ViewObject", None)
+            vp = getattr(vo, "Proxy", None)
+            if vp is not None and hasattr(vp, "raise_render_order"):
+                vp.raise_render_order()
 
     def reload_shader(self):
         if getattr(self, "_reloading", False):
