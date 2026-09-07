@@ -165,10 +165,24 @@ class ViewProviderRosette(VPCompositeBase):
         self.standard.addChild(self._rosette.separator)
         vobj.addDisplayMode(self.standard, "Standard")
         self._update_symbol()
+        self._hide_datum_symbology()
 
     def updateData(self, fp, prop):
         if prop in ("Support", "Angle"):
             self._update_symbol()
+            self._hide_datum_symbology()
+
+    def _hide_datum_symbology(self):
+        """Hide the LCS datum's native grey glyph.
+
+        The coloured RosetteSymbol replaces it — the grey datum display is
+        nearly invisible against the shell surfaces and gets mistaken for
+        the rosette itself.
+        """
+        lcs = getattr(self.Object, "LocalCoordinateSystem", None)
+        vobj = getattr(lcs, "ViewObject", None)
+        if vobj is not None:
+            vobj.Visibility = False
 
     def _update_symbol(self):
         fp = self.Object

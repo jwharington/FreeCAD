@@ -5,8 +5,10 @@ import math
 from pivy import coin
 
 
-_X_AXIS_COLOR = (0.9, 0.15, 0.15)  # red
-_Y_AXIS_COLOR = (0.15, 0.75, 0.15)  # green
+_X_AXIS_COLOR = (1.0, 0.25, 0.1)  # bright red-orange
+_Y_AXIS_COLOR = (0.2, 1.0, 0.2)  # bright green
+_CIRCLE_COLOR = (1.0, 1.0, 1.0)  # white reference circle
+_LINE_WIDTH = 3.0
 
 _CIRCLE_PTS = 64
 _ARROW_FRACTION = 0.18  # arrow head length as fraction of scale
@@ -90,7 +92,7 @@ class RosetteSymbol:
 
         # Thin line style for all geometry on this side.
         draw_style = coin.SoDrawStyle()
-        draw_style.lineWidth = 2.0
+        draw_style.lineWidth = _LINE_WIDTH
         side.addChild(draw_style)
 
         # Reference circle and centre dot.
@@ -108,7 +110,7 @@ class RosetteSymbol:
     # ------------------------------------------------------------------
 
     def _add_circle(self, parent, scale):
-        """Draw a grey reference circle of radius *scale* in the XY plane."""
+        """Draw the reference circle of radius *scale* in the XY plane."""
         pts = [
             (
                 scale * math.cos(2 * math.pi * i / _CIRCLE_PTS),
@@ -119,7 +121,7 @@ class RosetteSymbol:
         ]
 
         mat = coin.SoMaterial()
-        mat.diffuseColor.setValue(0.55, 0.55, 0.55)
+        mat.diffuseColor.setValue(*_CIRCLE_COLOR)
 
         coords = coin.SoCoordinate3()
         coords.point.setValues(0, pts)

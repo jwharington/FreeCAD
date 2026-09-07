@@ -5,10 +5,18 @@
 
 A pressure-vessel style transition: a cylindrical panel section and a
 spherical cap section of the SAME radius, meeting along the seam arc
-where the cap closes the shell. The cylindrical panel is draped from
-its own rosette. The TransferRosette on the cap solves its angle so the
-warp makes the same signed angle with the seam on both sides — the ply
-continues across the seam the way a real layup does.
+where the cap closes the shell. The cylindrical panel is draped with
+its fabric laid at 30 degrees to the panel edges. The TransferRosette
+on the cap solves its angle so the warp makes the same signed angle
+with the seam on both sides — the ply continues across the seam at the
+same 30 degree crossing, the way a real layup does.
+
+Note the physics: a 30 degree crossing on a spherical head strains the
+ply against the cap's converging latitudes — the drape quality flags
+report max_strain above the 2 percent threshold on both panels. A
+meridional (90 degree) master orientation drapes the cap strain-free;
+the 30 degree layup is shown because that is what was asked for, and
+the quality flags are the honest record of its cost.
 """
 
 import math
@@ -27,6 +35,7 @@ RADIUS = 50.0  # shared by shell and cap
 SHELL_HEIGHT = 80.0
 SWEEP_DEG = 60.0  # azimuthal width of both panels
 CAP_LATITUDE_DEG = 75.0  # cap stops short of the pole (polar opening)
+FABRIC_OFFSET_ANGLE = 30.0  # fabric laid at 30 degrees to the panel edges
 DRAPE_PITCH = 2.5  # stable pitch; the cap keeps a small seam-edge gap —
 # nextdrape boundary snapping drops quads at some grid alignments
 # (solver follow-up). Finer pitches pass quality but hit a flaky
@@ -75,10 +84,10 @@ def build(doc=None, run_solver=False):
     shell_panel = create_support_feature(doc, "ShellPanel", _cylinder_panel())
     shell = create_composite_feature_stack(doc, shell_panel, name_prefix="Shell")
 
-    # The ply runs meridionally over the head (warp across the seam, not
-    # around it): a circumferential warp strains absurdly against the
-    # cap's converging latitudes.
-    shell["rosette"].Angle = 90.0
+    # Fabric laid at 30 degrees to the panel edges; the transfer rosette
+    # solves the cap's angle for warp continuity across the seam at that
+    # crossing.
+    shell["rosette"].Angle = FABRIC_OFFSET_ANGLE
     doc.recompute()
 
     cap_panel = create_support_feature(doc, "CapPanel", _spherical_cap())
