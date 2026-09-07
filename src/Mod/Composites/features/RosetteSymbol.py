@@ -91,13 +91,19 @@ class RosetteSymbol:
         side.addChild(offset)
 
         # Render in Coin's deferred (transparent) pass: the symbol then
-        # draws after every opaque shell geometry — including the injected
-        # drape shader — so it is never occluded by the surface it sits on.
-        # Depth testing stays on, so the mirrored far-side copy is correctly
-        # hidden by the surface.
+        # draws after every opaque shell geometry. Depth testing is disabled
+        # because the shell's weave shader lives in the SAME deferred pass —
+        # a rosette created before its shell would otherwise be blended over
+        # by the weave. The symbol is mirror-symmetric, so its two ±Z copies
+        # overlapping is visually harmless.
         transparency = coin.SoTransparencyType()
         transparency.mode = coin.SoTransparencyType.DELAYED_BLEND
         side.addChild(transparency)
+
+        depth = coin.SoDepthBuffer()
+        depth.test = False
+        depth.write = False
+        side.addChild(depth)
 
         # Thin line style for all geometry on this side.
         draw_style = coin.SoDrawStyle()
