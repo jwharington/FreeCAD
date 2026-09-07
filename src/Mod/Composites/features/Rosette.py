@@ -172,6 +172,27 @@ class ViewProviderRosette(VPCompositeBase):
             self._update_symbol()
             self._hide_datum_symbology()
 
+    def raise_render_order(self):
+        """Move this rosette's scene node after all other objects.
+
+        The symbol renders in Coin's deferred pass, which preserves scene
+        order: a rosette created before its shell would have its symbol
+        blended over by the shell's weave shader. Appending the node to the
+        end of the viewer's scene graph puts the symbol on top.
+        """
+        import FreeCADGui
+
+        view = FreeCADGui.activeDocument().activeView()
+        if not hasattr(view, "getSceneGraph"):
+            return
+        scene = view.getSceneGraph()
+        root = self.ViewObject.RootNode
+        try:
+            scene.removeChild(root)
+        except Exception:
+            return  # not a direct child of the scene graph
+        scene.addChild(root)
+
     def _hide_datum_symbology(self):
         """Hide the LCS datum's native grey glyph.
 

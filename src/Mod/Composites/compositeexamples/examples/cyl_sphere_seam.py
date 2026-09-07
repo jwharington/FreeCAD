@@ -116,6 +116,8 @@ def build(doc=None, run_solver=False):
     # The stack's placeholder rosette is superseded by the transfer rosette.
     doc.removeObject(cap["rosette"].Name)
     doc.recompute()
+    if getattr(transfer.ViewObject, "Proxy", None) is not None:
+        transfer.ViewObject.Proxy.raise_render_order()
 
     return {
         "doc": doc,
