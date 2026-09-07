@@ -3,15 +3,15 @@
 
 """TransferRosette example — ply orientation continued across a bend.
 
-A realistic transition between surfaces: a flat leg and a cylindrical
-radius laid up as one sheet, sharing the bend line. The flat leg is
-draped from its own rosette. The TransferRosette on the radius solves
-its angle so the warp makes the same signed angle with the bend line on
-both sides — the ply continues across the bend exactly the way a real
-layup does.
+A realistic transition between surfaces: a flat leg and a shallow
+(30 degree) cylindrical radius laid up as one sheet, sharing the bend
+line. The flat leg is draped from its own rosette. The TransferRosette
+on the radius solves its angle so the warp makes the same signed angle
+with the bend line on both sides — the ply continues across the bend
+exactly the way a real layup does.
 
-The surfaces bound the drape naturally: the radius is a quarter
-cylinder, so the weft marches 90 degrees and stops. Nothing wraps
+The surfaces bound the drape naturally: the radius sweeps only 30
+degrees, so the weft marches along the arc and stops. Nothing wraps
 around.
 """
 
@@ -30,30 +30,39 @@ from ._shell_example_common import (
 LEG_LENGTH = 100.0  # along X — the bend line direction
 LEG_WIDTH = 80.0  # along Y, ending at the bend line
 BEND_RADIUS = 30.0
+BEND_ANGLE = 30.0  # sweep of the radius, degrees from the leg tangent
 # Fine pitch so the arc is many cells wide. This works around a nextdrape
 # boundary-snapping weakness: at some grid alignments the snapped boundary
 # rows duplicate and their degenerate quads are dropped, leaving gaps
 # (coverage < 1.0 with gap_fraction failures). Solver-side fix is a
 # follow-up; the right answer is not "tune the pitch".
+# Arc length at 30 degrees is ~16 mm; keep several cells across it.
 DRAPE_PITCH = 2.5
 
 
 def _bend_face():
-    """Quarter-cylinder radius extending the leg's far edge upward.
+    """Cylindrical radius extending the leg's far edge, sweeping BEND_ANGLE.
 
     Starts at the leg edge (y = LEG_WIDTH, z = 0) tangent to the leg —
-    continuing in the leg's own +y direction — and curves up through 90
-    degrees to a vertical tangent at (y = LEG_WIDTH + BEND_RADIUS).
+    continuing in the leg's own +y direction — and curves up through
+    BEND_ANGLE degrees. Built from the circle centred at
+    (y = LEG_WIDTH, z = BEND_RADIUS), parameterised as
+    (y, z) = (LEG_WIDTH + R sin t, R (1 - cos t)).
     """
-    mid = math.radians(45.0)
+    half = math.radians(BEND_ANGLE / 2.0)
+    full = math.radians(BEND_ANGLE)
     arc = Part.Arc(
         FreeCAD.Vector(0.0, LEG_WIDTH, 0.0),
         FreeCAD.Vector(
             0.0,
-            LEG_WIDTH + BEND_RADIUS * math.sin(mid),
-            BEND_RADIUS * (1.0 - math.cos(mid)),
+            LEG_WIDTH + BEND_RADIUS * math.sin(half),
+            BEND_RADIUS * (1.0 - math.cos(half)),
         ),
-        FreeCAD.Vector(0.0, LEG_WIDTH + BEND_RADIUS, BEND_RADIUS),
+        FreeCAD.Vector(
+            0.0,
+            LEG_WIDTH + BEND_RADIUS * math.sin(full),
+            BEND_RADIUS * (1.0 - math.cos(full)),
+        ),
     ).toShape()
     return arc.extrude(FreeCAD.Vector(LEG_LENGTH, 0.0, 0.0))
 

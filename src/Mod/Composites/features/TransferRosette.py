@@ -153,8 +153,14 @@ class TransferRosetteFP(RosetteFP):
         """Signed mean of (phi_attachment - phi_master) along the shared edge."""
         master = fp.MasterShell
         attachment = fp.AttachmentShell
-        master_draper = master.Proxy.get_draper()
-        attachment_draper = attachment.Proxy.get_draper()
+        try:
+            master_draper = master.Proxy.get_draper()
+            attachment_draper = attachment.Proxy.get_draper()
+        except AssertionError as exc:
+            # A drape that failed (e.g. an intermittent solver_failure at
+            # fine pitches) must surface as a handled solve failure, not
+            # leak an assertion out of the solver.
+            raise RosetteSolveError(f"draper invalid during solve: {exc}")
         if master_draper is None or attachment_draper is None:
             return 0.0
 

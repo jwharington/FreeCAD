@@ -55,6 +55,10 @@ EXAMPLES = {
         "module": ".examples.transfer_rosette",
         "name": "TransferRosette (master orientation carried to another shell)",
     },
+    "cyl_sphere_seam": {
+        "module": ".examples.cyl_sphere_seam",
+        "name": "TransferRosette (cylindrical panel to spherical cap across the seam)",
+    },
     "texture_plan": {
         "module": ".examples.texture_plan",
         "name": "Texture plan (ply boundaries unwrapped from a shell)",
