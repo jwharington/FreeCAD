@@ -5,10 +5,11 @@
 
 A realistic transition between surfaces: a flat leg and a shallow
 (30 degree) cylindrical radius laid up as one sheet, sharing the bend
-line. The flat leg is draped from its own rosette. The TransferRosette
-on the radius solves its angle so the warp makes the same signed angle
-with the bend line on both sides — the ply continues across the bend
-exactly the way a real layup does.
+line. The flat leg is draped from its own rosette with the fabric laid
+at 30 degrees to the panel edges. The TransferRosette on the radius
+solves its angle so the warp makes the same signed angle with the bend
+line on both sides — the ply continues across the bend exactly the way
+a real layup does, at the same 30 degree crossing.
 
 The surfaces bound the drape naturally: the radius sweeps only 30
 degrees, so the weft marches along the arc and stops. Nothing wraps
@@ -31,6 +32,7 @@ LEG_LENGTH = 100.0  # along X — the bend line direction
 LEG_WIDTH = 80.0  # along Y, ending at the bend line
 BEND_RADIUS = 30.0
 BEND_ANGLE = 30.0  # sweep of the radius, degrees from the leg tangent
+FABRIC_OFFSET_ANGLE = 30.0  # fabric laid at 30 degrees to the panel edges
 # Fine pitch so the arc is many cells wide. This works around a nextdrape
 # boundary-snapping weakness: at some grid alignments the snapped boundary
 # rows duplicate and their degenerate quads are dropped, leaving gaps
@@ -75,6 +77,7 @@ def build(doc=None, run_solver=False):
         doc, "FlatLeg", Part.makePlane(LEG_LENGTH, LEG_WIDTH)
     )
     master = create_composite_feature_stack(doc, leg, name_prefix="Leg")
+    master["rosette"].Angle = FABRIC_OFFSET_ANGLE
 
     bend = create_support_feature(doc, "Bend", _bend_face())
     attachment = create_composite_feature_stack(doc, bend, name_prefix="Bend")
