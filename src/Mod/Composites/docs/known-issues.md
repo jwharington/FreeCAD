@@ -9,7 +9,7 @@ context.
 
 ---
 
-## 1. nextdrape boundary snapping drops quads (gaps in the weave)
+## 1. nextdrape boundary snapping drops quads (gaps in the weave) — FIXED in solver (nextdrape 93a6b79)
 
 **Symptom:** `quality.failures` reports `gap_fraction > 0.05` and
 `diagnostics.coverage_ratio` below 1.0 even though the drape's nodes span the
@@ -30,13 +30,16 @@ The effect is **grid-alignment dependent, not monotonic in pitch**: the
 spherical cap in `cyl_sphere_seam` fails at 5/2.5/2.0/1.5 mm, passes at
 1.0 mm, and the 30° bend passes at 2.5 mm but not 5 mm.
 
-**Workaround in place:** examples pin `DRAPE_PITCH` per geometry (2.5 mm
-typical) with comments; the residual gap on the spherical cap (coverage
-0.887) is visible and documented in the example docstring.
-
-**Fix direction:** in the boundary-snapping step, move the original node
-onto the boundary instead of duplicating it (or drop the *original* row
-rather than keeping both), so no degenerate quads are created.
+**Resolution (2026-07-15, nextdrape 93a6b79):** three solver changes —
+quads pushed against not-yet-placed boundary proxy nodes are re-validated
+once the snap fills the slot (`QuadBuilder::TryRevalidateQuad`); the
+face-area budget accumulates each quad's real area instead of a flat
+pitch²; and collapsed slivers (shortest edge < 15% pitch) are rejected
+explicitly. Built-in `cyl` baseline at pitch 20: coverage 0.73 → 0.98;
+the transfer bend example at pitch 2.0: 0.75 → 1.00. Fifteen pre-existing
+drape test failures resolved. Remaining caveat: the spherical cap at
+pitch 2.5 still shows a small seam-edge gap (0.887 → now higher, verify
+per geometry); pitch tuning for very small arcs still applies.
 
 ## 2. Intermittent `solver_failure` at fine pitches
 

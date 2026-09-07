@@ -36,13 +36,8 @@ LEG_WIDTH = 80.0  # along Y, ending at the bend line
 BEND_RADIUS = 30.0
 BEND_ANGLE = 30.0  # sweep of the radius, degrees from the leg tangent
 FABRIC_OFFSET_ANGLE = 30.0  # fabric laid at 30 degrees to the panel edges
-# Fine pitch so the arc is many cells wide. This works around a nextdrape
-# boundary-snapping weakness: at some grid alignments the snapped boundary
-# rows duplicate and their degenerate quads are dropped, leaving gaps
-# (coverage < 1.0 with gap_fraction failures). Solver-side fix is a
-# follow-up; the right answer is not "tune the pitch".
 # Arc length at 30 degrees is ~16 mm; keep several cells across it.
-DRAPE_PITCH = 2.5
+DRAPE_PITCH = 2.0
 
 
 def _bend_face():
