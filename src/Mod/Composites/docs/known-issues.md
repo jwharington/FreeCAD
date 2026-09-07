@@ -58,7 +58,7 @@ assertion leak.
 pitches (suspect an iteration/step budget interacting with mesh rounding).
 Add a repeat-solve regression test at the failing pitch.
 
-## 3. No wrap-around stopping on closed surfaces
+## 3. No wrap-around stopping on closed surfaces — MITIGATED (nextdrape 5b4ef50)
 
 **Symptom:** a drape seeded with the warp running circumferentially on a
 closed cylinder spirals indefinitely. The `transfer_rosette` example's
@@ -72,11 +72,22 @@ shows overlapping, patchy weave.
 circumferential geodesic is a closed circle with no natural terminus, and
 the solver has no self-overlap or azimuthal bound detection.
 
-**Workaround in place:** examples use open/bounded panels and rosette seeds
-whose warp does not run circumferentially on closed surfaces.
+**Mitigation (2026-07-15, nextdrape 5b4ef50):** the frontier's cell
+processing now consults a per-face area accumulator (fed by every
+attempted cell, including quads the builder rejects) and stops expanding
+the face once accepted+attempted area reaches the surface area with
+slack — the ply trims at the meeting line. Closed cylinder at pitch 20:
+899 quads / 4.55 wraps → 303 quads / ~1 wrap; the valid fabric covers
+the surface exactly once. Four pre-existing test failures resolved.
 
-**Fix direction:** detect lattice self-overlap during marching (a new node
-nearer to an existing node than one pitch) and stop/trim the ply there.
+**Residual:** the march's quantized steps drift ~30 mm per revolution,
+so the trim line lands mid-panel instead of closing exactly on the
+start — coverage on a closed cylinder is ~0.85 with a seam-adjacent
+uncovered strip (physically: a butt joint at the seam). A full fix
+requires periodic-surface-aware lattice closing (wrap the face's
+periodic parameter into the lattice so the last column connects to the
+first); also the meeting-line nodes beyond the trim remain in the node
+list as invalid entries.
 
 ## 4. `max_strain` quality flag polluted by boundary-snapped nodes
 
