@@ -90,25 +90,34 @@ periodic parameter into the lattice so the last column connects to the
 first); also the meeting-line nodes beyond the trim remain in the node
 list as invalid entries.
 
-## 4. `max_strain` quality flag polluted by boundary-snapped nodes
+## 4. `max_strain` quality flag polluted by boundary-snapped nodes — RESOLVED (verified 2026-07-15)
 
-**Symptom:** a *flat plate* with the fabric at 30° reports
-`max_strain = 0.283` (28%!) and fails the 2% quality threshold, although the
+**Symptom:** a *flat plate* with the fabric at 30° reported
+`max_strain = 0.283` (28%!) and failed the 2% quality threshold, although the
 drape is geometrically exact — the texture-coordinate span matches the
 rotated bounding box of the plate to the millimetre
 (`100·cos30 + 80·sin30 = 126.6` measured 125.4) and geodesic marching gives
-identical results. The strain spikes come from boundary-snapped nodes whose
+identical results. The strain spikes came from boundary-snapped nodes whose
 positions disagree with their lattice positions along diagonally-crossed
 boundaries.
 
-**Consequence:** the quality flags are unreliable for fabrics laid at an
-angle to the surface parametrisation — the common case for real layups.
-Both rosette examples currently carry these flags (documented in their
-docstrings).
+**Resolution:** the boundary-aware strain of nextdrape 93a6b79 (edges
+incident to `BoundarySnapped` nodes are trimmed cuts, excluded from the
+strain; cells touching the trim report no shear) holds on the register's
+exact repro: a 100×80 flat plate seeded at 30° with 85 boundary-snapped
+nodes now reports `max_strain < 0.02`. The "CoverageGeometry sampling may
+still need attention" concern from the 93a6b79 session is closed by
+`CoverageGeometry.FlatPanelAngledSeedStrainClean` (nextdrape tests), which
+pins the repro against regression. CoverageGeometry's own sampling was not
+the pollution source.
 
-**Fix direction:** compute strain *after* boundary snapping settles node
-positions (compare against snapped neighbours, not the ideal lattice), or
-exclude boundary-snapped nodes from the strain histogram.
+Note: the nextdrape suite carries more pre-existing failures than the
+2026-07-15 handoff recorded (BaselineShapes.TexturePlanReportLabels*,
+TrimVisualizationAndExportStayInParity,
+CylindricalArcHasRectangularTextureBoundary, PartLineOutlineTangent.*,
+EquatorDiscriminator.*, plus the mould `splitNonPlanarShells` abort) —
+verified present on a clean `3e97ba0` checkout by stash-bisect, unrelated
+to the stiffener/solver work.
 
 ## 5. Fibre shader not re-attached on document restore — RESOLVED (2026-07-15)
 
