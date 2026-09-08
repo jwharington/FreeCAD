@@ -63,6 +63,10 @@ EXAMPLES = {
         "module": ".examples.texture_plan",
         "name": "Texture plan (ply boundaries unwrapped from a shell)",
     },
+    "seam_composite_laminate": {
+        "module": ".examples.seam_composite_laminate",
+        "name": "SeamCompositeLaminate (combined layup at an overlap seam)",
+    },
 }
 
 
