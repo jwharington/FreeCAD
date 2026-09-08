@@ -123,6 +123,8 @@ file(GLOB_RECURSE Composites_PY_SRCS_ALL RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     "*.qrc"
     "*.css"
     "*.FCMat"
+    "*.png"
+    "*.glsl"
 )
 
 # ── Copy to build tree for development ──────────────────────────
@@ -151,6 +153,7 @@ install(
         PATTERN "*.qrc"
         PATTERN "*.css"
         PATTERN "*.FCMat"
+        PATTERN "*.png"
         PATTERN "*.glsl"
         PATTERN "*.FCStd"
     PATTERN "__pycache__" EXCLUDE
