@@ -10,7 +10,6 @@ from ..objects import (
     HomogeneousLamina,
     Lamina,
 )
-from ..taskpanels import task_homogeneous_lamina
 from .Command import BaseCommand
 from .Lamina import BaseLaminaFP, BaseViewProviderLamina
 
@@ -46,7 +45,12 @@ class HomogeneousLaminaFP(BaseLaminaFP):
 
 
 class ViewProviderHomogeneousLamina(BaseViewProviderLamina):
-    _taskPanel = task_homogeneous_lamina._TaskPanel
+    @property
+    def _taskPanel(self):
+        # Lazy import: the task panel needs MatGui, which is GUI-only.
+        from ..taskpanels import task_homogeneous_lamina
+
+        return task_homogeneous_lamina._TaskPanel
 
     def getIcon(self):
         return HOMOGENEOUS_LAMINA_TOOL_ICON

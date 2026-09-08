@@ -109,7 +109,12 @@ class FibreCompositeLaminaFP(BaseLaminaFP):
 
 
 class ViewProviderFibreCompositeLamina(BaseViewProviderLamina):
-    _taskPanel = task_fibre_composite_lamina._TaskPanel
+    @property
+    def _taskPanel(self):
+        # Lazy import: the task panel needs MatGui, which is GUI-only.
+        from ..taskpanels import task_fibre_composite_lamina
+
+        return task_fibre_composite_lamina._TaskPanel
 
     def getIcon(self):
         return FIBRE_COMPOSITE_LAMINA_TOOL_ICON

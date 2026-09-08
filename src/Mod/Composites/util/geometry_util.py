@@ -11,40 +11,38 @@ import hashlib
 
 
 def shape_fingerprint(shape) -> str:
-    """Compute a structural hash of a FreeCAD shape.
+    """Compute a content hash of a FreeCAD shape.
 
-    Primary signature is ``shape.hashCode()`` as requested.
-    Falls back to ``BOPTools.Utils.HashableShape_Deep`` for composed
-    shapes where a direct hashCode call may be unavailable.
+    Content-based, not identity-based: two geometrically identical
+    shapes must produce the same fingerprint, because cache
+    invalidation decisions (drape reuse, transfer re-solve, seam
+    re-extraction) compare fingerprints across recomputes where the
+    shape objects are re-wrapped or copied.  ``shape.hashCode()`` is
+    identity-based and fails exactly that requirement.
 
-    Parameters
-    ----------
-    shape : FreeCAD.Shape
-        The shape to fingerprint.
-
-    Returns
-    -------
-    str
-        A hex digest (first 16 chars) suitable for equality comparison.
+    The hash covers bounding box, element counts, vertex positions
+    (capped for large shapes) and surface kinds — enough to catch any
+    geometric change relevant to caching.
     """
     h = hashlib.sha256()
-    h.update(b"shape:v1:")
-
-    try:
-        h.update(str(shape.hashCode()).encode())
-        return h.hexdigest()[:16]
-    except Exception:
-        pass
-
-    try:
-        from BOPTools.Utils import HashableShape_Deep
-
-        h.update(str(hash(HashableShape_Deep(shape))).encode())
-        return h.hexdigest()[:16]
-    except Exception:
-        pass
-
-    return "fallback:"
+    h.update(b"shape:v2:")
+    bb = shape.BoundBox
+    h.update(
+        f"{bb.XMin:.6f},{bb.YMin:.6f},{bb.ZMin:.6f},"
+        f"{bb.XMax:.6f},{bb.YMax:.6f},{bb.ZMax:.6f};".encode()
+    )
+    h.update(
+        f"f{len(shape.Faces)}e{len(shape.Edges)}v{len(shape.Vertexes)}".encode()
+    )
+    for v in shape.Vertexes[:64]:
+        h.update(
+            f"{v.Point.x:.6f},{v.Point.y:.6f},{v.Point.z:.6f};".encode()
+        )
+    kinds = "".join(
+        sorted({f.Surface.__class__.__name__ for f in shape.Faces})
+    )
+    h.update(kinds.encode())
+    return h.hexdigest()[:16]
 
 
 def expand_symmetry(

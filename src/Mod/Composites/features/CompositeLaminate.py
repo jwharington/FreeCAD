@@ -10,7 +10,6 @@ from ..objects import (
     CompositeLaminate,
     SymmetryType,
 )
-from ..taskpanels import task_composite_laminate
 from .Composite import add_composite_props
 from .Laminate import (
     LaminateCommand,
@@ -45,7 +44,12 @@ class CompositeLaminateFP(LaminateFP):
 
 
 class ViewProviderCompositeLaminate(ViewProviderLaminate):
-    _taskPanel = task_composite_laminate._TaskPanel
+    @property
+    def _taskPanel(self):
+        # Lazy import: the task panel needs MatGui, which is GUI-only.
+        from ..taskpanels import task_composite_laminate
+
+        return task_composite_laminate._TaskPanel
 
     def getIcon(self):
         return COMPOSITE_LAMINATE_TOOL_ICON

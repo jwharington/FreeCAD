@@ -83,12 +83,53 @@ class TransferRosetteFP(RosetteFP):
             # ran. Run them now, exactly as the deferred onChanged would.
             self._ensure_wired(obj)
             self._solve(obj)
+            self._last_solve_fingerprint = self._solve_inputs_fingerprint(obj)
             obj.recompute()
 
     def execute(self, fp):
         # Place the LCS from Support + Angle only; the iterative solve is
         # driven from onChanged so it never recurses into execute().
         super().execute(fp)
+
+    def resolve(self, fp) -> None:
+        """Re-solve when the defining inputs changed (pull-based freshness).
+
+        The constructor solve freezes the angle at creation time; without
+        this, downstream changes (a moved support, a re-angled rosette on
+        the master shell) leave the transfer angle stale.  Consumers that
+        need a current angle (SeamCompositeLaminate) call resolve() before
+        reading it; the fingerprint keeps repeat recomputes cheap.
+        """
+        fingerprint = self._solve_inputs_fingerprint(fp)
+        if fingerprint == getattr(self, "_last_solve_fingerprint", None):
+            return
+        self._last_solve_fingerprint = fingerprint
+        self._solving = True
+        try:
+            self._ensure_wired(fp)
+            self._solve(fp)
+        finally:
+            self._solving = False
+
+    def _solve_inputs_fingerprint(self, fp) -> str:
+        """Hash everything the solved angle depends on."""
+        import hashlib
+
+        from ..util.geometry_util import shape_fingerprint
+
+        parts = []
+        for shell in (getattr(fp, "MasterShell", None),
+                      getattr(fp, "AttachmentShell", None)):
+            if shell is None:
+                parts.append("None")
+                continue
+            try:
+                parts.append(shape_fingerprint(self._shape_of(shell)))
+            except Exception:
+                parts.append("shape-error")
+            rosette = getattr(shell, "Rosette", None)
+            parts.append(str(getattr(rosette, "Angle", 0.0)))
+        return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
     def onChanged(self, fp, prop):
         if getattr(self, "_solving", False):
@@ -170,14 +211,24 @@ class TransferRosetteFP(RosetteFP):
         if edge is None:
             return 0.0
 
-        samples = self._sample_edge(edge, _EDGE_SAMPLES)
-        if not samples:
+        # Paired inset samples: each side is evaluated just inside its
+        # own surface (boundary frames are unreliable — see
+        # _inset_edge_samples).
+        master_samples = self._inset_edge_samples(
+            edge, self._shape_of(master), _EDGE_SAMPLES
+        )
+        attach_samples = self._inset_edge_samples(
+            edge, self._shape_of(attachment), _EDGE_SAMPLES
+        )
+        if not master_samples or not attach_samples:
             return 0.0
 
         residuals: List[float] = []
-        for point, tangent in samples:
-            phi_m = self._warp_angle_at(master_draper, point, tangent)
-            phi_a = self._warp_angle_at(attachment_draper, point, tangent)
+        for (m_point, tangent), (a_point, _a_tangent) in zip(
+            master_samples, attach_samples
+        ):
+            phi_m = self._warp_angle_at(master_draper, m_point, tangent)
+            phi_a = self._warp_angle_at(attachment_draper, a_point, tangent)
             if phi_m is None or phi_a is None:
                 continue
             # Wrap the per-sample residual into (-pi, pi] so the signed mean
@@ -215,6 +266,54 @@ class TransferRosetteFP(RosetteFP):
         if not edges:
             return None
         return max(edges, key=lambda e: e.Length)
+
+    @staticmethod
+    def _inset_edge_samples(edge, shape, n, eps=1.5):
+        """Sample the edge offset inward into *shape*'s surface.
+
+        Warp evaluation exactly on the boundary is unreliable: the
+        boundary drape nodes are boundary-snapped and their frames do
+        not track the rosette seed, and UV queries at the exact edge can
+        fail outright (making the residual evaluate to exactly 0 and the
+        solver return a bracket endpoint).  Each sample point is offset
+        a little along the surface, inward from the edge; the tangent is
+        kept (the residual measures angles about the same edge line).
+        """
+        faces = getattr(shape, "Faces", [])
+        out = []
+        for point, tangent in TransferRosetteFP._sample_edge(edge, n):
+            host = None
+            for f in faces:
+                try:
+                    if f.isInside(point, 1e-6, True):
+                        host = f
+                        break
+                except Exception:
+                    continue
+            if host is None:
+                continue
+            try:
+                u, v = host.Surface.parameter(point)
+                normal = host.normalAt(u, v)
+            except Exception:
+                continue
+            normal.normalize()
+            inward = tangent.cross(normal)
+            if inward.Length < 1e-12:
+                continue
+            inward.normalize()
+            chosen = None
+            for sign in (1.0, -1.0):
+                cand = point + inward * (sign * eps)
+                try:
+                    if host.isInside(cand, 1e-6, True):
+                        chosen = cand
+                        break
+                except Exception:
+                    continue
+            if chosen is not None:
+                out.append((chosen, tangent))
+        return out
 
     @staticmethod
     def _sample_edge(edge, n):
@@ -265,6 +364,74 @@ class TransferRosetteFP(RosetteFP):
         normal.normalize()
         cross = warp.cross(tangent)
         return math.atan2(cross.dot(normal), warp.dot(tangent))
+
+
+class AnalysisTransferRosetteFP(TransferRosetteFP):
+    """Standalone attachment→seam analysis rosette.
+
+    Like :class:`TransferRosetteFP` but never rewires the host shell's
+    ``Rosette`` link (it is analysis-only: the seam shell's Rosette
+    belongs to the master→seam transfer), and the residual is evaluated
+    against its *own* LCS frame rather than the host shell's drape — the
+    phase-1 seam approximation carries no drape deviation
+    (docs/seam_composite_laminate.md §5.2, ADR-0001).
+    """
+
+    def _ensure_wired(self, fp) -> None:
+        # Standalone: the seam shell's Rosette stays with the
+        # master→seam transfer rosette.
+        return
+
+    def _edge_angle_error(self, fp) -> float:
+        master = fp.MasterShell
+        try:
+            master_draper = master.Proxy.get_draper()
+        except AssertionError as exc:
+            raise RosetteSolveError(
+                f"draper invalid during solve: {exc}"
+            )
+        if master_draper is None:
+            return 0.0
+
+        edge = self._shared_edge(
+            self._shape_of(master), self._shape_of(fp.AttachmentShell)
+        )
+        if edge is None:
+            return 0.0
+
+        # Master warp is evaluated just inside the master's surface —
+        # boundary frames are unreliable (see _inset_edge_samples).  The
+        # rosette frame is uniform in the phase-1 approximation, so the
+        # inset does not affect phi_r.
+        samples = self._inset_edge_samples(
+            edge, self._shape_of(master), _EDGE_SAMPLES
+        )
+        if not samples:
+            return 0.0
+
+        lcs = getattr(fp, "LocalCoordinateSystem", None)
+        if lcs is None:
+            return 0.0
+        rotation = lcs.Placement.Rotation
+        warp = rotation.multVec(FreeCAD.Vector(1.0, 0.0, 0.0))
+        normal = rotation.multVec(FreeCAD.Vector(0.0, 0.0, 1.0))
+        if warp.Length < 1e-12 or normal.Length < 1e-12:
+            return 0.0
+        warp.normalize()
+        normal.normalize()
+
+        residuals: List[float] = []
+        for point, tangent in samples:
+            phi_m = self._warp_angle_at(master_draper, point, tangent)
+            if phi_m is None:
+                continue
+            cross = warp.cross(tangent)
+            phi_r = math.atan2(cross.dot(normal), warp.dot(tangent))
+            residual = (phi_r - phi_m + math.pi) % (2.0 * math.pi) - math.pi
+            residuals.append(residual)
+        if not residuals:
+            return 0.0
+        return sum(residuals) / len(residuals)
 
 
 class ViewProviderTransferRosette(ViewProviderRosette):

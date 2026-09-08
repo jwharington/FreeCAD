@@ -69,8 +69,6 @@ def solve_rosette_angle(
         If no sign change is found in the bracket or convergence is not reached
         within ``max_iters``.
     """
-    doc = shell.Document
-
     def _eval(angle_deg: float) -> float:
         rosette.Angle = float(angle_deg)
         # Place the rosette LCS for the new angle BEFORE re-driving the
@@ -83,8 +81,16 @@ def solve_rosette_angle(
             rosette.Proxy.execute(rosette)
         except Exception:
             pass
-        shell.touch()
-        doc.recompute()
+        # Re-drive the host shell's drape DIRECTLY. The solve may run
+        # nested inside another object's recompute (e.g. a laminate
+        # resolving its transfer angles during execute), and a nested
+        # doc.recompute() does not re-execute an object touched within
+        # the nested scope — the draper would freeze at the bootstrap
+        # angle and the residual would flatline.  Calling the shell's
+        # execute drives the drape synchronously; execute() re-runs the
+        # full pipeline including any freshness guards, which see the
+        # just-updated rosette angle and LCS placement.
+        shell.Proxy.execute(shell)
         _require_valid_draper(shell)
         return float(error_fn(angle_deg))
 
