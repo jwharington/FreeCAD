@@ -556,17 +556,15 @@ class CompositeShellFP(CompositeBaseFP):
                 fp.recompute()
             case "Rosette":
                 fp.recompute()
-            case "DrapePitch":
-                # Mark the shell as needing a recompute.  The actual
-                # recompute is deferred — the user (or a script) must
-                # call fp.recompute() explicitly after settling on a
-                # new pitch value.  This avoids hanging the GUI when
-                # dragging the slider (each tick would trigger a
-                # 1-2s solve).
-                fp.Proxy._needs_recompute = True
-
-            case "DrapeCuts":
-                fp.Proxy._needs_recompute = True
+            case "DrapePitch" | "DrapeCuts":
+                # The recompute is deferred, but a bare touch() would
+                # never fire: doc.recompute() does not re-execute an
+                # object touched by its own value change.  enforceRecompute
+                # marks mustExecute, so the NEXT document recompute (user
+                # Ctrl+R, script, or command) re-drapes with the new
+                # pitch.  DrapePitch is a plain float property committed
+                # per edit — no continuous slider, so no per-tick solve.
+                fp.enforceRecompute()
 
             case "Support":
                 fp.recompute()

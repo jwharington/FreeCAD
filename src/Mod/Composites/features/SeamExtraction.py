@@ -153,6 +153,9 @@ class SeamGeometryFP(CompositeShellFP):
         if not fp.Support:
             return
         current_fp = self._shape_fingerprint(fp.Support.Shape)
+        # Pitch is part of the drape inputs: without it a pitch change
+        # would be skipped here and the seam shell would never re-drape.
+        current_fp += f"|pitch:{float(fp.DrapePitch):.6f}"
         rosette = getattr(fp, "Rosette", None)
         if rosette is not None:
             current_fp += f"|angle:{float(rosette.Angle):.6f}"
