@@ -431,36 +431,37 @@ shell (the DrapePitch fix must cover the foot shell's fingerprint).
 
 Status conventions: `[ ]` pending · `[~]` in progress · `[x]` done.
 
-### Step 1 — stiffener composite configuration `[ ]`
+### Step 1 — stiffener composite configuration `[x]`
 
-- [ ] `StiffenerFP` gains `Laminate` + `Rosette`
+- [x] `StiffenerFP` gains `Laminate` + `Rosette`
   links; the stiffener shell's plies render from its own laminate
   (weave on the swept shell requires the shell to become a drapeable
   `Composite::Shell` or to carry the shader directly — design decision
   during implementation, leaning on `SeamGeometryFP`)
-- [ ] `touch src/Mod/Composites/CMakeLists.txt` for any new file
-- [ ] tests: laminate wiring, loud failures on missing links — green
+- [x] `touch src/Mod/Composites/CMakeLists.txt` for any new file
+- [x] tests: laminate wiring, loud failures on missing links — green
 
-### Step 2 — foot strip + combined laminate `[ ]`
+### Step 2 — foot strip + combined laminate `[x]`
 
-- [ ] base-row face identification via `surface_rows` provenance
-- [ ] foot shell child (fingerprint freshness incl. pitch, pitch
+- [x] base-row face identification via `StiffenerSweep` provenance
+      (`foot_faces` / `web_faces` / `foot_width` / `web_height`)
+- [x] foot shell child (fingerprint freshness incl. pitch, pitch
   scaling to foot width, visibility after recompute, tree claiming)
-- [ ] `StiffenerCompositeShell` built and wired (both solved transfers,
+- [x] `StiffenerCompositeShell` built and wired (both solved transfers,
   combination models, angle outputs)
-- [ ] tests: foot identification (1), stack ordering (2), offset fabric
+- [x] tests: foot identification (1), stack ordering (2), offset fabric
   (3), wiring failures (4), section round-trip (7), symmetry pinned
   (8) — green
 
-### Step 3 — weave exclusivity `[ ]`
+### Step 3 — weave exclusivity `[x]`
 
-- [ ] panel re-supported on the support remainder (`SupportBase`
+- [x] panel re-supported on the support remainder (`SupportBase`
   captured; idempotence tested)
-- [ ] tests: re-support + idempotence (6), support/cut-surface move (5)
+- [x] tests: re-support + idempotence (6), support/cut-surface move (5)
   — green
 
-### Step 4 — example + GUI `[ ]`
+### Step 4 — example + GUI `[x]`
 
-- [ ] `stiffener_composite_shell.py` example; registry; suite green
-- [ ] GUI verification via MCP: shader attached, rosettes above weaves,
+- [x] `stiffener_composite_shell.py` example; registry; suite green
+- [x] GUI verification via MCP: shader attached, rosettes above weaves,
   weave exclusivity, pitch re-drape, forced-failure loudness (§9.10)

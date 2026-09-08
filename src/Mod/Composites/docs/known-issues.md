@@ -163,19 +163,28 @@ documents that an attachment shell must drape from its transfer rosette.
 projection (`shape.distToShape` / `Surface.projectPoint`), and fail loudly
 when the projected seed is further than a tolerance from the surface.
 
-## 8. GUI drape performance during transfer solving
+## 8. GUI drape performance during transfer solving — RESOLVED (2026-07-15, frame solve)
 
-**Symptom:** the transfer solve re-drapes the attachment shell per bisection
-iteration (up to ~40 iterations). Headless this is seconds; in the GUI each
-iteration also runs view-provider/shader updates, stretching builds to
-minutes, and the solve outruns MCP tool timeouts.
+**Symptom:** the transfer solve re-draped the attachment shell per
+iteration (up to ~40 bisection iterations); builds stretched to minutes and
+the solve outran MCP tool timeouts. Worse, the residual was step-quantised
+— the attachment-side samples read the boundary-snapped rows of the
+attachment lattice — so no root-finder could actually meet the residual
+tolerance; the old bisection only *appeared* to converge via its bracket
+tightness exit.
 
-**Workaround in place:** none; demonstrated builds complete if the client
-waits.
-
-**Fix direction:** batch the solve iterations without view updates (suspend
-the VP during `_solve`, re-inject once at the end), and/or cache per-angle
-drape results to skip re-meshing when only the seed rotates.
+**Resolution:** `TransferRosetteFP._solve` is now a closed-form phase-1
+frame solve. Both sides are read from rosette frames (master rosette vs the
+transfer's own LCS), never from drape fields — consistent with the
+documented zero-drape-deviation approximation (ADR-0001) rather than
+contradicting it. The residual is exact-linear in the angle (slope −π/180
+per degree), per-sample residuals fold mod π (undirected warp), and the
+root is one step away; the angle wraps into the fabric's principal period
+(wrap_angle) instead of clamping. Per-joint drape count dropped from ~40
+per solve to ~2, and the whole stiffener/seam test suites went from
+minutes to ~1 minute. `solve_rosette_angle` (still used by
+AlignFibreRosette, whose residual is a texture coordinate) is now a
+probe-seeded secant with the same wrap discipline.
 
 ## 9. Cosmetic
 
@@ -215,6 +224,27 @@ drape results to skip re-meshing when only the seed rotates.
   `create_composite_feature_stack` builder; the combined rosettes example
   was replaced by three focused examples (`rosette`,
   `align_fibre_rosette`, `transfer_rosette`) plus `cyl_sphere_seam`.
+
+## Recently fixed (2026-07-15, StiffenerCompositeShell session)
+
+- **Build tree never received shader assets — weave rendered black in the
+  GUI** — the `CompositesScripts` `file(GLOB_RECURSE)` that copies sources
+  into `build/debug/Mod/Composites` listed `*.py *.svg *.ui *.xml *.qrc
+  *.css *.FCMat` but not `*.glsl` or `*.png`, so `Grid_fragment_shader.glsl`
+  / `Grid_vertex_shader.glsl` (loaded by `MeshGridShader.py` from its own
+  directory) never reached the build tree the GUI FreeCAD loads from. The
+  *install* glob did include `*.glsl`, so the pixi env (headless tests) was
+  always fine and the gap stayed invisible to the suites. Both globs now
+  include `*.glsl` and `*.png`. Diagnosed by stash-bisect: the pristine
+  tree rendered identically black, exonerating the StiffenerCompositeShell
+  diff.
+- **Transfer solve re-solve storm** — `_solve_inputs_fingerprint` included
+  the attachment shell's Rosette Angle, which for a transfer IS the
+  transfer itself: every solve changed its own fingerprint, so each
+  `resolve()` re-solved, re-touching dependents (the foot shell draped
+  ~1000 times across a test module). The fingerprint now excludes the
+  transfer's own Angle, and no-op Angle writes are skipped (same-value
+  writes still touch dependents).
 
 ## #10 — Drape cache fast-path ignores support-shape validity
 
