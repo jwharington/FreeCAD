@@ -275,8 +275,9 @@ children.
   faces; the foot faces are the lofts whose generating profile edge lies
   at `y = 0` (provenance available in `tools/stiffener.py`'s loci keys —
   no new geometric matching needed).
-- `DrapePitch` scaled to the foot width, per the seam lesson (a 20 mm
-  default pitch cannot drape a 15 mm flange).
+- `DrapePitch` scaled to the narrow dimension of each weave shell — foot
+  width for the foot shell, web height for the web shell — per the seam
+  lesson (a 20 mm default pitch cannot drape a 15 mm flange).
 - Visible by default, visibility set *after* the creating recompute.
 - The web faces keep the stiffener's own laminate (they are rendered by
   the stiffener shell itself; the foot faces are **excluded from the
