@@ -25,6 +25,9 @@ SURFACE_TOLERANCE = 1e-9
 OFFSET_DIRECTION_TOLERANCE = 1e-6
 COORD_PRECISION = 6
 DIRECTION_PROBE_SAMPLES = 3
+# Ordinate below which a profile vertex counts as sitting on the base row
+# (y = 0, the support surface). Keys are rounded to COORD_PRECISION.
+BASE_ORDINATE_TOLERANCE = 1e-6
 
 
 def _debug(message):
@@ -355,15 +358,45 @@ def get_xsect(sketch):
 
 
 def _loft_profile(xsect, loci, mirror: ProfileMirror):
-    """One lofted face per profile edge, ruled between its two vertex loci."""
-    return [
-        Part.makeLoft(
-            [loci[_coordinate_key(mirror.apply(vertex.Point))] for vertex in edge.Vertexes],
+    """One lofted face per profile edge, ruled between its two vertex loci.
+
+    Returns the faces with their provenance: the foot faces are the lofts
+    whose generating profile edge lies at y = 0 (both vertex ordinates on
+    the base row) — the part of the stiffener that runs along the support;
+    every other face is a web face.
+    """
+    faces, foot_faces, web_faces = [], [], []
+    for edge in xsect:
+        coords = [mirror.apply(vertex.Point) for vertex in edge.Vertexes]
+        face = Part.makeLoft(
+            [loci[_coordinate_key(coord)] for coord in coords],
             solid=False,
             ruled=True,
         )
-        for edge in xsect
-    ]
+        faces.append(face)
+        if all(abs(coord.y) <= BASE_ORDINATE_TOLERANCE for coord in coords):
+            foot_faces.append(face)
+        else:
+            web_faces.append(face)
+    return faces, foot_faces, web_faces
+
+
+@dataclass
+class StiffenerSweep:
+    """The geometry one `make_stiffener` run produces, with face provenance.
+
+    `foot_width` is the narrowest base-edge extent (None when the profile
+    has no base edge); `web_height` is the tallest profile ordinate.  Both
+    scale the child shells' drape pitch — a default pitch can exceed a
+    15 mm flange and fail to drape it.
+    """
+
+    shell: Part.Shape
+    remainders: list
+    foot_faces: list
+    web_faces: list
+    foot_width: float | None = None
+    web_height: float = 0.0
 
 
 def make_stiffener(
@@ -371,8 +404,8 @@ def make_stiffener(
     cut_surface: Part.Shape,
     profile,
     mirror: ProfileMirror = ProfileMirror(),
-):
-    """The stiffener shell, the cut support, and the tool curves.
+) -> StiffenerSweep:
+    """The stiffener shell, the cut support, and the foot/web provenance.
 
     The support must be a shell or a face — the stiffener is a shell laid on a
     shell, and a solid is rejected outright.
@@ -382,8 +415,11 @@ def make_stiffener(
     Each profile vertex traces a locus: the row at its abscissa, moved sideways
     by its ordinate.
 
-    Returns the stiffener as one compound, then the remainders of the support
-    with the stiffener cut away — one shape per piece — then the surface rows.
+    Returns a :class:`StiffenerSweep`: the stiffener as one compound; the
+    remainders of the support with the stiffener cut away, one shape per
+    piece; and the lofted faces split into foot faces (generated from base
+    edges — the profile edges lying at y = 0) and web faces (everything
+    above the base rows).  A profile with no base edge yields no foot faces.
     """
     if support.ShapeType == "Solid":
         raise ValueError(
@@ -398,17 +434,40 @@ def make_stiffener(
 
     coords = _profile_coords(xsect, mirror)
     normal = plane_normal(cut_surface)
-    faces, surface_rows = [], []
+    faces, foot_faces, web_faces = [], [], []
     for path in paths:
         if normal is None:
             loci = _loci_over_surface(support, cut_surface, path, coords)
         else:
             loci = _loci_over_plane(support, cut_surface, path, coords, normal)
-        faces.extend(_loft_profile(xsect, loci, mirror))
-        surface_rows.extend(locus for key, locus in loci.items() if key[1] == 0.0)
+        path_faces, path_foot, path_web = _loft_profile(xsect, loci, mirror)
+        faces.extend(path_faces)
+        foot_faces.extend(path_foot)
+        web_faces.extend(path_web)
 
-    stiffener = Part.makeCompound(faces)
-    return stiffener, _support_remainders(support, stiffener), surface_rows
+    shell = Part.makeCompound(faces)
+    return StiffenerSweep(
+        shell=shell,
+        remainders=_support_remainders(support, shell),
+        foot_faces=foot_faces,
+        web_faces=web_faces,
+        foot_width=_base_edge_width(xsect, mirror),
+        web_height=max((abs(coord.y) for coord in coords.values()), default=0.0),
+    )
+
+
+def _base_edge_width(xsect, mirror: ProfileMirror) -> float | None:
+    """The narrowest base-edge extent, or None when no base edge exists.
+
+    A base edge is a profile edge whose two vertex ordinates both sit on
+    the base row (y = 0); its extent is the abscissa span between them.
+    """
+    widths = []
+    for edge in xsect:
+        coords = [mirror.apply(vertex.Point) for vertex in edge.Vertexes]
+        if all(abs(coord.y) <= BASE_ORDINATE_TOLERANCE for coord in coords):
+            widths.append(abs(coords[0].x - coords[1].x))
+    return min(widths) if widths else None
 
 
 def _support_remainders(support: Part.Shape, stiffener: Part.Shape):

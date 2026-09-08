@@ -12,6 +12,15 @@ from ..tools.stiffener import (
     make_stiffener,
 )
 from .Command import BaseCommand
+from .StiffenerCompositeShell import (
+    ensure_stiffener_shells_visible,
+    is_stiffener_composite,
+    stiffener_claimed_children,
+    teardown_composite_stiffener,
+    validate_composite_wiring,
+    wire_composite_stiffener,
+)
+from .TransferRosette import TransferRosetteFP
 from .VPCompositePart import (
     CompositePartFP,
     VPCompositePart,
@@ -57,23 +66,83 @@ class StiffenerFP(CompositePartFP):
             "Profile section of the stiffener",
         ).Profile = profile
 
+        # Composite configuration (standard Composite::Shell property
+        # names).  Linking a Laminate switches the feature into full
+        # composite mode — web/foot split, combined joint layup; without
+        # one the stiffener stays pure geometry.
+        obj.addProperty(
+            "App::PropertyLinkGlobal",
+            "Laminate",
+            "Materials",
+            "Laminate material (links the stiffener's own structure)",
+        )
+        obj.addProperty(
+            "App::PropertyLinkGlobal",
+            "Rosette",
+            "Materials",
+            "Rosette defining the stiffener fibre orientation",
+        )
+
+        # Original panel support geometry, captured before the panel is
+        # re-supported on the stiffener remainder (weave exclusivity).
+        # Drives every recompute: extraction must never run on the
+        # re-pointed (remainder) support.
+        obj.addProperty(
+            "App::PropertyLinkGlobal",
+            "SupportBase",
+            "References",
+            "Original support geometry (captured pre-re-support)",
+        )
+
         super().__init__(obj)
 
     def execute(self, fp):
-        shape, remainders, tools = make_stiffener(
-            support=fp.Support.Shape,
+        # Geometry queries read the captured base support, never the
+        # re-pointed (remainder) one: after weave exclusivity the
+        # panel's Support.Shape is the panel minus the stiffener seat,
+        # which would re-sweep garbage.
+        base = getattr(fp, "SupportBase", None)
+        support_shape = (
+            base.Shape
+            if base is not None
+            else TransferRosetteFP._shape_of(fp.Support)
+        )
+        sweep = make_stiffener(
+            support=support_shape,
             cut_surface=fp.IntersectSurface.Shape,
             profile=fp.Profile,
             mirror=ProfileMirror(flip_x=fp.MirrorX, flip_y=fp.MirrorY),
         )
         # The shape carries the stiffener and the remainder of the cut support
         # as its two children, for CompoundFilters to pick apart.
-        fp.Shape = Part.makeCompound([shape, Part.makeCompound(remainders)])
-        self.remainders = remainders
-        self.tools = tools
+        fp.Shape = Part.makeCompound([sweep.shell, Part.makeCompound(sweep.remainders)])
+        self.remainders = sweep.remainders
+        self.foot_faces = sweep.foot_faces
+        self.web_faces = sweep.web_faces
+        self.foot_width = sweep.foot_width
+        self.web_height = sweep.web_height
 
         fp.IntersectSurface.Visibility = False
         fp.Profile.Visibility = False
+
+        if not is_stiffener_composite(fp):
+            # Geometry-only mode: pure geometry, no weave, no children.
+            # A mode switch down from composite must undo the wiring —
+            # a panel left re-supported on the remainder would be
+            # silently wrong.
+            if getattr(fp, "SupportBase", None) is not None:
+                teardown_composite_stiffener(self, fp)
+            return
+        # Full composite mode: the loud-failure contract — record the
+        # reason and surface the error so the feature shows as in error,
+        # never a silently wrong stack.
+        try:
+            validate_composite_wiring(fp)
+            wire_composite_stiffener(self, fp, sweep)
+        except Exception as exc:
+            self.last_error = str(exc)
+            raise
+        self.last_error = None
 
 
 def add_stiffener_filters(doc, stiffener):
@@ -103,7 +172,9 @@ class ViewProviderStiffener(VPCompositePart):
         obj = getattr(self, "Object", None)
         if obj is None:
             return []
-        return [obj.Support, obj.IntersectSurface, obj.Profile]
+        return [obj.Support, obj.IntersectSurface, obj.Profile] + (
+            stiffener_claimed_children(obj)
+        )
 
     def getIcon(self):
         return STIFFENER_TOOL_ICON

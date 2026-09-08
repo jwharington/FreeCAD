@@ -16,7 +16,7 @@ from .SeamCompositeLaminate import SeamCompositeLaminateFP
 from .TransferRosette import (
     AnalysisTransferRosetteFP,
     TransferRosetteFP,
-    ViewProviderTransferRosette,
+    attach_rosette_view_provider,
 )
 from .VPCompositeBase import CompositeBaseFP
 from .Laminate import LaminateFP
@@ -204,8 +204,13 @@ class SeamGeometryFP(CompositeShellFP):
         """Nothing to restore — shape lives on fp itself."""
         pass
 
-    def update(self, fp, shape, laminate, rosette):
-        """Update the seam shell with new geometry and material data."""
+    def update(self, fp, shape, laminate, rosette, recenter_lcs=True):
+        """Update the seam shell with new geometry and material data.
+
+        `recenter_lcs=False` keeps the rosette's own LCS position — used
+        for shell children whose rosette is user-linked (moving it would
+        silently relocate the user's datum).
+        """
         fp.Shape = shape
         # Create a hidden support shape so CompositeShell.execute() can drape.
         sup_name = f"{fp.Name}_Support"
@@ -220,7 +225,8 @@ class SeamGeometryFP(CompositeShellFP):
         fp.Support = sup
         fp.Laminate = laminate
         fp.Rosette = rosette
-        self._recenter_lcs(shape, rosette)
+        if recenter_lcs:
+            self._recenter_lcs(shape, rosette)
 
     @staticmethod
     def _recenter_lcs(shape, rosette):
@@ -467,24 +473,9 @@ class SeamShellFP(CompositeShellFP):
             pass
 
     @staticmethod
-    def _attach_rosette_vp(rosette, vp_cls):
-        """Attach a rosette view provider (GUI only) and raise it.
-
-        Script-created rosettes get no ViewProvider otherwise: without
-        one there is no rosette symbol at all — only the LCS datum —
-        and the render-order raise has nothing to move.  The raise puts
-        the symbol above any weave injected later.
-        """
-        vo = getattr(rosette, "ViewObject", None)
-        if vo is None or getattr(vo, "Proxy", None) is not None:
-            return
-        try:
-            vp_cls(vo)
-            proxy = getattr(vo, "Proxy", None)
-            if proxy is not None and hasattr(proxy, "raise_render_order"):
-                proxy.raise_render_order()
-        except Exception:
-            pass
+    def _attach_rosette_vp(rosette, vp_cls=None):
+        """Deprecated shim — see TransferRosette.attach_rosette_view_provider."""
+        attach_rosette_view_provider(rosette)
 
     def _seam_support_sub(self, seam_shell):
         """Support link-sub for rosettes placed on the seam surface."""
@@ -508,7 +499,7 @@ class SeamShellFP(CompositeShellFP):
                 master_shell=master,
                 attachment_shell=seam_shell,
             )
-            self._attach_rosette_vp(transfer, ViewProviderTransferRosette)
+            self._attach_rosette_vp(transfer)
         return transfer
 
     def _wire_seam_analysis_rosette(self, doc, fp, seam_shell, attachment):
@@ -530,7 +521,7 @@ class SeamShellFP(CompositeShellFP):
                 master_shell=attachment,
                 attachment_shell=seam_shell,
             )
-            self._attach_rosette_vp(rosette, ViewProviderTransferRosette)
+            self._attach_rosette_vp(rosette)
         return rosette
 
     def _build_seam_composite_laminate(

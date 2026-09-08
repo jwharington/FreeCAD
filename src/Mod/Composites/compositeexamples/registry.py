@@ -67,6 +67,10 @@ EXAMPLES = {
         "module": ".examples.seam_composite_laminate",
         "name": "SeamCompositeLaminate (combined layup at an overlap seam)",
     },
+    "stiffener_composite_shell": {
+        "module": ".examples.stiffener_composite_shell",
+        "name": "StiffenerCompositeShell (combined layup at a stiffener joint)",
+    },
 }
 
 
