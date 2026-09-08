@@ -30,6 +30,37 @@ SEAM_WIDTH_DEFAULT = "10.0 mm"
 _EDGE_SAMPLES = 8
 
 
+def seam_claimed_children(fp):
+    """Document objects created by a seam extraction feature, tree order.
+
+    App-level (works headless, where ViewProviders do not exist) so the
+    ViewProvider's claimChildren and the tests share one source of
+    truth.  Covers both modes: SeamShellFP (seam shell + transfers +
+    SeamCompositeLaminate + remainder shell) and the plain SeamFP
+    (seam surface + remainder Part::Features).  Internal supports and
+    the legacy virtual laminate are claimed last so they nest at the
+    bottom of the feature's tree entry.
+    """
+    doc = getattr(fp, "Document", None)
+    if doc is None or not hasattr(doc, "getObject"):
+        return []
+    get = doc.getObject
+    name = fp.Name
+    ordered = (
+        f"{name}_Seam",                    # seam shell (shell mode)
+        f"{name}_SeamMasterTransfer",      # solved transfer master → seam
+        f"{name}_SeamAttachmentTransfer",  # solved transfer attachment → seam
+        f"{name}_SeamCompositeLaminate",   # combined layup
+        f"{name}_Remainder",               # remainder shell / feature
+        f"{name}_SeamSurface",             # seam surface (part mode)
+        # internals last — hidden in 3D, tree-tidy at the bottom
+        f"{name}_Seam_Support",
+        f"{name}_Remainder_Support",
+        f"{name}_VirtualLaminate",
+    )
+    return [o for o in (get(n) for n in ordered) if o is not None]
+
+
 class VirtualLaminateFP(LaminateFP):
     def execute(self, obj):
         return
@@ -644,20 +675,10 @@ class ViewProviderSeamExtraction(VPCompositePart):
         self.attach(vobj)
 
     def claimChildren(self):
-        children = []
         fp = self.Object
-        seam = getattr(fp, "Seam", None)
-        if seam is not None:
-            children.append(seam)
-        remainder = getattr(fp, "Remainder", None)
-        if remainder is not None:
-            children.append(remainder)
-        scl = getattr(fp.Document, "getObject", lambda n: None)(
-            f"{fp.Name}_SeamCompositeLaminate"
-        )
-        if scl is not None:
-            children.append(scl)
-        return children
+        if fp is None:
+            return []
+        return seam_claimed_children(fp)
 
     def getIcon(self):
         return SEAM_TOOL_ICON

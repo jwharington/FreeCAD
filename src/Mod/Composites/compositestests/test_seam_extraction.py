@@ -452,6 +452,41 @@ class TestSeamExtractionGeometry(TestFreeCADFP):
         self.assertIsNotNone(ext.Seam, "Seam should be set on success")
         self.assertFalse(ext.Seam.Shape.isNull())
 
+    def test_extraction_claims_created_elements(self):
+        """Every element the extraction created is claimed as a child.
+
+        The seam shell, both solved transfer rosettes, the
+        SeamCompositeLaminate, the remainder, and the internal supports
+        must all be claimed — nothing the feature created floats at the
+        top level of the tree.
+        """
+        from Composites.features.SeamExtraction import seam_claimed_children
+
+        ext = self._make_extraction()
+        children = seam_claimed_children(ext)
+        names = [c.Name for c in children]
+        for suffix in (
+            "_Seam",
+            "_SeamMasterTransfer",
+            "_SeamAttachmentTransfer",
+            "_SeamCompositeLaminate",
+            "_Remainder",
+            "_Seam_Support",
+            "_Remainder_Support",
+        ):
+            self.assertIn(
+                f"{ext.Name}{suffix}",
+                names,
+                f"{suffix} element must be claimed as a child",
+            )
+        # every claimed child still lives in the document
+        doc_names = {o.Name for o in self.doc.Objects}
+        for c in children:
+            self.assertIn(c.Name, doc_names)
+        # and in stable order: seam shell first, internals last
+        self.assertEqual(children[0].Name, f"{ext.Name}_Seam")
+        self.assertEqual(children[-1].Name, f"{ext.Name}_Remainder_Support")
+
     def test_seam_surface_spans_shared_edge(self):
         # The seam is a strip along the shared edge (x=0), spanning the panel
         # length (y in [-25, 25]).

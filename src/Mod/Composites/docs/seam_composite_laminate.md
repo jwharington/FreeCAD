@@ -315,6 +315,12 @@ execute(obj):
   conventions: weave injected via the shader path, rosette symbols
   re-raised above it, failures leave the shader detached (visible
   breakage, not a blank overlay).
+- **Tree claiming:** every element the extraction creates — the seam
+  shell, both solved transfer rosettes, the SeamCompositeLaminate, the
+  remainder shell, and the internal supports — is claimed as a child of
+  the extraction feature (`claimChildren` backed by the headless-testable
+  `seam_claimed_children` helper); nothing it created floats at the top
+  level of the document tree.
 - **Weave exclusivity inside the seam region:** the seam region shows
   *only* the combined weave. The master's and attachment's weaves are
   not visible inside the seam region — that area belongs to the seam
