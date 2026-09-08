@@ -42,6 +42,28 @@ The operation partitioning the attachment into seam region + remainder
 along the parting line offset by the seam width.
 _Avoid_: seam split, overlap trim
 
+### Stiffener joint
+
+**Base row**:
+The stiffener profile row at `y = 0` — surface-conformal, hugging the
+support.
+_Avoid_: bottom edge, base line
+
+**Foot strip**:
+The stiffener's base-row faces — the part of the stiffener that runs
+along the support, where the lap joint lives.
+_Avoid_: flange (profile-specific), footprint
+
+**Web**:
+Every stiffener face above the base rows.
+_Avoid_: spine, vertical part
+
+**Web shell / Foot shell**:
+The two Composite::Shell children the stiffener is split into — the web
+shell carries the stiffener's own laminate, the foot shell the combined
+stiffener⊕panel laminate.
+_Avoid_: stiffener parts (ambiguous with the CompoundFilter parts)
+
 ### Layup & orientation
 
 **Rosette**:
@@ -77,13 +99,13 @@ _Avoid_: virtual laminate, seam laminate
 
 ## Flagged ambiguities
 
-- **"SeamCompositeShell" vs "SeamCompositeLaminate" / "StiffenerSeamLaminate"**:
-  the seam feature family is canonically **SeamCompositeLaminate** (the
-  combined laminate) carried by a seam shell; the stiffener analogue
-  (PRD `docs/stiffener_seam_laminate.md`) is canonically
-  **StiffenerSeamLaminate**. "SeamCompositeShell" is the user's informal
-  term for the seam-shell-plus-laminate unit — avoid in properties and
-  code.
+- **"SeamCompositeShell" / "StiffenerCompositeShell" naming**: resolved —
+  the seam feature family is canonically **SeamCompositeLaminate**
+  (combined laminate, carried by a seam shell); the stiffener analogue
+  (PRD `docs/stiffener_composite_shell.md`) is canonically
+  **StiffenerCompositeShell**, configured with the standard
+  Composite::Shell property names `Laminate` / `Rosette`. Do not invent
+  `StiffenerLaminate`-style property names.
 
 - **"A side / B side" vs "Master / Attachment"**: resolved — same
   concepts. **Master/Attachment is canonical** (properties, code,

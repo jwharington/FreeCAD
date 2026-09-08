@@ -1,4 +1,4 @@
-# PRD: StiffenerSeamLaminate — combined layup where a stiffener runs along its support
+# PRD: StiffenerCompositeShell — combined layup where a stiffener runs along its support
 
 | | |
 |---|---|
@@ -11,13 +11,14 @@
 
 > **New session? Read this block, then skim §§2–6 before touching code.**
 
-- **Status:** plan complete, **not started** — pick up at Implementation order step 1 (§10b).
+- **Status:** plan complete, **not started** — pick up at Implementation order step 1 (§12).
 - **What this is:** the stiffener analogue of `SeamCompositeLaminate` (which
   this document assumes you have read — the domain decisions, the loud-failure
   contract, and the solved-transfer analysis carry over wholesale). The
-  stiffener gains a composite configuration (its own CompositeLaminate +
-  rosette), and the lap joint where the stiffener runs along its support gets
-  the combined stack as its material.
+  stiffener becomes a **StiffenerCompositeShell**: configured with its own
+  `Laminate` + `Rosette` (standard Composite::Shell property names), and the
+  lap joint where the stiffener runs along its support gets the combined
+  stack as its material.
 - **Key inherited decisions** (violating these reintroduces fixed bugs):
   transfers are *solved*, never copied; symmetric double transfer per ADR-0001;
   `Symmetry` pinned `Assymmetric`; loud failures with recorded `last_error`;
@@ -88,15 +89,15 @@ Aligned with `../CONTEXT.md` and `stiffener-design.md`:
 | **Stiffener rosette** | The rosette configuring the stiffener's own laminate frame. |
 | **Combined laminate** | The effective stack of stiffener ⊕ panel over the foot strip, per the selected combination model. |
 
-Naming note: the user's working term for this feature was
-"SeamCompositeShell"; the proposed canonical name is
-**`StiffenerSeamLaminate`** (flagged for `CONTEXT.md` alongside the seam
-feature's naming).
+Naming: **`StiffenerCompositeShell`** is canonical (user-decided); the
+stiffener's own laminate/rosette links use the standard Composite::Shell
+property names `Laminate` / `Rosette` — no `Laminate`-style
+invented names.
 
 ## 3. Domain model
 
 ```
-Composite::Shell (support panel)     StiffenerSeamLaminate        Composite::Shell (stiffener)
+Composite::Shell (support panel)     StiffenerCompositeShell        Composite::Shell (stiffener)
   Support ── base-row edges ── Foot strip (base-row faces) ── profile plies
   Rosette ─┐                        │                              ┌─ Stiffener rosette
            ├── symmetric solved transfers onto the foot strip ──────┘
@@ -110,8 +111,8 @@ Composite::Shell (support panel)     StiffenerSeamLaminate        Composite::She
 | Property | Type | Constraint |
 |---|---|---|
 | `Support` | link | Composite::Shell with a laminate — the panel side of the joint. (The existing geometry inputs `IntersectSurface` / `Profile` / `MirrorX` / `MirrorY` are inherited unchanged from `StiffenerFP`.) |
-| `StiffenerLaminate` | link | `CompositeLaminate` defining the stiffener's own structure. |
-| `StiffenerRosette` | link | Rosette seeding the stiffener laminate's frame. |
+| `Laminate` | link | `CompositeLaminate` defining the stiffener's own structure (standard Composite::Shell name). |
+| `Rosette` | link | Rosette seeding the stiffener laminate's frame. |
 
 ### 3.2 Structural invariants (validated loudly)
 
@@ -119,9 +120,14 @@ All seam-PRD §3.2 invariants carry over (loud failure with recorded
 `last_error`; live `Support.Shape` for geometry queries), specialised:
 
 1. **Support is a Composite::Shell with a non-empty laminate.**
-2. **StiffenerLaminate is a laminate with a non-empty layer list**;
-   `StiffenerRosette` is a rosette (proxy-type check — the
-   `is_comp_type` TypeId trap documented in the seam implementation).
+2. **`Laminate` is a laminate with a non-empty layer list**;
+   `Rosette` is a rosette (proxy-type check — the `is_comp_type` TypeId
+   trap documented in the seam implementation). Missing rosette is not a
+   failure: the flow **auto-creates** it on the web shell (`Angle = 0`,
+   web centroid) and never overwrites a user-linked one — the web face
+   it must live on only exists after the first build, so requiring it up
+   front would make every first build fail. A *linked non-rosette* is
+   the loud failure.
 3. **The foot strip exists** — the profile has at least one base edge
    (`y = 0`), so at least one foot face was lofted. A profile with no
    base edge (e.g. a fully lifted section) cannot form a joint and
@@ -139,6 +145,24 @@ All seam-PRD §3.2 invariants carry over (loud failure with recorded
 | `Thickness` / `StackOrientation` | existing `LaminateFP` machinery |
 | Per-side seam angle report + `EffectiveOffsetAngle` | §5 |
 | Combined section (`write_shell_section` / materials) | derived analysis output — additive, never replacing either side's export |
+
+### 3.4 Modes (decided, Q3)
+
+Exactly **two modes**, determined by one question — *is `Laminate`
+linked?*
+
+- **Geometry-only** (no `Laminate`): today's behaviour — swept shell,
+  remainder, filters; no children beyond that, no weave. A legitimate
+  mode (`stiffener-design.md`'s generality requirement), not a
+  degradation.
+- **Full composite** (`Laminate` linked): web/foot split, both shells,
+  combined laminate — and this requires the support to be a
+  `Composite::Shell` **with a laminate**; if it isn't, loud failure
+  (the joint genuinely cannot be computed).
+
+No middle mode ("stiffener laminate, dumb panel"): it would need
+conditional partition logic and serve a speculative case. Partial
+wiring fails loudly, per the contract.
 
 ## 4. Combination models
 
@@ -202,15 +226,36 @@ shell.
 
 | Property | Type | Notes |
 |---|---|---|
-| `StiffenerLaminate` | `App::PropertyLinkGlobal` | the stiffener's own CompositeLaminate |
-| `StiffenerRosette` | `App::PropertyLinkGlobal` | the stiffener's frame |
-| `FootLaminate` | `App::PropertyLinkGlobal` (ReadOnly-ish, derived) | the `StiffenerSeamLaminate` child — combined material for the foot strip |
+| `Laminate` | `App::PropertyLinkGlobal` | the stiffener's own CompositeLaminate |
+| `Rosette` | `App::PropertyLinkGlobal` | the stiffener's frame |
+| `FootLaminate` | `App::PropertyLinkGlobal` (ReadOnly-ish, derived) | the `StiffenerCompositeShell` child — combined material for the foot strip |
 
-`StiffenerSeamLaminateFP` reuses `SeamCompositeLaminateFP`'s machinery
+`StiffenerCompositeShellFP` reuses `SeamCompositeLaminateFP`'s machinery
 (validation, combination, angle outputs, loud failures) with
 stiffener-side wiring; whether it subclasses directly or the shared parts
 are factored out is an implementation choice — the *contract* is
 identical (see open questions).
+
+### 6.2 Region split: web shell + foot shell (decided, Q1)
+
+The swept stiffener shell is **partitioned into two Composite::Shell
+children**, using the face provenance `make_stiffener` already computes
+(loci keys, `surface_rows`):
+
+- **Web shell** — faces above the base rows; Laminate =
+  `Laminate`; drape seeded by `Rosette`.
+- **Foot shell** — the base-row faces; Laminate = the combined
+  `StiffenerCompositeShell`; drape seeded by the solved panel→foot
+  transfer.
+
+The fold edge between the two carries the symmetric solved transfers
+(ADR-0001): ply continuity across the fold is captured by the transfer
+solve, exactly as the seam models continuity across its edge. Weave
+exclusivity falls out by construction — three weaves (panel remainder /
+foot strip / web), no coincident-weave z-fighting. The stiffener
+shell's own shape carries all faces (geometry unchanged, CompoundFilter
+parts intact); the *weave render* is partitioned across the two
+children.
 
 ### 6.2 The foot shell child
 
@@ -309,7 +354,7 @@ running). Tests land with the build step that makes them runnable (§12).
    support remainder; idempotent across recomputes.
 7. **Section round-trip** — combined section via `write_shell_section`.
 8. **Symmetry pinned** — combined layer list is never mirrored.
-9. **Example** — `stiffener_seam_laminate.py`: Z-stiffener on a plate
+9. **Example** — `stiffener_composite_shell.py`: Z-stiffener on a plate
    with 30° fabric both sides; runner contract; registered in the
    registry; GUI demo + screenshot check.
 10. **Rendering (GUI-only)** — foot shader `_attached`, rosette symbols
@@ -346,7 +391,7 @@ shell (the DrapePitch fix must cover the foot shell's fingerprint).
    plies over panel plies) is proposed as the physical default — the
    layup story of a stiffener is that its plies are laid onto the panel.
    Confirm.
-3. **`StiffenerSeamLaminateFP` subclassing vs factoring:** reuse
+3. **`StiffenerCompositeShellFP` subclassing vs factoring:** reuse
    `SeamCompositeLaminateFP` directly with stiffener wiring, or factor
    the shared machinery (combination, angles, outputs) into a common
    base and keep two thin subclasses? Recommendation: factor minimally —
@@ -354,7 +399,7 @@ shell (the DrapePitch fix must cover the foot shell's fingerprint).
    validation invariants (§3.2) can differ cleanly.
 4. **The attachment rosette vs the stiffener rosette on the remainder:**
    the panel keeps its own rosette (it drapes the remainder); the
-   stiffener keeps `StiffenerRosette`. No copies — per the
+   stiffener keeps `Rosette`. No copies — per the
    remainder-rosette lesson from the seam implementation.
 5. **Open, future phase:** interfacial ply tolerance for taper matching;
    two-sided base contact (blade stiffeners).
@@ -365,7 +410,7 @@ Status conventions: `[ ]` pending · `[~]` in progress · `[x]` done.
 
 ### Step 1 — stiffener composite configuration `[ ]`
 
-- [ ] `StiffenerFP` gains `StiffenerLaminate` + `StiffenerRosette`
+- [ ] `StiffenerFP` gains `Laminate` + `Rosette`
   links; the stiffener shell's plies render from its own laminate
   (weave on the swept shell requires the shell to become a drapeable
   `Composite::Shell` or to carry the shader directly — design decision
@@ -378,7 +423,7 @@ Status conventions: `[ ]` pending · `[~]` in progress · `[x]` done.
 - [ ] base-row face identification via `surface_rows` provenance
 - [ ] foot shell child (fingerprint freshness incl. pitch, pitch
   scaling to foot width, visibility after recompute, tree claiming)
-- [ ] `StiffenerSeamLaminate` built and wired (both solved transfers,
+- [ ] `StiffenerCompositeShell` built and wired (both solved transfers,
   combination models, angle outputs)
 - [ ] tests: foot identification (1), stack ordering (2), offset fabric
   (3), wiring failures (4), section round-trip (7), symmetry pinned
@@ -393,6 +438,6 @@ Status conventions: `[ ]` pending · `[~]` in progress · `[x]` done.
 
 ### Step 4 — example + GUI `[ ]`
 
-- [ ] `stiffener_seam_laminate.py` example; registry; suite green
+- [ ] `stiffener_composite_shell.py` example; registry; suite green
 - [ ] GUI verification via MCP: shader attached, rosettes above weaves,
   weave exclusivity, pitch re-drape, forced-failure loudness (§9.10)
