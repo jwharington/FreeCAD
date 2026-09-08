@@ -128,10 +128,15 @@ All seam-PRD §3.2 invariants carry over (loud failure with recorded
    it must live on only exists after the first build, so requiring it up
    front would make every first build fail. A *linked non-rosette* is
    the loud failure.
-3. **The foot strip exists** — the profile has at least one base edge
-   (`y = 0`), so at least one foot face was lofted. A profile with no
-   base edge (e.g. a fully lifted section) cannot form a joint and
-   raises.
+3. **The foot strip is optional and follows the profile** (decided,
+   Q6): when the profile has base edge(s) with extent (`y = 0`), the
+   foot shell + combined laminate exist; when the base degenerates to a
+   vertex or zero-width line (e.g. the user edits the sketch to remove
+   the bonding flange), the flow **degrades gracefully** — no foot
+   shell, no transfers, no combined laminate; the web shell keeps the
+   stiffener weave. The stiffener must not break when the profile
+   changes to remove the foot, and must regain the joint when the
+   profile regains a base edge.
 4. **The foot strip shares its boundary edges with the support panel**
    (geometric section, per the seam's shared-edge rule).
 5. Geometry queries read live `Support.Shape`.
@@ -199,7 +204,9 @@ writer's no-offset convention.
 Identical machinery and rules to the seam PRD §5 / ADR-0001, restated
 for this geometry:
 
-- **Two solved transfers onto the foot strip**, one per side:
+- **Two solved transfers onto the foot strip**, one per side — created
+  only when the foot strip has area (§3.2 invariant 3; a degenerate
+  base means no joint region and no transfers):
   - `panel_angle_at_foot`: solved transfer support → foot — **seeds the
     foot strip's drape** (and its rendered weave), honouring the panel's
     continuity across the base-row edge.
@@ -293,9 +300,15 @@ children.
 - **Command:** `Composites_Stiffener` selection order unchanged
   (support, cut surface, profile); the laminate and rosette are linked
   via the property editor (or the task panel, later).
-- **Rendering:** the foot shell renders the combined weave via the
-  standard shader pipeline; rosette symbols raised above it; failures
-  leave the shader detached.
+- **Rendering (decided, Q5):** in full composite mode the three weave
+  shells — panel (over the remainder), foot (combined), web (stiffener
+  plies) — render everything between them, and the two CompoundFilters
+  ("Parts", "Remainder") are **hidden**: their native faces are
+  coincident with the weaves and would z-fight. In geometry-only mode
+  the filters stay visible exactly as today and no weave shells exist.
+  One rule: the mode determines the render split. The foot shell
+  renders the combined weave via the standard shader pipeline; rosette
+  symbols raised above it; failures leave the shader detached.
 
 ## 7. Relationship to existing components
 
@@ -333,6 +346,11 @@ children.
    idempotence via the captured base geometry).
 8. The foot weave is exclusive: the panel's weave does not render under
    the foot strip (support-remainder re-support).
+8b. **Profile change degrades gracefully**: removing the bonding flange
+   from the profile sketch drops the foot shell and transfers without
+   error (web weave persists, panel weave covers the formerly-cut
+   footprint via the remainder, which recomputes to the full panel);
+   restoring a base edge regains the joint.
 
 ## 9. Test plan
 
@@ -358,6 +376,10 @@ running). Tests land with the build step that makes them runnable (§12).
 9. **Example** — `stiffener_composite_shell.py`: Z-stiffener on a plate
    with 30° fabric both sides; runner contract; registered in the
    registry; GUI demo + screenshot check.
+9b. **Profile-change degradation** — edit the profile sketch to remove
+    the base edge: no error; foot shell and transfers dropped; web weave
+    persists; restoring the base edge regains the joint (§8 criterion
+    8b). Also guards invariant 3's graceful-degradation contract.
 10. **Rendering (GUI-only)** — foot shader `_attached`, rosette symbols
     above the weaves, weave exclusivity visible, forced-failure
     loudness.

@@ -51,7 +51,9 @@ _Avoid_: bottom edge, base line
 
 **Foot strip**:
 The stiffener's base-row faces — the part of the stiffener that runs
-along the support, where the lap joint lives.
+along the support, where the lap joint lives. Optional: a profile with
+no base extent (no bonding flange) has no foot strip, and the stiffener
+degrades to web-only.
 _Avoid_: flange (profile-specific), footprint
 
 **Web**:
