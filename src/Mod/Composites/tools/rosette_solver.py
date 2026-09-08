@@ -5,14 +5,14 @@
 
 Both features fix a rosette's ``Angle`` by minimising a scalar error that is
 a function of the candidate angle. Each evaluation sets the angle, re-drives
-the host ``CompositeShell`` (via ``Document.recompute()``), waits for the
-shell's draper to be valid, and reads the error back from the draper.
+the host ``CompositeShell`` (directly, never via a nested recompute), waits
+for the shell's draper to be valid, and reads the error back from the draper.
 
-The solver is a bounded secant/bisection root-find over an angle range
-(default ``[-90, 90]`` degrees). Because the warp field rotates monotonically
-with the rosette angle on a single connected patch, one root exists in the
-range; the bracket is refined until the angle step or the residual drops below
-its tolerance.
+The residual is near-linear in the seed angle: rotating the rosette rotates
+the warp field across the draped patch almost rigidly, so a secant through
+two true evaluations extrapolates the root in one large step. The remaining
+iterations only correct for real drape deviation, re-grounded by one drape
+each — there is no blind bracket search re-draping the shell per halving.
 """
 
 from __future__ import annotations
@@ -20,10 +20,27 @@ from __future__ import annotations
 from typing import Callable
 
 import FreeCAD
+import math
 
 
 class RosetteSolveError(RuntimeError):
     """Raised when the iterative solve fails to converge."""
+
+
+def wrap_angle(angle_deg: float, angle_min_deg: float = -90.0,
+               angle_max_deg: float = 90.0) -> float:
+    """Fold an angle into the fibre's principal period.
+
+    A fabric's warp direction has no arrow: angle and angle + period are
+    the same layup, so an angle solve lives on a circle, not a line.
+    Wrapping keeps iterates in the principal period instead of pinning
+    them at a clamp bound whenever the root lies beyond it.
+    """
+    period = angle_max_deg - angle_min_deg
+    a = math.fmod(angle_deg - angle_min_deg, period)
+    if a < 0.0:
+        a += period
+    return angle_min_deg + a
 
 
 def solve_rosette_angle(
@@ -50,7 +67,7 @@ def solve_rosette_angle(
         Residual as a function of the candidate angle (degrees). Called after
         each recompute with the angle just applied.
     angle_min_deg, angle_max_deg : float
-        Bracket bounds (degrees).
+        Clamp bounds for iterated angles (degrees).
     angle_tol_deg : float
         Convergence tolerance on the angle step.
     residual_tol : float
@@ -66,11 +83,15 @@ def solve_rosette_angle(
     Raises
     ------
     RosetteSolveError
-        If no sign change is found in the bracket or convergence is not reached
-        within ``max_iters``.
+        If convergence is not reached within ``max_iters``.
     """
+
     def _eval(angle_deg: float) -> float:
-        rosette.Angle = float(angle_deg)
+        # Skip no-op writes: assigning the same Angle still touches the
+        # rosette, and every touch propagates to dependent shells (and
+        # through them to the laminates that resolve this rosette).
+        if abs(float(getattr(rosette, "Angle", 0.0) or 0.0) - float(angle_deg)) > 1e-9:
+            rosette.Angle = float(angle_deg)
         # Place the rosette LCS for the new angle BEFORE re-driving the
         # shell. FreeCAD's recompute dependency ordering does not always
         # execute the rosette (and thus update its child LCS placement)
@@ -94,45 +115,48 @@ def solve_rosette_angle(
         _require_valid_draper(shell)
         return float(error_fn(angle_deg))
 
-    lo = float(angle_min_deg)
-    hi = float(angle_max_deg)
+    def _wrap(angle_deg: float) -> float:
+        return wrap_angle(angle_deg, angle_min_deg, angle_max_deg)
+
+    # Start from the rosette's current angle: when it already drapes at
+    # that angle, the first evaluation costs no re-drape at all — the
+    # shell's fingerprint fast path skips the solve.
+    lo = _wrap(float(getattr(rosette, "Angle", 0.0) or 0.0))
     f_lo = _eval(lo)
-    f_hi = _eval(hi)
-
-    if f_lo == 0.0:
+    if abs(f_lo) <= residual_tol:
         return lo
-    if f_hi == 0.0:
-        return hi
-    if f_lo * f_hi > 0.0:
-        raise RosetteSolveError(
-            f"No sign change in [{lo}, {hi}] deg "
-            f"(f(lo)={f_lo:.6g}, f(hi)={f_hi:.6g})"
-        )
 
-    # Bracket refinement: bisection (robust) with a secant guess mixed in.
+    # Probe once to capture the local slope of the near-linear residual
+    # (the rigid-rotation assumption: rotating the rosette rotates the
+    # warp field with it), then extrapolate the root in one large step.
+    probe = max(2.0, min(10.0, (angle_max_deg - angle_min_deg) / 20.0))
+    hi = _wrap(lo + probe)
+    f_hi = _eval(hi)
+    if abs(f_hi) <= residual_tol:
+        return hi
+
     for _ in range(max_iters):
-        mid = 0.5 * (lo + hi)
-        if abs(hi - lo) < angle_tol_deg:
-            return mid
-        # Secant guess, kept inside the bracket.
-        if (f_hi - f_lo) != 0.0:
-            secant = lo - f_lo * (hi - lo) / (f_hi - f_lo)
-        else:
-            secant = mid
-        if not (lo < secant < hi):
-            secant = mid
-        candidate = secant
-        f_c = _eval(candidate)
-        if abs(f_c) < residual_tol:
+        rise = f_hi - f_lo
+        if rise == 0.0 or hi == lo:
+            raise RosetteSolveError(
+                f"Residual is flat near [{lo:.4g}, {hi:.4g}] deg "
+                f"(f={f_lo:.6g}, {f_hi:.6g}) — cannot extrapolate"
+            )
+        candidate = _wrap(hi - f_hi * (hi - lo) / rise)
+        if abs(candidate - hi) < angle_tol_deg:
+            # The root lies within the angle tolerance of the candidate;
+            # its residual is within tolerance to first order.
             return candidate
-        if f_lo * f_c < 0.0:
-            hi, f_hi = candidate, f_c
-        else:
-            lo, f_lo = candidate, f_c
+        f_candidate = _eval(candidate)
+        if abs(f_candidate) <= residual_tol:
+            return candidate
+        # Slide the secant window onto the two freshest evaluations.
+        lo, f_lo = hi, f_hi
+        hi, f_hi = candidate, f_candidate
 
     raise RosetteSolveError(
         f"Did not converge within {max_iters} iterations "
-        f"(bracket [{lo:.4f}, {hi:.4f}] deg)"
+        f"(last angle {hi:.4g} deg, residual {f_hi:.6g})"
     )
 
 

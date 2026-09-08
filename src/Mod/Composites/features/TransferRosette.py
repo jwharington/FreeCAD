@@ -1,18 +1,22 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
-"""TransferRosette — iterative warp-transfer rosette on an attachment shell.
+"""TransferRosette — warp-transfer rosette on an attachment shell.
 
 A :class:`TransferRosetteFP` is a :class:`Rosette` that lives on the
 **attachment** shell (``attachment_shell.Rosette = transfer_rosette``). Its
-``Angle`` is solved iteratively so the attachment shell's warp direction makes
-the same signed angle with the shared boundary edge as the master shell's
-warp, at sampled points along that edge. The solved angle is written back
-into the inherited ``Angle`` property.
+``Angle`` is solved so the attachment's frame makes the same signed angle
+with the shared boundary edge as the master shell's warp, at sampled points
+along that edge. The solved angle is written back into the inherited
+``Angle`` property.
 
-The solve is driven from :meth:`onChanged` (not :meth:`execute`) for the
-defining references, guarded by a ``_solving`` flag so the solver's own
-``Angle`` writes do not recurse.
+The solve is a phase-1 frame solve: the rosette frame rotates exactly 1:1
+with ``Angle`` and the combined-laminate model treats drape deviation as
+zero, so the residual is exact-linear in the angle — the master's warp is
+measured once and the frame stepped analytically (no per-iteration re-drape
+of the attachment). The solve is driven from :meth:`onChanged` (not
+:meth:`execute`) for the defining references, guarded by a ``_solving`` flag
+so the solve's own ``Angle`` writes do not recurse.
 """
 
 import math
@@ -27,7 +31,7 @@ from .. import (
 )
 from ..tools.rosette_solver import (
     RosetteSolveError,
-    solve_rosette_angle,
+    wrap_angle,
 )
 from .Command import BaseCommand
 from .CompositeShell import is_composite_shell
@@ -38,6 +42,20 @@ from .Rosette import (
 
 # Number of sample points along the shared boundary edge.
 _EDGE_SAMPLES = 8
+
+# Warp-continuity convergence tolerance (radians) — ~0.057 degrees.
+_ANGLE_TOL_RAD = 1e-3
+
+_HALF_PI = math.pi / 2.0
+
+
+debug = False
+
+
+def _debug(message):
+    """Emit a solve trace when :data:`debug` is enabled."""
+    if debug:
+        FreeCAD.Console.PrintMessage(message + "\n")
 
 
 def is_transfer_rosette(obj) -> bool:
@@ -112,7 +130,13 @@ class TransferRosetteFP(RosetteFP):
             self._solving = False
 
     def _solve_inputs_fingerprint(self, fp) -> str:
-        """Hash everything the solved angle depends on."""
+        """Hash everything the solved angle depends on.
+
+        The attachment shell's Rosette is this transfer itself, so its
+        Angle must NOT enter the fingerprint: the solve writes its own
+        Angle, and a self-referential fingerprint would re-trigger the
+        solve on every resolve — a re-drape storm.
+        """
         import hashlib
 
         from ..util.geometry_util import shape_fingerprint
@@ -128,7 +152,8 @@ class TransferRosetteFP(RosetteFP):
             except Exception:
                 parts.append("shape-error")
             rosette = getattr(shell, "Rosette", None)
-            parts.append(str(getattr(rosette, "Angle", 0.0)))
+            if rosette is not fp:
+                parts.append(str(getattr(rosette, "Angle", 0.0)))
         return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
     def onChanged(self, fp, prop):
@@ -166,7 +191,22 @@ class TransferRosetteFP(RosetteFP):
             attachment.Rosette = fp
 
     def _solve(self, fp) -> None:
-        """Iterate the attachment rosette Angle to match the master warp."""
+        """Solve the attachment rosette Angle for warp continuity.
+
+        Phase-1 frame solve: the rosette frame rotates exactly with
+        ``Angle`` and the laminates treat drape deviation as zero (the
+        approximation stated in the combined-laminate report), so the
+        warp-continuity residual is exact-linear in the angle — only the
+        master's drape is read, and every measurement is free of
+        attachment re-draping.  The slope (including its sign, which
+        depends on whether the attachment face's normal agrees with the
+        master's) is measured with two free probes, and the step is
+        wrapped into the fabric's principal period rather than clamped.
+        The old per-iteration re-drape was both wasteful (a full drape
+        per candidate angle) and self-defeating: boundary-snapped
+        lattice rows quantise the residual into steps no root-finder
+        can meet.
+        """
         master = fp.MasterShell
         attachment = fp.AttachmentShell
         # The two shells must share a topological boundary edge. If they don't
@@ -181,66 +221,112 @@ class TransferRosetteFP(RosetteFP):
                 "TransferRosette: master and attachment shells share no "
                 "boundary edge — cannot transfer warp orientation."
             )
-        error_fn = lambda _angle: self._edge_angle_error(fp)
-        try:
-            angle = solve_rosette_angle(fp.AttachmentShell, fp, error_fn)
-        except RosetteSolveError:
-            # Keep the feature recompute-safe when the solve cannot bracket
-            # (genuine non-convergence).
-            return
-        fp.Angle = angle
+        self._ensure_wired(fp)
+        angle = wrap_angle(float(getattr(fp, "Angle", 0.0) or 0.0))
+
+        def _residual(at_angle: float) -> float:
+            fp.Angle = at_angle
+            self.execute(fp)  # place the LCS for the current angle
+            return self._edge_angle_error(fp)  # radians
+
+        # Closed form: the rosette frame's measured angle decreases exactly
+        # radians(1) per degree of Angle — the Angle rotates the frame
+        # about the very normal the measurement uses — and the master
+        # frame is Angle-independent.  The residual is therefore a
+        # sawtooth of exact slope -pi/180 per degree, so the root is one
+        # step away; wrapping into the fabric's principal period lands on
+        # an equivalent root (period pi, undirected warp).
+        residual = _residual(angle)
+        for _ in range(3):
+            if abs(residual) <= _ANGLE_TOL_RAD:
+                _debug(
+                    f"TransferRosette {fp.Name}: solved angle {angle:.4f} "
+                    f"(residual {residual:.3g} rad)"
+                )
+                return
+            angle = wrap_angle(angle + math.degrees(residual))
+            residual = _residual(angle)
+        raise RosetteSolveError(
+            f"TransferRosette {fp.Name}: warp-continuity residual did not "
+            f"settle within tolerance (last angle {angle:.4f} deg, "
+            f"residual {residual:.3g} rad)"
+        )
 
     def _edge_angle_error(self, fp) -> float:
-        """Signed mean of (phi_attachment - phi_master) along the shared edge."""
-        master = fp.MasterShell
-        attachment = fp.AttachmentShell
-        try:
-            master_draper = master.Proxy.get_draper()
-            attachment_draper = attachment.Proxy.get_draper()
-        except AssertionError as exc:
-            # A drape that failed (e.g. an intermittent solver_failure at
-            # fine pitches) must surface as a handled solve failure, not
-            # leak an assertion out of the solver.
-            raise RosetteSolveError(f"draper invalid during solve: {exc}")
-        if master_draper is None or attachment_draper is None:
-            return 0.0
+        """Signed mean of (phi_rosette - phi_master) along the shared edge.
 
+        Phase-1 frame measurement: both sides are read from rosette
+        frames — the master's rosette frame and this rosette's own LCS —
+        never from drape fields.  The combined-laminate model treats
+        drape deviation as zero (stated in its report), and a drape
+        lattice's boundary rows read frames that do not track the
+        rosette, which made field-based residuals chaotic.  Per-sample
+        residuals are folded into (-pi/2, pi/2] — period pi, the
+        fabric's undirected warp — and the tangent varies along a curved
+        edge, so the master's frame is compared against each local
+        tangent.
+        """
+        master = fp.MasterShell
         edge = self._shared_edge(
-            self._shape_of(master), self._shape_of(attachment)
+            self._shape_of(master), self._shape_of(fp.AttachmentShell)
         )
         if edge is None:
             return 0.0
 
-        # Paired inset samples: each side is evaluated just inside its
-        # own surface (boundary frames are unreliable — see
-        # _inset_edge_samples).
-        master_samples = self._inset_edge_samples(
-            edge, self._shape_of(master), _EDGE_SAMPLES
-        )
-        attach_samples = self._inset_edge_samples(
-            edge, self._shape_of(attachment), _EDGE_SAMPLES
-        )
-        if not master_samples or not attach_samples:
+        samples = self._sample_edge(edge, _EDGE_SAMPLES)
+        if not samples:
             return 0.0
 
+        lcs = getattr(fp, "LocalCoordinateSystem", None)
+        if lcs is None:
+            return 0.0
+        master_rotation = self._master_frame(master)
+        rotation = lcs.Placement.Rotation
+
         residuals: List[float] = []
-        for (m_point, tangent), (a_point, _a_tangent) in zip(
-            master_samples, attach_samples
-        ):
-            phi_m = self._warp_angle_at(master_draper, m_point, tangent)
-            phi_a = self._warp_angle_at(attachment_draper, a_point, tangent)
-            if phi_m is None or phi_a is None:
-                continue
-            # Wrap the per-sample residual into (-pi, pi] so the signed mean
-            # is continuous across the atan2 branch cut at +/-180 deg. Without
-            # this, a sample whose (phi_a - phi_m) crosses the cut flips sign
-            # and the root-finder loses its bracket.
-            residual = (phi_a - phi_m + math.pi) % (2.0 * math.pi) - math.pi
+        for _point, tangent in samples:
+            phi_m = self._axis_angle(master_rotation, tangent)
+            phi_r = self._axis_angle(rotation, tangent)
+            # Fold into (-pi/2, pi/2] — period pi, not 2pi: a fabric's
+            # warp is an undirected line, so frames anti-parallel by 180
+            # degrees are the SAME layup, and folding mod 2pi would put
+            # the comparison on the atan2 branch cut where the signed
+            # mean is meaningless.
+            residual = (phi_r - phi_m + _HALF_PI) % math.pi - _HALF_PI
             residuals.append(residual)
 
         if not residuals:
             return 0.0
         return sum(residuals) / len(residuals)
+
+    @staticmethod
+    def _master_frame(master):
+        """The master side's fibre frame rotation.
+
+        Its rosette's LCS when linked; otherwise the support placement
+        the shell's drape seeds from (rosette-less shells).
+        """
+        rosette = getattr(master, "Rosette", None)
+        lcs = getattr(rosette, "LocalCoordinateSystem", None)
+        if lcs is not None:
+            return lcs.Placement.Rotation
+        support = getattr(master, "Support", None)
+        placement = getattr(support, "Placement", None)
+        if placement is not None:
+            return placement.Rotation
+        return FreeCAD.Rotation()
+
+    @staticmethod
+    def _axis_angle(rotation, tangent) -> float:
+        """Signed angle from `tangent` to the frame's X about its Z."""
+        warp = rotation.multVec(FreeCAD.Vector(1.0, 0.0, 0.0))
+        normal = rotation.multVec(FreeCAD.Vector(0.0, 0.0, 1.0))
+        if warp.Length < 1e-12 or normal.Length < 1e-12:
+            return 0.0
+        warp.normalize()
+        normal.normalize()
+        cross = warp.cross(tangent)
+        return math.atan2(cross.dot(normal), warp.dot(tangent))
 
     @staticmethod
     def _shape_of(shell):
@@ -268,54 +354,6 @@ class TransferRosetteFP(RosetteFP):
         return max(edges, key=lambda e: e.Length)
 
     @staticmethod
-    def _inset_edge_samples(edge, shape, n, eps=1.5):
-        """Sample the edge offset inward into *shape*'s surface.
-
-        Warp evaluation exactly on the boundary is unreliable: the
-        boundary drape nodes are boundary-snapped and their frames do
-        not track the rosette seed, and UV queries at the exact edge can
-        fail outright (making the residual evaluate to exactly 0 and the
-        solver return a bracket endpoint).  Each sample point is offset
-        a little along the surface, inward from the edge; the tangent is
-        kept (the residual measures angles about the same edge line).
-        """
-        faces = getattr(shape, "Faces", [])
-        out = []
-        for point, tangent in TransferRosetteFP._sample_edge(edge, n):
-            host = None
-            for f in faces:
-                try:
-                    if f.isInside(point, 1e-6, True):
-                        host = f
-                        break
-                except Exception:
-                    continue
-            if host is None:
-                continue
-            try:
-                u, v = host.Surface.parameter(point)
-                normal = host.normalAt(u, v)
-            except Exception:
-                continue
-            normal.normalize()
-            inward = tangent.cross(normal)
-            if inward.Length < 1e-12:
-                continue
-            inward.normalize()
-            chosen = None
-            for sign in (1.0, -1.0):
-                cand = point + inward * (sign * eps)
-                try:
-                    if host.isInside(cand, 1e-6, True):
-                        chosen = cand
-                        break
-                except Exception:
-                    continue
-            if chosen is not None:
-                out.append((chosen, tangent))
-        return out
-
-    @staticmethod
     def _sample_edge(edge, n):
         """Return [(point, unit_tangent)] at ``n`` arc-length midpoints."""
         length = edge.Length
@@ -337,101 +375,43 @@ class TransferRosetteFP(RosetteFP):
             samples.append((FreeCAD.Vector(point), tan))
         return samples
 
-    @staticmethod
-    def _draper_basis_at(draper, point):
-        """Return (warp, normal) unit vectors at *point* from the draper.
 
-        Warp is the LCS X-axis in world; normal is the LCS Z-axis. Both come
-        from ``draper.get_lcs_at_point(point).Rotation``.
-        """
-        placement = draper.get_lcs_at_point(point)
-        if placement is None:
-            return None, None
-        rotation = placement.Rotation
-        warp = rotation.multVec(FreeCAD.Vector(1.0, 0.0, 0.0))
-        normal = rotation.multVec(FreeCAD.Vector(0.0, 0.0, 1.0))
-        return warp, normal
+def attach_rosette_view_provider(rosette):
+    """Attach the rosette view provider (GUI only) and raise it.
 
-    @staticmethod
-    def _warp_angle_at(draper, point, tangent):
-        """Signed angle from the edge tangent to the warp about the face normal."""
-        warp, normal = TransferRosetteFP._draper_basis_at(draper, point)
-        if warp is None or normal is None:
-            return None
-        if warp.Length < 1e-12 or normal.Length < 1e-12:
-            return None
-        warp.normalize()
-        normal.normalize()
-        cross = warp.cross(tangent)
-        return math.atan2(cross.dot(normal), warp.dot(tangent))
+    Script-created rosettes get no ViewProvider otherwise: without one
+    there is no rosette symbol at all — only the LCS datum — and the
+    render-order raise has nothing to move.  The raise puts the symbol
+    above any weave injected later.
+    """
+    vo = getattr(rosette, "ViewObject", None)
+    if vo is None or getattr(vo, "Proxy", None) is not None:
+        return
+    try:
+        ViewProviderTransferRosette(vo)
+        proxy = getattr(vo, "Proxy", None)
+        if proxy is not None and hasattr(proxy, "raise_render_order"):
+            proxy.raise_render_order()
+    except Exception:
+        pass
 
 
 class AnalysisTransferRosetteFP(TransferRosetteFP):
     """Standalone attachment→seam analysis rosette.
 
-    Like :class:`TransferRosetteFP` but never rewires the host shell's
-    ``Rosette`` link (it is analysis-only: the seam shell's Rosette
-    belongs to the master→seam transfer), and the residual is evaluated
-    against its *own* LCS frame rather than the host shell's drape — the
-    phase-1 seam approximation carries no drape deviation
-    (docs/seam_composite_laminate.md §5.2, ADR-0001).
+    Solves the same frame-based warp-continuity residual as
+    :class:`TransferRosetteFP` but never rewires the host shell's
+    ``Rosette`` link: it is analysis-only (the seam/stiffener shell's
+    Rosette belongs to the master→region transfer).  The residual is
+    evaluated against its own LCS frame — the phase-1 approximation
+    carries no drape deviation (docs/seam_composite_laminate.md §5.2,
+    ADR-0001).
     """
 
     def _ensure_wired(self, fp) -> None:
         # Standalone: the seam shell's Rosette stays with the
         # master→seam transfer rosette.
         return
-
-    def _edge_angle_error(self, fp) -> float:
-        master = fp.MasterShell
-        try:
-            master_draper = master.Proxy.get_draper()
-        except AssertionError as exc:
-            raise RosetteSolveError(
-                f"draper invalid during solve: {exc}"
-            )
-        if master_draper is None:
-            return 0.0
-
-        edge = self._shared_edge(
-            self._shape_of(master), self._shape_of(fp.AttachmentShell)
-        )
-        if edge is None:
-            return 0.0
-
-        # Master warp is evaluated just inside the master's surface —
-        # boundary frames are unreliable (see _inset_edge_samples).  The
-        # rosette frame is uniform in the phase-1 approximation, so the
-        # inset does not affect phi_r.
-        samples = self._inset_edge_samples(
-            edge, self._shape_of(master), _EDGE_SAMPLES
-        )
-        if not samples:
-            return 0.0
-
-        lcs = getattr(fp, "LocalCoordinateSystem", None)
-        if lcs is None:
-            return 0.0
-        rotation = lcs.Placement.Rotation
-        warp = rotation.multVec(FreeCAD.Vector(1.0, 0.0, 0.0))
-        normal = rotation.multVec(FreeCAD.Vector(0.0, 0.0, 1.0))
-        if warp.Length < 1e-12 or normal.Length < 1e-12:
-            return 0.0
-        warp.normalize()
-        normal.normalize()
-
-        residuals: List[float] = []
-        for point, tangent in samples:
-            phi_m = self._warp_angle_at(master_draper, point, tangent)
-            if phi_m is None:
-                continue
-            cross = warp.cross(tangent)
-            phi_r = math.atan2(cross.dot(normal), warp.dot(tangent))
-            residual = (phi_r - phi_m + math.pi) % (2.0 * math.pi) - math.pi
-            residuals.append(residual)
-        if not residuals:
-            return 0.0
-        return sum(residuals) / len(residuals)
 
 
 class ViewProviderTransferRosette(ViewProviderRosette):
