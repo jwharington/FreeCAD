@@ -373,9 +373,11 @@ class TestSeamGeometryFPExecuteFingerprint(TestFreeCADFP):
 
         seam = self._setup_seam_shell(box)
 
-        # First execute — should set the fingerprint.
+        # First execute — should set the fingerprint (shape + pitch +
+        # rosette seed; the seam shell's freshness inputs).
         seam.Proxy.execute(seam)
         fp = seam.Proxy._shape_fingerprint(seam.Support.Shape)
+        fp += f"|pitch:{float(seam.DrapePitch):.6f}"
         self.assertEqual(
             seam.Proxy._last_shape_fingerprint,
             fp,
@@ -408,9 +410,10 @@ class TestSeamGeometryFPExecuteFingerprint(TestFreeCADFP):
 
         seam = self._setup_seam_shell(box1)
 
-        # First execute with box1.
+        # First execute with box1 (fingerprint = shape + pitch + seed).
         seam.Proxy.execute(seam)
         fp1 = seam.Proxy._shape_fingerprint(seam.Support.Shape)
+        fp1 += f"|pitch:{float(seam.DrapePitch):.6f}"
         self.assertEqual(
             seam.Proxy._last_shape_fingerprint,
             fp1,

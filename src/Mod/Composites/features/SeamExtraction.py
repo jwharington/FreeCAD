@@ -12,7 +12,6 @@ from ..tools.seam_extraction import extract_seam
 from ..util.geometry_util import shape_fingerprint
 from .Command import BaseCommand
 from .CompositeShell import CompositeShellFP, is_composite_shell
-from .Rosette import RosetteFP, ViewProviderRosette
 from .SeamCompositeLaminate import SeamCompositeLaminateFP
 from .TransferRosette import (
     AnalysisTransferRosetteFP,
@@ -382,16 +381,15 @@ class SeamShellFP(CompositeShellFP):
                 SeamGeometryFP(rem_feat, doc)
                 self._hide_object(rem_feat)
 
-            # Update FIRST: it assigns the remainder's Support, which the
-            # remainder rosette needs for its LCS placement (a rosette
-            # without Support resets its LCS to the origin on every
-            # execute and its symbol rebuilds half-updated).
+            # Update FIRST: it assigns the remainder's Support.
             rem_laminate = getattr(attachment, "Laminate", None)
             rem_feat.Proxy.update(rem_feat, remainder, rem_laminate, None)
-            self._wire_transfer_rosette_for(
-                doc, fp, attachment, rem_feat, "Remainder"
-            )
-            rem_rosette = getattr(rem_feat, "Rosette", None)
+            # The remainder is a piece of the attachment surface: the
+            # attachment's own rosette is exactly the right frame for it
+            # (same surface, same angle).  Link it — a separate copied
+            # rosette would be a redundant object and a doubled symbol
+            # next to the attachment's own.
+            rem_rosette = getattr(attachment, "Rosette", None)
             if rem_rosette is not None and rem_feat.Rosette is not rem_rosette:
                 rem_feat.Rosette = rem_rosette
             # The remainder carries the attachment's OWN laminate — the
@@ -414,39 +412,14 @@ class SeamShellFP(CompositeShellFP):
                     attachment.Support is not rem_feat.Support:
                 attachment.Support = rem_feat.Support
 
+        # Migration: documents saved before the remainder rosette was
+        # dropped carry an orphaned copy next to the attachment's own —
+        # hide it (its symbol doubles the attachment's).
+        orphan = doc.getObject(f"{fp.Name}_Remainder_Rosette")
+        if orphan is not None:
+            self._hide_object(orphan)
+
         return seam_shell
-
-    def _wire_transfer_rosette_for(
-        self, doc, fp, source_shell, target_shell, label_suffix
-    ):
-        """Wire a rosette to *target_shell* copied from *source_shell*.
-
-        Used for the remainder shell, which is a piece of the attachment
-        surface: copying the attachment's rosette angle is correct there
-        (same surface frame, no edge crossing).  The seam shell itself
-        uses solved transfers instead (see _wire_seam_master_transfer).
-        """
-        source_ros = getattr(source_shell, "Rosette", None)
-        if source_ros is None:
-            return
-
-        name = f"{fp.Name}_{label_suffix}_Rosette"
-        ros = doc.getObject(name)
-        if ros is None:
-            # Support on the target shell's surface: without it every
-            # rosette execute resets the LCS to the origin and the
-            # symbol rebuilds half-updated.
-            target_support = getattr(target_shell, "Support", None)
-            support_sub = (
-                (target_support, ["Face1"])
-                if target_support is not None
-                else None
-            )
-            ros = doc.addObject("Part::FeaturePython", name)
-            RosetteFP(ros, support=support_sub)
-            self._attach_rosette_vp(ros, ViewProviderRosette)
-        ros.Angle = source_ros.Angle
-        target_shell.Rosette = ros
 
     @staticmethod
     def _ensure_seam_shell_visible(seam_shell):
