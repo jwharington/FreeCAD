@@ -195,7 +195,11 @@ class ViewProviderRosette(VPCompositeBase):
         root = self.ViewObject.RootNode
 
         def find_parent(node, target):
-            for i in range(node.getNumChildren()):
+            try:
+                n = node.getNumChildren()
+            except AttributeError:
+                return None  # group-less node (transforms, materials, ...)
+            for i in range(n):
                 child = node.getChild(i)
                 if child is target:
                     return node
