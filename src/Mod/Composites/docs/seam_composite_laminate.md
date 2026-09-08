@@ -4,7 +4,7 @@
 
 > **New session? Read this block, then skim §§2–6 before touching code.**
 
-- **Status:** plan approved, **not started** — pick up at Implementation order step 1 (§10b).
+- **Status:** implementation **steps 1–5 done** (commits `59c9cf2771`, `36f9babcc1`, `324e870f7e`, pushed). Remaining: GUI demo + screenshot check (§10b steps 4–5 GUI items, §9.7), then commit any doc updates.
 - **What this is:** `SeamCompositeLaminate` (SCL) replaces the naive virtual laminate on the seam shell with a real combined layup (stack model, solved seam angles, loud failures). Design decisions are all resolved and recorded here + [ADR-0001](adr/0001-seam-angle-analysis-symmetric-transfers.md); terminology lives in [`../CONTEXT.md`](../CONTEXT.md).
 - **Key non-obvious decisions** (violating these reintroduces fixed bugs): transfers are *solved*, never copied (§5.2); both sides transfer-solved symmetrically (§5.2); master→seam seeds the weave, attachment→seam is analysis-only (§5.2, ADR-0001); `Symmetry` pinned `Assymmetric` (§6.1); remainder carries the attachment's own laminate (§7); side weaves excluded inside the seam region (§6.3); rosette angle changes must re-solve the drape (§7 fingerprint row).
 - **Environment:** edit sources in `src/Mod/Composites/`, run `build-install-freecad.sh` before tests (suites load from the pixi env, not build/debug); new `.py` files need `touch src/Mod/Composites/CMakeLists.txt`; headless VP is `None` — guard all ViewObject access; MCP restarts via `start-freecad-mcp.sh [--kill]`, wait after long example builds.
@@ -487,22 +487,35 @@ Check off sub-items as landed; note surprises inline.
   the offset-fabric and support-move scenarios, which exercise the
   solve→drape→angle chain end to end)
 
-### Step 4 — render path: weave exclusivity `[ ]`
+### Step 4 — render path: weave exclusivity `[x]`
 
-- [ ] side weaves trimmed at the seam boundary (start from the
-  cut-edge injection machinery)
+- [x] **Approach changed by user decision:** no render-path clipping —
+  the attachment shell is re-supported on the remainder geometry, so
+  its weave covers only the remainder by construction; the master
+  plate ends at the joint line. Each region of the joint (master /
+  seam strip / remainder) shows exactly one weave.
+- [x] pre-seam attachment geometry preserved in a hidden
+  `AttachmentBase` property; all future extractions read it
+  (idempotence tested). Init-order trap fixed: `Width`'s onChanged can
+  drive the first extraction during `__init__` before later properties
+  exist — `AttachmentBase` now registers before the inputs.
 - [ ] GUI verification via MCP: shader `_attached`, rosette symbols
   above weave, weave exclusivity, forced-failure loudness (§9.7 —
-  GUI-only, no headless assertion possible)
+  GUI-only; deferred to the GUI demo pass)
 
-### Step 5 — example `[ ]`
+### Step 5 — example `[x]`
 
-- [ ] `compositeexamples/examples/seam_composite_laminate.py` on the
-  `transfer_rosette` bend geometry; runner-contract return dict; one
+- [x] `compositeexamples/examples/seam_composite_laminate.py` —
+  coplanar panels at 30° fabric (the extractor's edge-sharing input
+  model, per `seam_extraction.py`); runner-contract return dict; one
   example per document
-- [ ] registered in `registry.py`; `test_compositeexamples` green
-  (8→9 examples)
-- [ ] GUI demo + screenshot check
+- [x] registered in `registry.py`; `test_compositeexamples` green
+  (8/8 — the all-examples smoke test picks it up; the suite's total
+  test count is unchanged because it iterates the registry)
+- [x] verified headless: both transfers solve to ~30° (offset
+  ≈ 0.002°), combined stack = 8 physical plies (4+4) at 30°, attachment
+  re-supported on the remainder
+- [ ] GUI demo + screenshot check (deferred to the GUI demo pass)
 
 ### 10b.1 Test landing order (tests map to §9 scenarios)
 
