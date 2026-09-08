@@ -214,3 +214,22 @@ drape results to skip re-meshing when only the seed rotates.
   `create_composite_feature_stack` builder; the combined rosettes example
   was replaced by three focused examples (`rosette`,
   `align_fibre_rosette`, `transfer_rosette`) plus `cyl_sphere_seam`.
+
+## #10 — Drape cache fast-path ignores support-shape validity
+
+**Status:** OPEN (found during SeamCompositeLaminate GUI verification, 2026-07-15)
+
+`CompositeShell._can_use_persisted` compares the support's shape
+*fingerprint* against the cached one, but an *invalid* (empty-compound)
+support re-assigned over a previously valid one can leave the cached
+drape in place: the shell keeps rendering its weave from a solve that no
+longer corresponds to any real geometry. Recovery is correct — restoring
+valid geometry re-drapes and re-attaches the shader.
+
+Repro: load the `seam_composite_laminate` example, set the seam shell's
+support `Shape` to `Part.Compound()`, recompute — weave persists,
+`grid_shader._attached` stays True.
+
+Fix direction: the fast path should treat a null/empty support shape as
+a cache miss and route through `_mark_failed` (loud breakage), never
+silently reusing a solve for geometry that no longer exists.

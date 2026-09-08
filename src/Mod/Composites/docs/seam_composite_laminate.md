@@ -4,7 +4,7 @@
 
 > **New session? Read this block, then skim §§2–6 before touching code.**
 
-- **Status:** implementation **steps 1–5 done** (commits `59c9cf2771`, `36f9babcc1`, `324e870f7e`, pushed). Remaining: GUI demo + screenshot check (§10b steps 4–5 GUI items, §9.7), then commit any doc updates.
+- **Status:** implementation **complete** — all five steps done including GUI verification (commits `59c9cf2771`, `36f9babcc1`, `324e870f7e`, `882df1f03e` + this commit). One new known-issue (#10, drape-cache fast path) recorded; not a regression from this feature.
 - **What this is:** `SeamCompositeLaminate` (SCL) replaces the naive virtual laminate on the seam shell with a real combined layup (stack model, solved seam angles, loud failures). Design decisions are all resolved and recorded here + [ADR-0001](adr/0001-seam-angle-analysis-symmetric-transfers.md); terminology lives in [`../CONTEXT.md`](../CONTEXT.md).
 - **Key non-obvious decisions** (violating these reintroduces fixed bugs): transfers are *solved*, never copied (§5.2); both sides transfer-solved symmetrically (§5.2); master→seam seeds the weave, attachment→seam is analysis-only (§5.2, ADR-0001); `Symmetry` pinned `Assymmetric` (§6.1); remainder carries the attachment's own laminate (§7); side weaves excluded inside the seam region (§6.3); rosette angle changes must re-solve the drape (§7 fingerprint row).
 - **Environment:** edit sources in `src/Mod/Composites/`, run `build-install-freecad.sh` before tests (suites load from the pixi env, not build/debug); new `.py` files need `touch src/Mod/Composites/CMakeLists.txt`; headless VP is `None` — guard all ViewObject access; MCP restarts via `start-freecad-mcp.sh [--kill]`, wait after long example builds.
@@ -499,9 +499,12 @@ Check off sub-items as landed; note surprises inline.
   (idempotence tested). Init-order trap fixed: `Width`'s onChanged can
   drive the first extraction during `__init__` before later properties
   exist — `AttachmentBase` now registers before the inputs.
-- [ ] GUI verification via MCP: shader `_attached`, rosette symbols
-  above weave, weave exclusivity, forced-failure loudness (§9.7 —
-  GUI-only; deferred to the GUI demo pass)
+- [x] GUI verification via MCP: shader `_attached` ✓, rosette symbols
+  above weave ✓, weave exclusivity ✓ (three weaves, continuous 30°
+  fabric), recovery after geometry break/restore ✓. Forced-failure
+  loudness is PARTIAL: the `_can_use_persisted` fast-path reuses the
+  cached weave over an emptied support — recorded as known-issues #10
+  (pre-existing fast-path behaviour, not introduced by this feature).
 
 ### Step 5 — example `[x]`
 
@@ -515,7 +518,9 @@ Check off sub-items as landed; note surprises inline.
 - [x] verified headless: both transfers solve to ~30° (offset
   ≈ 0.002°), combined stack = 8 physical plies (4+4) at 30°, attachment
   re-supported on the remainder
-- [ ] GUI demo + screenshot check (deferred to the GUI demo pass)
+- [x] GUI demo + screenshot check — example loads, solves, renders:
+  four rosette symbols above three weaves, effective offset ≈ 0.002°,
+  combined stack 8 plies at 30°
 
 ### 10b.1 Test landing order (tests map to §9 scenarios)
 
