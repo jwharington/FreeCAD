@@ -24,7 +24,8 @@ The shell that stays whole during seam extraction; informally "A side".
 _Avoid_: base, parent, A side (in code and properties)
 
 **Attachment**:
-The shell that is trimmed by seam extraction; informally "B side".
+The second side of a lap joint (informally "B side"); in seam
+extraction it is the shell trimmed into seam region + remainder.
 _Avoid_: flange, secondary, B side (in code and properties)
 
 **Seam region**:

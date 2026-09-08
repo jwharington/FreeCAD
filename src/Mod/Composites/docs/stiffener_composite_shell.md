@@ -110,7 +110,7 @@ Composite::Shell (support panel)     StiffenerCompositeShell        Composite::S
 
 | Property | Type | Constraint |
 |---|---|---|
-| `Support` | link | Composite::Shell with a laminate — the panel side of the joint. (The existing geometry inputs `IntersectSurface` / `Profile` / `MirrorX` / `MirrorY` are inherited unchanged from `StiffenerFP`.) |
+| `Support` | link | The panel side of the joint. In full composite mode it must be a Composite::Shell with a laminate; in geometry-only mode any Part::Feature (§3.4). The geometry inputs `IntersectSurface` / `Profile` / `MirrorX` / `MirrorY` are inherited unchanged from `StiffenerFP`. |
 | `Laminate` | link | `CompositeLaminate` defining the stiffener's own structure (standard Composite::Shell name). |
 | `Rosette` | link | Rosette seeding the stiffener laminate's frame. |
 

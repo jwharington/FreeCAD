@@ -12,7 +12,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — plan complete, implementation not started |
+| **Status** | **Implemented** — steps 1–5 complete, GUI-verified (see onboarding block + §10b) |
 | **Date** | 2026-07-15 |
 | **Related** | `seam-current-analysis.md`, `seam-nextdrape-integration.md`, `seam-nextdrape-implementation.md`, `stiffener-design.md`, `rosette-refactor-plan.md`, [ADR-0001](adr/0001-seam-angle-analysis-symmetric-transfers.md) (symmetric transfer solves), `../CONTEXT.md` (terminology) |
 | **Scope** | Stack combination model only (phase 1). Interleave and taper are specified for direction but out of scope. |

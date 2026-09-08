@@ -136,9 +136,10 @@ two shells whose supports were 500 mm apart still "shared" an edge (both
 snapshots frozen at the origin), so the transfer solve converged against
 phantom geometry.
 
-**Fixed for the transfer path** (`_shape_of` reads `Support.Shape`), but the
-stale `Shape` property itself remains a trap for any other consumer that
-reads `shell.Shape` expecting live geometry.
+**Fixed for the transfer path and seam extraction** (`_shape_of` reads
+`Support.Shape`; the seam extraction extracts from live support
+geometry), but the stale `Shape` property itself remains a trap for any
+other consumer that reads `shell.Shape` expecting live geometry.
 
 **Fix direction:** either refresh `Shape` from `Support.Shape` whenever the
 support fingerprint changes in `execute()`, or deprecate `shell.Shape` in
