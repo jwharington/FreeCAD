@@ -226,3 +226,29 @@ class TestAlignFibreRosetteScenarios(TestFreeCADFP):
         self.doc.recompute()
 
         self.assertIn("Invalid", align.State)
+
+    def test_command_path_wires_the_shell_rosette(self):
+        """The GUI command / constructor-only path must wire the align
+        rosette as the shell's Rosette (known handoff follow-up): without
+        the wiring the solved angle steers a drape the shell never sees.
+        Note the fixture deliberately does NOT pass rosette= into
+        CompositeShellFP — that was the only thing masking the gap."""
+        from Composites.features.CompositeShell import CompositeShellFP
+
+        plate = self.doc.addObject("Part::Feature", "PlateSupport")
+        plate.Shape = Part.makePlane(100.0, 100.0)
+        shell = self.doc.addObject("Part::FeaturePython", "Shell")
+        CompositeShellFP(shell, support=plate, laminate=self._make_laminate())
+        self.doc.recompute()
+
+        align = self._make_align_fibre_rosette(
+            support=(plate, ["Face1"]), composite_shell=shell
+        )
+        point = self._make_point("Point1", FreeCAD.Vector(60.0, 60.0, 0.0))
+        align.SecondPoint = (point, ["Vertex1"])
+        self.doc.recompute()
+
+        self.assertIs(shell.Rosette, align)
+        self.assertAlmostEqual(float(align.Angle), 45.0, delta=0.5)
+        self.assertNotIn("Invalid", align.State)
+        self.assertNotIn("Invalid", shell.State)

@@ -48,7 +48,9 @@ def build(doc=None, run_solver=False):
     if align.ViewObject is not None:
         ViewProviderAlignFibreRosette(align.ViewObject)
     doc.recompute()
-    shell.Rosette = align
+    # The rosette wires itself as the shell's Rosette when CompositeShell
+    # is linked (AlignFibreRosetteFP._ensure_wired) — the solved angle
+    # steers the drape.
     align.CompositeShell = shell
     doc.recompute()
 

@@ -125,6 +125,19 @@ class AlignFibreRosetteFP(RosetteFP):
             raise RuntimeError(f"rosette alignment failed: {self.solve_error}")
         super().execute(fp)
 
+    def _ensure_wired(self, fp) -> None:
+        """Make the shell use this rosette as its orientation datum.
+
+        The GUI command path (and any constructor-only script) never
+        assigns ``shell.Rosette`` — the solved angle would steer a drape
+        the shell never sees.  Same wiring rule as
+        ``TransferRosetteFP._ensure_wired``; the example's manual wiring
+        was the only thing masking this.
+        """
+        shell = fp.CompositeShell
+        if shell is not None and getattr(shell, "Rosette", None) is not fp:
+            shell.Rosette = fp
+
     def _solve(self, fp):
         """Iteratively solve ``fp.Angle`` so the warp fibre (v=0) passes
         through ``fp.SecondPoint`` on the draped ``fp.CompositeShell``.
@@ -139,6 +152,7 @@ class AlignFibreRosetteFP(RosetteFP):
             raise ValueError("SecondPoint must be set")
 
         self.solve_error = None  # a retry starts clean; _eval re-runs execute
+        self._ensure_wired(fp)
 
         def error_fn(angle: float) -> float:
             vert = _vertex_from_link_sub(fp.SecondPoint)
