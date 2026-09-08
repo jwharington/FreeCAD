@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Draft |
 | **Date** | 2026-07-15 |
-| **Related** | `stiffener-design.md`, `seam_composite_laminate.md` (PRD), `adr/0001-seam-angle-analysis-symmetric-transfers.md`, `../CONTEXT.md` (terminology) |
+| **Related** | `stiffener-design.md`, `seam_composite_laminate.md` (PRD), `adr/0001-seam-angle-analysis-symmetric-transfers.md`, `adr/0002-stiffener-region-split-and-render-ownership.md`, `../CONTEXT.md` (terminology) |
 | **Scope** | Phase 1: stack combination model only, discrete base-row foot. Interleave/taper reuse the seam PRD's reserved models. |
 
 ## Session onboarding
