@@ -77,6 +77,14 @@ _Avoid_: virtual laminate, seam laminate
 
 ## Flagged ambiguities
 
+- **"SeamCompositeShell" vs "SeamCompositeLaminate" / "StiffenerSeamLaminate"**:
+  the seam feature family is canonically **SeamCompositeLaminate** (the
+  combined laminate) carried by a seam shell; the stiffener analogue
+  (PRD `docs/stiffener_seam_laminate.md`) is canonically
+  **StiffenerSeamLaminate**. "SeamCompositeShell" is the user's informal
+  term for the seam-shell-plus-laminate unit — avoid in properties and
+  code.
+
 - **"A side / B side" vs "Master / Attachment"**: resolved — same
   concepts. **Master/Attachment is canonical** (properties, code,
   docs); "A/B" is informal prose shorthand. Note the roles are a
