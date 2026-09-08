@@ -164,25 +164,28 @@ No middle mode ("stiffener laminate, dumb panel"): it would need
 conditional partition logic and serve a speculative case. Partial
 wiring fails loudly, per the contract.
 
-## 4. Combination models
+## 4. Combination models (decided, Q4)
 
-The generic stack machinery is reused unchanged; the enum labels are
-stiffener-specific for clarity, with the mapping noted:
+`SeamCompositeLaminateFP` is reused **unchanged** — generic labels, no
+subclass, no factored base. The wiring makes the roles literal:
 
-| Label | Meaning | Generic mapping |
-|---|---|---|
-| `StackStiffenerOverSupport` (**default**) | stiffener plies above panel plies: bottom→top `P₁…Pₘ, S₁…Sₙ` | `StackAttachmentOverMaster` |
-| `StackSupportOverStiffener` | mirror image | `StackMasterOverAttachment` |
-| `Interleaved`, `Taper` | reserved, raise loudly | as in the seam PRD |
+- `Master` = the support panel shell (stays whole)
+- `Attachment` = the **web shell** (the Composite::Shell child carrying
+  the stiffener's own `Laminate` + `Rosette`)
+- `SeamRegion` = the foot shell
 
-**The default is inverted relative to the seam feature, deliberately.**
-In the seam, the master's plies are laid across the joint (so
-master-over-attachment was the physical default). Here the *stiffener's*
-plies are laid onto the panel — the physical story is
-stiffener-over-support. Keeping the canonical roles (panel = Master by
-the "stays whole" rule) while inverting the default stack keeps the
-model honest; the enum labels say the physical truth instead of the
-role names.
+Every seam invariant validates unchanged against this wiring: both
+Master and Attachment are Composite::Shells; the shared-edge checks pass
+(panel ↔ foot along the base-row edges, web ↔ foot along the fold);
+`_side_layers` reads `Attachment.Laminate` — the stiffener's own
+laminate. Combination machinery is identical.
+
+**The physical default is a wiring choice, not a class difference:** the
+stiffener flow sets `CombinationModel = StackAttachmentOverMaster`
+(stiffener plies over panel plies — the layup story of a stiffener is
+that its plies are laid onto the panel) at creation. The seam's default
+(master over attachment) stays untouched in the seam flow. Reserved
+models (`Interleaved`, `Taper`) raise loudly, as in the seam.
 
 Ply angles are never copied from the nominal stacks: each ply's angle in
 the foot strip is its nominal angle plus its side's solved transfer
@@ -228,13 +231,10 @@ shell.
 |---|---|---|
 | `Laminate` | `App::PropertyLinkGlobal` | the stiffener's own CompositeLaminate |
 | `Rosette` | `App::PropertyLinkGlobal` | the stiffener's frame |
-| `FootLaminate` | `App::PropertyLinkGlobal` (ReadOnly-ish, derived) | the `StiffenerCompositeShell` child — combined material for the foot strip |
-
-`StiffenerCompositeShellFP` reuses `SeamCompositeLaminateFP`'s machinery
-(validation, combination, angle outputs, loud failures) with
-stiffener-side wiring; whether it subclasses directly or the shared parts
-are factored out is an implementation choice — the *contract* is
-identical (see open questions).
+The combined laminate for the foot strip is `SeamCompositeLaminateFP`
+reused unchanged, wired by the stiffener flow and carried by the foot
+shell child (§6.2 / Q4) — reached through the tree claim, not a
+duplicate property link.
 
 ### 6.2 Region split: web shell + foot shell (decided, Q1)
 
@@ -313,7 +313,8 @@ children.
 
 1. Z-stiffener on a plate (0° fabric): the foot shell exists over the
    base-row face; combined thickness `t_stiffener + t_panel`; layer
-   count `n_stiffener + n_panel`; order per `StackStiffenerOverSupport`;
+   count `n_stiffener + n_panel`; order per
+   `StackAttachmentOverMaster` (stiffener over panel);
    per-ply angles equal each side's solved transfer angle at the joint.
 2. Switching to `StackSupportOverStiffener` reverses the two blocks
    without touching per-ply angles.
@@ -387,16 +388,15 @@ shell (the DrapePitch fix must cover the foot shell's fingerprint).
    copied, master→foot seeds the weave — per ADR-0001. The seam PRD's
    §5.2 rationale (remote rosettes, distortion between rosette and edge)
    applies identically here.
-2. **Default stack direction:** `StackStiffenerOverSupport` (stiffener
-   plies over panel plies) is proposed as the physical default — the
-   layup story of a stiffener is that its plies are laid onto the panel.
-   Confirm.
-3. **`StiffenerCompositeShellFP` subclassing vs factoring:** reuse
-   `SeamCompositeLaminateFP` directly with stiffener wiring, or factor
-   the shared machinery (combination, angles, outputs) into a common
-   base and keep two thin subclasses? Recommendation: factor minimally —
-   shared base `SeamCombinedLaminateFP`, two thin subclasses — so the
-   validation invariants (§3.2) can differ cleanly.
+2. **Resolved (Q4):** the physical default is
+   `StackAttachmentOverMaster` — stiffener plies over panel plies — set
+   by the stiffener flow at wiring time, not baked into a class.
+3. **Resolved (Q4):** `SeamCompositeLaminateFP` is reused **unchanged** —
+   no subclass, no factored base, generic Master/Attachment labels. The
+   stiffener flow wires it (Master = panel, Attachment = web shell,
+   `SeamRegion` = foot shell) and sets the physical default at creation.
+   Stiffener-specific knowledge lives in the wiring, per the seam grill's
+   reuse rule.
 4. **The attachment rosette vs the stiffener rosette on the remainder:**
    the panel keeps its own rosette (it drapes the remainder); the
    stiffener keeps `Rosette`. No copies — per the
