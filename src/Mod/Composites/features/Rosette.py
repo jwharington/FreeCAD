@@ -177,8 +177,14 @@ class ViewProviderRosette(VPCompositeBase):
 
         The symbol renders in Coin's deferred pass, which preserves scene
         order: a rosette created before its shell would have its symbol
-        blended over by the shell's weave shader. Appending the node to the
+        blended over by the shell's weave shader. Moving the node to the
         end of the viewer's scene graph puts the symbol on top.
+
+        The node is not necessarily a direct child of the scene graph:
+        rosettes created while a recompute is in flight (e.g. the seam
+        flow's transfer rosettes) get their RootNode nested under a group
+        instead of appended at top level. The node's actual parent is
+        located by traversal and the node re-parented from there.
         """
         import FreeCADGui
 
@@ -187,10 +193,25 @@ class ViewProviderRosette(VPCompositeBase):
             return
         scene = view.getSceneGraph()
         root = self.ViewObject.RootNode
-        try:
-            scene.removeChild(root)
-        except Exception:
-            return  # not a direct child of the scene graph
+
+        def find_parent(node, target):
+            for i in range(node.getNumChildren()):
+                child = node.getChild(i)
+                if child is target:
+                    return node
+                parent = find_parent(child, target)
+                if parent is not None:
+                    return parent
+            return None
+
+        parent = find_parent(scene, root)
+        if parent is None or parent is scene:
+            try:
+                scene.removeChild(root)
+            except Exception:
+                return
+        else:
+            parent.removeChild(root)
         scene.addChild(root)
 
     def _hide_datum_symbology(self):

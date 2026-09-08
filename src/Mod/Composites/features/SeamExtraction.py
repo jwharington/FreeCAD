@@ -12,7 +12,7 @@ from ..tools.seam_extraction import extract_seam
 from ..util.geometry_util import shape_fingerprint
 from .Command import BaseCommand
 from .CompositeShell import CompositeShellFP, is_composite_shell
-from .Rosette import RosetteFP
+from .Rosette import RosetteFP, ViewProviderRosette
 from .SeamCompositeLaminate import SeamCompositeLaminateFP
 from .TransferRosette import (
     AnalysisTransferRosetteFP,
@@ -332,7 +332,9 @@ class SeamShellFP(CompositeShellFP):
         if seam_shell is None:
             seam_shell = doc.addObject("Part::FeaturePython", name)
             SeamGeometryFP(seam_shell, doc)
-            self._hide_object(seam_shell)
+            # The seam shell renders the COMBINED weave on the strip —
+            # it must be visible (unlike the remainder shell, whose
+            # weave is redundant with the re-supported attachment's).
         # The seam strip's narrow dimension is the seam width; the
         # default drape pitch (20 mm) can exceed it, and a lattice that
         # cannot fit one cell across the width fails to drape at most
@@ -377,16 +379,22 @@ class SeamShellFP(CompositeShellFP):
                 SeamGeometryFP(rem_feat, doc)
                 self._hide_object(rem_feat)
 
+            # Update FIRST: it assigns the remainder's Support, which the
+            # remainder rosette needs for its LCS placement (a rosette
+            # without Support resets its LCS to the origin on every
+            # execute and its symbol rebuilds half-updated).
+            rem_laminate = getattr(attachment, "Laminate", None)
+            rem_feat.Proxy.update(rem_feat, remainder, rem_laminate, None)
             self._wire_transfer_rosette_for(
                 doc, fp, attachment, rem_feat, "Remainder"
             )
             rem_rosette = getattr(rem_feat, "Rosette", None)
+            if rem_rosette is not None and rem_feat.Rosette is not rem_rosette:
+                rem_feat.Rosette = rem_rosette
             # The remainder carries the attachment's OWN laminate — the
             # master's plies lie on the attachment only within the
             # overlap (the seam region), so the combined stack never
             # applies here (ADR-0001 boundary decision).
-            rem_laminate = getattr(attachment, "Laminate", None)
-            rem_feat.Proxy.update(rem_feat, remainder, rem_laminate, rem_rosette)
             fp.Remainder = rem_feat
 
             # Weave exclusivity: the seam region carries the combined
@@ -422,11 +430,54 @@ class SeamShellFP(CompositeShellFP):
         name = f"{fp.Name}_{label_suffix}_Rosette"
         ros = doc.getObject(name)
         if ros is None:
+            # Support on the target shell's surface: without it every
+            # rosette execute resets the LCS to the origin and the
+            # symbol rebuilds half-updated.
+            target_support = getattr(target_shell, "Support", None)
+            support_sub = (
+                (target_support, ["Face1"])
+                if target_support is not None
+                else None
+            )
             ros = doc.addObject("Part::FeaturePython", name)
-            RosetteFP(ros)
-            self._hide_object(ros)
+            RosetteFP(ros, support=support_sub)
+            self._attach_rosette_vp(ros, ViewProviderRosette)
         ros.Angle = source_ros.Angle
         target_shell.Rosette = ros
+
+    @staticmethod
+    def _ensure_seam_shell_visible(seam_shell):
+        """Make the seam shell visible after the creating recompute.
+
+        Shells born inside a recompute are left invisible by the GUI's
+        new-object handling — an in-execute `Visibility = True` is
+        overridden when the recompute settles, so the caller must set it
+        after `doc.recompute()` returns (examples and command do).
+        """
+        try:
+            seam_shell.Visibility = True
+        except Exception:
+            pass
+
+    @staticmethod
+    def _attach_rosette_vp(rosette, vp_cls):
+        """Attach a rosette view provider (GUI only) and raise it.
+
+        Script-created rosettes get no ViewProvider otherwise: without
+        one there is no rosette symbol at all — only the LCS datum —
+        and the render-order raise has nothing to move.  The raise puts
+        the symbol above any weave injected later.
+        """
+        vo = getattr(rosette, "ViewObject", None)
+        if vo is None or getattr(vo, "Proxy", None) is not None:
+            return
+        try:
+            vp_cls(vo)
+            proxy = getattr(vo, "Proxy", None)
+            if proxy is not None and hasattr(proxy, "raise_render_order"):
+                proxy.raise_render_order()
+        except Exception:
+            pass
 
     def _seam_support_sub(self, seam_shell):
         """Support link-sub for rosettes placed on the seam surface."""
@@ -450,7 +501,7 @@ class SeamShellFP(CompositeShellFP):
                 master_shell=master,
                 attachment_shell=seam_shell,
             )
-            self._hide_object(transfer)
+            self._attach_rosette_vp(transfer, ViewProviderTransferRosette)
         return transfer
 
     def _wire_seam_analysis_rosette(self, doc, fp, seam_shell, attachment):
@@ -472,7 +523,7 @@ class SeamShellFP(CompositeShellFP):
                 master_shell=attachment,
                 attachment_shell=seam_shell,
             )
-            self._hide_object(rosette)
+            self._attach_rosette_vp(rosette, ViewProviderTransferRosette)
         return rosette
 
     def _build_seam_composite_laminate(
@@ -696,6 +747,9 @@ class CompositeSeamExtractionCommand(BaseCommand):
 
         FreeCADGui.Selection.clearSelection()
         doc.recompute()
+        seam_shell = getattr(obj, "Seam", None)
+        if seam_shell is not None:
+            SeamShellFP._ensure_seam_shell_visible(seam_shell)
 
 
 # Command registration moved to InitGui.py to avoid FreeCADGui dependency

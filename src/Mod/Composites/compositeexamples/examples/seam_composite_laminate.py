@@ -69,6 +69,10 @@ def build(doc=None, run_solver=False):
     doc.recompute()
 
     seam_shell = getattr(seam, "Seam", None)
+    # Visibility must be set after the creating recompute settles (the
+    # GUI leaves recompute-born shells invisible).
+    if seam_shell is not None:
+        SeamShellFP._ensure_seam_shell_visible(seam_shell)
     scl = seam_shell.Laminate if seam_shell is not None else None
     remainder = getattr(seam, "Remainder", None)
 
