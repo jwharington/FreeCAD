@@ -110,23 +110,29 @@ docstrings).
 positions (compare against snapped neighbours, not the ideal lattice), or
 exclude boundary-snapped nodes from the strain histogram.
 
-## 5. Fibre shader not re-attached on document restore
+## 5. Fibre shader not re-attached on document restore — RESOLVED (2026-07-15)
 
 **Symptom:** saving and reopening a document with draped composite shells
-shows smooth grey surfaces — the drapes are valid (backends rebuild and
-solve on recompute) but the Coin shader/injected drape geometry is gone.
-The view provider restore path never re-runs the injection that
-`_configure_shell_visuals` performs at build time.
+showed smooth grey surfaces — the drapes were valid (backends rebuild and
+solve on recompute) but the Coin shader/injected drape geometry was gone.
 
-**Repro:** build `cyl_sphere_seam`, `doc.saveAs(...)`, reopen, recompute.
-Backends report valid; surfaces render untextured.
+**Root cause:** `CompositeShellFP.onDocumentRestored` swaps the
+int-serialised ViewProvider proxy for a fresh instance, but the fresh
+instance's `__init__` does not call `attach()` — so `drape_host` and the
+mode switch were missing and `_inject_drape_geometry` silently bailed at
+its `drape_host is None` guard. The post-restore recompute re-draped
+correctly and then threw the result away. Secondary ordering hazard:
+`updateData`/`load_shader` fired during restore before `attach` bound
+`self.Object`, logging attribute errors.
 
-**Workaround in place:** none for the user; the examples are demonstrated
-from fresh builds.
-
-**Fix direction:** on `ViewProviderCompositeShell.attach` (or after the
-first successful post-restore execute), re-run the shader attach + drape
-geometry injection, guarded so it does not double-inject in the build path.
+**Fix:** `_inject_drape_geometry` re-attaches the proxy (idempotent
+`attach`) when the drape host is missing, so the injection has its scene
+node; `reload_shader`/`load_shader` no-op until `attach` has run.
+Verified by the register's repro (seam and stiffener examples:
+save → close → reopen → recompute; shader `_attached`, drape host
+populated, weave rendered). Regression test:
+`test_g7_persistence.test_seam_example_shells_reattach_shader_after_reload`
+(GUI-gated, same harness as the G7 test).
 
 ## 6. `CompositeShell.Shape` is a stale snapshot of the support
 

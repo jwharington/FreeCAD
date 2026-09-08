@@ -135,5 +135,53 @@ class TestG7Persistence(unittest.TestCase):
         )
 
 
+    def test_seam_example_shells_reattach_shader_after_reload(self):
+        """Known-issue #5 regression: shells created mid-recompute by the
+        seam flow lose their ViewProvider scene graph on restore (the
+        fresh proxy never runs attach), and the post-restore drape
+        injection silently bailed — reopened documents showed bare
+        surfaces. The injection now re-attaches the proxy first."""
+        if not getattr(FreeCAD, "GuiUp", False):
+            self.skipTest("GUI not available — shader/persistence needs MCP/GUI mode")
+
+        from Composites.compositeexamples.examples import seam_composite_laminate
+
+        result = seam_composite_laminate.build(doc=None, run_solver=False)
+        doc = result["doc"]
+        doc.recompute()
+        names = [
+            result["master_shell"].Name,
+            result["attachment_shell"].Name,
+            result["seam_shell"].Name,
+        ]
+        before = {name: _shell_state(doc.getObject(name)) for name in names}
+        for name, state in before.items():
+            self.assertTrue(state["shader_attached"], f"{name}: shader attached before save")
+
+        path = os.path.join(tempfile.gettempdir(), "ki5_seam_restore.FCStd")
+        doc.saveAs(path)
+        FreeCAD.closeDocument(doc.Name)
+
+        reopened = FreeCAD.openDocument(path)
+        reopened.recompute()
+        for name in names:
+            shell = reopened.getObject(name)
+            self.assertIsNotNone(shell, f"{name} must reload")
+            state = _shell_state(shell)
+            self.assertTrue(state["DrapeValid"], f"{name}: drape valid after reload")
+            self.assertTrue(
+                state.get("drape_host_children", 0) > 0,
+                f"{name}: drape host must have scene-graph children after reload",
+            )
+            self.assertTrue(
+                state["shader_attached"],
+                f"{name}: shader must re-attach after reload (known-issue #5)",
+            )
+            self.assertEqual(
+                state["shader_coin_geo"], "SupportSurface",
+                f"{name}: shader must bind the support surface after reload",
+            )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

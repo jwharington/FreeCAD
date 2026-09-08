@@ -491,6 +491,11 @@ class ViewProviderCompositeShell:
                 vp.raise_render_order()
 
     def reload_shader(self):
+        if not hasattr(self, "Object"):
+            # Restore ordering: updateData can fire before attach() has run,
+            # so there is no scene graph to reload into — the post-restore
+            # drape injection loads the shader once the drape host exists.
+            return
         if getattr(self, "_reloading", False):
             return
         self._reloading = True
@@ -609,6 +614,10 @@ class ViewProviderCompositeShell:
             if self.Active:
                 return
             if hasattr(self, "grid_shader") and self.grid_shader and self.grid_shader._attached:
+                return
+            if not hasattr(self, "Object"):
+                # Restore ordering: no scene graph bound yet — the post-
+                # restore drape injection loads the shader later.
                 return
             vobj = self.Object
             obj = vobj.Proxy

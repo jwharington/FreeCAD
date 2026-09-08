@@ -296,6 +296,23 @@ class CompositeShellFP(CompositeBaseFP):
                     break
         if not (vp and hasattr(vp, "Proxy")):
             return
+        proxy = getattr(vp, "Proxy", None)
+        if not hasattr(proxy, "drape_host"):
+            # Document restore can leave the ViewProvider proxy without its
+            # scene-graph state: CompositeShellFP.onDocumentRestored swaps an
+            # int-serialised proxy for a fresh instance whose __init__ does
+            # not call attach(), so drape_host and the mode switch are
+            # missing and this injection would silently bail — the reopened
+            # document then shows bare surfaces (known-issue #5). attach is
+            # idempotent; run it so the injection has its host.
+            if isinstance(proxy, int) or proxy is None:
+                proxy = ViewProviderCompositeShell(vp)
+                vp.Proxy = proxy
+            if hasattr(proxy, "attach"):
+                try:
+                    proxy.attach(vp)
+                except Exception:
+                    pass
         drape_host = getattr(vp.Proxy, "drape_host", None)
         if drape_host is None:
             return
