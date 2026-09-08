@@ -10,6 +10,22 @@ if TYPE_CHECKING:
 import hashlib
 
 
+def live_support_shape(shell):
+    """The shell's live mould-surface geometry (known-issue #6).
+
+    A draped shell's own ``Shape`` is a cached snapshot: it refreshes only
+    when the shell re-executes, so a consumer reading it during another
+    object's execute — or without a recompute — can see geometry that no
+    longer matches the linked support.  The support's shape is
+    authoritative for geometry queries; fall back to the snapshot only
+    when no support link exists.
+    """
+    support = getattr(shell, "Support", None)
+    if support is not None and hasattr(support, "Shape"):
+        return support.Shape
+    return shell.Shape
+
+
 def shape_fingerprint(shape) -> str:
     """Compute a content hash of a FreeCAD shape.
 

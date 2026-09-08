@@ -221,8 +221,13 @@ class CompositeShellFP(CompositeBaseFP):
         if not fp.Support:
             return
         if not fp.Laminate:
-            # No laminate — fall back to the support shape.
+            # No laminate — fall back to the support shape.  The Placement
+            # must be synced too: a bare Shape assignment stores the
+            # geometry in its own coordinates but reads back with the
+            # shell's own (identity) placement, silently dropping the
+            # support's placement move (known-issue #6).
             fp.Shape = fp.Support.Shape
+            fp.Placement = fp.Support.Placement
             return
 
         # ── In-memory fast-path: skip when the live backend cache matches ──
@@ -247,7 +252,10 @@ class CompositeShellFP(CompositeBaseFP):
         # ── Full solve — run synchronously ─────────────────────────
         _profiler('drape_solve')
         self._diag(fp, "running drape solve")
+        # Mirror the support (shape + placement — see the no-laminate
+        # branch above for why the placement sync matters).
         fp.Shape = fp.Support.Shape
+        fp.Placement = fp.Support.Placement
         result = self._run_drape_sync(fp, get_lcs())
         _profiler('drape_solve')
         if isinstance(result, Exception):

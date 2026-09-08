@@ -143,22 +143,31 @@ populated, weave rendered). Regression test:
 `test_g7_persistence.test_seam_example_shells_reattach_shader_after_reload`
 (GUI-gated, same harness as the G7 test).
 
-## 6. `CompositeShell.Shape` is a stale snapshot of the support
+## 6. `CompositeShell.Shape` does not track a moved support — RESOLVED (2026-07-15)
 
-**Symptom:** the shell feature's `Shape` does not track a moved support.
+**Symptom:** the shell feature's `Shape` did not track a moved support.
 `TransferRosette._shared_edge` compared the two shells' `Shape` snapshots:
 two shells whose supports were 500 mm apart still "shared" an edge (both
 snapshots frozen at the origin), so the transfer solve converged against
 phantom geometry.
 
-**Fixed for the transfer path and seam extraction** (`_shape_of` reads
-`Support.Shape`; the seam extraction extracts from live support
-geometry), but the stale `Shape` property itself remains a trap for any
-other consumer that reads `shell.Shape` expecting live geometry.
+**Root cause (found 2026-07-15, deeper than "stale snapshot"):** the
+execute-time mirror `fp.Shape = fp.Support.Shape` **silently drops the
+support's placement** — a bare Shape assignment on a Part::FeaturePython
+stores the geometry in its own coordinates and reads back with the
+shell's own (identity) placement applied. Supports moved via
+`Placement` therefore produced a shell `Shape` at the old position even
+after a recompute; in-place geometry edits always looked correct, which
+hid the bug. Verified with a minimal FeaturePython probe (assignment
+loses the location; shape+placement sync preserves it).
 
-**Fix direction:** either refresh `Shape` from `Support.Shape` whenever the
-support fingerprint changes in `execute()`, or deprecate `shell.Shape` in
-favour of `shell.Support.Shape` for geometry queries.
+**Fix:** `CompositeShellFP.execute` syncs `fp.Placement =
+fp.Support.Placement` at both mirror sites (no-laminate fallback and the
+full-solve branch), and geometry consumers read through
+`util.geometry_util.live_support_shape(shell)` (the `_shape_of` rule,
+now shared): `TransferRosette._shape_of` delegates to it, and
+`tools/fibre.py`'s fibre-length analysis reads live support geometry.
+Regression test: `test_composite_shell.test_live_support_shape_tracks_moved_support`.
 
 ## 7. Fallback drape seed is a naive bounding-box clamp
 

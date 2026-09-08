@@ -40,3 +40,33 @@ class TestCompositeShellFP(TestFreeCADFP):
         laminate = self._create_laminate()
         shell.Laminate = laminate
         self.assertIs(shell.Laminate, laminate)
+    def test_live_support_shape_tracks_moved_support(self):
+        """Known-issue #6: geometry queries must read the live support, not
+        the shell's cached Shape snapshot."""
+        import FreeCAD
+        import Part
+
+        from Composites.features.CompositeShell import CompositeShellFP
+        from Composites.util.geometry_util import live_support_shape
+
+        support = self.doc.addObject("Part::Feature", "Support")
+        support.Shape = Part.makePlane(100.0, 100.0)
+        shell = self.doc.addObject("Part::FeaturePython", "Shell")
+        CompositeShellFP(shell, support)
+        self.doc.recompute()
+        self.assertEqual(
+            live_support_shape(shell).BoundBox.ZMax,
+            support.Shape.BoundBox.ZMax,
+        )
+
+        # Move the support WITHOUT recomputing: the shell's own Shape is
+        # still the pre-move snapshot, but the live query must track.
+        support.Placement = FreeCAD.Placement(
+            FreeCAD.Vector(0.0, 0.0, 40.0), FreeCAD.Rotation()
+        )
+        self.assertLess(shell.Shape.BoundBox.ZMax, 39.0)
+        self.assertGreater(live_support_shape(shell).BoundBox.ZMax, 39.0)
+
+        # After a recompute the snapshot catches up.
+        self.doc.recompute()
+        self.assertGreater(shell.Shape.BoundBox.ZMax, 39.0)

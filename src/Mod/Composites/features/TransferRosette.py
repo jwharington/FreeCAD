@@ -334,12 +334,12 @@ class TransferRosetteFP(RosetteFP):
 
         The shell feature's own ``Shape`` is a cached snapshot that does not
         necessarily track a moved support; the support's shape is the
-        authoritative geometry for shared-edge discovery.
+        authoritative geometry for shared-edge discovery (delegates to the
+        shared helper, known-issue #6).
         """
-        support = getattr(shell, "Support", None)
-        if support is not None:
-            return support.Shape
-        return shell.Shape
+        from ..util.geometry_util import live_support_shape
+
+        return live_support_shape(shell)
 
     @staticmethod
     def _shared_edge(master_shape, attachment_shape):

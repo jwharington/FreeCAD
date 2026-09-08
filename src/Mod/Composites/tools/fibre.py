@@ -6,6 +6,7 @@ import Part
 from FreeCAD import Vector
 
 from ..util.bom_util import get_layers_fibre
+from ..util.geometry_util import live_support_shape
 
 
 @dataclass
@@ -115,7 +116,9 @@ def make_fibre_length_analysis(composite_shell, n_strips: int = 20):
         boundaries = composite_shell.Proxy.get_boundaries(orientation)
         if not boundaries:
             continue
-        surface = get_surface(boundaries, composite_shell.Shape)
+        # Live support geometry, not the shell's cached Shape snapshot
+        # (known-issue #6): the projection must track a moved support.
+        surface = get_surface(boundaries, live_support_shape(composite_shell))
 
         # chop into pieces
         shape = make_strips(surface, n_strips)
