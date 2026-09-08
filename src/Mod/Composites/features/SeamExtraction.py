@@ -261,6 +261,20 @@ class SeamShellFP(CompositeShellFP):
             locked=True,
         ).Attachment = attachment
 
+        # Original attachment support, captured before the attachment is
+        # re-supported on the remainder.  Extraction must keep using this
+        # geometry: once the attachment shell is re-supported, its
+        # Support.Shape is the remainder and re-extracting from it would
+        # be garbage.  Registered BEFORE the inputs: Width's onChanged
+        # can drive the first extraction during __init__, and the
+        # remainder block must see this property already in place.
+        obj.addProperty(
+            "App::PropertyLinkGlobal",
+            "AttachmentBase",
+            "References",
+            "Original attachment support (captured pre-seam)",
+        )
+
         obj.addProperty(
             "App::PropertyLength",
             "Width",
@@ -374,6 +388,20 @@ class SeamShellFP(CompositeShellFP):
             rem_laminate = getattr(attachment, "Laminate", None)
             rem_feat.Proxy.update(rem_feat, remainder, rem_laminate, rem_rosette)
             fp.Remainder = rem_feat
+
+            # Weave exclusivity: the seam region carries the combined
+            # stack, so the attachment's plies exist only on the
+            # remainder.  Re-supporting the attachment shell on the
+            # remainder geometry makes its weave exclusive of the seam
+            # region by construction (no render-path clipping needed).
+            # The pre-seam geometry is preserved in AttachmentBase and
+            # drives future extractions.
+            if "AttachmentBase" in fp.PropertiesList and \
+                    getattr(fp, "AttachmentBase", None) is None:
+                fp.AttachmentBase = attachment.Support
+            if "AttachmentBase" in fp.PropertiesList and \
+                    attachment.Support is not rem_feat.Support:
+                attachment.Support = rem_feat.Support
 
         return seam_shell
 
@@ -508,12 +536,18 @@ class SeamShellFP(CompositeShellFP):
         attachment = fp.Attachment
         width = fp.Width
         parts = []
+        attachment_base = getattr(fp, "AttachmentBase", None)
         for shell in (master, attachment):
             if shell is None:
                 parts.append("None")
                 continue
             parts.append(getattr(shell, "Name", ""))
-            support = getattr(shell, "Support", None)
+            # The attachment's extraction input is its captured base
+            # geometry, not the re-pointed (remainder) support.
+            if shell is attachment and attachment_base is not None:
+                support = attachment_base
+            else:
+                support = getattr(shell, "Support", None)
             shape = getattr(support, "Shape", None)
             if shape is not None:
                 try:
@@ -549,10 +583,14 @@ class SeamShellFP(CompositeShellFP):
 
             # Extract from the live SUPPORT geometry: a draped shell's
             # own .Shape is the drape output, not the mould surface
-            # (known-issues #6 stale-shape trap).
+            # (known-issues #6 stale-shape trap).  The attachment side
+            # uses the captured base geometry — after the first
+            # extraction the attachment is re-supported on the
+            # remainder, which must never be re-extracted.
+            attachment_src = getattr(fp, "AttachmentBase", None) or attachment
             result = extract_seam(
                 TransferRosetteFP._shape_of(master),
-                TransferRosetteFP._shape_of(attachment),
+                TransferRosetteFP._shape_of(attachment_src),
                 float(fp.Width),
             )
             if not result.get("success"):

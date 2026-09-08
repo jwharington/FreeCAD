@@ -339,6 +339,40 @@ class TestSeamCompositeLaminate(TestFreeCADFP):
         for layer in model.layers:
             self.assertAlmostEqual(layer.orientation % 180.0, 30.0, delta=2.0)
 
+    def test_attachment_resupported_on_remainder(self):
+        """Weave exclusivity: the attachment is re-supported on the
+        remainder — its weave cannot overlap the seam region."""
+        master, attachment = self._make_offset_pair()
+        original_area = attachment.Support.Shape.Area
+        seam_x = self._make_seam_extraction(master, attachment)
+        remainder = seam_x.Remainder
+        self.assertIsNotNone(remainder)
+        self.assertIs(attachment.Support, remainder.Support)
+        # the remainder is strictly smaller than the original plate
+        self.assertLess(attachment.Support.Shape.Area, original_area)
+        # and the pipeline still validates
+        scl = seam_x.Seam.Laminate
+        self.assertNotIn("Invalid", scl.State)
+
+    def test_extraction_idempotent_after_resupport(self):
+        """A second recompute must not re-extract from the re-pointed
+        (remainder) support — the captured base geometry drives it."""
+        master, attachment = self._make_offset_pair()
+        seam_x = self._make_seam_extraction(master, attachment)
+        seam_shape_1 = seam_x.Seam.Support.Shape
+        self.assertIsNotNone(seam_x.AttachmentBase)
+        self.doc.recompute()
+        seam_shape_2 = seam_x.Seam.Support.Shape
+        # same geometry after the second pass (content fingerprint stable)
+        self.assertEqual(
+            len(seam_shape_1.Faces), len(seam_shape_2.Faces)
+        )
+        self.assertAlmostEqual(
+            seam_shape_1.Area, seam_shape_2.Area, places=6
+        )
+        scl = seam_x.Seam.Laminate
+        self.assertNotIn("Invalid", scl.State)
+
     def test_support_move_updates_seam_angles(self):
         master, attachment = self._make_offset_pair()
         seam_x = self._make_seam_extraction(master, attachment)
