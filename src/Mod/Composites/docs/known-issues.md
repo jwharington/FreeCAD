@@ -169,23 +169,28 @@ now shared): `TransferRosette._shape_of` delegates to it, and
 `tools/fibre.py`'s fibre-length analysis reads live support geometry.
 Regression test: `test_composite_shell.test_live_support_shape_tracks_moved_support`.
 
-## 7. Fallback drape seed is a naive bounding-box clamp
+## 7. Fallback drape seed is a naive bounding-box clamp — RESOLVED (2026-07-15)
 
-**Symptom:** a composite shell with **no rosette** seeds its drape by
+**Symptom:** a composite shell with **no rosette** seeded its drape by
 projecting the support's centre of mass onto the surface via a
 bounding-box-face clamp (`_project_point_to_surface` in
 `drape_backend_nextdrape.py`). For closed surfaces the COM lies on the axis
-and the projection degenerates: the seed lands off-surface and the solve
-fails with `solver_failure`. This is why the original `transfer_rosette`
+and the clamp degenerated: the seed landed off-surface and the solve
+failed with `solver_failure`. This is why the original `transfer_rosette`
 example's cylinder never rendered a weave.
 
-**Workaround in place:** all examples wire a rosette (which is also the
-compositing-correct modelling). The transferred-cylinder case additionally
-documents that an attachment shell must drape from its transfer rosette.
+**Fix:** `_project_point_to_surface` now uses a true nearest-point
+projection (`shape.distToShape` against a vertex) — the seed is
+guaranteed to lie ON the shell, which is exactly what the closed-surface
+degenerate case needed (the clamp's bbox face is not the shell).
+Regression tests in `test_composite_shell.py`
+(`TestRosettelessFallbackSeed`): the projected seed lies on-surface, and
+a rosette-less open cylinder drapes from the COM seed.
 
-**Fix direction:** replace the bbox clamp with a true nearest-point
-projection (`shape.distToShape` / `Surface.projectPoint`), and fail loudly
-when the projected seed is further than a tolerance from the surface.
+**Scope note:** a *closed* cylinder still fails the march itself with
+the projected on-surface seed — that is the wrap-around lattice-closing
+problem (issue #3), not the seed; the rosette remains the
+compositing-correct modelling path.
 
 ## 8. GUI drape performance during transfer solving — RESOLVED (2026-07-15, frame solve)
 

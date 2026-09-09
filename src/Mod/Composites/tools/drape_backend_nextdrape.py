@@ -371,47 +371,27 @@ class NextDrapeBackend(DrapeBackend):
     # ── Internal helpers ─────────────────────────────────────────
 
     def _project_point_to_surface(self, point) -> list:
-        """Project a point onto the shape surface.
+        """Project a point onto the shape surface (true nearest point).
 
-        When the center of mass lies inside a solid (e.g. a cylinder),
-        projecting it onto the surface ensures the draper seed lands
-        on valid geometry rather than failing with NonDrapable.
+        When the centre of mass lies inside a closed surface (e.g. on a
+        cylinder's axis), projecting it onto the surface ensures the
+        draper seed lands on valid geometry rather than failing with
+        NonDrapable.
 
-        Strategy: push the point to the nearest bounding-box face by
-        clamping each coordinate independently and measuring the
-        resulting displacement.  Pick the axis that yields the
-        shortest push.
+        Strategy: `distToShape` against a vertex — the solution point is
+        guaranteed to lie ON the shape.  This replaces a bounding-box
+        clamp that pushed the point to the nearest bbox face: on a
+        closed surface the clamp landed off-surface (a bbox face is not
+        the shell) and the solve failed with `solver_failure`
+        (known-issue #7).
         """
+        import Part
+
         shape = self._shape
-        bbox = shape.BoundBox
-
-        px, py, pz = point
-        candidates: list[tuple[float, list[float]]] = []
-
-        # Push along X
-        cx_high = max(px, bbox.XMax) if px < bbox.XMax else min(px, bbox.XMin)
-        cx_low = min(px, bbox.XMin) if px > bbox.XMin else max(px, bbox.XMax)
-        for cx_val in (cx_high, cx_low):
-            d = abs(cx_val - px)
-            candidates.append((d, [cx_val, py, pz]))
-
-        # Push along Y
-        cy_high = max(py, bbox.YMax) if py < bbox.YMax else min(py, bbox.YMin)
-        cy_low = min(py, bbox.YMin) if py > bbox.YMin else max(py, bbox.YMax)
-        for cy_val in (cy_high, cy_low):
-            d = abs(cy_val - py)
-            candidates.append((d, [px, cy_val, pz]))
-
-        # Push along Z
-        cz_high = max(pz, bbox.ZMax) if pz < bbox.ZMax else min(pz, bbox.ZMin)
-        cz_low = min(pz, bbox.ZMin) if pz > bbox.ZMin else max(pz, bbox.ZMax)
-        for cz_val in (cz_high, cz_low):
-            d = abs(cz_val - pz)
-            candidates.append((d, [px, py, cz_val]))
-
-        # Return the candidate with the shortest push
-        candidates.sort(key=lambda c: c[0])
-        return candidates[0][1] if candidates else point
+        vertex = Part.Vertex(point[0], point[1], point[2])
+        _dist, points, _info = shape.distToShape(vertex)
+        nearest = points[0][0]
+        return [nearest.x, nearest.y, nearest.z]
 
     def _build_seed(self) -> dict:
         """Build nextdrape SeedInput dict.
