@@ -75,6 +75,105 @@ class TestCompositeShellFP(TestFreeCADFP):
         self.assertGreater(shell.Shape.BoundBox.ZMax, 39.0)
 
 
+class TestFrameSeedValidation(TestFreeCADFP):
+    """Known-issue #11: the drape seed must lie on the support surface.
+
+    ``_build_seed`` used to treat any object carrying a ``Placement`` as
+    a fibre frame.  An unplaced rosette LCS (the shell re-drapes mid
+    transfer wiring, before the transfer's own LCS has been placed) and
+    the rosette-less fallback of the support feature itself both present
+    the identity placement — an origin seed that lands inside the
+    geometry and fails the solve deterministically.  Whether the failure
+    was healed depended on recompute ordering, which presented as the
+    intermittent fine-pitch ``solver_failure`` of the seam example.
+    """
+
+    ON_SURFACE_TOL = 1e-4
+
+    def _cap_face(self):
+        from Composites.compositeexamples.examples.cyl_sphere_seam import (
+            _spherical_cap,
+        )
+
+        return _spherical_cap()
+
+    def _assert_seed_on_surface(self, backend):
+        import Part
+
+        seed = backend._build_seed()
+        point = seed["point"]
+        vertex = Part.Vertex(*point)
+        dist = backend._shape.distToShape(vertex)[0]
+        self.assertLess(
+            dist,
+            self.ON_SURFACE_TOL,
+            f"seed {point} lies {dist} off the support surface",
+        )
+        return seed
+
+    def test_unplaced_lcs_frame_falls_back_to_com_projection(self):
+        """An identity-placement LCS is not a frame: fall back to the
+        known-issue #7 COM projection instead of seeding at the origin."""
+        from Composites.tools.drape_backend_nextdrape import NextDrapeBackend
+
+        cap = self._cap_face()
+
+        class _UnplacedLcs:
+            Placement = FreeCAD.Placement()  # identity — never executed
+
+        backend = NextDrapeBackend(mesh=None, lcs=_UnplacedLcs(), shape=cap)
+        self._assert_seed_on_surface(backend)
+
+    def test_support_as_lcs_falls_back_to_com_projection(self):
+        """The rosette-less path hands the support feature itself as the
+        'lcs' (CompositeShell.get_lcs fallback); its identity placement
+        must not become an origin seed either."""
+        from Composites.tools.drape_backend_nextdrape import NextDrapeBackend
+
+        cap = self._cap_face()
+        support = self.doc.addObject("Part::Feature", "CapSupport")
+        support.Shape = cap
+        backend = NextDrapeBackend(mesh=None, lcs=support, shape=cap)
+        self._assert_seed_on_surface(backend)
+
+    def test_unplaced_lcs_still_solves(self):
+        """End to end: with the frame rejected, the fallback seed drapes
+        the cap instead of failing with solver_failure."""
+        from Composites.tools.drape_backend_nextdrape import NextDrapeBackend
+
+        cap = self._cap_face()
+
+        class _UnplacedLcs:
+            Placement = FreeCAD.Placement()
+
+        backend = NextDrapeBackend(mesh=None, lcs=_UnplacedLcs(), shape=cap)
+        result = backend._run_solve()
+        self.assertTrue(
+            result.get("success"), f"solve failed: {result.get('error')}"
+        )
+
+    def test_placed_rosette_frame_is_used(self):
+        """A genuine rosette frame (LCS placed by RosetteFP, origin on the
+        face) must still seed the drape — the validation must not reject
+        real frames."""
+        from Composites.features.Rosette import _frame_rotation
+        from Composites.tools.drape_backend_nextdrape import NextDrapeBackend
+
+        cap = self._cap_face()
+        position, rotation = _frame_rotation(cap, 41.0)
+
+        class _PlacedLcs:
+            Placement = FreeCAD.Placement(position, rotation)
+
+        backend = NextDrapeBackend(mesh=None, lcs=_PlacedLcs(), shape=cap)
+        seed = self._assert_seed_on_surface(backend)
+        self.assertEqual(seed["point"], [position.x, position.y, position.z])
+        warp = rotation.multVec(FreeCAD.Vector(1.0, 0.0, 0.0))
+        self.assertEqual(
+            seed["warp_direction"], [warp.x, warp.y, warp.z]
+        )
+
+
 class TestRosettelessFallbackSeed(TestFreeCADFP):
     """Known-issue #7: a rosette-less shell seeds its drape from the
     support's centre of mass projected onto the surface.  On a closed

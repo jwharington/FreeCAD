@@ -39,10 +39,11 @@ SHELL_HEIGHT = 80.0
 SWEEP_DEG = 60.0  # azimuthal width of both panels
 CAP_LATITUDE_DEG = 75.0  # cap stops short of the pole (polar opening)
 FABRIC_OFFSET_ANGLE = 30.0  # fabric laid at 30 degrees to the panel edges
-DRAPE_PITCH = 2.5  # stable pitch; the cap keeps a small seam-edge gap —
-# nextdrape boundary snapping drops quads at some grid alignments
-# (solver follow-up). Finer pitches pass quality but hit a flaky
-# solver_failure at this size.
+DRAPE_PITCH = 2.5  # finer pitches also drape; the cap keeps a small
+# seam-edge gap at some grid alignments (nextdrape boundary snapping,
+# known-issue #1 residual). The fine-pitch solver_failure that used to
+# flake here was a FreeCAD-side bad-seed transient, now fixed
+# (known-issue #11).
 
 
 def _cylinder_panel():

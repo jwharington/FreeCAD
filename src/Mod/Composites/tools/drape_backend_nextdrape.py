@@ -393,46 +393,73 @@ class NextDrapeBackend(DrapeBackend):
         nearest = points[0][0]
         return [nearest.x, nearest.y, nearest.z]
 
+    # A frame placed by RosetteFP sits exactly on its face (parametric
+    # centre, vertex, or edge midpoint); anything farther off is not a
+    # placed frame.
+    _ON_SURFACE_TOL = 1e-4
+
+    def _point_on_shape(self, point) -> bool:
+        """Whether the point lies on the support surface."""
+        import Part
+
+        if not hasattr(self._shape, "distToShape"):
+            return True
+        vertex = Part.Vertex(point[0], point[1], point[2])
+        dist, _points, _info = self._shape.distToShape(vertex)
+        return dist <= self._ON_SURFACE_TOL
+
+    def _frame_seed(self):
+        """(point, warp_direction) from the LCS frame, or None.
+
+        The frame is only trusted when its origin lies ON the support:
+        an object that merely carries a Placement is not a fibre frame.
+        An unplaced rosette LCS (the shell re-drapes mid transfer wiring,
+        before the transfer's own LCS has been placed) and the
+        rosette-less support fallback both present the identity
+        placement — seeding at the origin failed the solve whenever the
+        geometry did not contain it (known-issue #11), healed only by
+        whatever recompute happened to follow.
+        """
+        if not (self._lcs is not None and hasattr(self._lcs, "Placement")):
+            return None
+        base = self._lcs.Placement.Base
+        point = [base.x, base.y, base.z]
+        if not self._point_on_shape(point):
+            return None
+        # Use the LCS X-axis as the warp direction (fiber direction).
+        # The Rosette LCS is oriented with X along fibers, Z normal
+        # to the surface.  Transform the standard X vector by the
+        # LCS rotation to get the world-space warp direction.
+        from FreeCAD import Vector
+
+        rot = self._lcs.Placement.Rotation
+        axis = rot.multVec(Vector(1, 0, 0))
+        return point, [axis.x, axis.y, axis.z]
+
+    def _com_seed(self):
+        """(point, warp_direction) from the centre of mass projected onto
+        the surface — the rosette-less fallback seed (known-issue #7)."""
+        point = [0.0, 0.0, 0.0]
+        if hasattr(self._shape, "CenterOfMass"):
+            com = self._shape.CenterOfMass
+            point = self._project_point_to_surface(com)
+        return point, [1.0, 0.0, 0.0]
+
     def _build_seed(self) -> dict:
         """Build nextdrape SeedInput dict.
 
-        Uses the Rosette LCS (LocalCoordinateSystem) to position the
-        seed point and orient the warp direction.  Falls back to the
-        shape center-of-mass projected onto the surface when no LCS
-        is available.
+        Seed point and warp direction come from the same source: the
+        mesh when it carries an explicit seed, the rosette LCS frame
+        when it carries a real, on-surface frame, or the shape
+        centre-of-mass projection otherwise.
         """
         mesh = self._mesh
-        shape = self._shape
-
-        # ── Seed point ───────────────────────────────────────────
         if hasattr(mesh, "seed_point") and mesh.seed_point is not None:
-            point = list(mesh.seed_point)
-        elif self._lcs and hasattr(self._lcs, "Placement"):
-            # Use the LCS placement base as the seed point
-            base = self._lcs.Placement.Base
-            point = [base.x, base.y, base.z]
-        elif hasattr(shape, "CenterOfMass"):
-            com = shape.CenterOfMass
-            point = self._project_point_to_surface(com)
-        else:
-            point = [0.0, 0.0, 0.0]
-
-        # ── Warp direction ───────────────────────────────────────
-        if hasattr(mesh, "warp_direction") and mesh.warp_direction is not None:
-            warp_dir = list(mesh.warp_direction)
-        elif self._lcs and hasattr(self._lcs, "Placement"):
-            # Use the LCS X-axis as the warp direction (fiber direction).
-            # The Rosette LCS is oriented with X along fibers, Z normal
-            # to the surface.  Transform the standard X vector by the
-            # LCS rotation to get the world-space warp direction.
-            from FreeCAD import Vector
-
-            rot = self._lcs.Placement.Rotation
-            axis = rot.multVec(Vector(1, 0, 0))
-            warp_dir = [axis.x, axis.y, axis.z]
-        else:
             warp_dir = [1.0, 0.0, 0.0]
-
+            if hasattr(mesh, "warp_direction") and mesh.warp_direction is not None:
+                warp_dir = list(mesh.warp_direction)
+            return {"point": list(mesh.seed_point), "warp_direction": warp_dir}
+        point, warp_dir = self._frame_seed() or self._com_seed()
         return {"point": point, "warp_direction": warp_dir}
 
     def _build_params(self) -> dict:

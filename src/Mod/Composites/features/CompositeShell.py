@@ -580,7 +580,14 @@ class CompositeShellFP(CompositeBaseFP):
             case "Laminate":
                 fp.recompute()
             case "Rosette":
-                fp.recompute()
+                # Defer to the next document recompute. This fires mid
+                # transfer wiring, before the new rosette's LCS has been
+                # placed — draping now would seed from an identity frame
+                # (known-issue #11) and waste a full solve that the
+                # wiring flow's own doc.recompute() redoes correctly.
+                # enforceRecompute marks mustExecute so the NEXT document
+                # recompute re-drapes with the wired rosette.
+                fp.enforceRecompute()
             case "DrapePitch" | "DrapeCuts":
                 # The recompute is deferred, but a bare touch() would
                 # never fire: doc.recompute() does not re-execute an

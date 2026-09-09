@@ -121,6 +121,47 @@ class TestFailurePostprocess(TestCompositeExamplesBase):
         self.assertEqual(report["hotspots"][0]["element_id"], 2)
 
 
+class TestSeamExampleBuildSolves(TestCompositeExamplesBase):
+    """Known-issue #11: the seam example's transfer wiring used to drape
+    the cap shell while the transfer rosette's LCS was still unplaced —
+    an origin seed that failed the solve deterministically and was only
+    healed by a later recompute.  The build must issue zero failed
+    solves, whatever the recompute ordering heals afterwards."""
+
+    save_fcstd = False
+
+    def test_seam_example_build_issues_no_failed_solves(self):
+        from Composites.compositeexamples.examples import cyl_sphere_seam
+        from Composites.tools import drape_backend_nextdrape
+
+        failures = []
+        original = drape_backend_nextdrape.NextDrapeBackend._run_solve
+
+        def _recording_run_solve(backend):
+            result = original(backend)
+            if not result.get("success"):
+                failures.append(result.get("error", "solve failed"))
+            return result
+
+        drape_backend_nextdrape.NextDrapeBackend._run_solve = (
+            _recording_run_solve
+        )
+        try:
+            result = cyl_sphere_seam.build(doc=None)
+        finally:
+            drape_backend_nextdrape.NextDrapeBackend._run_solve = original
+
+        self._saved_doc = result.get("doc")
+        self.assertEqual(
+            failures,
+            [],
+            f"example build issued {len(failures)} failed drape solve(s): "
+            f"{failures}",
+        )
+        self.assertTrue(result["cap_shell"].DrapeValid)
+        self.assertTrue(result["shell_shell"].DrapeValid)
+
+
 class TestCompositeExamplesSmoke(TestCompositeExamplesBase):
     """End-to-end smoke tests using real FreeCAD geometry."""
 
