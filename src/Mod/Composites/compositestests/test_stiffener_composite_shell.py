@@ -122,6 +122,7 @@ class StiffenerCompositeFixture(TestFreeCADFP):
         rosette=None,
         name="Stiffener",
         profile_points=None,
+        cut_y=PLATE_CUT_Y,
     ):
         """A Z-section stiffener along the panel, with composite wiring."""
         from Composites.features.Stiffener import StiffenerFP
@@ -130,7 +131,7 @@ class StiffenerCompositeFixture(TestFreeCADFP):
             profile_points = z_profile_points()
         surface = self.doc.addObject("Part::Feature", f"{name}CutSurface")
         surface.Shape = vertical_cut(
-            PLATE_CUT_Y, -10.0, PLATE_LENGTH + 10.0, -20.0, 80.0
+            cut_y, -10.0, PLATE_LENGTH + 10.0, -20.0, 80.0
         )
         profile = self.doc.addObject("Sketcher::SketchObject", f"{name}Profile")
         if profile_points and isinstance(profile_points[0], (tuple, list)):
@@ -657,6 +658,141 @@ class TestStiffenerJointStack(StiffenerCompositeFixture):
         if parts is not None:
             self.assertTrue(parts.Visibility)
         self.assertNotIn("Invalid", stiffener.State)
+
+
+class TestMultipleStiffenersOnOnePanel(StiffenerCompositeFixture):
+    """Sequential remainders: several composite stiffeners on one panel.
+
+    Weave exclusivity must compose: each stiffener re-supports the panel
+    on the remainder of the support it found at wiring time, so the
+    panel's weave covers the plate minus every stiffener seat.  The
+    chain is static — each remainder is a pure cut of its own
+    SupportBase — and the panel's Support pointer moves only at wiring
+    time.  A later recompute of an earlier stiffener must not re-point
+    the panel to its own (shallower) remainder: that would resurrect a
+    seated region into the panel weave — double plies under the later
+    stiffener's foot.
+    """
+
+    def _make_two_stiffeners(self):
+        """Two composite Z-stiffeners on one panel, B chained on A."""
+        panel = self._make_panel()
+        laminate_a = self._make_laminate(
+            [45.0, -45.0], [0.4, 0.4], [RESIN, RESIN],
+            name="StiffenerA_Laminate",
+        )
+        stiffener_a = self._make_stiffener(
+            panel, laminate=laminate_a, name="StiffenerA", cut_y=30.0
+        )
+        laminate_b = self._make_laminate(
+            [0.0, 90.0], [0.4, 0.4], [RESIN, RESIN],
+            name="StiffenerB_Laminate",
+        )
+        stiffener_b = self._make_stiffener(
+            panel, laminate=laminate_b, name="StiffenerB", cut_y=10.0
+        )
+        self.doc.recompute()
+        return panel, stiffener_a, stiffener_b
+
+    def _assert_joint_valid(self, stiffener):
+        for suffix in ("_Web", "_Foot", "_CombinedLaminate"):
+            obj = self.doc.getObject(f"{stiffener.Name}{suffix}")
+            self.assertIsNotNone(obj)
+            self.assertNotIn("Invalid", obj.State)
+        self.assertNotIn("Invalid", stiffener.State)
+        self.assertIsNone(getattr(stiffener.Proxy, "last_error", None))
+
+    def test_two_stiffeners_build_a_chained_remainder(self):
+        panel, stiffener_a, stiffener_b = self._make_two_stiffeners()
+        original = stiffener_a.SupportBase
+        remainder_a = self.doc.getObject("StiffenerA_RemainderSupport")
+        remainder_b = self.doc.getObject("StiffenerB_RemainderSupport")
+
+        # The support chain: original → A's remainder → B's remainder,
+        # and the panel weaves on the deepest link.
+        self.assertIs(stiffener_b.SupportBase, remainder_a)
+        self.assertIs(panel.Support, remainder_b)
+        self.assertLess(remainder_a.Shape.Area, original.Shape.Area)
+        self.assertLess(remainder_b.Shape.Area, remainder_a.Shape.Area)
+
+        for stiffener in (stiffener_a, stiffener_b):
+            self._assert_joint_valid(stiffener)
+        self.assertNotIn("Invalid", panel.State)
+
+    def test_earlier_stiffener_recompute_keeps_the_chain(self):
+        """A recompute of A (its sweep runs on its own SupportBase) must
+        not re-point the panel from B's chained remainder back to A's
+        shallower one."""
+        panel, stiffener_a, stiffener_b = self._make_two_stiffeners()
+        chain = panel.Support
+        chain_area = chain.Shape.Area
+
+        # Force A's execute — a plain recompute is a no-op when nothing
+        # is touched, and would never exercise the pointer fight.
+        stiffener_a.touch()
+        self.doc.recompute()
+
+        self.assertIs(panel.Support, chain)
+        self.assertAlmostEqual(chain.Shape.Area, chain_area, places=6)
+        for stiffener in (stiffener_a, stiffener_b):
+            self._assert_joint_valid(stiffener)
+
+    def test_earlier_stiffener_edit_keeps_the_chain(self):
+        """Editing an EARLIER stiffener after a later one exists (only its
+        fingerprint changes, so only it re-wires) must not re-point the
+        panel to its own shallower remainder — the later stiffener's seat
+        would return to the panel weave (double plies)."""
+        panel, stiffener_a, stiffener_b = self._make_two_stiffeners()
+        chain = panel.Support
+
+        cut_a = self.doc.getObject("StiffenerACutSurface")
+        cut_a.Placement = FreeCAD.Placement(
+            FreeCAD.Vector(0.0, 5.0, 0.0), FreeCAD.Rotation()
+        )
+        self.doc.recompute()
+        # Settle: B's remainder is re-cut from A's refreshed remainder,
+        # which A re-wrote mid-execute.
+        self.doc.recompute()
+
+        self.assertIs(panel.Support, chain)
+        for stiffener in (stiffener_a, stiffener_b):
+            self._assert_joint_valid(stiffener)
+
+    def test_support_move_recomputes_the_whole_chain(self):
+        """Moving the plate touches both stiffeners; whichever order they
+        re-execute in, the panel must end on the deepest chained
+        remainder with both seats still cut away."""
+        panel, stiffener_a, stiffener_b = self._make_two_stiffeners()
+        chain = panel.Support
+        base = stiffener_a.SupportBase
+
+        base.Placement = FreeCAD.Placement(
+            FreeCAD.Vector(0.0, 0.0, 20.0), FreeCAD.Rotation()
+        )
+        self.doc.recompute()
+        # Settle: the chain's shape writes are imperative (invisible to
+        # the DAG), so B may re-cut from A's refreshed remainder only in
+        # this second pass.
+        self.doc.recompute()
+
+        self.assertIs(panel.Support, chain)
+        # The chained remainder moved with the plate: both seats cut,
+        # sitting on the raised plate.
+        self.assertAlmostEqual(chain.Shape.BoundBox.ZMin, 20.0, delta=1e-6)
+        for stiffener in (stiffener_a, stiffener_b):
+            self._assert_joint_valid(stiffener)
+
+    def test_teardown_of_the_last_stiffener_steps_the_chain_back(self):
+        panel, stiffener_a, stiffener_b = self._make_two_stiffeners()
+        remainder_a = self.doc.getObject("StiffenerA_RemainderSupport")
+
+        stiffener_b.Laminate = None
+        self.doc.recompute()
+
+        # B's teardown restores the panel to B's SupportBase — A's
+        # remainder — so A's exclusivity survives the switch.
+        self.assertIs(panel.Support, remainder_a)
+        self._assert_joint_valid(stiffener_a)
 
 
 class TestStiffenerCompositeExample(TestFreeCADFP):

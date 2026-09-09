@@ -396,8 +396,15 @@ shell (the DrapePitch fix must cover the foot shell's fingerprint).
 - Non-developable foot drape deviation (phase-1 stated approximation).
 - Multiple stiffeners sharing one panel: each stiffener re-supports the
   panel on its own remainder; composing several stiffeners on one panel
-  (sequential remainders) is expected to work but is not a phase-1
-  acceptance criterion.
+  (sequential remainders) is implemented and pinned — the remainders
+  chain through ``SupportBase`` (a later stiffener captures the earlier
+  one's remainder), the remainders are pure cuts of their own capture,
+  and the panel's Support pointer moves only at wiring time so a later
+  recompute of an earlier stiffener cannot steal it down to a shallower
+  link. Acceptance: ``TestMultipleStiffenersOnOnePanel``
+  (test_stiffener_composite_shell.py). Open follow-up: deleting a
+  mid-chain stiffener leaves the later stiffener's ``SupportBase`` on an
+  orphaned remainder object (stale until that stiffener recomputes).
 - Blade/T stiffeners with base rows on **both** sides of the web
   (double lap joint): phase 1 handles profiles whose base edges all lie
   on the same support face; two-sided contact is a future phase.

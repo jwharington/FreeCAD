@@ -171,7 +171,17 @@ def _resupport_panel(doc, fp, panel, sweep) -> None:
     its weave is exclusive of the foot strip by construction, exactly
     as the seam flow re-supports its attachment.  The pre-stiffener
     geometry is preserved in ``SupportBase`` and drives every recompute
-    (idempotence)."""
+    (idempotence).
+
+    With several stiffeners on one panel the remainders chain: a later
+    stiffener captures the earlier one's remainder as its SupportBase,
+    so each remainder is a pure cut of its own capture and the panel
+    weaves on the deepest link.  The panel's Support pointer therefore
+    moves only at wiring time — a later recompute of an earlier
+    stiffener refreshes its own remainder's geometry but must not steal
+    the pointer down to its shallower link, which would resurrect a
+    later stiffener's seat into the panel weave.
+    """
     rem_name = f"{fp.Name}_RemainderSupport"
     rem_sup = doc.getObject(rem_name)
     if rem_sup is None:
@@ -179,9 +189,26 @@ def _resupport_panel(doc, fp, panel, sweep) -> None:
         _hide(rem_sup)
     rem_sup.Shape = Part.makeCompound(sweep.remainders)
     if getattr(fp, "SupportBase", None) is None:
+        # First wiring: capture and claim the panel's support.
         fp.SupportBase = panel.Support
-    if panel.Support is not rem_sup:
         panel.Support = rem_sup
+    elif panel.Support is fp.SupportBase or not _is_remainder_support(
+        panel.Support
+    ):
+        # This stiffener is the chain tip (nobody chained beyond it), or
+        # the panel's support was restored/changed outside the chain —
+        # (re-)claim it.  When a later stiffener owns the pointer, leave
+        # it: only this stiffener's remainder geometry was refreshed.
+        panel.Support = rem_sup
+
+
+def _is_remainder_support(obj) -> bool:
+    """Whether the object is a stiffener flow's remainder support.
+
+    Name-based, like every lookup in this flow — the remainder objects
+    are created as ``<stiffener>_RemainderSupport``.
+    """
+    return getattr(obj, "Name", "").endswith("_RemainderSupport")
 
 
 def teardown_composite_stiffener(host, fp) -> None:
