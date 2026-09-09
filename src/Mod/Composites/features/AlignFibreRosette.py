@@ -76,7 +76,14 @@ class AlignFibreRosetteFP(RosetteFP):
         self._solving = False
         super().__init__(obj, support)  # adds Support, Angle, LocalCoordinateSystem
         obj.addProperty(
-            "App::PropertyLinkGlobal",
+            # Solve reference, not a geometry dependency: the real
+            # dependency is the shell's Rosette link pointing back at this
+            # rosette — visible back-references made shell→rosette→shell a
+            # dependency cycle that tripped DAGView (known-issue #9).
+            # Freshness is edit-driven: the solve re-runs when the defining
+            # properties are set, and the shell re-draps through its own
+            # links.
+            "App::PropertyLinkHidden",
             "CompositeShell",
             "References",
             "Composite shell whose rosette this is",

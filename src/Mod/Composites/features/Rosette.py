@@ -136,6 +136,11 @@ class RosetteFP(CompositeBaseFP):
         lcs = fp.LocalCoordinateSystem
         lcs.Placement.Base = position
         lcs.Placement.Rotation = rotation
+        # Writing the placement touches the LCS datum mid-sweep (we may be
+        # executing inside another object's recompute); the datum is fully
+        # placed, so consume the touch instead of leaving the "still touched
+        # after recompute" warning behind (known-issue #9).
+        lcs.purgeTouched()
 
         # The VP symbol is built in attach() before execute() runs, so
         # it sits at the origin until a property change re-triggers it.

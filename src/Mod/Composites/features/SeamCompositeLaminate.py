@@ -95,19 +95,32 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
                 "Attachment composite shell (trimmed by seam extraction)",
             )
             obj.addProperty(
-                "App::PropertyLinkGlobal",
+                # Back-reference, not a compute dependency: the SCL derives
+                # its stack from Master and Attachment; the region shell
+                # carries the SCL as its Laminate, so a visible link here
+                # made region→SCL→region a dependency cycle that tripped
+                # DAGView (known-issue #9).  Hidden links read normally;
+                # they only stay out of the touch/DAG propagation.
+                "App::PropertyLinkHidden",
                 "SeamRegion",
                 "References",
                 "Seam shell carrying the overlap surface",
             )
             obj.addProperty(
-                "App::PropertyLinkGlobal",
+                # Solved-value references, not dependencies: the SCL pulls
+                # the angles in execute (resolve()) and its freshness is
+                # fingerprint-driven.  Visible links here made
+                # shell→SCL→transfer→shell a dependency cycle that tripped
+                # DAGView (known-issue #9) — the shell legitimately links
+                # both the SCL (its Laminate) and the transfer (its
+                # Rosette).
+                "App::PropertyLinkHidden",
                 "MasterTransfer",
                 "References",
                 "Solved transfer rosette master → seam (seeds seam drape)",
             )
             obj.addProperty(
-                "App::PropertyLinkGlobal",
+                "App::PropertyLinkHidden",
                 "AttachmentTransfer",
                 "References",
                 "Solved transfer rosette attachment → seam (analysis only)",
@@ -338,6 +351,10 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
         refs = (
             "Master",
             "Attachment",
+            # SeamRegion/MasterTransfer/AttachmentTransfer are hidden
+            # (no-dependency) links: assigning them doesn't touch the SCL,
+            # so freshness is handled inside execute's pull-based
+            # resolve() instead.
             "SeamRegion",
             "MasterTransfer",
             "AttachmentTransfer",

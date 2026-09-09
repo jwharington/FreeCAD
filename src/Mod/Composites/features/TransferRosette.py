@@ -77,19 +77,29 @@ class TransferRosetteFP(RosetteFP):
 
     Type = "Composite::TransferRosette"
 
+    # NOTE: MasterShell/AttachmentShell use App::PropertyLinkHidden — they
+    # are solve *references*, not geometry dependencies.  The real
+    # dependency is the attachment shell's Rosette link pointing back at
+    # this rosette; visible back-references made shell→rosette→shell a
+    # dependency cycle that tripped DAGView (known-issue #9).  Hidden
+    # links still read normally; they only stay out of the touch/DAG
+    # propagation.  Freshness is pull-based: consumers resolve() against
+    # the fingerprint, and the SCL re-executes via its own direct shell
+    # links.
+
     def __init__(self, obj, support=None, master_shell=None, attachment_shell=None):
         # Suppress any solve while the defining references are being set up.
         # Set before super().__init__ (which may trigger onChanged).
         self._solving = True
         super().__init__(obj, support)
         obj.addProperty(
-            type="App::PropertyLinkGlobal",
+            type="App::PropertyLinkHidden",
             name="MasterShell",
             group="References",
             doc="Master composite shell (already solved)",
         ).MasterShell = master_shell
         obj.addProperty(
-            type="App::PropertyLinkGlobal",
+            type="App::PropertyLinkHidden",
             name="AttachmentShell",
             group="References",
             doc="Attachment composite shell whose rosette this is",
@@ -103,6 +113,11 @@ class TransferRosetteFP(RosetteFP):
             self._solve(obj)
             self._last_solve_fingerprint = self._solve_inputs_fingerprint(obj)
             obj.recompute()
+            # The solve wrote Angle and placed the LCS (both touch this
+            # object mid-sweep — the constructor runs inside another
+            # object's execute); the state is consistent, so consume the
+            # touch instead of leaving the "still touched" warning.
+            obj.purgeTouched()
 
     def execute(self, fp):
         # Place the LCS from Support + Angle only; the iterative solve is
@@ -128,6 +143,11 @@ class TransferRosetteFP(RosetteFP):
             self._solve(fp)
         finally:
             self._solving = False
+        # The solve wrote Angle and placed the LCS, which touches this
+        # object mid-sweep (we are inside the consumer's execute); the
+        # state is already consistent, so consume the touch instead of
+        # leaving the "still touched after recompute" warning behind.
+        fp.purgeTouched()
 
     def _solve_inputs_fingerprint(self, fp) -> str:
         """Hash everything the solved angle depends on.

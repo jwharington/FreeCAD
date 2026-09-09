@@ -545,12 +545,16 @@ class SeamShellFP(CompositeShellFP):
             old = doc.getObject(f"{fp.Name}_VirtualLaminate")
             if old is not None:
                 self._hide_object(old)
+        # Resin BEFORE the references: wiring the last visible ref fires
+        # the SCL's onChanged recompute, which must not run against an
+        # empty resin (transient loud failure; heals only on the next
+        # recompute).
+        scl.ResinMaterial = self._side_resin(master, attachment)
         scl.Master = master
         scl.Attachment = attachment
         scl.SeamRegion = seam_shell
         scl.MasterTransfer = master_transfer
         scl.AttachmentTransfer = attachment_transfer
-        scl.ResinMaterial = self._side_resin(master, attachment)
         scl.recompute()
         return scl
 

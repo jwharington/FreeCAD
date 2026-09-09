@@ -388,12 +388,16 @@ def _ensure_combined_laminate(
         SeamCompositeLaminateFP(scl)
         created = True
         _hide(scl)
+    # Resin BEFORE the references: wiring the last visible ref fires the
+    # SCL's onChanged recompute, and it must not run against an empty
+    # resin (the combined plies' matrix fallback) — that transient
+    # failure healed on the next recompute but logged a traceback.
+    scl.ResinMaterial = SeamShellFP._side_resin(panel, web_shell)
     scl.Master = panel
     scl.Attachment = web_shell
     scl.SeamRegion = foot_shell
     scl.MasterTransfer = panel_foot
     scl.AttachmentTransfer = stiffener_foot
-    scl.ResinMaterial = SeamShellFP._side_resin(panel, web_shell)
     if created:
         # Physical default: the stiffener's plies are laid onto the
         # panel — a wiring choice made by this flow, not a class

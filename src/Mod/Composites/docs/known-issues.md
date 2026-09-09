@@ -210,7 +210,42 @@ minutes to ~1 minute. `solve_rosette_angle` (still used by
 AlignFibreRosette, whose residual is a texture coordinate) is now a
 probe-seeded secant with the same wrap discipline.
 
-## 9. Cosmetic
+## 9. Cosmetic — LCS/transfer touched warnings + DAG view error RESOLVED (2026-07-15); MCP screenshot segfault OPEN
+
+**Resolved items:**
+
+- **`Document.cpp(3003): ... still touched after recompute`** for rosette
+  LCS datums and transfer rosettes: `RosetteFP.execute` now purges the
+  LCS datum's touch after placing it (writing the placement touched the
+  datum mid-sweep), and `TransferRosetteFP.resolve`/constructor purge the
+  rosette's touch after a solve (the Angle write + LCS placement touch it
+  inside the consumer's execute; the state is already consistent).
+- **`not a dag exception in DAGView::Model::updateSlot()`** after example
+  builds with transfer rosettes: the cycle was real — shell → SCL (its
+  Laminate) → transfer (SCL MasterTransfer link) → shell (transfer
+  AttachmentShell), and shell → transfer → shell for the foot's rosette.
+  The solve-reference links are now `App::PropertyLinkHidden`
+  (excluded from dependency calculation, still read normally):
+  `TransferRosetteFP.MasterShell/AttachmentShell`,
+  `AlignFibreRosetteFP.CompositeShell`, and
+  `SeamCompositeLaminateFP.SeamRegion/MasterTransfer/AttachmentTransfer`.
+  Freshness is pull-based (fingerprints + resolve()) and the flows
+  recompute the SCL explicitly, so no touch propagation is needed.
+  Verified: a full stiffener example build now produces **zero**
+  touched/DAG warnings in the log.
+- **Transient `no matrix material` assert on SCL construction**: wiring
+  the last visible reference fired the SCL's onChanged recompute before
+  the resin was assigned. Both flows now set `ResinMaterial` before the
+  reference assignments.
+
+**Remaining:** the MCP screenshot grab intermittently segfaults
+(`QOpenGLFramebufferObject::hasOpenGLFramebufferObjects`) after heavy GUI
+sessions, killing FreeCAD during automated viewing. Tooling issue, not
+workbench code, but it disrupted verification repeatedly.
+
+---
+
+## Old cosmetic detail (superseded by the resolution above)
 
 - `Document.cpp(3003): ... still touched after recompute` warnings for
   rosette LCS datums and transfer rosettes after every solve. Harmless but
