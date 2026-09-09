@@ -168,9 +168,75 @@ class ViewProviderRosette(VPCompositeBase):
         self._rosette = RosetteSymbol()
         self.standard = coin.SoGroup()
         self.standard.addChild(self._rosette.separator)
+        # Named so the mode switch can be located reliably later — pivy
+        # returns a fresh Python wrapper per getChild(), so node identity
+        # must be established on the C++ side (by name), not with `is`.
+        self.standard.setName("RosetteStandardMode")
         vobj.addDisplayMode(self.standard, "Standard")
+        self._pin_display_switch(vobj)
         self._update_symbol()
         self._hide_datum_symbology()
+        # The GUI's new-object finalization is deferred: it can re-derive
+        # the mode switch after this attach returns. Re-pin once the
+        # event loop settles.
+        try:
+            from PySide import QtCore
+
+            def _deferred_pin():
+                try:
+                    self._pin_display_switch(vobj)
+                except Exception:
+                    pass  # document closed before the timer fired
+
+            QtCore.QTimer.singleShot(0, _deferred_pin)
+        except Exception:
+            pass
+
+    def _pin_display_switch(self, vobj):
+        """Force the Standard-mode switch onto the symbol (whichChild 0).
+
+        A rosette whose ViewProvider attaches after FreeCAD's GUI has
+        already initialised the object's display bookkeeping — e.g. a
+        transfer rosette wired up by a flow mid-build — can in principle
+        be left with the mode switch at NONE: the node sits in the scene
+        graph but nothing renders (the attach race from the
+        rosette-visibility work).  The switch holding the named Standard
+        branch is located by traversal and pinned explicitly; harmless
+        when already selected.  Other switches under the RootNode (the
+        hidden datum/indicator symbology) are legitimately NONE and are
+        left alone.
+
+        The mode switch IS the visibility mechanism (C++ hide() writes
+        whichChild = -1), so a deliberately hidden rosette must stay
+        hidden — only a VISIBLE rosette is pinned.
+        """
+        from pivy import coin
+
+        if not getattr(vobj, "Visibility", True):
+            return
+        root = getattr(vobj, "RootNode", None)
+        if root is None:
+            return
+
+        def visit(node):
+            if node is None:
+                return
+            try:
+                is_switch = node.getTypeId().isDerivedFrom(
+                    coin.SoSwitch.getClassTypeId()
+                )
+                children = int(node.getNumChildren())
+            except AttributeError:
+                return
+            if is_switch and any(
+                (node.getChild(i).getName() or "") == "RosetteStandardMode"
+                for i in range(children)
+            ):
+                node.whichChild = 0
+            for i in range(children):
+                visit(node.getChild(i))
+
+        visit(root)
 
     def updateData(self, fp, prop):
         if prop in ("Support", "Angle"):
@@ -222,6 +288,9 @@ class ViewProviderRosette(VPCompositeBase):
         else:
             parent.removeChild(root)
         scene.addChild(root)
+        # The re-parent is the flow's last render fixup — re-pin the mode
+        # switch so a deferred GUI update cannot leave it at NONE.
+        self._pin_display_switch(self.ViewObject)
 
     def _hide_datum_symbology(self):
         """Hide the LCS datum's native grey glyph.

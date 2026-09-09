@@ -28,8 +28,83 @@ from Composites.compositeexamples import registry, runner  # noqa: E402
 from Composites.compositeexamples.examples import (  # noqa: E402
     _shell_example_common,
     conical_panel_segment,
+    cyl_sphere_seam,
     tubular_shell,
 )
+
+
+def _mode_switches(root_node):
+    """All SoSwitch nodes under a ViewObject RootNode, depth-first."""
+    from pivy import coin
+
+    switches = []
+
+    def walk(node):
+        if node is None:
+            return
+        try:
+            if node.getTypeId().isDerivedFrom(coin.SoSwitch.getClassTypeId()):
+                switches.append(node)
+        except AttributeError:
+            return
+        try:
+            children = int(node.getNumChildren())
+        except AttributeError:
+            return
+        for i in range(children):
+            walk(node.getChild(i))
+
+    walk(root_node)
+    return switches
+
+
+def _rosette_mode_switch(vobj):
+    """The rosette VP's display-mode Switch — the one holding the named
+    Standard branch (ViewProviderRosette names its mode group so the
+    switch can be found across pivy wrapper identities)."""
+    for switch in _mode_switches(vobj.RootNode):
+        try:
+            children = int(switch.getNumChildren())
+        except Exception:
+            continue
+        for i in range(children):
+            if (switch.getChild(i).getName() or "") == "RosetteStandardMode":
+                return switch
+    return None
+
+
+def _assert_rosette_switches_visible(self, doc):
+    """Every rosette VP's display-mode Switch must point at its symbol.
+
+    Pin for the rosette-VP attach race: the rosette symbol lives in the
+    Standard display mode behind the VP's mode Switch — a whichChild of
+    NONE (-1) leaves the node in the scene graph but nothing rendered,
+    which is exactly how the attach race presented.  Other switches
+    under the RootNode (hidden datum/indicator symbology) are
+    legitimately NONE and are not asserted.
+    """
+    from Composites.features.Rosette import ViewProviderRosette
+
+    rosettes = [
+        obj
+        for obj in doc.Objects
+        if isinstance(
+            getattr(getattr(obj, "ViewObject", None), "Proxy", None),
+            ViewProviderRosette,
+        )
+    ]
+    self.assertTrue(rosettes, "no rosette view providers in the scene")
+    for rosette in rosettes:
+        switch = _rosette_mode_switch(rosette.ViewObject)
+        self.assertIsNotNone(
+            switch,
+            f"{rosette.Name}: no display Switch holding the Standard branch",
+        )
+        self.assertEqual(
+            switch.whichChild.getValue(),
+            0,
+            f"{rosette.Name}: display Switch not pointing at the symbol",
+        )
 
 
 class TestCompositeExamplesBase(unittest.TestCase):
@@ -164,6 +239,36 @@ class TestSeamExampleBuildSolves(TestCompositeExamplesBase):
 
 class TestCompositeExamplesSmoke(TestCompositeExamplesBase):
     """End-to-end smoke tests using real FreeCAD geometry."""
+
+    def test_rosette_vp_switch_survives_attach_and_raise(self):
+        """Pin for the rosette-VP attach race (rosette-visibility work,
+        2026-07-15): the seam example exercises both orderings — stack
+        rosettes whose VPs attach BEFORE their shell exists, and transfer
+        rosettes created mid-recompute (RootNode nested under a group).
+        After the build, every rosette display Switch must point at its
+        symbol (whichChild == 0), and raise_render_order's re-parenting
+        must not reset it.
+        """
+        if not getattr(FreeCAD, "GuiUp", False):
+            self.skipTest("GUI not available — scene graph requires MCP/GUI mode")
+        result = cyl_sphere_seam.build(doc=None)
+        doc = result["doc"]
+        # Let the GUI's deferred new-object finalization run — it is
+        # exactly what can re-derive the mode switch after attach.
+        import FreeCADGui
+
+        FreeCADGui.updateGui()
+        _assert_rosette_switches_visible(self, doc)
+
+        # raise_render_order re-parents the rosette RootNode to the end
+        # of the scene graph; the display Switch must survive the move.
+        from Composites.features.Rosette import ViewProviderRosette
+
+        for obj in doc.Objects:
+            proxy = getattr(getattr(obj, "ViewObject", None), "Proxy", None)
+            if isinstance(proxy, ViewProviderRosette):
+                proxy.raise_render_order()
+        _assert_rosette_switches_visible(self, doc)
 
     def test_tubular_shell_builds(self):
         """tubular_shell builds successfully with real FreeCAD objects."""
