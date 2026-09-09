@@ -15,6 +15,8 @@ machinery.
 import FreeCAD
 import Part
 
+from Composites.features.StiffenerCompositeShell import chain_base_is_orphaned
+
 from .test_base import TestFreeCADFP
 from .test_stiffener import PLATE_CUT_Y, vertical_cut
 
@@ -793,6 +795,67 @@ class TestMultipleStiffenersOnOnePanel(StiffenerCompositeFixture):
         # remainder — so A's exclusivity survives the switch.
         self.assertIs(panel.Support, remainder_a)
         self._assert_joint_valid(stiffener_a)
+
+    def test_deleting_the_first_stiffener_heals_the_survivor(self):
+        """Deleting A orphans A's remainder (B's SupportBase): the
+        orphan still holds a shape that no longer reflects the
+        document.  B's next execute must re-capture the panel's
+        original support — its remainder is re-cut without A's seat
+        (A's seat returns to the panel weave) instead of sweeping
+        garbage from the orphan."""
+        panel, stiffener_a, stiffener_b = self._make_two_stiffeners()
+        original = stiffener_a.SupportBase
+        remainder_b = self.doc.getObject("StiffenerB_RemainderSupport")
+        seated_area = remainder_b.Shape.Area
+
+        self.doc.removeObject("StiffenerA")
+        stiffener_b.touch()
+        self.doc.recompute()
+
+        # B re-captured the panel's original support; the panel weaves
+        # on B's refreshed remainder (still B's seat only).  A's seat
+        # is back in the weave, so the remainder grows vs the chained
+        # cut but stays smaller than the untouched panel support.
+        self.assertIs(stiffener_b.SupportBase, original)
+        self.assertIs(panel.Support, remainder_b)
+        self.assertGreater(remainder_b.Shape.Area, seated_area)
+        self.assertLess(remainder_b.Shape.Area, original.Shape.Area)
+        self.assertFalse(chain_base_is_orphaned(stiffener_b))
+        self._assert_joint_valid(stiffener_b)
+
+    def test_deleting_first_stiffener_and_its_remainder_heals_too(self):
+        """Same scenario as the GUI delete (which removes claimed
+        children): A and its remainder are both gone, B's SupportBase
+        resolves to None, and the heal must still re-capture the
+        panel's original support."""
+        panel, stiffener_a, stiffener_b = self._make_two_stiffeners()
+        original = stiffener_a.SupportBase
+        remainder_b = self.doc.getObject("StiffenerB_RemainderSupport")
+        seated_area = remainder_b.Shape.Area
+
+        self.doc.removeObject("StiffenerA_RemainderSupport")
+        self.doc.removeObject("StiffenerA")
+        stiffener_b.touch()
+        self.doc.recompute()
+
+        self.assertIs(stiffener_b.SupportBase, original)
+        self.assertIs(panel.Support, remainder_b)
+        self.assertGreater(remainder_b.Shape.Area, seated_area)
+        self._assert_joint_valid(stiffener_b)
+
+    def test_deleting_the_last_stiffener_leaves_the_chain_valid(self):
+        """Deleting the chain tip leaves A's exclusivity intact: the
+        panel steps back to A's remainder and A stays valid."""
+        panel, stiffener_a, stiffener_b = self._make_two_stiffeners()
+        remainder_a = self.doc.getObject("StiffenerA_RemainderSupport")
+
+        self.doc.removeObject("StiffenerB")
+        stiffener_a.touch()
+        self.doc.recompute()
+
+        self.assertIs(panel.Support, remainder_a)
+        self._assert_joint_valid(stiffener_a)
+        self.assertNotIn("Invalid", panel.State)
 
 
 class TestStiffenerCompositeExample(TestFreeCADFP):

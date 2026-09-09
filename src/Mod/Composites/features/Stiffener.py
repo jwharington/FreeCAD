@@ -13,8 +13,11 @@ from ..tools.stiffener import (
 )
 from .Command import BaseCommand
 from .StiffenerCompositeShell import (
+    chain_base_is_orphaned,
     ensure_stiffener_shells_visible,
     is_stiffener_composite,
+    panel_support_is_orphaned,
+    recover_deleted_chain_predecessor,
     stiffener_claimed_children,
     teardown_composite_stiffener,
     validate_composite_wiring,
@@ -102,6 +105,20 @@ class StiffenerFP(CompositePartFP):
         # panel's Support.Shape is the panel minus the stiffener seat,
         # which would re-sweep garbage.
         base = getattr(fp, "SupportBase", None)
+        if base is None or (
+            base.Name.endswith("_RemainderSupport")
+            and chain_base_is_orphaned(fp)
+        ):
+            # A remainder base whose owning stiffener was deleted since
+            # the wiring is an orphan: heal the capture (re-derive it
+            # from the panel's original support) before sweeping — a
+            # sweep on a dead capture is garbage.  Healthy chains and
+            # unwired stiffeners are untouched.  The heal also rewrote
+            # the panel pointer, so the wiring must not take its
+            # unchanged-fingerprint fast path this round.
+            if recover_deleted_chain_predecessor(fp):
+                self._last_flow_fingerprint = None
+            base = getattr(fp, "SupportBase", None)
         support_shape = (
             base.Shape
             if base is not None
@@ -138,6 +155,12 @@ class StiffenerFP(CompositePartFP):
         # never a silently wrong stack.
         try:
             validate_composite_wiring(fp)
+            if panel_support_is_orphaned(fp.Support):
+                # The chain tip below this stiffener was deleted and
+                # the panel pointer sits on the orphaned remainder;
+                # force the wiring to re-run so this stiffener
+                # re-claims the pointer onto its own remainder.
+                self._last_flow_fingerprint = None
             wire_composite_stiffener(self, fp, sweep)
         except Exception as exc:
             self.last_error = str(exc)

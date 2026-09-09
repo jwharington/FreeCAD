@@ -191,14 +191,19 @@ def _resupport_panel(doc, fp, panel, sweep) -> None:
     if getattr(fp, "SupportBase", None) is None:
         # First wiring: capture and claim the panel's support.
         fp.SupportBase = panel.Support
+        _capture_panel_support_backup(panel)
         panel.Support = rem_sup
-    elif panel.Support is fp.SupportBase or not _is_remainder_support(
-        panel.Support
+    elif (
+        panel.Support is fp.SupportBase
+        or not _is_remainder_support(panel.Support)
+        or _remainder_owner_gone(panel.Support)
     ):
-        # This stiffener is the chain tip (nobody chained beyond it), or
-        # the panel's support was restored/changed outside the chain —
-        # (re-)claim it.  When a later stiffener owns the pointer, leave
-        # it: only this stiffener's remainder geometry was refreshed.
+        # This stiffener is the chain tip (nobody chained beyond it),
+        # or the panel's support was restored/changed outside the chain
+        # — or it sits on an orphaned remainder whose owning stiffener
+        # was deleted (the chain below is dead).  (Re-)claim it.  When
+        # a later stiffener owns the pointer, leave it: only this
+        # stiffener's remainder geometry was refreshed.
         panel.Support = rem_sup
 
 
@@ -209,6 +214,95 @@ def _is_remainder_support(obj) -> bool:
     are created as ``<stiffener>_RemainderSupport``.
     """
     return getattr(obj, "Name", "").endswith("_RemainderSupport")
+
+
+def _remainder_owner_gone(obj) -> bool:
+    """Whether a remainder support's owning stiffener was deleted.
+
+    The remainder object outlives its owner; the chain below the
+    deleted stiffener is dead and the pointer must not be treated as a
+    living link.
+    """
+    if not _is_remainder_support(obj):
+        return False
+    return (
+        obj.Document is None
+        or obj.Document.getObject(obj.Name[: -len("_RemainderSupport")]) is None
+    )
+
+
+def _capture_panel_support_backup(panel) -> None:
+    """Remember the panel's pre-stiffener support (hidden link).
+
+    The remainder chain loses its root when a stiffener earlier in the
+    chain is deleted: its remainder object dies (or is orphaned) and
+    with it the ``SupportBase`` of every later stiffener.  The backup
+    lets a surviving stiffener re-capture the panel's original support
+    and re-cut its remainder without the deleted stiffener's seat.
+    """
+    if _is_remainder_support(panel.Support):
+        return
+    if not hasattr(panel, "SupportBackup"):
+        panel.addProperty(
+            type="App::PropertyLinkHidden",
+            name="SupportBackup",
+            group="Composite",
+            doc="Panel support captured before the first stiffener claimed it",
+        )
+    if getattr(panel, "SupportBackup", None) is None:
+        panel.SupportBackup = panel.Support
+
+
+def chain_base_is_orphaned(fp) -> bool:
+    """Whether the stiffener's SupportBase belonged to a deleted
+    stiffener.  A remainder whose owning stiffener no longer exists is
+    an orphan: it still holds a shape, but that shape no longer
+    reflects the document.
+    """
+    base = getattr(fp, "SupportBase", None)
+    if base is None or fp.Document is None:
+        return False
+    return _remainder_owner_gone(base)
+
+
+def panel_support_is_orphaned(panel) -> bool:
+    """Whether the panel's Support points at an orphaned remainder
+    (its owning stiffener was deleted).  The chain below the deleted
+    stiffener is dead; the deepest living stiffener must re-claim the
+    pointer onto its own remainder.
+    """
+    return panel is not None and _remainder_owner_gone(
+        getattr(panel, "Support", None)
+    )
+
+
+def recover_deleted_chain_predecessor(fp) -> bool:
+    """Heal a stiffener whose chain predecessor was deleted.
+
+    The deleted stiffener's remainder (this stiffener's ``SupportBase``)
+    is deleted or orphaned, so the captured geometry can no longer drive
+    the sweep — sweeping from the panel's re-pointed support (this
+    stiffener's own remainder) would be garbage.  Restore the panel's
+    original support (captured at the first wiring) and re-capture it
+    here: the remainder is re-cut without the deleted stiffener's seat,
+    and that seat returns to the panel weave.  Returns True when healed.
+    """
+    panel = fp.Support
+    if panel is None or fp.Document is None:
+        return False
+    own_remainder = fp.Document.getObject(f"{fp.Name}_RemainderSupport")
+    wired = own_remainder is not None and panel.Support is own_remainder
+    damaged = getattr(fp, "SupportBase", None) is None or chain_base_is_orphaned(fp)
+    if not wired or not damaged:
+        return False
+    backup = getattr(panel, "SupportBackup", None)
+    if backup is None:
+        return False
+    # Step the panel back to the original support; the wiring below
+    # re-claims it onto the refreshed remainder.
+    panel.Support = backup
+    fp.SupportBase = backup
+    return True
 
 
 def teardown_composite_stiffener(host, fp) -> None:
@@ -225,6 +319,12 @@ def teardown_composite_stiffener(host, fp) -> None:
     panel = fp.Support
     if panel is not None and base is not None:
         panel.Support = base
+    elif panel is not None and getattr(panel, "SupportBackup", None) is not None:
+        # The captured base died with a deleted chain predecessor;
+        # restore the panel's original support instead.
+        own_remainder = doc.getObject(f"{fp.Name}_RemainderSupport")
+        if own_remainder is not None and panel.Support is own_remainder:
+            panel.Support = panel.SupportBackup
     fp.SupportBase = None
     for suffix in ("_Web", "_Foot", "_PanelFootTransfer",
                    "_StiffenerFootTransfer", "_CombinedLaminate",
