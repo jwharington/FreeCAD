@@ -105,7 +105,9 @@ self-meeting collision closes the lattice naturally. Estimated scope:
 GeodesicStepper + LatticeNodePlacer UV snapping + regression tests on
 closed cylinders at several seeds/pitches; must not regress the 15
 tests restored by 93a6b79/5b4ef50. Deferred as a standalone solver
-project, not a tail-end patch.
+project, not a tail-end patch. **⛔ DO NOT ATTEMPT without explicit
+user approval — an implementation attempt was already made and failed
+hard; treat as blocked, lowest priority.**
 
 ## 4. `max_strain` quality flag polluted by boundary-snapped nodes — RESOLVED (verified 2026-07-15)
 
@@ -280,6 +282,62 @@ workbench code, but it disrupted verification repeatedly.
   (`QOpenGLFramebufferObject::hasOpenGLFramebufferObjects`) after heavy GUI
   sessions, killing FreeCAD during automated viewing. Tooling issue, not
   workbench code, but it disrupted verification repeatedly.
+
+## #11 — Drape seeded from an unplaced frame → deterministic `solver_failure` (RESOLVED 2026-09)
+
+**Symptom:** the seam example (`cyl_sphere_seam`) intermittently failed
+its build with `solver_failure` at DrapePitch ≤ 2.5 mm — "finer pitches
+pass quality but hit a flaky solver_failure at this size" (example
+docstring, 2026-07-15). The failure appeared only in full example
+builds, never in engine-level repeats.
+
+**Diagnosis (2026-09, two layers):**
+
+1. **Not solver nondeterminism.** 50 engine-level solves of the exact
+   cap face (pitches 2.5/2.0/1.5/1.0, angles 0/41, with/without a
+   warm-up panel drape) produced zero failures with bit-identical
+   node/quad counts (`compositestests/inspect_fine_pitch_flake.py`, the
+   committed repro loop). The nextdrape-side pin this item assumed does
+   not exist.
+2. **The real mechanism — a bad seed from an unplaced frame.** During
+   `TransferRosetteFP` wiring, `_ensure_wired` assigns the attachment
+   shell's `Rosette`; `onChanged("Rosette") → fp.recompute()` draped the
+   shell *immediately*, before the transfer rosette's LCS had ever been
+   placed. `NextDrapeBackend._build_seed` trusted any object with a
+   `Placement` as a fibre frame, so the identity placement became the
+   seed `point [0,0,0], warp [1,0,0]` — inside the sphere, rejected
+   deterministically at every pitch. The failure was healed only by the
+   later `doc.recompute()` re-draping with the placed frame; whether
+   that heal happened before anything read the shell depended on
+   recompute ordering — hence "flaky", and hence GUI-only. The same
+   defect silently broke the rosette-less path:
+   `CompositeShell.get_lcs()` falls back to `fp.Support`, whose identity
+   placement was likewise mistaken for a frame (contradicting the #7
+   COM-projection seed; the #7 tests passed `lcs=None` directly and
+   never exercised the fallback).
+
+**Resolution:**
+
+- `_build_seed` now validates the frame as a unit: the seed point must
+  lie on the support surface (`distToShape` ≤ 1e-4 mm; a rosette-placed
+  frame sits exactly on its face), otherwise the frame is rejected and
+  the seed falls back to the #7 COM projection. Seed point and warp now
+  always come from the same source.
+- `CompositeShell.onChanged("Rosette")` defers to the next document
+  recompute (`enforceRecompute`) instead of an immediate
+  `fp.recompute()` — no mid-wiring drape, no wasted solve; the wiring
+  flow's own `doc.recompute()` re-drapes with the placed frame.
+- Verified at the example level: pre-fix build = 7 solves / 1 failure
+  (healed); post-fix = 6 solves / 0 failures. The transient solve is
+  gone entirely.
+- Regression tests: `TestFrameSeedValidation` (test_composite_shell:
+  unplaced-LCS and support-as-LCS fall back to COM projection, fallback
+  seed solves, placed rosette frame still used) and
+  `TestSeamExampleBuildSolves.test_seam_example_build_issues_no_failed_solves`
+  (test_compositeexamples: the seam build issues zero failed solves).
+
+Repro/inspection tool: `compositestests/inspect_fine_pitch_flake.py`
+(headless, `FLAKE_ARGS="--pitches 2.5 --repeats 10 ..."`).
 
 ---
 
