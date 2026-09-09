@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>AlignFibreRosette</class>
+ <widget class="QWidget" name="AlignFibreRosette">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>400</width>
+    <height>240</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Align Fibre Rosette</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <widget class="QLabel" name="lbl_instructions">
+     <property name="text">
+      <string>Pick the references, then press OK. The rosette's angle is solved so the warp fibre (v = 0) passes through the second point on the draped shell.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="grp_shell">
+     <property name="title">
+      <string>Composite shell</string>
+     </property>
+     <layout class="QGridLayout" name="grid_shell">
+      <item row="0" column="0">
+       <widget class="QLineEdit" name="edt_shell">
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+        <property name="placeholderText">
+         <string>no shell picked</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QPushButton" name="btn_pick_shell">
+        <property name="text">
+         <string>Pick…</string>
+        </property>
+        <property name="checkable">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="grp_anchor">
+     <property name="title">
+      <string>Rosette anchor (face, edge or vertex)</string>
+     </property>
+     <layout class="QGridLayout" name="grid_anchor">
+      <item row="0" column="0">
+       <widget class="QLineEdit" name="edt_anchor">
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+        <property name="placeholderText">
+         <string>nothing picked</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QPushButton" name="btn_pick_anchor">
+        <property name="text">
+         <string>Pick…</string>
+        </property>
+        <property name="checkable">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="grp_second">
+     <property name="title">
+      <string>Second point (vertex the warp must pass through)</string>
+     </property>
+     <layout class="QGridLayout" name="grid_second">
+      <item row="0" column="0">
+       <widget class="QLineEdit" name="edt_second">
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+        <property name="placeholderText">
+         <string>no vertex picked</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QPushButton" name="btn_pick_second">
+        <property name="text">
+         <string>Pick…</string>
+        </property>
+        <property name="checkable">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="lbl_status">
+     <property name="text">
+      <string/>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <spacer name="verticalSpacer">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeHint" stdset="0">
+      <size>
+       <width>20</width>
+       <height>10</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

@@ -59,6 +59,33 @@ class TestAlignFibreRosetteScenarios(TestFreeCADFP):
         self.doc.recompute()
         self.assertIsNotNone(align)
 
+    def test_creation_helper_wires_and_solves(self):
+        """The command/task-panel creation path: the helper must wire the
+        rosette as the shell's Rosette and solve the angle so the warp
+        fibre (v = 0) passes through the second point."""
+        from Composites.features.AlignFibreRosette import (
+            create_align_fibre_rosette,
+        )
+
+        shell = self._make_shell(Part.makePlane(100.0, 100.0))
+        # The example's proven geometry: the rosette seeds at the plate
+        # centre, so a point at (60, 60) sits 45° from it and the solve
+        # must land the warp on 45°.  (A makeBox "plate" would not do:
+        # the anchor face and the point must lie on the same face.)
+        pt = self._make_point("Pt", FreeCAD.Vector(60.0, 60.0, 0.0))
+
+        align = create_align_fibre_rosette(
+            self.doc,
+            composite_shell=shell,
+            support=(shell.Support, ["Face1"]),
+            second_point=(pt, ["Vertex1"]),
+        )
+
+        self.assertIs(shell.Rosette, align)
+        self.assertNotIn("Invalid", align.State)
+        self.assertIsNone(getattr(align.Proxy, "solve_error", None))
+        self.assertAlmostEqual(float(align.Angle), 45.0, delta=0.5)
+
     def test_align_fibre_rosette_with_second_point(self):
         face_shape = self._make_flat_plate()
         shell = self._make_shell(face_shape)

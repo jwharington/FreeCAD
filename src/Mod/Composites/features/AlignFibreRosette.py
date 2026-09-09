@@ -186,6 +186,34 @@ class ViewProviderAlignFibreRosette(ViewProviderRosette):
         return ALIGN_FIBRE_ROSETTE_TOOL_ICON
 
 
+def create_align_fibre_rosette(
+    doc,
+    composite_shell=None,
+    support=None,
+    second_point=None,
+):
+    """Create and wire an AlignFibreRosette (command / task-panel path).
+
+    Mirrors the proven example sequence: the feature is created with the
+    shell wired, and the second point is set after the creating recompute
+    so the solve runs once, against a live drape.  The rosette wires
+    itself as the shell's Rosette (``_ensure_wired``) — the solved angle
+    steers the drape.
+    """
+    obj = doc.addObject("Part::FeaturePython", "AlignFibreRosette")
+    AlignFibreRosetteFP(obj, support=support, composite_shell=composite_shell)
+    if obj.ViewObject is not None:
+        ViewProviderAlignFibreRosette(obj.ViewObject)
+    from .Container import getCompositesContainer
+
+    getCompositesContainer().addObject(obj)
+    doc.recompute()
+    if second_point is not None:
+        obj.SecondPoint = second_point
+        doc.recompute()
+    return obj
+
+
 def _is_vertex(o):
     """Return True if *o* is a Part vertex shape."""
     return isinstance(o, Part.Vertex)
@@ -197,8 +225,8 @@ class AlignFibreRosetteCommand(BaseCommand):
     tool_tip = (
         "Create an AlignFibreRosette: a Rosette whose Angle is solved so the\n"
         "warp fibre (v=0) passes through a second picked vertex on the shell.\n"
-        "Select a composite shell, a support face/vertex/edge (rosette anchor),\n"
-        "and a second vertex the warp fibre must pass through."
+        "Opens a task panel: pick the composite shell, a rosette anchor, and\n"
+        "the second vertex the warp fibre must pass through."
     )
     sel_args = [
         {
@@ -220,6 +248,33 @@ class AlignFibreRosetteCommand(BaseCommand):
     instance_name = "AlignFibreRosette"
     cls_fp = AlignFibreRosetteFP
     cls_vp = ViewProviderAlignFibreRosette
+
+    def Activated(self):
+        """Open the creation task panel.
+
+        The panel guides the reference picking (shell, anchor, second
+        point) — the legacy pre-selection-only flow can't know the anchor
+        and second point before the command starts.  Pre-selected
+        references prefill the panel.  Headless callers (scripts) keep
+        the direct pre-selection path.
+        """
+        if FreeCAD.GuiUp:
+            import FreeCADGui
+
+            # Lazy import: the taskpanel module pulls in FreeCADGui/Qt.
+            from ..taskpanels.task_align_fibre_rosette import _TaskPanel
+
+            FreeCADGui.Control.showDialog(
+                _TaskPanel(prefill=self.check_sel(True) or {})
+            )
+            return
+        super().Activated()
+
+    def IsActive(self):
+        # The task panel collects the references itself, so the command
+        # is active with any open document — not only with a full
+        # pre-selection.
+        return FreeCAD.ActiveDocument is not None
 
 
 # Command registration moved to InitGui.py to avoid FreeCADGui dependency
