@@ -84,11 +84,28 @@ the surface exactly once. Four pre-existing test failures resolved.
 **Residual:** the march's quantized steps drift ~30 mm per revolution,
 so the trim line lands mid-panel instead of closing exactly on the
 start — coverage on a closed cylinder is ~0.85 with a seam-adjacent
-uncovered strip (physically: a butt joint at the seam). A full fix
-requires periodic-surface-aware lattice closing (wrap the face's
-periodic parameter into the lattice so the last column connects to the
-first); also the meeting-line nodes beyond the trim remain in the node
-list as invalid entries.
+uncovered strip (physically: a butt joint at the seam). Also the
+meeting-line nodes beyond the trim remain in the node list as invalid
+entries.
+
+**Design analysis for the full fix (2026-09-09 investigation, deferred
+as a scoped solver project):** the self-meeting detector
+(`OccupancyMap` in LatticeFrontierPhase1) collides at
+`max(projectionTol, pitch*0.1)` — 2 mm at pitch 20 — far below the
+~30 mm/rev quantization drift, so a wrapped column never welds to the
+start column; the area-budget trim then cuts mid-panel. The drift
+accumulates in the geodesic stepper's per-pitch quantization. The
+identified design: detect the seed face's periodic parameter
+(`Geom_Surface::IsUPeriodic/IsVPeriodic`) at Init, determine which
+lattice axis rides it, force the steps-per-period to the integer
+`N = round(period_length / pitch)`, and snap each wrapped column's
+periodic parameter to `p0 + k*period/N` in the stepper — after N
+columns the march lands exactly on the start line and the existing
+self-meeting collision closes the lattice naturally. Estimated scope:
+GeodesicStepper + LatticeNodePlacer UV snapping + regression tests on
+closed cylinders at several seeds/pitches; must not regress the 15
+tests restored by 93a6b79/5b4ef50. Deferred as a standalone solver
+project, not a tail-end patch.
 
 ## 4. `max_strain` quality flag polluted by boundary-snapped nodes — RESOLVED (verified 2026-07-15)
 
