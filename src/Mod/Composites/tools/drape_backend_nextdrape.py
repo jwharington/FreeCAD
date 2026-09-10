@@ -405,6 +405,7 @@ class NextDrapeBackend(DrapeBackend):
         if not hasattr(self._shape, "distToShape"):
             return True
         vertex = Part.Vertex(point[0], point[1], point[2])
+        import FreeCAD
         try:
             dist, _points, _info = self._shape.distToShape(vertex)
         except Exception:
