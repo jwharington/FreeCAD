@@ -405,7 +405,16 @@ class NextDrapeBackend(DrapeBackend):
         if not hasattr(self._shape, "distToShape"):
             return True
         vertex = Part.Vertex(point[0], point[1], point[2])
-        dist, _points, _info = self._shape.distToShape(vertex)
+        try:
+            dist, _points, _info = self._shape.distToShape(vertex)
+        except Exception:
+            # BRepExtrema_DistShapeShape throws on a point lying ON a
+            # periodic face's seam (the cyl-closed restore path: the seed
+            # meridian coincides with the parameter wrap).  Not a placement
+            # failure — fall back to the face-level inside test.
+            return self._shape.isInside(
+                FreeCAD.Vector(*point), self._ON_SURFACE_TOL, True
+            )
         return dist <= self._ON_SURFACE_TOL
 
     def _frame_seed(self):
