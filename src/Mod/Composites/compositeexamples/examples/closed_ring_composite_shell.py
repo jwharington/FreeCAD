@@ -30,6 +30,10 @@ GEOMETRY = {
     "pitch_mm": 5.0,
 }
 
+# Fibre offset angle: the rosette's primary fibre direction, measured from
+# the ring's circumferential axis.  45 deg = the ±45 bias-ply orientation.
+ROSETTE_ANGLE_DEG = 45.0
+
 LAMINA_ANGLES = (0.0, 45.0, -45.0, 90.0)
 
 
@@ -109,7 +113,7 @@ def build(doc=None, run_solver=False):
 
     rosette = doc.addObject("Part::FeaturePython", "ClosedRingRosette")
     RosetteFP(rosette, support=(support, ["Face1"]))
-    rosette.Angle = 0.0
+    rosette.Angle = ROSETTE_ANGLE_DEG
     if gui_up and getattr(rosette, "ViewObject", None):
         ViewProviderRosette(rosette.ViewObject)
 
