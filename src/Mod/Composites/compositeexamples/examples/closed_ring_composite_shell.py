@@ -46,6 +46,97 @@ def _new_document(doc, name):
     return FreeCAD.newDocument(name)
 
 
+def _stiffener_laminate(doc, name):
+    """A compact UD laminate for a ring stiffener's own structure."""
+    from Composites.features.CompositeLaminate import CompositeLaminateFP
+    from Composites.features.FibreCompositeLamina import FibreCompositeLaminaFP
+    from Composites.objects import SymmetryType, WeaveType
+
+    plies = []
+    for idx, angle in enumerate((0.0, 90.0), start=1):
+        ply = doc.addObject("App::FeaturePython", f"{name}_Ply{idx:02d}")
+        FibreCompositeLaminaFP(ply)
+        ply.FibreMaterial = _carbon_material()
+        ply.FibreVolumeFraction = 55
+        ply.Thickness = _to_length_mm(FreeCAD, 0.2)
+        ply.Angle = angle
+        ply.WeaveType = WeaveType.UD.name
+        plies.append(ply)
+
+    laminate = doc.addObject("App::FeaturePython", name)
+    CompositeLaminateFP(laminate, laminae=plies)
+    laminate.ResinMaterial = _resin_material()
+    laminate.FibreVolumeFraction = 55
+    laminate.SymmetryType if False else None
+    laminate.Symmetry = SymmetryType.Assymmetric.name
+    return laminate
+
+
+def _ring_stiffener(doc, shell, name, z_centre, laminate):
+    """One circumferential ring stiffener on the closed ring.
+
+    The cut surface is a plane perpendicular to the ring axis at ``z_centre``:
+    its intersection with the cylindrical shell is the ring path the profile
+    sweeps.  The Z-profile rides the shell (base flange), web and top flange
+    free — same world-XY profile and horizontal cut plane recipe as the
+    stiffener example's ring case.
+    """
+    from Composites.features.Stiffener import (
+        StiffenerFP,
+        ViewProviderStiffener,
+        add_stiffener_filters,
+    )
+    from .stiffener import _make_shape_object, _make_sketch, _z_profile
+
+    side = 3.0 * GEOMETRY["radius_mm"]
+    cut = Part.makePlane(
+        side,
+        side,
+        FreeCAD.Vector(-side / 2.0, -side / 2.0, z_centre),
+        FreeCAD.Vector(0, 0, 1),
+    )
+    cut_surface = _make_shape_object(doc, f"{name}CutSurface", cut)
+    profile = _make_sketch(doc, f"{name}Profile", _z_profile())
+
+    stiffener = doc.addObject("Part::FeaturePython", name)
+    StiffenerFP(
+        stiffener,
+        support=shell,
+        cut_surface=cut_surface,
+        profile=profile,
+    )
+    stiffener.Laminate = laminate
+    if getattr(FreeCAD, "GuiUp", False) and getattr(stiffener, "ViewObject", None):
+        ViewProviderStiffener(stiffener.ViewObject)
+    add_stiffener_filters(doc, stiffener)
+    doc.recompute()
+    return stiffener
+
+
+def _add_ring_stiffeners(doc, shell):
+    """Two composite ring stiffeners, one near each end of the tube."""
+    from Composites.features.StiffenerCompositeShell import (
+        ensure_stiffener_shells_visible,
+    )
+
+    length = GEOMETRY["length_mm"]
+    offset = 40.0  # axial inset of each ring from its tube end
+    stiffeners = []
+    laminate_a = _stiffener_laminate(doc, "RingStiffenerALaminate")
+    stiffeners.append(
+        _ring_stiffener(doc, shell, "RingStiffenerA", offset, laminate_a)
+    )
+    laminate_b = _stiffener_laminate(doc, "RingStiffenerBLaminate")
+    stiffeners.append(
+        _ring_stiffener(doc, shell, "RingStiffenerB", length - offset, laminate_b)
+    )
+    doc.recompute()
+    for stiffener in stiffeners:
+        ensure_stiffener_shells_visible(stiffener)
+    doc.recompute()
+    return stiffeners
+
+
 def _laminate(doc, name):
     """A lay-up of four UD laminae as document features, wrapped in a laminate."""
     _prepare_feature_import_environment()
@@ -134,6 +225,9 @@ def build(doc=None, run_solver=False):
             pass
     doc.recompute()
 
+    stiffeners = _add_ring_stiffeners(doc, shell)
+    doc.recompute()
+
     texture_plan = None
     try:
         from Composites.features.TexturePlan import TexturePlanFP
@@ -149,6 +243,7 @@ def build(doc=None, run_solver=False):
         "support": support,
         "rosette": rosette,
         "shell": shell,
+        "stiffeners": stiffeners,
         "texture_plan": texture_plan,
         "geometry": GEOMETRY,
     }
