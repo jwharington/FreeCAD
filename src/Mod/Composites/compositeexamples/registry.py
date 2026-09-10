@@ -23,6 +23,10 @@ EXAMPLES = {
         "module": ".examples.cylindrical_panel_segment",
         "name": "Cylindrical panel segment",
     },
+    "closed_ring_composite_shell": {
+        "module": ".examples.closed_ring_composite_shell",
+        "name": "Composite shell on a closed cylindrical ring",
+    },
     "conical_panel_segment": {
         "module": ".examples.conical_panel_segment",
         "name": "Conical panel segment",

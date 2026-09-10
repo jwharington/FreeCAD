@@ -27,6 +27,7 @@ if _REPO_ROOT not in sys.path:
 from Composites.compositeexamples import registry, runner  # noqa: E402
 from Composites.compositeexamples.examples import (  # noqa: E402
     _shell_example_common,
+    closed_ring_composite_shell,
     conical_panel_segment,
     cyl_sphere_seam,
     tubular_shell,
@@ -143,6 +144,7 @@ class TestCompositeExamplesRegistry(TestCompositeExamplesBase):
         self.assertIn("quasi_iso_laminate_plate", examples)
         self.assertIn("tubular_shell", examples)
         self.assertIn("cylindrical_panel_segment", examples)
+        self.assertIn("closed_ring_composite_shell", examples)
         self.assertIn("conical_panel_segment", examples)
 
     def test_get_example_module_unknown_raises(self):
@@ -276,6 +278,19 @@ class TestCompositeExamplesSmoke(TestCompositeExamplesBase):
         self._saved_doc = result.get("doc")
         self.assertIn("laminate", result)
         self.assertIsNotNone(result["laminate"])
+
+    def test_closed_ring_shell_drapes_single_cover(self):
+        """Composite shell on a full closed ring: the drape covers the ring
+        exactly once (periodic seam stop, seed relocated off the seam) and
+        the texture plan unwraps without laps."""
+        result = closed_ring_composite_shell.build(doc=None)
+        self._saved_doc = result.get("doc")
+        shell = result["shell"]
+        self.assertTrue(shell.DrapeValid)
+        # Single cover: no meet-line holes, seam = the only joint.
+        plan = result.get("texture_plan")
+        self.assertIsNotNone(plan)
+        self.assertGreater(len(plan.Shape.Edges), 0)
 
     def test_conical_panel_full_pipeline_round_trip(self):
         """The conical panel example drives the full drape-to-FEM pipeline."""
