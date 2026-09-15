@@ -1,0 +1,238 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2025 John Wharington jwharington@gmail.com
+
+"""End-to-end QI FEM tests (PRD quasi_isotropic_laminate.md §7.6).
+
+Cross-validation gate: the same quasi-isotropic stack solved twice under
+a membrane load case — (a) QI isotropic presentation, (b) the
+conventional draped orthotropic per-ply export. The gate's tolerance is
+deliberately unresolved (implementation review): these tests run both
+solves and report the measured max-displacement difference; asserting
+agreement is added only once the tolerance is agreed.
+"""
+
+import os
+import sys
+import unittest
+
+import FreeCAD
+import Part
+
+_REPO_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..")
+)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+import Composites  # noqa: E402, F401
+import Composites.objects  # noqa: E402, F401
+
+from .test_base import TestFreeCADFP  # noqa: E402
+from Composites.compositeexamples.examples._shell_example_common import (  # noqa: E402
+    _add_analysis_member,
+    _add_fixed_constraint,
+    _create_fem_base,
+    _mesh_support,
+    _run_ccx,
+    _set_constraint_refs,
+)
+
+CARBON = {
+    "Name": "Carbon",
+    "Density": "1750.0 kg/m^3",
+    "PoissonRatioXY": "0.27",
+    "PoissonRatioXZ": "0.27",
+    "PoissonRatioYZ": "0.45",
+    "ShearModulusXY": "5000 MPa",
+    "ShearModulusXZ": "5000 MPa",
+    "ShearModulusYZ": "3500 MPa",
+    "YoungsModulusX": "135 GPa",
+    "YoungsModulusY": "9.5 GPa",
+    "YoungsModulusZ": "9.5 GPa",
+}
+RESIN = {
+    "Name": "Epoxy",
+    "Density": "1180.0 kg/m^3",
+    "YoungsModulus": "3.300 GPa",
+    "PoissonRatio": "0.35",
+}
+
+PLATE_LENGTH = 100.0
+PLATE_WIDTH = 60.0
+QI_ANGLES = (0.0, 45.0, -45.0, 90.0)
+FORCE_N = 1000.0
+
+
+def _edge_names_by_x(support):
+    min_edge, max_edge, min_x, max_x = None, None, None, None
+    for idx, edge in enumerate(support.Shape.Edges, start=1):
+        x = sum(v.Point.x for v in edge.Vertexes) / len(edge.Vertexes)
+        if min_x is None or x < min_x:
+            min_x, min_edge = x, f"Edge{idx}"
+        if max_x is None or x > max_x:
+            max_x, max_edge = x, f"Edge{idx}"
+    return min_edge, max_edge
+
+
+def _add_edge_force(doc, analysis, support, edge_name, tag):
+    import ObjectsFem
+
+    force_obj = ObjectsFem.makeConstraintForce(doc, f"{tag}_Force")
+    _set_constraint_refs(force_obj, [(support, edge_name)])
+    force_obj.Force = FORCE_N
+    direction_obj = doc.addObject("App::Line", f"{tag}_ForceDirection")
+    direction_obj.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(0, 0, 0),
+        FreeCAD.Rotation(FreeCAD.Vector(0, 1, 0), 90),
+    )
+    try:
+        force_obj.Direction = (direction_obj, [])
+    except Exception:
+        pass
+    try:
+        force_obj.DirectionVector = FreeCAD.Vector(1.0, 0.0, 0.0)
+    except Exception:
+        pass
+    _add_analysis_member(analysis, force_obj)
+    return force_obj
+
+
+def _max_displacement(analysis):
+    for obj in analysis.Group:
+        if obj.isDerivedFrom("Fem::FemResultObject"):
+            lengths = getattr(obj, "DisplacementLengths", None)
+            if lengths:
+                return max(float(v) for v in lengths)
+    return None
+
+
+class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
+    """Same QI stack, two exports, membrane load case (§7.6)."""
+
+    save_fcstd = False
+
+    def _build_and_solve(self, isotropic, name):
+        doc = FreeCAD.newDocument(name)
+
+        from Composites.compositeexamples.examples._shell_example_common import (
+            _add_shell_section_and_material,
+            _prepare_feature_import_environment,
+        )
+
+        _prepare_feature_import_environment()
+        from Composites.features.CompositeShell import CompositeShellFP
+        from Composites.features.CompositeLaminate import CompositeLaminateFP
+        from Composites.features.FibreCompositeLamina import (
+            FibreCompositeLaminaFP,
+        )
+        from Composites.features.Rosette import RosetteFP
+        from Composites.objects import SymmetryType, WeaveType
+
+        support = doc.addObject("Part::Feature", f"{name}_Support")
+        support.Shape = Part.makePlane(PLATE_LENGTH, PLATE_WIDTH)
+
+        plies = []
+        for idx, angle in enumerate(QI_ANGLES, start=1):
+            ply = doc.addObject("App::FeaturePython", f"{name}_Ply{idx:02d}")
+            FibreCompositeLaminaFP(ply)
+            ply.FibreMaterial = CARBON
+            ply.FibreVolumeFraction = 55
+            ply.Thickness = FreeCAD.Units.Quantity("0.2 mm")
+            ply.Angle = angle
+            ply.WeaveType = WeaveType.UD.name
+            plies.append(ply)
+        laminate = doc.addObject("Part::FeaturePython", f"{name}_Laminate")
+        CompositeLaminateFP(laminate, laminae=plies)
+        laminate.ResinMaterial = RESIN
+        laminate.FibreVolumeFraction = 55
+        laminate.Symmetry = SymmetryType.Even.name
+        laminate.IsotropicEquivalent = isotropic
+        doc.recompute()
+
+        shell = doc.addObject("Part::FeaturePython", f"{name}_Shell")
+        CompositeShellFP(shell, support, laminate=laminate, rosette=None)
+        if not isotropic:
+            # The draped export needs a fibre frame.
+            rosette = doc.addObject("Part::FeaturePython", f"{name}_Rosette")
+            RosetteFP(rosette, support=(support, ["Face1"]))
+            rosette.Angle = 0.0
+            shell.Rosette = rosette
+            shell.DrapePitch = 5.0
+        doc.recompute()
+
+        self.assertNotIn("Invalid", laminate.State)
+        self.assertNotIn("Invalid", shell.State)
+
+        analysis, solver, mesh_obj = _create_fem_base(doc, name)
+        _add_shell_section_and_material(
+            doc, analysis, support, name, shell_obj=shell
+        )
+        mesher = _mesh_support(mesh_obj, support)
+        min_edge, max_edge = _edge_names_by_x(support)
+        _add_fixed_constraint(doc, analysis, support, min_edge, name)
+        _add_edge_force(doc, analysis, support, max_edge, name)
+        doc.recompute()
+
+        solve_result, fem = _run_ccx(analysis, solver, mesh_obj)
+        if not solve_result:
+            raise RuntimeError(f"CalculiX solve failed for {name}")
+        displacement = _max_displacement(analysis)
+        with open(fem.inp_file_name, encoding="utf-8", errors="ignore") as fh:
+            solver_input = fh.read()
+        return {
+            "doc": doc,
+            "shell": shell,
+            "laminate": laminate,
+            "max_displacement": displacement,
+            "solver_input": solver_input,
+            "mesh_node_count": mesh_obj.FemMesh.NodeCount,
+        }
+
+    def tearDown(self):
+        for doc_name in list(FreeCAD.listDocuments()):
+            FreeCAD.closeDocument(doc_name)
+
+    def test_cross_validation_membrane(self):
+        """QI presentation vs per-ply draped export, same stack.
+
+        Reports the measured max-displacement difference; the gate
+        tolerance is deliberately unresolved (§7.6) and is asserted
+        only after the implementation review agrees it.
+        """
+        qi = self._build_and_solve(isotropic=True, name="QIVariant")
+        draped = self._build_and_solve(isotropic=False, name="DrapedVariant")
+
+        # Both solves are the same model: identical meshes.
+        self.assertEqual(
+            qi["mesh_node_count"], draped["mesh_node_count"]
+        )
+        # The QI export is the plain isotropic path...
+        self.assertNotIn("*ORIENTATION", qi["solver_input"])
+        self.assertIn("TYPE=ISO", qi["solver_input"])
+        # ...and the draped export is the conventional composite path.
+        self.assertIn("*ORIENTATION", draped["solver_input"])
+        self.assertIn("COMPOSITE,ORIENTATION=", draped["solver_input"])
+
+        from FreeCAD import Console
+
+        Console.PrintMessage(
+            f"\n[QI cross-validation] QI presentation: "
+            f"{qi['max_displacement']:.6e} mm; "
+            f"per-ply draped export: "
+            f"{draped['max_displacement']:.6e} mm\n"
+        )
+        relative = abs(
+            qi["max_displacement"] - draped["max_displacement"]
+        ) / draped["max_displacement"]
+        Console.PrintMessage(
+            f"[QI cross-validation] relative difference: {relative:.3e}\n"
+        )
+
+        # Sanity only — the agreement tolerance is deliberately NOT
+        # asserted here (§7.6 stop condition).
+        self.assertGreater(qi["max_displacement"], 0.0)
+        self.assertGreater(draped["max_displacement"], 0.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

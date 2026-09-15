@@ -309,9 +309,13 @@ def merge_clt_isotropic(
     material["ShearModulusXZ"] = f"{H[1, 1] / total_thickness} MPa"
     material["ShearModulusYZ"] = f"{H[0, 0] / total_thickness} MPa"
 
-    angles = "/".join(
-        str(int(round(normalise_orientation(lay.orientation)))) for lay in layers
+    # Compact description: unique normalised angles in first-appearance
+    # order (the expanded list mirrors plies; CalculiX caps material
+    # names at 80 characters).
+    unique_angles = dict.fromkeys(
+        int(round(normalise_orientation(lay.orientation))) for lay in layers
     )
+    angles = "/".join(str(angle) for angle in unique_angles)
     material["Name"] = f"{prefix} QI [{angles}]"
     return HomogeneousLamina(
         material=material,
