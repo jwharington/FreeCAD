@@ -239,7 +239,7 @@ class TestQuasiIsotropicProvider(_DrapedLaminateFixture, unittest.TestCase):
         )
         self.assertNotIn("ORIENTATION=", out["material"])
         self.assertNotIn("COMPOSITE", out["material"])
-        self.assertEqual(out["material"], expected_name)
+        self.assertEqual(out["material"], f"MATERIAL={expected_name}")
         # Single layer: exactly one thickness line.
         lines = [ln for ln in out["section_geo"].splitlines() if ln]
         self.assertEqual(len(lines), 1)

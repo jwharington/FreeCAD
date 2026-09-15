@@ -1,8 +1,24 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-from ..features.CompositeShell import is_isotropic_shell
-from ..features.Laminate import is_isotropic_laminate
-from ..util.fem_util import format_material_name
+
+def _is_isotropic_shell(compshell_obj):
+    # Lazy import: this module loads during Composites package init, where
+    # the feature modules are not importable yet.
+    from ..features.CompositeShell import is_isotropic_shell
+
+    return is_isotropic_shell(compshell_obj)
+
+
+def _is_isotropic_laminate(laminate):
+    from ..features.Laminate import is_isotropic_laminate
+
+    return is_isotropic_laminate(laminate)
+
+
+def _format_material_name(name, prefix):
+    from ..util.fem_util import format_material_name
+
+    return format_material_name(name, prefix=prefix)
 
 
 def get_compshell_obj(shellth_obj):
@@ -56,7 +72,7 @@ def shell_orientation_provider(shellth_obj, femmesh_obj, elements, orientation):
     compshell_obj = get_compshell_obj(shellth_obj)
     if not compshell_obj:
         return {}
-    if is_isotropic_shell(compshell_obj):
+    if _is_isotropic_shell(compshell_obj):
         # D5: a QI shell has no drape frame — zero per-element work (no
         # mesh walk). The explicit None also clobbers any LCS orientation
         # the FEM material carries, so the writer takes the
@@ -72,7 +88,7 @@ def shell_section_provider(shellth_obj, matgeoset, orientation_name):
     laminate = get_laminate(shellth_obj)
     if not laminate:
         return None
-    if is_isotropic_laminate(laminate):
+    if _is_isotropic_laminate(laminate):
         # D5: single-layer plain section; the referenced material is the
         # laminate's equivalent isotropic layer (written by the indirect
         # material provider), never a COMPOSITE orientation.
@@ -83,11 +99,13 @@ def shell_section_provider(shellth_obj, matgeoset, orientation_name):
                 f"{len(layers)} merged layers"
             )
         layer = layers[0]
+        material_name = _format_material_name(
+            layer.description,
+            prefix=laminate.Name,
+        )
         return {
-            "material": format_material_name(
-                layer.description,
-                prefix=laminate.Name,
-            ),
+            # The override replaces the whole header MATERIAL chunk.
+            "material": f"MATERIAL={material_name}",
             "section_geo": f"{layer.thickness:.13G}\n",
         }
     return {

@@ -805,7 +805,9 @@ def _run_ccx(analysis, solver, mesh_obj):
         fem.update_objects()
 
     result = fem.run() if hasattr(fem, "run") else None
-    return result
+    # The FemToolsCcx carries the solver input path (inp_file_name) and
+    # has loaded the frd results into the analysis on success.
+    return result, fem
 
 
 DEFAULT_FAILURE_OPTIONS = {
@@ -1073,7 +1075,7 @@ def run_full_shell_job(doc, support, *, case_id, boundary_conditions, solve=True
             "hotspots": [],
         }
     else:
-        solve_result = _run_ccx(analysis, solver, mesh_obj)
+        solve_result, fem = _run_ccx(analysis, solver, mesh_obj)
         failure_report = evaluate_failure_criteria(analysis)
 
     return {
@@ -1087,4 +1089,7 @@ def run_full_shell_job(doc, support, *, case_id, boundary_conditions, solve=True
         "solve_result": solve_result,
         "failure_report": failure_report,
         "boundary_conditions": boundary_conditions,
+        "inp_file": (
+            getattr(fem, "inp_file_name", None) if solve else None
+        ),
     }

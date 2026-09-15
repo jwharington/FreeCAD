@@ -83,6 +83,10 @@ EXAMPLES = {
         "module": ".examples.quasi_iso_seam",
         "name": "Quasi-isotropic seam (QI presentation at an overlap seam)",
     },
+    "quasi_iso_fem_plate": {
+        "module": ".examples.quasi_iso_fem_plate",
+        "name": "Quasi-isotropic FEM plate (isotropic presentation through CalculiX)",
+    },
 }
 
 

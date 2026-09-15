@@ -269,6 +269,51 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
         self.assertTrue(result["remainder_isotropic"])
         self.assertIsNotNone(result["remainder"])
 
+    def test_quasi_iso_fem_plate_solves_isotropic(self):
+        """§8.3: the QI plate solves CalculiX as a plain ISO material."""
+        try:
+            result = runner.run(
+                "quasi_iso_fem_plate", run_solver=True, doc=None
+            )
+        except RuntimeError as exc:
+            msg = str(exc)
+            missing_stack_markers = (
+                "ObjectsFem is required",
+                "Unable to create FEM analysis/solver/mesh objects",
+                "Mesh generation failed",
+                "femtools.ccxtools is required",
+            )
+            if any(marker in msg for marker in missing_stack_markers):
+                self.skipTest(
+                    f"FEM stack unavailable in this FreeCAD build: {msg}",
+                )
+            raise
+
+        self._saved_doc = result.get("doc")
+        self._assert_composites_features_valid(result["doc"])
+        shell = result["shell"]
+        self.assertNotIn("Invalid", shell.State)
+        self.assertFalse(shell.DrapeValid)  # orientation-free: no drape
+        # The membrane solve produced a displacement.
+        self.assertIsNotNone(result["max_displacement"])
+        self.assertGreater(result["max_displacement"], 0.0)
+        # The solver input shows the isotropic presentation: TYPE=ISO,
+        # single-layer section, and no *ORIENTATION anywhere.
+        solver_input = result["solver_input"]
+        self.assertIn("*ELASTIC", solver_input)
+        self.assertIn("TYPE=ISO", solver_input)
+        self.assertNotIn("*ORIENTATION", solver_input)
+        self.assertNotIn("ORIENTATION=", solver_input)
+        self.assertNotIn("COMPOSITE", solver_input)
+        # Exactly one *SHELL SECTION line (single layer) for the plate.
+        section_lines = [
+            ln for ln in solver_input.splitlines()
+            if ln.startswith("*SHELL SECTION") or ln.startswith("*MEMBRANE SECTION")
+        ]
+        self.assertEqual(len(section_lines), 1)
+        snippet = result["solver_input_snippet"]
+        self.assertIn("TYPE=ISO", snippet)
+
 
 class TestFailurePostprocess(TestCompositeExamplesBase):
     def test_evaluate_failure_criteria_returns_hotspots(self):
