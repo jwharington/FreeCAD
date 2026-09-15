@@ -14,16 +14,13 @@ import FreeCAD
 # FreeCADGui removed for decoupling
 import Part
 
-from .. import DART_TOOL_ICON, is_comp_type
+from .. import DART_TOOL_ICON
 from .Command import BaseCommand
+from .CompositeShell import is_composite_shell
 
 
 PROJECT_TOLERANCE = 1e-6
 PROJECTION_SAMPLES = 8
-
-
-def is_composite_shell(obj) -> bool:
-    return is_comp_type(obj, "Part::FeaturePython", "Composite::Shell")
 
 
 def _is_dart_source(obj) -> bool:

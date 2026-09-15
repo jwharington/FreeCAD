@@ -65,6 +65,21 @@ def is_composite_shell(obj):
     )
 
 
+def is_isotropic_shell(obj):
+    """True for a Composite::Shell whose laminate declares isotropic
+    presentation (either tier, PRD quasi_isotropic_laminate.md D1).
+    """
+    if not is_composite_shell(obj):
+        return False
+    laminate = getattr(obj, "Laminate", None)
+    if laminate is None:
+        return False
+    return bool(
+        getattr(laminate, "IsotropicEquivalent", False)
+        or getattr(laminate, "ApproximateIsotropicEquivalent", False)
+    )
+
+
 class CompositeShellFP(CompositeBaseFP):
     Type = "Composite::Shell"
 
@@ -170,6 +185,7 @@ class CompositeShellFP(CompositeBaseFP):
 
         self._rosette_angle = 0.0
         self._backend = None
+        self._drape_blocked_reason = None
         self._needs_recompute = False
 
         super().__init__(obj)
@@ -197,6 +213,7 @@ class CompositeShellFP(CompositeBaseFP):
             ("_cached_rosette_angle", None),
             ("_cached_drape_pitch", None),
             ("_cached_drape_cuts_fingerprint", ""),
+            ("_drape_blocked_reason", None),
         ):
             if not hasattr(self, attr):
                 setattr(self, attr, value)
@@ -228,6 +245,14 @@ class CompositeShellFP(CompositeBaseFP):
             # support's placement move (known-issue #6).
             fp.Shape = fp.Support.Shape
             fp.Placement = fp.Support.Placement
+            return
+
+        # Structural draping bypass (D4): a declared isotropic shell never
+        # enters the drape backend. This must live inside execute — the
+        # stiffener flow's _ensure_draped drives execute() directly, so a
+        # bypass only in the protocol functions would be re-entered.
+        if is_isotropic_shell(fp):
+            self._execute_isotropic(fp)
             return
 
         # ── In-memory fast-path: skip when the live backend cache matches ──
@@ -268,6 +293,28 @@ class CompositeShellFP(CompositeBaseFP):
             _profiler('complete_drape')
             if _profiler_data:
                 print(f'[PROFILER] TOTAL: {sum(_profiler_data.values()):.0f}ms', flush=True)
+
+    def _execute_isotropic(self, fp):
+        """Declared isotropic shell: sync the shape, never drape (D4)."""
+        if fp.Rosette:
+            # Wiring error (PRD §5.3): a rosette cannot attach to an
+            # isotropic shell — loud on recompute, never silently ignored.
+            raise ValueError(
+                f"{fp.Name}: isotropic shell takes no rosette "
+                f"(no fibre frame exists to seed)"
+            )
+        # Mirror the support (shape + placement — see the no-laminate
+        # branch above for why the placement sync matters).
+        fp.Shape = fp.Support.Shape
+        fp.Placement = fp.Support.Placement
+        self._backend = None
+        self._cached_shape_fingerprint = ""
+        self._cached_rosette_angle = None
+        self._cached_drape_pitch = None
+        self._cached_drape_cuts_fingerprint = ""
+        fp.DrapeValid = False
+        # The drape protocol functions must fail loudly on this shell (D4).
+        self._drape_blocked_reason = "isotropic shell has no drape frame"
 
     def _diag(self, fp, message):
         try:
@@ -603,6 +650,8 @@ class CompositeShellFP(CompositeBaseFP):
 
     def _require_valid(self):
         """Assert the draper is valid; raise if it isn't."""
+        if getattr(self, "_drape_blocked_reason", None):
+            raise RuntimeError(self._drape_blocked_reason)
         assert self._backend is not None and self._backend.is_valid(), (
             "Draper not valid – execute() should have produced a valid backend"
         )

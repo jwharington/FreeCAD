@@ -35,6 +35,10 @@ class CompositeLaminateFP(LaminateFP):
             layers=model_layers,
             volume_fraction_fibre=volume_fraction,  # noqa
             material_matrix=obj.ResinMaterial,
+            isotropic_equivalent=obj.IsotropicEquivalent,
+            approximate_isotropic_equivalent=(
+                obj.ApproximateIsotropicEquivalent
+            ),
         )
 
     def execute(self, obj):

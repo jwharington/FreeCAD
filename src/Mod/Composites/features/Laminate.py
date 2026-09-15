@@ -76,6 +76,34 @@ class LaminateFP(CompositeBaseFP):
         obj.Symmetry = SymmetryType.Odd.name
 
         obj.addProperty(
+            "App::PropertyBool",
+            "IsotropicEquivalent",
+            "Composition",
+            "Declare exact quasi-isotropic presentation; the stack must "
+            "satisfy the QI balance conditions to round-off (validated "
+            "loudly) and FEM export collapses to one isotropic material",
+        )
+        obj.IsotropicEquivalent = False
+
+        obj.addProperty(
+            "App::PropertyBool",
+            "ApproximateIsotropicEquivalent",
+            "Composition",
+            "Declare approximate quasi-isotropic presentation; passes only "
+            "within the residual budget and the deviation is recorded",
+        )
+        obj.ApproximateIsotropicEquivalent = False
+
+        obj.addProperty(
+            "App::PropertyMap",
+            "ApproximateIsotropicResiduals",
+            "Composition",
+            "Recorded balance residuals of the approximate presentation",
+        )
+        obj.setPropertyStatus("ApproximateIsotropicResiduals", "ReadOnly")
+        obj.ApproximateIsotropicResiduals = {}
+
+        obj.addProperty(
             "App::PropertyMap",
             "StackOrientation",
             "Composition",
@@ -113,18 +141,34 @@ class LaminateFP(CompositeBaseFP):
         if not hasattr(obj, "StackModelType"):
             return
 
-        self.FEMLayers = get_layers_ccx(
-            laminate=laminate,
-            model_type=StackModelType[obj.StackModelType],
-        )
-        obj.StackOrientation = {
-            o.material["Name"]: f"{int(o.orientation_display):+03d}"
-            for o in self.FEMLayers
-        }
-        if laminate:
-            obj.Thickness = FreeCAD.Units.Quantity(laminate.thickness)
-        else:
-            obj.Thickness = FreeCAD.Units.Quantity(0.0)
+        try:
+            self.FEMLayers = get_layers_ccx(
+                laminate=laminate,
+                model_type=StackModelType[obj.StackModelType],
+            )
+            obj.StackOrientation = {
+                o.material["Name"]: f"{int(o.orientation_display):+03d}"
+                for o in self.FEMLayers
+            }
+            if laminate:
+                obj.Thickness = FreeCAD.Units.Quantity(laminate.thickness)
+                obj.ApproximateIsotropicResiduals = (
+                    {
+                        name: f"{residual:.6g}"
+                        for name, residual in laminate.qi_residuals.items()
+                    }
+                    if obj.ApproximateIsotropicEquivalent
+                    else {}
+                )
+            else:
+                obj.Thickness = FreeCAD.Units.Quantity(0.0)
+        except Exception as exc:
+            # Loud-failure contract (PRD §5.3): record the reason and
+            # surface the error so the feature shows as in error — never
+            # a silently pseudo-isotropic export.
+            self.last_error = str(exc)
+            raise
+        self.last_error = None
 
     def get_stack_assembly(self, obj):
         laminate = self.get_model(obj)
@@ -156,6 +200,10 @@ class LaminateFP(CompositeBaseFP):
         return Laminate(
             symmetry=SymmetryType[obj.Symmetry],
             layers=model_layers,
+            isotropic_equivalent=obj.IsotropicEquivalent,
+            approximate_isotropic_equivalent=(
+                obj.ApproximateIsotropicEquivalent
+            ),
         )
 
 
