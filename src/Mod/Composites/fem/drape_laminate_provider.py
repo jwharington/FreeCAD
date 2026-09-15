@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
+from ..features.CompositeShell import is_isotropic_shell
+from ..features.Laminate import is_isotropic_laminate
+from ..util.fem_util import format_material_name
+
 
 def get_compshell_obj(shellth_obj):
     if len(shellth_obj.References) >= 1:
@@ -52,6 +56,12 @@ def shell_orientation_provider(shellth_obj, femmesh_obj, elements, orientation):
     compshell_obj = get_compshell_obj(shellth_obj)
     if not compshell_obj:
         return {}
+    if is_isotropic_shell(compshell_obj):
+        # D5: a QI shell has no drape frame — zero per-element work (no
+        # mesh walk). The explicit None also clobbers any LCS orientation
+        # the FEM material carries, so the writer takes the
+        # plain-material path (no *ORIENTATION block).
+        return {"orientation": None}
     return {
         "orientation": get_drape_lcs(compshell_obj, femmesh_obj, elements),
         "element_ids": elements,
@@ -62,6 +72,24 @@ def shell_section_provider(shellth_obj, matgeoset, orientation_name):
     laminate = get_laminate(shellth_obj)
     if not laminate:
         return None
+    if is_isotropic_laminate(laminate):
+        # D5: single-layer plain section; the referenced material is the
+        # laminate's equivalent isotropic layer (written by the indirect
+        # material provider), never a COMPOSITE orientation.
+        layers = getattr(laminate.Proxy, "FEMLayers", None) or []
+        if len(layers) != 1:
+            raise ValueError(
+                f"{laminate.Name}: declared isotropic but has "
+                f"{len(layers)} merged layers"
+            )
+        layer = layers[0]
+        return {
+            "material": format_material_name(
+                layer.description,
+                prefix=laminate.Name,
+            ),
+            "section_geo": f"{layer.thickness:.13G}\n",
+        }
     return {
         "material": f"COMPOSITE,ORIENTATION={orientation_name}",
         "section_geo": laminate.Proxy.write_shell_section(laminate),
