@@ -222,6 +222,53 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
         )
         self.assertNotIn("equivalent", plain)
 
+    def _assert_composites_features_valid(self, doc):
+        """Validity invariant (§7.0): no greyed icons after a build."""
+        for obj in doc.Objects:
+            if getattr(obj, "TypeId", "") in (
+                "App::FeaturePython",
+                "Part::FeaturePython",
+            ):
+                self.assertNotIn(
+                    "Invalid", obj.State, msg=f"{obj.Name} is invalid"
+                )
+
+    def test_quasi_iso_stiffener_panel_fully_orientation_free(self):
+        result = runner.run(
+            "quasi_iso_stiffener_panel",
+            run_solver=False,
+            doc=None,
+            panel_qi=True,
+        )
+        self._saved_doc = result.get("doc")
+        self._assert_composites_features_valid(result["doc"])
+        # No web rosette (a rosette cannot attach to an isotropic shell).
+        self.assertIsNone(result["web_rosette"])
+        self.assertIsNone(
+            result["doc"].getObject("ZStiffener_WebRosette")
+        )
+        # Derived combined presentation: all sides declared → isotropic.
+        self.assertTrue(result["combined_isotropic"])
+        # Fully orientation-free: nothing draped anywhere.
+        self.assertFalse(result["web_draped"])
+        self.assertFalse(result["foot_draped"])
+        self.assertFalse(result["panel_draped"])
+
+    def test_quasi_iso_seam_no_transfers(self):
+        result = runner.run("quasi_iso_seam", run_solver=False, doc=None)
+        self._saved_doc = result.get("doc")
+        self._assert_composites_features_valid(result["doc"])
+        # Wiring relaxed (D8): no transfer rosettes on either side.
+        self.assertIsNone(result["master_transfer"])
+        self.assertIsNone(result["attachment_transfer"])
+        # Derived combined presentation is isotropic; the seam region
+        # and the remainder (the attachment's own QI laminate) are
+        # orientation-free through the actual extraction flow.
+        self.assertTrue(result["combined_isotropic"])
+        self.assertFalse(result["seam_shell_draped"])
+        self.assertTrue(result["remainder_isotropic"])
+        self.assertIsNotNone(result["remainder"])
+
 
 class TestFailurePostprocess(TestCompositeExamplesBase):
     def test_evaluate_failure_criteria_returns_hotspots(self):

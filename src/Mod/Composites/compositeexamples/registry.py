@@ -75,6 +75,14 @@ EXAMPLES = {
         "module": ".examples.stiffener_composite_shell",
         "name": "StiffenerCompositeShell (combined layup at a stiffener joint)",
     },
+    "quasi_iso_stiffener_panel": {
+        "module": ".examples.quasi_iso_stiffener_panel",
+        "name": "Quasi-isotropic stiffener panel (QI presentation at a stiffener joint)",
+    },
+    "quasi_iso_seam": {
+        "module": ".examples.quasi_iso_seam",
+        "name": "Quasi-isotropic seam (QI presentation at an overlap seam)",
+    },
 }
 
 
