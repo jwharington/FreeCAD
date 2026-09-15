@@ -34,7 +34,7 @@ from ..tools.rosette_solver import (
     solve_rosette_angle,
 )
 from .Command import BaseCommand
-from .CompositeShell import is_composite_shell
+from .CompositeShell import is_composite_shell, is_isotropic_shell
 from .Rosette import RosetteFP, ViewProviderRosette, is_rosette
 
 
@@ -249,6 +249,17 @@ class AlignFibreRosetteCommand(BaseCommand):
     cls_fp = AlignFibreRosetteFP
     cls_vp = ViewProviderAlignFibreRosette
 
+    def validate_selection(self, sel):
+        # D7: aligning a fibre consumes the drape solution; an isotropic
+        # shell has no fibre direction to align — block at entry.
+        shell = sel.get("composite_shell")
+        if shell is not None and is_isotropic_shell(shell):
+            return (
+                f"{shell.Name}: isotropic shell has no fibre direction "
+                f"to align"
+            )
+        return None
+
     def Activated(self):
         """Open the creation task panel.
 
@@ -261,12 +272,17 @@ class AlignFibreRosetteCommand(BaseCommand):
         if FreeCAD.GuiUp:
             import FreeCADGui
 
+            sel = self.check_sel(True) or {}
+            if reason := self.validate_selection(sel):
+                from FreeCAD import Console
+
+                Console.PrintError(f"{reason}\n")
+                return
+
             # Lazy import: the taskpanel module pulls in FreeCADGui/Qt.
             from ..taskpanels.task_align_fibre_rosette import _TaskPanel
 
-            FreeCADGui.Control.showDialog(
-                _TaskPanel(prefill=self.check_sel(True) or {})
-            )
+            FreeCADGui.Control.showDialog(_TaskPanel(prefill=sel))
             return
         super().Activated()
 

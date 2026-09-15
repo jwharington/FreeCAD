@@ -11,7 +11,7 @@ from .. import (
     TEXTURE_PLAN_TOOL_ICON,
 )
 from .Command import BaseCommand
-from .CompositeShell import is_composite_shell
+from .CompositeShell import is_composite_shell, is_isotropic_shell
 from .VPCompositePart import (
     CompositePartFP,
     VPCompositePart,
@@ -125,6 +125,17 @@ class TexturePlanCommand(BaseCommand):
     instance_name = "TexturePlan"
     cls_fp = TexturePlanFP
     cls_vp = ViewProviderTexturePlan
+
+    def validate_selection(self, sel):
+        # D7: a texture plan consumes the drape solution; an isotropic
+        # shell has no flat pattern, so block at entry.
+        for shell in sel.get("shells", []):
+            if is_isotropic_shell(shell):
+                return (
+                    f"{shell.Name}: isotropic shell has no drape: "
+                    f"no texture plan"
+                )
+        return None
 
 
 # Command registration moved to InitGui.py to avoid FreeCADGui dependency

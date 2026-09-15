@@ -7,6 +7,7 @@ from ...objects import (
     CompositeLaminate,
     FibreCompositeLamina,
     SimpleFabric,
+    StackModelType,
     SymmetryType,
     WeaveType,
 )
@@ -64,25 +65,35 @@ def _maybe_run_solver(doc):
         doc.recompute()
 
 
-def build(doc=None, run_solver=False):
+def build(doc=None, run_solver=False, isotropic_equivalent=True):
     doc = _ensure_document(doc)
 
+    # A QI stack must be symmetric (Even) for isotropic presentation: the
+    # balance validation requires B = 0, so the half-stack [0/45/-45/90]
+    # becomes the full [0/45/-45/90]s layup.
     laminate = CompositeLaminate(
-        symmetry=SymmetryType.Assymmetric,
+        symmetry=SymmetryType.Even,
         layers=[
             _make_ply(0),
             _make_ply(45),
             _make_ply(-45),
             _make_ply(90),
         ],
-        volume_fraction_fibre=0.58,
+        volume_fraction_fibre=0.55,
         material_matrix=_resin_material(),
+        isotropic_equivalent=isotropic_equivalent,
     )
 
     if run_solver:
         _maybe_run_solver(doc)
 
-    return {
+    result = {
         "doc": doc,
         "laminate": laminate,
     }
+    if isotropic_equivalent:
+        # Isotropic presentation: collapse to one equivalent material so
+        # downstream consumers can inspect E / nu / G / density.
+        merged = laminate.get_layers(StackModelType.Smeared)
+        result["equivalent"] = merged[0]
+    return result

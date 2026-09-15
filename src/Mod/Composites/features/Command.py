@@ -114,8 +114,23 @@ class BaseCommand:
             return res
         return None
 
+    def validate_selection(self, sel):
+        """Return a block reason for the collected selection, or None.
+
+        Commands override this to reject selections that cannot produce a
+        valid feature (e.g. an isotropic shell for a drape-dependent
+        operation) — at selection/activation time, before any object is
+        created.
+        """
+        return None
+
     def Activated(self):
         if (sel := self.check_sel(True)) is None:
+            return
+        if reason := self.validate_selection(sel):
+            from FreeCAD import Console
+
+            Console.PrintError(f"{reason}\n")
             return
 
         doc = FreeCAD.ActiveDocument

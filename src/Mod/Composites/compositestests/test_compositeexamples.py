@@ -32,6 +32,10 @@ from Composites.compositeexamples.examples import (  # noqa: E402
     cyl_sphere_seam,
     tubular_shell,
 )
+from Composites.mechanics.material_properties import (  # noqa: E402
+    is_orthotropic,
+    iso_material2dict,
+)
 
 
 def _mode_switches(root_node):
@@ -174,6 +178,49 @@ class TestCompositeExamplesRunner(TestCompositeExamplesBase):
 
         self.assertIn("laminate", result)
         self.assertIsNotNone(result["laminate"])
+
+
+class TestQuasiIsoExample(TestCompositeExamplesBase):
+    """§8.1: quasi-isotropic plate example with isotropic presentation."""
+
+    def test_quasi_iso_plate_builds_equivalent_material(self):
+        result = runner.run(
+            "quasi_iso_laminate_plate", run_solver=False, doc=None
+        )
+        self._saved_doc = result.get("doc")
+        equivalent = result["equivalent"]
+        self.assertFalse(is_orthotropic(equivalent.material))
+        d = iso_material2dict(equivalent.material)
+        self.assertGreater(d["YoungsModulus"], 0.0)
+        self.assertTrue(0.0 < d["PoissonRatio"] < 0.5)
+        self.assertGreater(d["Density"], 0.0)
+        # Derived shear must satisfy the isotropic identity to round-off
+        G = float(
+            FreeCAD.Units.Quantity(
+                equivalent.material["ShearModulus"]
+            ).getValueAs("MPa")
+        )
+        G_identity = d["YoungsModulus"] / (2 * (1 + d["PoissonRatio"]))
+        self.assertLessEqual(abs(G - G_identity), 1e-9 * G)
+        # 8 plies x 0.2 (Even symmetry of the four-angle stack)
+        self.assertAlmostEqual(equivalent.thickness, 1.6, places=6)
+
+    def test_quasi_iso_plate_record_unchanged_by_declaration(self):
+        declared = runner.run(
+            "quasi_iso_laminate_plate", run_solver=False, doc=None
+        )
+        self._saved_doc = declared.get("doc")
+        plain = runner.run(
+            "quasi_iso_laminate_plate",
+            run_solver=False,
+            doc=None,
+            isotropic_equivalent=False,
+        )
+        self.assertEqual(
+            declared["laminate"].get_product(),
+            plain["laminate"].get_product(),
+        )
+        self.assertNotIn("equivalent", plain)
 
 
 class TestFailurePostprocess(TestCompositeExamplesBase):
