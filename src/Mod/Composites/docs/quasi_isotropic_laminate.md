@@ -849,19 +849,26 @@ tolerance (§7.6).
 6. **Composition (D8, §5.4):** seam/stiffener wiring relaxation,
    `_side_layers` zero-rotation for QI sides, derived combined flag +
    re-validation, `_WebRosette` skip; composition tests (§7.4).
-7. **Stiffener panel QI example** (§8.2) registered in `registry.py`;
-   composition scenario coverage via the example runner.
+7. **Examples:** stiffener panel QI (§8.2) and QI seam (§8.4)
+   registered in `registry.py`; composition scenario coverage via the
+   example runner.
 8. **FEM provider** (§6.1): orientation-provider skip, single-layer
    plain section; material writer already ISO-capable (verified).
-9. **FEM provider tests** (§7.5) + flat-plate companion example (§8.3)
-   registered in `registry.py`.
+9. **FEM provider tests** (§7.5: provider behaviour, failure-provider
+   guard, byte-identical negative control) + flat-plate companion
+   example (§8.3) registered in `registry.py`.
 10. **End-to-end FEM test** (§7.6, stiffener panel case) with
     cross-validation run; fix remaining OQ decisions as encountered.
-11. **Docs:** `CONTEXT.md` terminology additions; this PRD's status →
+11. **Extras:** curved-surface demo (§8.5) and export-time benchmark
+    script (§8.6) — demo value, no CI gate.
+12. **Docs:** `CONTEXT.md` terminology additions; this PRD's status →
     implemented.
-12. **Build hygiene:** any new files added to `compositeexamples/` need
-    the CMakeLists touch per the established environment procedure; sync
-    source → `build/debug/` and purge `.pyc` before runtime verification.
+13. **Build hygiene:** `compositeexamples/CMakeLists.txt` is empty
+    (verified) — no per-file install edits are needed for new examples;
+    registration in `registry.py` is the only wiring. What *is* required
+    per the `freecad-dev` skill: `build-install-freecad.sh` (confirm
+    `=== Done ===`) then purge stale `.pyc` under
+    `build/debug/Mod/Composites/` before any runtime verification.
 ---
 
 ## Appendix A — verified code facts (research pass 2026-09-15)
