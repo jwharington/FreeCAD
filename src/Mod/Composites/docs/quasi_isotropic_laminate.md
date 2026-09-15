@@ -136,10 +136,13 @@ inference, and it is **two-tier** (resolved during grill 2026-09-15):
   conditions to round-off — loud error otherwise. No advisory tolerance.
 - `ApproximateIsotropicEquivalent`: for deliberately nearly-balanced
   stacks (e.g. 45°-doubled QI). Passes only when every membrane residual
-  is within a coarse budget (~5% of A₁₁, provisional); the deviation is
-  recorded as a read-only property and never silently ignored. Large
-  residuals (clearly orthotropic stacks) are rejected in **both** tiers.
-  Not usable with core plies.
+  is within a coarse budget (**20% of A₁₁** — interim value by user
+  decision 2026-09-16, widened from the provisional 5% so the
+  45°-doubled stack `[0/2×45/90]s` with its measured A66 residual of
+  ≈15% of A₁₁ is admitted for now); the deviation is recorded as a
+  read-only property and never silently ignored. Large residuals
+  (clearly orthotropic stacks) are rejected in **both** tiers. Not
+  usable with core plies.
 
 A stack that fails its tier's validation is a **loud error**
 (`last_error` recorded, feature marked touched-error), exactly like the
@@ -310,7 +313,7 @@ New pure function (testable without FreeCAD):
 def validate_quasi_isotropic(
     A: np.ndarray, B: np.ndarray,
     tol: float = 1e-6,
-    budget: float = 0.05,
+    budget: float = 0.20,
 ) -> None  # raises QuasiIsotropicError on failure
 ```
 
@@ -326,9 +329,11 @@ residuals):
 
 - Tolerances: exact tier proposed at **1e-6** (relative) — the balanced
   QI conditions are analytically exact, so only floating-point
-  round-off should register; approximate tier budget ~**5% of A₁₁** per
-  residual (provisional, D1). **These thresholds must not be widened
-  without explicit user confirmation** (testing-discipline rule).
+  round-off should register; approximate tier budget **20% of A₁₁** per
+  residual (interim value by user decision 2026-09-16, widened from the
+  provisional 5% to admit the 45°-doubled stack; D1). **These
+  thresholds must not be widened without explicit user confirmation**
+  (testing-discipline rule).
 - Failure mode: raise a dedicated exception type; the caller (feature
   layer, §5) records `last_error` and marks the object touched-error, per
   the established loud-failure contract.
@@ -537,8 +542,13 @@ New `TestQuasiIsotropic` class, building stacks from the existing
   spaced) raises naming `A16`.
 - `test_core_ply_rejected` — stack with `core=True` raises under
   isotropic presentation.
-- `test_approximate_tier_passes_near_balanced` — 45°-doubled stack passes
-  the approximate tier (each residual ≤ budget) and fails the exact tier.
+- `test_approximate_tier_passes_near_balanced` — nearly-balanced
+  ±45-family thickness perturbation of a symmetric QI stack passes the
+  approximate tier (each residual ≤ budget) and fails the exact tier.
+- `test_approximate_tier_doubled_45_accepted` — the 45°-doubled stack
+  (measured A66 residual ≈15% of A₁₁) passes the approximate tier under
+  the interim 20%-of-A₁₁ budget (user decision 2026-09-16) and fails
+  the exact tier.
 - `test_approximate_tier_records_deviation` — validation returns the
   per-residual magnitudes (pure dict, FreeCAD-free); the feature layer
   stores them read-only (§7.3).
@@ -827,6 +837,13 @@ tolerance (§7.6).
   monolithic-plate substitution distorts bending by an order of
   magnitude. Phase 1 excludes cores (D6); revisit with a deliberate
   sandwich export shape later.
+- **OQ-8 approximate-tier budget vs the 45°-doubled family (resolved
+  2026-09-16, user decision):** the provisional 5%-of-A₁₁ budget
+  rejected the 45°-doubled stack `[0/2×45/90]s` (measured A66 residual
+  ≈15% of A₁₁). The budget is widened to **20% of A₁₁** as an interim
+  value so the stack is admitted for now; the exact tier stays at 1e-6
+  untouched. Revisit if the intended "nearly balanced" population
+  changes.
 
 ## 12. Implementation order
 
