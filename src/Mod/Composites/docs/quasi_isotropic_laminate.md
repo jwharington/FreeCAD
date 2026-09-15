@@ -991,3 +991,51 @@ visibility path — no new visibility logic.
 `features/CompositeShell.py` and `features/PlaceDart.py` — the new
 `is_isotropic_shell` helper should live next to the former (canonical)
 and the D7 guards should import from there, not add a third copy.
+
+### A.4 Examples and test infrastructure
+
+**Registry/runner contract** (`compositeexamples/registry.py`,
+`runner.py`): `EXAMPLES` is a plain dict of
+`id → {"module": ".examples.<name>", "name": "<label>"}`; adding an
+example is one dict entry (no CMakeLists change — that applies to the
+build-dir sync, not the registry). `get_example_module` raises with the
+available list on unknown ids. The runner contract is a single function:
+
+```python
+def build(doc=None, run_solver=False, **kwargs) -> result-dict
+```
+
+`runner.run(example_id, run_solver=..., doc=..., **build_kwargs)`
+forwards keyword arguments straight to `build` — so the §8.2
+`panel_qi` variant needs **no second example module and no registry
+entry of its own**: tests call `runner.run("quasi_iso_stiffener_panel",
+panel_qi=True)`. The existing `quasi_iso_laminate_plate.build` already
+follows this contract (`_ensure_document` / `_maybe_run_solver`
+helpers).
+
+**`test_compositeexamples.py` conventions:**
+`TestCompositeExamplesSmoke` builds real geometry per test and saves
+`_saved_doc`; `test_all_examples_build` sweeps every registered example
+(§8 entries are picked up automatically once registered). GUI-dependent
+assertions follow the `GuiUp` guard idiom —
+`if not getattr(FreeCAD, "GuiUp", False): self.skipTest("GUI not
+available — scene graph requires MCP/GUI mode")` — so the same module
+runs headless (GUI tests self-skip) and in MCP/GUI sessions. The
+`test_conical_panel_full_pipeline_round_trip` test is the existing
+example-level FEM pattern (`runner.run(..., run_solver=True)`) the §7.6
+e2e follows.
+
+**Provider-test headless pattern** (`test_drape_laminate_provider.py`):
+registration is tested by **injecting a fake
+`femtools.fem_extension_registry` module into `sys.modules`**, calling
+`register_drape_laminate_providers()`, capturing the registered
+provider callables, and restoring the module in a `finally`. The §7.5
+QI provider tests follow the same pattern: capture the providers, then
+exercise `shell_orientation_provider` / `shell_section_provider` with a
+small real femmesh — the mock boundary is the FEM registry, never the
+Composites objects.
+
+**FEM entry to be exercised by §7.6:** the conical-panel example
+(`examples/conical_panel_segment.py`) already drives drape → FEM →
+CalculiX headless (`run_solver=True`); the QI e2e can reuse its
+analysis-construction helpers rather than re-deriving them.
