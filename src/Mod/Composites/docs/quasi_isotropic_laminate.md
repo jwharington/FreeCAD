@@ -837,7 +837,13 @@ tolerance (§7.6).
    (§5.1, §4.3).
 4. **Features:** `IsotropicEquivalent` + `ApproximateIsotropicEquivalent`
    on `Composite::Laminate`, error contract wiring, `CompositeShell`
-   drape bypass + loud drape-LCS failure (§5.2, §5.3).
+   drape bypass + loud drape-LCS failure (§5.2, §5.3). Include the
+   small dedup found in the research pass: delete the duplicate
+   `is_composite_shell` from `features/PlaceDart.py` (identical body to
+   the canonical `features/CompositeShell.py:60` — six modules already
+   import from there) and import the canonical one; verified by
+   `test_place_dart.py` + the `texture_plan` example. The new
+   `is_isotropic_shell` lives next to the canonical definition.
 5. **Feature tests** (§7.2, §7.3) + example update (§8.1); entry-point
    guards for TexturePlan / AlignFibreRosette and the render fallback.
 6. **Composition (D8, §5.4):** seam/stiffener wiring relaxation,
