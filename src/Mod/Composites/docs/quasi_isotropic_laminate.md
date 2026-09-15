@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | Draft |
 | **Date** | 2026-09-15 |
-| **Related** | `stiffener_composite_shell.md` (PRD style/precedent), `../CONTEXT.md` (terminology), `mechanics/stack_model.py`, `fem/drape_laminate_provider.py`, `../compositeexamples/examples/quasi_iso_laminate_plate.py` |
+| **Related** | `stiffener_composite_shell.md` (PRD style/precedent), `adr/0003-quasi-isotropic-presentation-contract.md` (decision record), `../CONTEXT.md` (terminology), `mechanics/stack_model.py`, `fem/drape_laminate_provider.py`, `../compositeexamples/examples/quasi_iso_laminate_plate.py` |
 | **Scope** | QI stack validation, equivalent isotropic material generation, CompositeShell draping bypass, FEM provider shortcut path. |
 
 ## Session onboarding
@@ -23,13 +23,18 @@
   writer must not query material orientation across the mesh; (b) correct
   physics — a validated QI stack *is* isotropic in-plane, so the orthotropic
   machinery adds cost without accuracy.
-- **Key inherited decisions** (consistent with the seam/stiffener PRDs):
+- **Key inherited decisions** (consistent with the seam/stiffener PRDs,
+  recorded in ADR-0003):
   loud failures with recorded `last_error`; validation at definition time,
   not at export time; modelling-only scope; isotropy is **declared then
-  verified** — an unbalanced stack never silently becomes a pseudo-isotropic
-  material; QI **composes through** the stiffener and seam machinery
-  (D8) — isotropic ⊕ isotropic = isotropic, any draped side keeps today's
-  path unchanged.
+  verified** (two tiers, D1) — an unbalanced stack never silently becomes
+  a pseudo-isotropic material; the contract **ends at the exported
+  material** — the solver owns bending/shear (D2); QI **composes through**
+  the stiffener and seam machinery (D8) — isotropic ⊕ isotropic =
+  isotropic, any draped side keeps today's path unchanged.
+- **Testing:** headless first (§7.0 tiering; `FreeCADCmd` per the
+  `freecad-dev` skill); greyed icons / `Invalid` state on success paths
+  are test failures (§7.0 validity invariant).
 
 | | |
 |---|---|
