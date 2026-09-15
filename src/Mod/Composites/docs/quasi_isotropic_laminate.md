@@ -87,7 +87,8 @@ Required: a presentation path in which a QI laminate
 
 ## 2. Terminology
 
-Proposed additions to `CONTEXT.md` (Layup & orientation section):
+Recorded in `CONTEXT.md` (new *Quasi-isotropic* term group) as of the
+grill session; repeated here for the implementation reader:
 
 **Quasi-isotropic (QI) laminate**:
 A stack with equal numbers of plies at evenly spaced orientations
@@ -107,7 +108,8 @@ merging too), homogenisation (implies micromechanics).
 
 QI is a **laminate** property, not a shell type. There is deliberately
 no `QICompositeShell` feature class: a QI shell is any shell carrying a
-laminate with `IsotropicEquivalent=True` — a plain `Composite::Shell`, a
+laminate with the declaration set (either tier, D1) — a plain
+`Composite::Shell`, a
 stiffener web, or a seam/foot shell whose combined laminate derived
 QI-ness from its sides (§5.4).
 
@@ -487,8 +489,8 @@ binary `build/debug/bin/FreeCADCmd`):
 
 | Tier | Runs on | How | Covers |
 |---|---|---|---|
-| A — pure | plain python, no FreeCAD | run `test_mechanics.py` new class directly | §7.1 validation + merge (pure numpy) |
-| B — headless | `FreeCADCmd` | `FreeCADCmd -t compositestests.<module>` for single modules; `FreeCADCmd -P src/Mod/Composites/compositestests/run_freecad_integration_tests.py` for the integration set (FreeCADGui mocked before imports) | §7.2–§7.6, examples, provider, e2e |
+| A — validation core | plain python, no FreeCAD | run `validate_quasi_isotropic` directly (A.2: the only FreeCAD-free unit) | §4.2 residuals, both tiers |
+| B — headless | `FreeCADCmd` | `FreeCADCmd -t compositestests.<module>` for single modules (incl. the §7.1 merge tests — `material_properties.py` imports `FreeCAD.Units`, A.2); `FreeCADCmd -P src/Mod/Composites/compositestests/run_freecad_integration_tests.py` for the integration set (FreeCADGui mocked before imports) | §7.1–§7.6, examples, provider, e2e |
 | C — GUI | full GUI (MCP session) | only visual checks: weave-vs-plain rendering, rosette symbol layout, and **icon validity** | the one thing headless cannot see |
 
 Run only the modules relevant to the step in progress (testing
@@ -832,7 +834,8 @@ tolerance (§7.6).
    `QuasiIsotropicError` in `mechanics/stack_model.py` (§4). Pure numpy,
    FreeCAD-free.
 2. **Mechanics unit tests** (§7.1) — red→green on the pure layer before
-   any feature wiring.
+   any feature wiring (validation core runs FreeCAD-free, §7.0 tier A;
+   the merge tests run under `FreeCADCmd`, §7.0 tier B).
 3. **Objects:** `CompositeLaminate` dataclass flag + `get_layers` routing
    (§5.1, §4.3).
 4. **Features:** `IsotropicEquivalent` + `ApproximateIsotropicEquivalent`
