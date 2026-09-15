@@ -63,9 +63,15 @@ from Composites.objects.homogeneous_lamina import HomogeneousLamina  # noqa: E40
 from Composites.objects.fabric import Fabric  # noqa: E402
 from Composites.objects.simple_fabric import SimpleFabric  # noqa: E402
 from Composites.mechanics.stack_model import (  # noqa: E402
+    BUDGET_APPROXIMATE_QUASI_ISOTROPIC,
+    TOL_QUASI_ISOTROPIC,
+    QuasiIsotropicError,
     calc_z,
     merge_clt,
+    merge_clt_isotropic,
     merge_single,
+    quasi_isotropic_residuals,
+    validate_quasi_isotropic,
 )
 from Composites.mechanics.stack_expansion import calc_stack_model  # noqa: E402
 from Composites.objects.fibre_composite_lamina import FibreCompositeLamina  # noqa: E402
@@ -341,6 +347,7 @@ class TestMaterialProperties(unittest.TestCase):
 # Tests: shell_model
 # ---------------------------------------------------------------------------
 
+import FreeCAD  # noqa: E402
 import numpy as np  # noqa: E402
 
 
@@ -1411,6 +1418,211 @@ class TestCompositeLaminatePropertyPropagation(unittest.TestCase):
         lam.get_layers()
         # 0.35 is truthy → must NOT be replaced by 0.50
         self.assertAlmostEqual(fc.volume_fraction_fibre, 0.35)
+
+
+# ---------------------------------------------------------------------------
+# Tests: mechanics/stack_model.py — quasi-isotropic presentation (§7.1)
+# ---------------------------------------------------------------------------
+
+
+def _ud_ply(orientation, thickness=1.0):
+    return HomogeneousLamina(
+        material=_make_glass(),
+        thickness=thickness,
+        orientation=orientation,
+        orientation_display=orientation,
+    )
+
+
+def _merged_AB(layers):
+    """Independent re-accumulation of the merged A/B matrices."""
+    zbar, _ = calc_z(layers)
+    A = np.zeros((3, 3))
+    B = np.zeros((3, 3))
+    membrane = (0, 1, 5)
+    for zbar_k, lay in zip(zbar, layers):
+        _, Qbar_k = material_shell_properties(
+            lay.material, math.radians(lay.orientation)
+        )
+        Qm = Qbar_k[np.ix_(membrane, membrane)]
+        A += Qm * lay.thickness
+        B += Qm * lay.thickness * zbar_k
+    return A, B
+
+
+def _qi_symmetric(angles, thicknesses=None):
+    """Even-symmetric QI stack (expand_symmetry) so the B gate passes."""
+    if thicknesses is None:
+        layers = [_ud_ply(a) for a in angles]
+    else:
+        layers = [_ud_ply(a, t) for a, t in zip(angles, thicknesses)]
+    return expand_symmetry(layers, SymmetryType.Even)
+
+
+def _qi_reference_layers():
+    return _qi_symmetric((0, 45, -45, 90))
+
+
+class TestQuasiIsotropic(unittest.TestCase):
+    """QI balance validation and isotropic merge (PRD §4, tests §7.1)."""
+
+    def test_qi_A_matrix_isotropic(self):
+        A, B = _merged_AB([_ud_ply(a) for a in (0, 45, -45, 90)])
+        residuals = quasi_isotropic_residuals(A, B)
+        self.assertLessEqual(residuals["A11-A22"], 1e-6)
+        self.assertLessEqual(residuals["A16"], 1e-6)
+        self.assertLessEqual(residuals["A26"], 1e-6)
+
+    def test_qi_G12_identity(self):
+        result = merge_clt_isotropic("Test", _qi_reference_layers())
+        d = iso_material2dict(result.material)
+        G = float(
+            FreeCAD.Units.Quantity(result.material["ShearModulus"]).getValueAs("MPa")
+        )
+        G_identity = d["YoungsModulus"] / (2 * (1 + d["PoissonRatio"]))
+        self.assertLessEqual(abs(G - G_identity), 1e-9 * G)
+
+    def test_qi_equiv_rotation_invariant(self):
+        equiv = merge_clt_isotropic("Test", _qi_reference_layers())
+        for angle_deg in (30.0, 61.3):
+            rotated = material_rotate(equiv.material, math.radians(angle_deg))
+            d_orig = iso_material2dict(equiv.material)
+            d_rot = iso_material2dict(rotated)
+            for key in ("YoungsModulus", "PoissonRatio"):
+                scale = max(abs(d_orig[key]), abs(d_rot[key]))
+                self.assertLessEqual(abs(d_orig[key] - d_rot[key]), 1e-9 * scale)
+
+    def test_qi_symmetric_stack_B_zero(self):
+        layers = [_ud_ply(a) for a in (0, 45, 90, 135)]
+        expanded = expand_symmetry(layers, SymmetryType.Even)
+        A, B = _merged_AB(expanded)
+        residuals = quasi_isotropic_residuals(A, B)
+        self.assertLessEqual(residuals["B"], 1e-6)
+
+    def test_asymmetric_qi_stack_rejected(self):
+        # [0/45/-45/90] plain (no symmetry expansion) is membrane-QI but
+        # asymmetric: the B gate rejects it — a symmetric stack is required.
+        layers = [_ud_ply(a) for a in (0, 45, -45, 90)]
+        A, B = _merged_AB(layers)
+        with self.assertRaises(QuasiIsotropicError) as ctx:
+            validate_quasi_isotropic(A, B)
+        self.assertIn("B", str(ctx.exception))
+
+    def test_unbalanced_stack_rejected(self):
+        layers = [_ud_ply(a) for a in (0, 45)]
+        A, B = _merged_AB(layers)
+        with self.assertRaises(QuasiIsotropicError) as ctx:
+            validate_quasi_isotropic(A, B)
+        self.assertIn("A11-A22", str(ctx.exception))
+
+    def test_uneven_angle_set_rejected(self):
+        layers = [_ud_ply(a) for a in (0, 30, 90)]
+        A, B = _merged_AB(layers)
+        with self.assertRaises(QuasiIsotropicError) as ctx:
+            validate_quasi_isotropic(A, B)
+        self.assertIn("A16", str(ctx.exception))
+
+    def test_core_ply_rejected(self):
+        core = _ud_ply(0)
+        core.core = True
+        with self.assertRaises(QuasiIsotropicError) as ctx:
+            merge_clt_isotropic("Test", [core])
+        self.assertIn("core", str(ctx.exception))
+
+    def test_approximate_tier_passes_near_balanced(self):
+        # Nearly balanced: the +-45 family carries 5% extra thickness in a
+        # symmetric stack; the A66 residual sits between the exact-tier
+        # tolerance and the approximate budget.
+        layers = [_ud_ply(0), _ud_ply(45, 1.05), _ud_ply(-45, 1.05), _ud_ply(90)]
+        expanded = expand_symmetry(layers, SymmetryType.Even)
+        A, B = _merged_AB(expanded)
+        residuals = quasi_isotropic_residuals(A, B)
+        for name, residual in residuals.items():
+            self.assertLessEqual(
+                residual, BUDGET_APPROXIMATE_QUASI_ISOTROPIC, msg=name
+            )
+        validate_quasi_isotropic(A, B, approximate=True)
+        with self.assertRaises(QuasiIsotropicError):
+            validate_quasi_isotropic(A, B)
+
+    def test_approximate_tier_doubled_45_rejected(self):
+        # The PRD's "45-doubled" example: doubling the +-45 family against
+        # single 0/90 plies leaves a large A66 residual (~15% of A11), far
+        # beyond the approximate budget — the approximate tier rejects it.
+        layers = [_ud_ply(0), _ud_ply(45), _ud_ply(45), _ud_ply(90),
+                  _ud_ply(-45), _ud_ply(-45)]
+        A, B = _merged_AB(layers)
+        residuals = quasi_isotropic_residuals(A, B)
+        # measured: the A66 residual dominates at ~15% of A11
+        self.assertGreater(residuals["A66"], BUDGET_APPROXIMATE_QUASI_ISOTROPIC)
+        self.assertLess(residuals["A66"], 0.3)
+        with self.assertRaises(QuasiIsotropicError):
+            validate_quasi_isotropic(A, B, approximate=True)
+
+    def test_approximate_tier_records_deviation(self):
+        A = np.array([[10.0, 1.0, 0.2], [1.0, 10.0, 0.1], [0.2, 0.1, 4.5]])
+        B = np.zeros((3, 3))
+        residuals = validate_quasi_isotropic(A, B, approximate=True)
+        self.assertEqual(
+            set(residuals.keys()), {"A11-A22", "A16", "A26", "A66", "B"}
+        )
+        self.assertGreater(residuals["A16"], 0.0)
+        self.assertGreater(residuals["A26"], 0.0)
+
+    def test_approximate_tier_rejects_large_residual(self):
+        layers = [_ud_ply(a) for a in (0, 90)]
+        A, B = _merged_AB(layers)
+        with self.assertRaises(QuasiIsotropicError):
+            validate_quasi_isotropic(A, B)
+        with self.assertRaises(QuasiIsotropicError):
+            validate_quasi_isotropic(A, B, approximate=True)
+
+    def test_isotropic_dict_shape(self):
+        result = merge_clt_isotropic("Test", _qi_reference_layers())
+        d = iso_material2dict(result.material)
+        self.assertIn("YoungsModulus", d)
+        self.assertIn("PoissonRatio", d)
+        self.assertIn("Density", d)
+        self.assertNotIn("YoungsModulusX", result.material)
+        self.assertFalse(is_orthotropic(result.material))
+
+    def test_thickness_weighted_imbalance_rejected(self):
+        # Equal ply counts, unequal thicknesses: the 45-degree pair carries
+        # 60% of the angled weight — not isotropic; only the explicit A66
+        # condition catches it (A11-A22 and A16/A26 remain zero).
+        layers = [
+            _ud_ply(0, 0.2),
+            _ud_ply(45, 0.3),
+            _ud_ply(-45, 0.3),
+            _ud_ply(90, 0.2),
+        ]
+        A, B = _merged_AB(layers)
+        with self.assertRaises(QuasiIsotropicError) as ctx:
+            validate_quasi_isotropic(A, B)
+        self.assertIn("A66", str(ctx.exception))
+
+    def test_angle_normalisation_equiv(self):
+        # Mod-180 equivalents of [0/-45/45/90] must validate identically.
+        layers_equiv = _qi_symmetric((0, 135, -135, 90))
+        A, B = _merged_AB(layers_equiv)
+        validate_quasi_isotropic(A, B)
+        result_equiv = merge_clt_isotropic("Test", layers_equiv)
+        result_ref = merge_clt_isotropic("Test", _qi_reference_layers())
+        d_equiv = iso_material2dict(result_equiv.material)
+        d_ref = iso_material2dict(result_ref.material)
+        self.assertAlmostEqual(d_equiv["YoungsModulus"], d_ref["YoungsModulus"], places=6)
+        self.assertAlmostEqual(d_equiv["PoissonRatio"], d_ref["PoissonRatio"], places=9)
+        # QI-looking only before normalisation: doubled -45 (as 135), no +45.
+        A_bad, B_bad = _merged_AB(_qi_symmetric((0, 135, 135, 90)))
+        with self.assertRaises(QuasiIsotropicError):
+            validate_quasi_isotropic(A_bad, B_bad)
+
+    def test_merge_clt_isotropic_thickness_and_layer(self):
+        result = merge_clt_isotropic("Test", _qi_symmetric((0, 45, -45, 90), (0.25,) * 4))
+        self.assertIsInstance(result, HomogeneousLamina)
+        # 4 plies x 0.25 doubled by Even symmetry
+        self.assertAlmostEqual(result.thickness, 2.0, places=10)
+        self.assertEqual(result.orientation, 0)
 
 
 if __name__ == "__main__":
