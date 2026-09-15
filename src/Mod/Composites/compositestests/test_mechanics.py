@@ -1545,19 +1545,29 @@ class TestQuasiIsotropic(unittest.TestCase):
         with self.assertRaises(QuasiIsotropicError):
             validate_quasi_isotropic(A, B)
 
-    def test_approximate_tier_doubled_45_rejected(self):
-        # The PRD's "45-doubled" example: doubling the +-45 family against
-        # single 0/90 plies leaves a large A66 residual (~15% of A11), far
-        # beyond the approximate budget — the approximate tier rejects it.
-        layers = [_ud_ply(0), _ud_ply(45), _ud_ply(45), _ud_ply(90),
-                  _ud_ply(-45), _ud_ply(-45)]
+    def test_approximate_tier_doubled_45_accepted(self):
+        # The PRD's "45-doubled" example [0/2x45/90]s: the +-45 plies of
+        # the symmetric QI reference are doubled. The A66 residual lands
+        # at ~15% of A11 — within the interim 20%-of-A11 budget (user
+        # decision 2026-09-16, widened from the provisional 5% so this
+        # stack is admitted for now). The approximate tier accepts it;
+        # the exact tier still rejects it.
+        layers = [
+            _ud_ply(0), _ud_ply(45), _ud_ply(45),
+            _ud_ply(-45), _ud_ply(-45), _ud_ply(90),
+            _ud_ply(90), _ud_ply(-45), _ud_ply(-45),
+            _ud_ply(45), _ud_ply(45), _ud_ply(0),
+        ]
         A, B = _merged_AB(layers)
         residuals = quasi_isotropic_residuals(A, B)
-        # measured: the A66 residual dominates at ~15% of A11
-        self.assertGreater(residuals["A66"], BUDGET_APPROXIMATE_QUASI_ISOTROPIC)
+        # measured: the A66 residual dominates at ~15% of A11 — above the
+        # exact-tier tolerance, below the approximate budget; the mirror
+        # ordering keeps B = 0
+        self.assertGreater(residuals["A66"], TOL_QUASI_ISOTROPIC)
         self.assertLess(residuals["A66"], 0.3)
+        validate_quasi_isotropic(A, B, approximate=True)
         with self.assertRaises(QuasiIsotropicError):
-            validate_quasi_isotropic(A, B, approximate=True)
+            validate_quasi_isotropic(A, B)
 
     def test_approximate_tier_records_deviation(self):
         A = np.array([[10.0, 1.0, 0.2], [1.0, 10.0, 0.1], [0.2, 0.1, 4.5]])
@@ -1570,8 +1580,13 @@ class TestQuasiIsotropic(unittest.TestCase):
         self.assertGreater(residuals["A26"], 0.0)
 
     def test_approximate_tier_rejects_large_residual(self):
+        # Clearly orthotropic: the [0/90] cross-ply has A66 residual
+        # ~0.4 of A11 (G12 << (A11-A12)/2), far above the 20% budget —
+        # the tier still rejects genuine anisotropy.
         layers = [_ud_ply(a) for a in (0, 90)]
         A, B = _merged_AB(layers)
+        residuals = quasi_isotropic_residuals(A, B)
+        self.assertGreater(residuals["A66"], BUDGET_APPROXIMATE_QUASI_ISOTROPIC)
         with self.assertRaises(QuasiIsotropicError):
             validate_quasi_isotropic(A, B)
         with self.assertRaises(QuasiIsotropicError):

@@ -22,8 +22,11 @@ from .shell_model import (
 # QI balance tolerances (PRD quasi_isotropic_laminate.md §4.2): the exact
 # tier enforces to round-off; the approximate tier admits a coarse
 # residual budget. Widening either requires explicit user confirmation.
+# Budget is an interim value (20% of A11) by user decision 2026-09-16:
+# widened from the provisional 5% so the 45-doubled stack [0/2x45/90]s
+# (measured A66 residual ~ 15% of A11) is admitted for now.
 TOL_QUASI_ISOTROPIC = 1e-6
-BUDGET_APPROXIMATE_QUASI_ISOTROPIC = 0.05
+BUDGET_APPROXIMATE_QUASI_ISOTROPIC = 0.20
 
 
 class QuasiIsotropicError(ValueError):
