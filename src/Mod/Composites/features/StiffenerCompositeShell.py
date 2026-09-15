@@ -26,7 +26,8 @@ unacceptable outcome.
 import Part
 
 from ..util.geometry_util import shape_fingerprint
-from .CompositeShell import is_composite_shell
+from .CompositeShell import is_composite_shell, is_isotropic_shell
+from .Laminate import is_isotropic_laminate
 from .Rosette import RosetteFP
 from .SeamCompositeLaminate import CombinationModel, SeamCompositeLaminateFP
 from .SeamExtraction import SeamGeometryFP, SeamShellFP
@@ -380,6 +381,11 @@ def _build_web_shell(doc, fp, sweep):
     rosette = getattr(fp, "Rosette", None)
     recenter = rosette is not None and rosette.Name == f"{fp.Name}_WebRosette"
     web_shell.Proxy.update(web_shell, web_shape, fp.Laminate, rosette, recenter_lcs=recenter)
+    if is_isotropic_shell(web_shell):
+        # D8: a QI web laminate takes no rosette (none can attach to an
+        # isotropic shell) and no drape — the web shell's own execute
+        # bypasses draping; leave fp.Rosette as None.
+        return web_shell
     if rosette is None:
         rosette = _ensure_web_rosette(doc, fp, web_shell)
         fp.Rosette = rosette
@@ -422,21 +428,39 @@ def _build_foot_strip(doc, fp, panel, web_shell, sweep):
     # Bootstrap: the foot is part of the stiffener surface, so the
     # stiffener's own laminate is the physically correct stand-in until
     # the combined laminate exists (the seam bootstraps from its
-    # attachment's laminate for the same reason).  No explicit drape
-    # here: the panel → foot transfer solve drives the foot shell's
-    # drape directly, and it wires its rosette first.
-    foot_shell.Proxy.update(foot_shell, foot_shape, fp.Laminate, None, recenter_lcs=False)
-    _ensure_draped(panel)
+    # attachment's laminate for the same reason) — but a QI stiffener
+    # laminate cannot seed a drape (no fibre frame, D8): the panel's
+    # laminate stands in.  No explicit drape here: the panel → foot
+    # transfer solve drives the foot shell's drape directly, and it
+    # wires its rosette first.
+    bootstrap = fp.Laminate
+    if is_isotropic_laminate(bootstrap):
+        bootstrap = panel.Laminate
+    foot_shell.Proxy.update(foot_shell, foot_shape, bootstrap, None, recenter_lcs=False)
+    if not is_isotropic_shell(panel):
+        _ensure_draped(panel)
 
-    panel_foot = _ensure_panel_foot_transfer(doc, fp, panel, foot_shell)
-    stiffener_foot = _ensure_stiffener_foot_transfer(doc, fp, web_shell, foot_shell)
+    # Transfers (D8): a QI side has no fibre frame to translate — the
+    # panel → foot transfer is kept whenever the panel is draped, the
+    # web → foot analysis transfer is meaningless for a QI web.
+    panel_foot = (
+        _ensure_panel_foot_transfer(doc, fp, panel, foot_shell)
+        if not is_isotropic_shell(panel)
+        else None
+    )
+    stiffener_foot = (
+        _ensure_stiffener_foot_transfer(doc, fp, web_shell, foot_shell)
+        if not is_isotropic_shell(web_shell)
+        else None
+    )
     scl = _ensure_combined_laminate(
         doc, fp, panel, web_shell, foot_shell, panel_foot, stiffener_foot
     )
 
     foot_shell.Proxy.update(foot_shell, foot_shape, scl, panel_foot)
     for obj in (foot_shell, panel_foot, stiffener_foot, scl):
-        _unhide(obj)
+        if obj is not None:
+            _unhide(obj)
     return foot_shell
 
 

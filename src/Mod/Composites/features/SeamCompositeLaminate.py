@@ -41,7 +41,7 @@ from .CompositeLaminate import (
     ViewProviderCompositeLaminate,
 )
 from .CompositeShell import is_composite_shell
-from .Laminate import LaminateFP, get_model_layers
+from .Laminate import LaminateFP, get_model_layers, is_isotropic_laminate
 from .Rosette import RosetteFP
 from .TransferRosette import TransferRosetteFP
 
@@ -151,6 +151,12 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
             )
             obj.setPropertyStatus("SideAngleReport", "ReadOnly")
 
+            # Derived presentation (OQ-6): never declared on the combined
+            # laminate — it equals all sides declared, written by execute
+            # and pinned read-only.
+            obj.setPropertyStatus("IsotropicEquivalent", "ReadOnly")
+            obj.setPropertyStatus("ApproximateIsotropicEquivalent", "ReadOnly")
+
             # The combined stack is a literal record of the physical
             # layup.  The inherited default (Odd) mirrors the stack and
             # would silently fabricate a copy of every ply.
@@ -178,6 +184,11 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
         proxy_type = getattr(getattr(obj, "Proxy", None), "Type", None)
         return proxy_type in ("Composite::Rosette", "Composite::TransferRosette")
 
+    def _side_is_isotropic(self, obj, side_name) -> bool:
+        """Whether the side's own laminate declares isotropic presentation."""
+        side = getattr(obj, side_name, None)
+        return is_isotropic_laminate(getattr(side, "Laminate", None))
+
     def _validate_wiring(self, obj) -> None:
         """Raise on every violated structural invariant (§3.2 of the PRD)."""
         for name in ("Master", "Attachment"):
@@ -187,8 +198,21 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
                     f"{type(self).__name__}: {name} must be a "
                     f"CompositeShell, got {side}"
                 )
-        for name in ("MasterTransfer", "AttachmentTransfer"):
+        for name, side_name in (
+            ("MasterTransfer", "Master"),
+            ("AttachmentTransfer", "Attachment"),
+        ):
             rosette = getattr(obj, name, None)
+            if self._side_is_isotropic(obj, side_name):
+                # D8: a QI side is orientation-free — its transfer
+                # rosette may be omitted; a linked non-rosette still
+                # raises (wiring error, not an omission).
+                if rosette is not None and not self._is_rosette(rosette):
+                    raise ValueError(
+                        f"{type(self).__name__}: {name} must be a solved "
+                        f"transfer rosette, got {rosette}"
+                    )
+                continue
             if not self._is_rosette(rosette):
                 raise ValueError(
                     f"{type(self).__name__}: {name} must be a solved "
@@ -228,22 +252,56 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
 
     # ── angle analysis ────────────────────────────────────────────
 
+    def _side_angle(self, obj, side_name: str, transfer_name: str):
+        """Solved fibre angle of one side at the seam; None when QI."""
+        if self._side_is_isotropic(obj, side_name):
+            # D8/OQ-5: a QI side contributes no solved angle.
+            return None
+        transfer = getattr(obj, transfer_name, None)
+        if transfer is None:
+            raise ValueError(
+                f"{type(self).__name__}: {side_name} has no solved "
+                f"transfer angle"
+            )
+        return transfer.Angle.Value
+
     def _seam_angles(self, obj) -> dict:
-        """Solved fibre-frame angles of both sides at the seam."""
-        master_angle = obj.MasterTransfer.Angle.Value
-        attachment_angle = obj.AttachmentTransfer.Angle.Value
+        """Solved fibre-frame angles of both sides at the seam.
+
+        QI sides report None (orientation-free); the effective offset is
+        only defined when both sides are draped.
+        """
+        master_angle = self._side_angle(obj, "Master", "MasterTransfer")
+        attachment_angle = self._side_angle(
+            obj, "Attachment", "AttachmentTransfer"
+        )
+        effective_offset = (
+            attachment_angle - master_angle
+            if master_angle is not None and attachment_angle is not None
+            else None
+        )
         return {
             "master": master_angle,
             "attachment": attachment_angle,
-            "effective_offset": attachment_angle - master_angle,
+            "effective_offset": effective_offset,
         }
 
+    @staticmethod
+    def _format_angle(angle) -> str:
+        return "n/a" if angle is None else f"{angle:.6g}"
+
     def _update_angle_outputs(self, obj, angles: dict) -> None:
-        obj.EffectiveOffsetAngle = angles["effective_offset"]
+        if angles["effective_offset"] is not None:
+            # Meaningful only when both sides are draped (D8).
+            obj.EffectiveOffsetAngle = angles["effective_offset"]
         obj.SideAngleReport = {
-            "master_angle_at_seam": f"{angles['master']:.6g}",
-            "attachment_angle_at_seam": f"{angles['attachment']:.6g}",
-            "effective_offset": f"{angles['effective_offset']:.6g}",
+            "master_angle_at_seam": self._format_angle(angles["master"]),
+            "attachment_angle_at_seam": self._format_angle(
+                angles["attachment"]
+            ),
+            "effective_offset": self._format_angle(
+                angles["effective_offset"]
+            ),
             "approximation": (
                 "seam-shell drape deviation treated as zero (phase 1)"
             ),
@@ -256,7 +314,9 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
 
         One rigid rotation per side: ply nominal orientation relative to
         that side's rosette frame, plus the side's solved transfer angle
-        at the seam.  Thickness and material are untouched.
+        at the seam.  Thickness and material are untouched.  A QI side
+        is orientation-free (D8/OQ-5): its plies enter the record at
+        their nominal angles with a fixed rotation of 0.
         """
         side = getattr(obj, side_name)
         model_layers = get_model_layers(side.Laminate)
@@ -265,6 +325,8 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
                 f"{type(self).__name__}: {side_name} laminate model is "
                 f"empty"
             )
+        if self._side_is_isotropic(obj, side_name):
+            return list(model_layers)
         return [
             replace(layer, orientation=layer.orientation + seam_angle)
             for layer in model_layers
@@ -292,6 +354,23 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
     def get_model(self, obj) -> CompositeLaminate:
         self._validate_wiring(obj)
         model_layers = self._combined_layers(obj)
+        # Derived presentation (OQ-6): the combined stack cannot be more
+        # isotropic than its sides — all sides declared, never declared
+        # here.  Either approximate side makes the combination
+        # approximate; the combined stack is re-validated by the §4.2
+        # balance check through the model's QI branch when derived-true.
+        sides_isotropic = all(
+            self._side_is_isotropic(obj, name)
+            for name in ("Master", "Attachment")
+        )
+        sides_approximate = any(
+            self._side_is_approximate(obj, name)
+            for name in ("Master", "Attachment")
+        )
+        obj.IsotropicEquivalent = sides_isotropic
+        obj.ApproximateIsotropicEquivalent = (
+            sides_isotropic and sides_approximate
+        )
         if volume_fraction := obj.FibreVolumeFraction:
             volume_fraction *= 0.01
         else:
@@ -304,6 +383,20 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
             layers=model_layers,
             volume_fraction_fibre=volume_fraction,  # noqa
             material_matrix=obj.ResinMaterial,
+            isotropic_equivalent=sides_isotropic,
+            approximate_isotropic_equivalent=(
+                sides_isotropic and sides_approximate
+            ),
+            # The combined record is an intentionally asymmetric literal
+            # concat (master plies + attachment plies) — the B gate does
+            # not apply to the derived QI presentation (D8).
+            qi_symmetric=False,
+        )
+
+    def _side_is_approximate(self, obj, side_name) -> bool:
+        laminate = getattr(getattr(obj, side_name, None), "Laminate", None)
+        return bool(
+            getattr(laminate, "ApproximateIsotropicEquivalent", False)
         )
 
     def execute(self, obj):
@@ -315,9 +408,12 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
             # Pull-based freshness: the transfer rosettes' angles are
             # frozen at solve time; re-solve them when their inputs
             # (shapes, rosette angles) changed since (fingerprint-guarded
-            # inside resolve()).
+            # inside resolve()).  A QI side may have no transfer at all
+            # (D8) — nothing to resolve.
             for name in ("MasterTransfer", "AttachmentTransfer"):
                 transfer = getattr(obj, name)
+                if transfer is None:
+                    continue
                 resolve = getattr(transfer.Proxy, "resolve", None)
                 if resolve is not None:
                     # Plain rosette stand-ins (e.g. hand-wired tests) have

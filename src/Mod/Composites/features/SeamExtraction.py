@@ -12,6 +12,7 @@ from ..tools.seam_extraction import extract_seam
 from ..util.geometry_util import shape_fingerprint
 from .Command import BaseCommand
 from .CompositeShell import CompositeShellFP, is_composite_shell
+from .Laminate import is_isotropic_laminate
 from .SeamCompositeLaminate import SeamCompositeLaminateFP
 from .TransferRosette import (
     AnalysisTransferRosetteFP,
@@ -388,17 +389,28 @@ class SeamShellFP(CompositeShellFP):
         # Bootstrap: the transfer solves iterate the seam shell's drape,
         # which needs a Laminate before the SeamCompositeLaminate exists.
         # The attachment's own laminate is the physically correct
-        # stand-in — the seam region is part of the attachment surface.
+        # stand-in — the seam region is part of the attachment surface —
+        # but a QI attachment cannot seed a drape (no fibre frame, D8):
+        # fall back to the master's laminate as the drapeable stand-in.
         bootstrap = getattr(attachment, "Laminate", None)
+        if bootstrap is not None and is_isotropic_laminate(bootstrap):
+            bootstrap = getattr(master, "Laminate", None)
         if bootstrap is None:
             bootstrap = self._build_virtual_laminate(doc, fp, master, attachment)
         seam_shell.Proxy.update(seam_shell, shape, bootstrap, None)
 
-        master_transfer = self._wire_seam_master_transfer(
-            doc, fp, master, seam_shell
+        # Transfers (D8): a QI side is orientation-free — no solved
+        # rosette is wired for it; both transfers vanish when both sides
+        # are QI and the combined laminate derives isotropic.
+        master_transfer = (
+            self._wire_seam_master_transfer(doc, fp, master, seam_shell)
+            if not is_isotropic_laminate(getattr(master, "Laminate", None))
+            else None
         )
-        attachment_transfer = self._wire_seam_analysis_rosette(
-            doc, fp, seam_shell, attachment
+        attachment_transfer = (
+            self._wire_seam_analysis_rosette(doc, fp, seam_shell, attachment)
+            if not is_isotropic_laminate(getattr(attachment, "Laminate", None))
+            else None
         )
 
         scl = self._build_seam_composite_laminate(

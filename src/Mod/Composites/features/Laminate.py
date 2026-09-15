@@ -46,6 +46,17 @@ def is_laminate(obj):
     )
 
 
+def is_isotropic_laminate(laminate):
+    """True when the laminate declares isotropic presentation (either
+    tier, PRD quasi_isotropic_laminate.md D1)."""
+    if laminate is None:
+        return False
+    return bool(
+        getattr(laminate, "IsotropicEquivalent", False)
+        or getattr(laminate, "ApproximateIsotropicEquivalent", False)
+    )
+
+
 class LaminateFP(CompositeBaseFP):
     Type = "Fem::MaterialMechanicalLaminate"
 

@@ -22,6 +22,10 @@ class Laminate(Lamina):
     isotropic_equivalent: bool = False
     approximate_isotropic_equivalent: bool = False
     qi_residuals: dict = field(default_factory=dict)
+    # Whether the B gate applies to the QI validation: declared stacks
+    # must be symmetric; a derived combined record (D8) is an
+    # intentionally asymmetric literal concat, so only A applies there.
+    qi_symmetric: bool = True
 
     def get_layers(
         self,
@@ -67,6 +71,7 @@ class Laminate(Lamina):
                 self.approximate_isotropic_equivalent
                 and not self.isotropic_equivalent
             ),
+            check_symmetry=self.qi_symmetric,
         )
         self.qi_residuals = merged.qi_residuals
         return [merged]

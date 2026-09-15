@@ -62,14 +62,20 @@ def validate_quasi_isotropic(
     tol: float = TOL_QUASI_ISOTROPIC,
     budget: float = BUDGET_APPROXIMATE_QUASI_ISOTROPIC,
     approximate: bool = False,
+    check_symmetry: bool = True,
 ) -> dict:
     """Validate a merged stack as quasi-isotropic; raise on failure.
 
     Returns the residual dict (quasi_isotropic_residuals) so callers can
     record the approximate tier's deviation. The exact tier enforces
     `tol`; the approximate tier (declared, D1) enforces `budget`.
+    `check_symmetry` drops the B gate for derived combined records
+    (D8): their asymmetric literal concat is physical — isotropy of
+    presentation is the membrane (A) property there.
     """
     residuals = quasi_isotropic_residuals(A, B)
+    if not check_symmetry:
+        del residuals["B"]
     threshold = budget if approximate else tol
     offenders = [
         (name, residual)
@@ -234,6 +240,7 @@ def merge_clt_isotropic(
     prefix: str,
     layers: List[Lamina],
     approximate: bool = False,
+    check_symmetry: bool = True,
 ) -> HomogeneousLamina:
     """Collapse a quasi-isotropic stack into one equivalent isotropic layer.
 
@@ -275,7 +282,12 @@ def merge_clt_isotropic(
         C += p_k * C_k
         density += p_k * layer_density(lay)
 
-    residuals = validate_quasi_isotropic(A, B, approximate=approximate)
+    residuals = validate_quasi_isotropic(
+        A,
+        B,
+        approximate=approximate,
+        check_symmetry=check_symmetry,
+    )
 
     A11 = A[0, 0]
     A12 = A[0, 1]

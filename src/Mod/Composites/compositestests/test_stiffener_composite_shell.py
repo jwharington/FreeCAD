@@ -74,7 +74,9 @@ def t_profile_points():
 class StiffenerCompositeFixture(TestFreeCADFP):
     """Shared fixtures: laminates, composite panel, wired stiffener."""
 
-    def _make_laminate(self, angles, thicknesses, materials, name="Laminate"):
+    def _make_laminate(
+        self, angles, thicknesses, materials, name="Laminate", isotropic=False
+    ):
         from Composites.features.HomogeneousLamina import HomogeneousLaminaFP
         from Composites.features.Laminate import LaminateFP
 
@@ -91,10 +93,20 @@ class StiffenerCompositeFixture(TestFreeCADFP):
             ply.Material = material
             ply_objs.append(ply)
         laminate.Layers = ply_objs
+        if isotropic:
+            laminate.Symmetry = "Even"
+            laminate.IsotropicEquivalent = True
         self.doc.recompute()
         return laminate
 
-    def _make_panel(self, name="Panel", with_laminate=True, rosette_angle=0.0):
+    def _make_panel(
+        self,
+        name="Panel",
+        with_laminate=True,
+        rosette_angle=0.0,
+        isotropic=False,
+        with_rosette=True,
+    ):
         """A composite panel shell on a planar plate (the joint's Master)."""
         from Composites.features.CompositeShell import CompositeShellFP
         from Composites.features.Rosette import RosetteFP
@@ -104,16 +116,30 @@ class StiffenerCompositeFixture(TestFreeCADFP):
         panel = self.doc.addObject("Part::FeaturePython", name)
         CompositeShellFP(panel, support)
         if with_laminate:
-            panel.Laminate = self._make_laminate(
-                [0.0, 90.0],
-                [0.5, 0.5],
-                [STEEL, STEEL],
-                name=f"{name}_Laminate",
-            )
-        rosette = self.doc.addObject("Part::FeaturePython", f"{name}_Rosette")
-        RosetteFP(rosette, support=(support, ["Face1"]))
-        rosette.Angle = rosette_angle
-        panel.Rosette = rosette
+            if isotropic:
+                # A QI panel declaration needs evenly spaced carbon plies
+                # (isotropic-material plies hit a pre-existing factor-2 in
+                # the isotropic compliance branch and are not usable here).
+                qi_angles = [0.0, 45.0, -45.0, 90.0]
+                panel.Laminate = self._make_laminate(
+                    qi_angles,
+                    [0.5] * len(qi_angles),
+                    [TestQuasiIsotropicStiffener.CARBON] * len(qi_angles),
+                    name=f"{name}_Laminate",
+                    isotropic=True,
+                )
+            else:
+                panel.Laminate = self._make_laminate(
+                    [0.0, 90.0],
+                    [0.5, 0.5],
+                    [STEEL, STEEL],
+                    name=f"{name}_Laminate",
+                )
+        if with_rosette:
+            rosette = self.doc.addObject("Part::FeaturePython", f"{name}_Rosette")
+            RosetteFP(rosette, support=(support, ["Face1"]))
+            rosette.Angle = rosette_angle
+            panel.Rosette = rosette
         self.doc.recompute()
         return panel
 
@@ -893,3 +919,103 @@ class TestStiffenerCompositeExample(TestFreeCADFP):
         self.assertAlmostEqual(
             result["web_rosette"].Angle, 30.0
         )
+
+
+class TestQuasiIsotropicStiffener(StiffenerCompositeFixture):
+    """QI composition through the stiffener flow (D8, §7.4)."""
+
+    QI_ANGLES = [0.0, 45.0, -45.0, 90.0]
+    CARBON = {
+        "Name": "Carbon",
+        "Density": "1750.0 kg/m^3",
+        "PoissonRatioXY": "0.27",
+        "PoissonRatioXZ": "0.27",
+        "PoissonRatioYZ": "0.45",
+        "ShearModulusXY": "5000 MPa",
+        "ShearModulusXZ": "5000 MPa",
+        "ShearModulusYZ": "3500 MPa",
+        "YoungsModulusX": "135 GPa",
+        "YoungsModulusY": "9.5 GPa",
+        "YoungsModulusZ": "9.5 GPa",
+    }
+
+    def _make_qi_laminate(self, name="QILaminate"):
+        return self._make_laminate(
+            self.QI_ANGLES,
+            [0.5] * len(self.QI_ANGLES),
+            [self.CARBON] * len(self.QI_ANGLES),
+            name=name,
+            isotropic=True,
+        )
+
+    def _qi_children(self, stiffener_name="Stiffener"):
+        doc = self.doc
+        get = doc.getObject
+        return (
+            get(f"{stiffener_name}"),
+            get(f"{stiffener_name}_Web"),
+            get(f"{stiffener_name}_Foot"),
+            get(f"{stiffener_name}_CombinedLaminate"),
+        )
+
+    def _assert_all_valid(self, *features):
+        for obj in features:
+            if obj is not None:
+                self.assertNotIn("Invalid", obj.State)
+
+    def test_qi_web_needs_no_rosette_and_no_drape(self):
+        panel = self._make_panel()
+        stiffener = self._make_stiffener(
+            panel, laminate=self._make_qi_laminate(name="WebLam")
+        )
+        self._assert_all_valid(panel, *self._qi_children())
+        # No web rosette is auto-created for a QI web laminate (D8).
+        self.assertIsNone(self.doc.getObject("Stiffener_WebRosette"))
+        self.assertIsNone(stiffener.Rosette)
+        web = self.doc.getObject("Stiffener_Web")
+        self.assertIsNone(web.Proxy._backend)
+        self.assertFalse(web.DrapeValid)
+
+    def test_qi_stiffener_qi_panel_foot_orientation_free(self):
+        panel = self._make_panel(
+            name="QIPanel", isotropic=True, with_rosette=False
+        )
+        stiffener = self._make_stiffener(
+            panel, laminate=self._make_qi_laminate(name="WebLam")
+        )
+        self._assert_all_valid(panel, *self._qi_children())
+        scl = self.doc.getObject("Stiffener_CombinedLaminate")
+        # Derived read-only flag: both sides declared → combined QI.
+        self.assertTrue(scl.IsotropicEquivalent)
+        layers = scl.Proxy.FEMLayers
+        self.assertEqual(len(layers), 1)
+        self.assertNotIn("YoungsModulusX", layers[0].material)
+        # Neither transfer exists — both sides are orientation-free.
+        self.assertIsNone(self.doc.getObject("Stiffener_PanelFootTransfer"))
+        self.assertIsNone(
+            self.doc.getObject("Stiffener_StiffenerFootTransfer")
+        )
+        foot = self.doc.getObject("Stiffener_Foot")
+        self.assertIsNone(foot.Proxy._backend)
+        self.assertFalse(foot.DrapeValid)
+
+    def test_qi_stiffener_draped_panel_keeps_panel_machinery(self):
+        panel = self._make_panel()
+        stiffener = self._make_stiffener(
+            panel, laminate=self._make_qi_laminate(name="WebLam")
+        )
+        self._assert_all_valid(panel, *self._qi_children())
+        scl = self.doc.getObject("Stiffener_CombinedLaminate")
+        # Mixed combination stays draped (derived flag false).
+        self.assertFalse(scl.IsotropicEquivalent)
+        # The panel-side foot transfer is kept; the analysis transfer for
+        # the QI web is meaningless and skipped.
+        self.assertIsNotNone(
+            self.doc.getObject("Stiffener_PanelFootTransfer")
+        )
+        self.assertIsNone(
+            self.doc.getObject("Stiffener_StiffenerFootTransfer")
+        )
+        report = dict(scl.SideAngleReport)
+        self.assertNotEqual(report["master_angle_at_seam"], "n/a")
+        self.assertEqual(report["attachment_angle_at_seam"], "n/a")

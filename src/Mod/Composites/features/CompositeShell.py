@@ -52,7 +52,7 @@ from ..util import mesh_util
 from ..util.geometry_util import shape_fingerprint
 from .Command import BaseCommand
 from .Container import getCompositesContainer
-from .Laminate import is_laminate
+from .Laminate import is_isotropic_laminate, is_laminate
 from .Rosette import is_rosette
 from .VPCompositeBase import CompositeBaseFP
 
@@ -71,13 +71,7 @@ def is_isotropic_shell(obj):
     """
     if not is_composite_shell(obj):
         return False
-    laminate = getattr(obj, "Laminate", None)
-    if laminate is None:
-        return False
-    return bool(
-        getattr(laminate, "IsotropicEquivalent", False)
-        or getattr(laminate, "ApproximateIsotropicEquivalent", False)
-    )
+    return is_isotropic_laminate(getattr(obj, "Laminate", None))
 
 
 class CompositeShellFP(CompositeBaseFP):

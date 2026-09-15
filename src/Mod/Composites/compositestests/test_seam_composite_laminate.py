@@ -29,11 +29,32 @@ STEEL = {
     "PoissonRatio": "0.3",
 }
 
+CARBON = {
+    "Name": "Carbon",
+    "Density": "1750.0 kg/m^3",
+    "PoissonRatioXY": "0.27",
+    "PoissonRatioXZ": "0.27",
+    "PoissonRatioYZ": "0.45",
+    "ShearModulusXY": "5000 MPa",
+    "ShearModulusXZ": "5000 MPa",
+    "ShearModulusYZ": "3500 MPa",
+    "YoungsModulusX": "135 GPa",
+    "YoungsModulusY": "9.5 GPa",
+    "YoungsModulusZ": "9.5 GPa",
+}
 
-class TestSeamCompositeLaminate(TestFreeCADFP):
-    """SeamCompositeLaminate stack, symmetry, and failure scenarios."""
 
-    def _make_laminate(self, angles, thicknesses, materials, name="Laminate"):
+class SeamCompositeFixture(TestFreeCADFP):
+    """Shared fixtures: laminates, shells, solved-angle rosettes, SCL."""
+
+    def _make_laminate(
+        self,
+        angles,
+        thicknesses,
+        materials,
+        name="Laminate",
+        isotropic=False,
+    ):
         from Composites.features.HomogeneousLamina import HomogeneousLaminaFP
         from Composites.features.Laminate import LaminateFP
 
@@ -52,10 +73,13 @@ class TestSeamCompositeLaminate(TestFreeCADFP):
             ply.Material = material
             ply_objs.append(ply)
         laminate.Layers = ply_objs
+        if isotropic:
+            laminate.Symmetry = "Even"
+            laminate.IsotropicEquivalent = True
         self.doc.recompute()
         return laminate
 
-    def _make_shell(self, name, angles, thicknesses, materials):
+    def _make_shell(self, name, angles, thicknesses, materials, isotropic=False):
         from Composites.features.CompositeShell import CompositeShellFP
 
         support = self.doc.addObject("Part::Feature", f"{name}_Support")
@@ -65,6 +89,7 @@ class TestSeamCompositeLaminate(TestFreeCADFP):
             thicknesses,
             materials,
             name=f"{name}_Laminate",
+            isotropic=isotropic,
         )
         shell = self.doc.addObject("Part::FeaturePython", name)
         CompositeShellFP(shell, support)
@@ -103,27 +128,47 @@ class TestSeamCompositeLaminate(TestFreeCADFP):
         master_angle_at_seam=10.0,
         attachment_angle_at_seam=25.0,
         combination_model=None,
+        master_isotropic=False,
+        attachment_isotropic=False,
+        master_transfer=True,
+        attachment_transfer=True,
+        master_materials=None,
+        attachment_materials=None,
     ):
         from Composites.features.SeamCompositeLaminate import (
             SeamCompositeLaminateFP,
         )
 
+        if master_materials is None:
+            master_materials = [STEEL] * len(master_angles)
+        if attachment_materials is None:
+            attachment_materials = [RESIN] * len(attachment_angles)
         master = self._make_shell(
             "Master",
             angles=list(master_angles),
             thicknesses=[0.5] * len(master_angles),
-            materials=[STEEL] * len(master_angles),
+            materials=master_materials,
+            isotropic=master_isotropic,
         )
         attachment = self._make_shell(
             "Attachment",
             angles=list(attachment_angles),
             thicknesses=[0.4] * len(attachment_angles),
-            materials=[RESIN] * len(attachment_angles),
+            materials=attachment_materials,
+            isotropic=attachment_isotropic,
         )
         seam = self._make_seam_shell()
-        master_tr = self._make_rosette("MasterTransfer", master_angle_at_seam)
-        attachment_tr = self._make_rosette(
-            "AttachmentTransfer", attachment_angle_at_seam
+        master_tr = (
+            self._make_rosette("MasterTransfer", master_angle_at_seam)
+            if master_transfer
+            else None
+        )
+        attachment_tr = (
+            self._make_rosette(
+                "AttachmentTransfer", attachment_angle_at_seam
+            )
+            if attachment_transfer
+            else None
         )
 
         scl = self.doc.addObject("Part::FeaturePython", name)
@@ -138,6 +183,10 @@ class TestSeamCompositeLaminate(TestFreeCADFP):
             scl.CombinationModel = combination_model
         self.doc.recompute()
         return scl
+
+
+class TestSeamCompositeLaminate(SeamCompositeFixture):
+    """SeamCompositeLaminate stack, symmetry, and failure scenarios."""
 
     # ── stack ordering ────────────────────────────────────────────
 
@@ -423,3 +472,121 @@ class TestSeamCompositeLaminate(TestFreeCADFP):
         self.assertIn("not implemented", scl.Proxy.last_error)
         with self.assertRaises(NotImplementedError):
             scl.Proxy.get_model(scl)
+
+
+class TestQuasiIsotropicSeamComposition(SeamCompositeFixture):
+    """QI composition through the seam machinery (D8, §7.4)."""
+
+    # QI sides: equal carbon plies at evenly spaced angles, Even symmetry
+    QI_ANGLES = (0.0, 45.0, -45.0, 90.0)
+
+    def _qi_scl(self, name="QISCL", master_isotropic=True,
+                attachment_isotropic=True, master_angle_at_seam=10.0,
+                attachment_angle_at_seam=25.0):
+        # QI sides carry carbon plies (real UD orthotropic layers, the
+        # PRD's QI case); draped sides keep the fixture's steel plies.
+        return self._make_scl(
+            name=name,
+            master_angles=self.QI_ANGLES,
+            attachment_angles=self.QI_ANGLES,
+            master_angle_at_seam=master_angle_at_seam,
+            attachment_angle_at_seam=attachment_angle_at_seam,
+            master_isotropic=master_isotropic,
+            attachment_isotropic=attachment_isotropic,
+            master_transfer=not master_isotropic,
+            attachment_transfer=not attachment_isotropic,
+            master_materials=(
+                [CARBON] * len(self.QI_ANGLES) if master_isotropic else None
+            ),
+            attachment_materials=(
+                [CARBON] * len(self.QI_ANGLES) if attachment_isotropic else None
+            ),
+        )
+
+    def _assert_all_valid(self, *features):
+        for obj in features:
+            self.assertNotIn("Invalid", obj.State)
+
+    def test_both_sides_qi_derives_isotropic_without_transfers(self):
+        scl = self._qi_scl()
+        # Wiring relaxed (D8): no transfer rosettes required at all.
+        self.assertIsNone(scl.MasterTransfer)
+        self.assertIsNone(scl.AttachmentTransfer)
+        self._assert_all_valid(
+            scl, scl.Master, scl.Attachment, scl.SeamRegion,
+            *scl.Master.Laminate.Layers,
+        )
+        # Derived read-only flag (OQ-6): all sides declared → combined QI,
+        # re-validated through the balance check.
+        self.assertTrue(scl.IsotropicEquivalent)
+        self.assertFalse(scl.ApproximateIsotropicEquivalent)
+        layers = scl.Proxy.FEMLayers
+        self.assertEqual(len(layers), 1)
+        self.assertNotIn("YoungsModulusX", layers[0].material)
+
+    def test_both_sides_qi_angle_report_is_na(self):
+        scl = self._qi_scl()
+        self._assert_all_valid(scl)
+        report = dict(scl.SideAngleReport)
+        self.assertEqual(report["master_angle_at_seam"], "n/a")
+        self.assertEqual(report["attachment_angle_at_seam"], "n/a")
+        self.assertEqual(report["effective_offset"], "n/a")
+
+    def test_draped_master_qi_attachment(self):
+        scl = self._qi_scl(
+            master_isotropic=False, attachment_isotropic=True
+        )
+        self._assert_all_valid(
+            scl, scl.Master, scl.Attachment, scl.SeamRegion,
+            *scl.Master.Laminate.Layers,
+        )
+        # The draped side's transfer is required and solved; the QI side
+        # contributes no angle and the combination stays draped.
+        self.assertIsNotNone(scl.MasterTransfer)
+        self.assertIsNone(scl.AttachmentTransfer)
+        self.assertFalse(scl.IsotropicEquivalent)
+        report = dict(scl.SideAngleReport)
+        self.assertNotEqual(report["master_angle_at_seam"], "n/a")
+        self.assertEqual(report["attachment_angle_at_seam"], "n/a")
+
+    def test_qi_master_draped_attachment(self):
+        scl = self._qi_scl(
+            master_isotropic=True, attachment_isotropic=False
+        )
+        self._assert_all_valid(
+            scl, scl.Master, scl.Attachment, scl.SeamRegion,
+            *scl.Attachment.Laminate.Layers,
+        )
+        self.assertIsNone(scl.MasterTransfer)
+        self.assertIsNotNone(scl.AttachmentTransfer)
+        self.assertFalse(scl.IsotropicEquivalent)
+
+    def test_qi_side_plies_enter_record_at_nominal_angles(self):
+        scl = self._qi_scl(
+            master_isotropic=False, attachment_isotropic=True,
+            master_angle_at_seam=10.0,
+        )
+        model = scl.Proxy.get_model(scl)
+        by_orientation = sorted(
+            layer.orientation for layer in model.layers
+        )
+        # Draped master plies: solved transfer angle 10 applied
+        # (0/45/-45/90 + 10); QI attachment plies: nominal angles, fixed
+        # rotation 0 (OQ-5).
+        self.assertEqual(
+            by_orientation,
+            [-45.0, -35.0, 0.0, 10.0, 45.0, 55.0, 90.0, 100.0],
+        )
+
+    def test_qi_side_linked_non_rosette_raises(self):
+        scl = self._qi_scl(attachment_isotropic=True)
+        junk = self.doc.addObject("Part::FeaturePython", "NotARosette")
+        from Composites.features.Rosette import RosetteFP
+
+        # Any non-rosette link is a wiring error even on a QI side.
+        junk.addProperty("App::PropertyAngle", "Angle", "A", "angle")
+        junk.Angle = 7.0
+        scl.AttachmentTransfer = junk
+        scl.recompute()
+        self.assertIn("Invalid", scl.State)
+        self.assertIn("transfer rosette", scl.Proxy.last_error)
