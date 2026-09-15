@@ -367,7 +367,12 @@ mechanism is reused for propagation where applicable.
 - `sel_args` already marks `rosette` optional — a QI shell is created with
   support + laminate only. **No property changes needed.**
 - When the laminate has `IsotropicEquivalent=True`:
-  - the shell does not instantiate the drape backend;
+  - the shell does not instantiate the drape backend. **The bypass must
+    be inside `CompositeShell.execute`** (check the laminate flag before
+    `_run_drape_sync`, keeping the shape/placement sync): the stiffener
+    flow drives `shell.Proxy.execute(shell)` directly via
+    `_ensure_draped` (`StiffenerCompositeShell.py`), so a bypass only in
+    the protocol functions would be re-entered by that direct drive;
   - `get_drape_lcs` / `get_lcs_at_point` / `get_tex_coord_at_point` raise
     loudly ("isotropic shell has no drape frame") rather than returning
     garbage — structural bypass per D4;
@@ -413,12 +418,14 @@ machinery minimally, per D8:
 
 | Aspect | Change |
 |---|---|
-| Wiring validation | `SeamCompositeLaminateFP._validate_wiring`: a side whose laminate `IsotropicEquivalent=True` may omit its transfer rosette; a draped side still requires it. `StiffenerCompositeShell.validate_composite_wiring`: the web rosette becomes optional when the stiffener's own laminate is QI (today it raises "Rosette must be a rosette feature") |
+| Wiring validation | `SeamCompositeLaminateFP._validate_wiring`: a side whose laminate is QI may omit its transfer rosette (proxy-type check relaxed for that side); a draped side still requires it; the shared-edge checks stay (geometry, not orientation). `StiffenerCompositeShell.validate_composite_wiring` needs **no change** — a missing rosette is already tolerated today (auto-created, A.3); only a linked non-rosette raises |
 | `_side_layers` (QI side) | rotation contribution fixed at 0 — plies enter the record at nominal angles; no transfer resolution for that side |
+| `_seam_angles` / `SideAngleReport` | `None`-tolerant angle reads; QI sides report `n/a` in the map; `EffectiveOffsetAngle` written only when both sides are draped |
 | `_seam_angles` / `_update_angle_outputs` | QI sides contribute no solved angle (report `n/a`); they never block the solve of the draped side |
 | Transfer resolution in `execute` | skips `MasterTransfer`/`AttachmentTransfer` stand-ins for QI sides (no `resolve` needed) |
 | Combined presentation | combined laminate's `IsotropicEquivalent` **derived read-only** = all sides QI; re-validated via §4.2 when true |
-| Stiffener web | QI web laminate → no `_WebRosette` auto-creation, web shell renders plain (D7 fallback), web shell has no drape backend |
+| Stiffener web | QI web laminate → **skip `_ensure_web_rosette` auto-creation** (a missing rosette is already tolerated; leave `fp.Rosette = None`) and **skip `_ensure_draped(web_shell)`**; web shell renders plain (D7 fallback) |
+| Stiffener analysis transfer | `_StiffenerFootTransfer` (web → foot, analysis-only) is meaningless for a QI web (isotropic web has no angles to translate) — skip creating it in that case; `_PanelFootTransfer` (master/panel side) is kept whenever the panel is draped |
 | Stiffener foot / seam-region shell | carries the combined laminate; the FEM provider sees an ordinary shell whose laminate flag drives the D5 skip — **no special-casing** in `fem/drape_laminate_provider.py` |
 | Weave rendering on child shells | web / seam / remainder shells fall back to plain colour when their (combined) laminate is QI |
 
