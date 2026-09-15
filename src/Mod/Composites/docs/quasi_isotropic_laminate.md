@@ -840,3 +840,61 @@ tolerance (§7.6).
 12. **Build hygiene:** any new files added to `compositeexamples/` need
     the CMakeLists touch per the established environment procedure; sync
     source → `build/debug/` and purge `.pyc` before runtime verification.
+---
+
+## Appendix A — verified code facts (research pass 2026-09-15)
+
+Everything below was read in source; signatures and behaviours are as
+implemented today, not as proposed. Where the plan changes one of these
+facts, the change is called out in §5/§6.
+
+### A.1 Model dataclasses (`objects/`)
+
+- `Lamina` (dataclass): `core: bool = False`, `thickness: float = 1.0`;
+  carries the static `set_missing_child_props(parent, children, items)`
+  helper (used by `CompositeLaminate.get_layers` to propagate
+  `volume_fraction_fibre` / `material_matrix` to children that have the
+  attribute but no value). `get_layers()` returns `[self]`.
+- `Ply(Lamina)`: adds `orientation: float = 0`.
+- `HomogeneousLamina(Ply)`: adds `material: dict`, `orientation_display`.
+  `description` = material `Name`, **plus `format_orientation(...)` only
+  when `is_orthotropic(material)`** — an isotropic merged layer
+  therefore prints as a plain name (e.g. `LaminateQI`), no angle suffix.
+  `get_product()` yields the BOM `(description thickness, 0)` entry.
+- `Fabric(Ply)`: `weave`, `material_fibre`, `volume_fraction_fibre`;
+  thickness ⇄ area-density conversions live here.
+- `SimpleFabric.get_plies()` expands weave families into real plies
+  (`WeaveType.UD → [0]`, `BIAX090 → [0, 90]`, `BIAX45 → [45, −45]`,
+  `TRIAX* → [0, θ, 90, −θ, 0]`), normalising each orientation through
+  `normalise_orientation`. Note the TRIAX expansions are **assymmetric**
+  families with doubled 0° — relevant only if a woven QI stack is ever
+  declared; phase 1 QI tests use UD plies.
+- `Laminate.get_layers(model_type)` (objects/laminate.py): recurses into
+  child `get_layers`, then `expand_symmetry(layers, self.symmetry)`,
+  then `calc_stack_model(prefix, model_type, expanded_layers)`, then
+  sets `self.thickness` from the merged result. The QI branch (§4.3)
+  hooks in exactly here: same expansion, different merge.
+
+### A.2 Material properties (`mechanics/material_properties.py`)
+
+- Unit conversion is **FreeCAD-dependent** (`from FreeCAD import Units`)
+  — the dict extraction runs quantities through
+  `Units.Quantity(val).getValueAs(units)`. Units used: MPa for moduli,
+  `t/mm^3` for density, dimensionless for Poisson ratios. **Implication:
+  the "pure numpy, FreeCAD-free" claim for §4 holds only for
+  `validate_quasi_isotropic`; `merge_clt_isotropic` imports FreeCAD via
+  this module** (same as `merge_clt` today). Tier-A tests (§7.0) can
+  still run headless in FreeCADCmd; truly FreeCAD-free coverage is the
+  validation function alone.
+- `is_orthotropic(material)` = presence of key `"YoungsModulusX"` — the
+  isotropic/orthotropic dispatch everywhere (writer included) keys on
+  this single key, so `merge_clt_isotropic` must simply **not emit**
+  that key.
+- `material_from_dict(mat, orthotropic=False)` copies only the keys
+  present in `mat` (`iso_items`: `YoungsModulus`, `PoissonRatio`,
+  `Density`) — missing keys are silently skipped, so a forgotten
+  `Density` yields a dict without density that fails later at the
+  writer (`write_lamina_material_ccx` indexes `mat['Density']`
+  directly). `merge_clt_isotropic` must set Density explicitly.
+- `merge_clt` density: thickness-fraction-weighted (`p_k = t_k/T`),
+  consistent with the D3 plan to reuse it.
