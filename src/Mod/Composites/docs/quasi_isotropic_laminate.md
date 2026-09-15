@@ -1,0 +1,541 @@
+# PRD: Quasi-isotropic laminate presentation — isotropic FEM material without draping
+
+| | |
+|---|---|
+| **Status** | Draft |
+| **Date** | 2026-09-15 |
+| **Related** | `stiffener_composite_shell.md` (PRD style/precedent), `../CONTEXT.md` (terminology), `mechanics/stack_model.py`, `fem/drape_laminate_provider.py`, `../compositeexamples/examples/quasi_iso_laminate_plate.py` |
+| **Scope** | QI stack validation, equivalent isotropic material generation, CompositeShell draping bypass, FEM provider shortcut path. |
+
+## Session onboarding
+
+> **New session? Read this block, then skim §§2–7 before touching code.**
+
+- **Status:** plan complete, **not started** — pick up at Implementation order step 1 (§12).
+- **What this is:** quasi-isotropic (QI) laminates — balanced stacks with
+  evenly spaced ply angles, e.g. `[0/±45/90]s` or `[0/±60]` — behave as
+  isotropic sheets in-plane. They therefore need **no draping, no rosette,
+  and no per-element material orientation** in the FEM workbench. The whole
+  per-element query pipeline (`get_drape_lcs` over the mesh) is bypassed;
+  the laminate collapses once, at definition time, into a single equivalent
+  isotropic material.
+- **Key motivations:** (a) FEM solve-time/export-time cost — the FEM
+  writer must not query material orientation across the mesh; (b) correct
+  physics — a validated QI stack *is* isotropic in-plane, so the orthotropic
+  machinery adds cost without accuracy.
+- **Key inherited decisions** (consistent with the seam/stiffener PRDs):
+  loud failures with recorded `last_error`; validation at definition time,
+  not at export time; modelling-only scope; isotropy is **declared then
+  verified** — an unbalanced stack never silently becomes a pseudo-isotropic
+  material.
+
+| | |
+|---|---|
+| **Status** | Draft — plan complete, implementation not started |
+
+## Table of contents
+
+- [1. Problem statement](#1-problem-statement)
+- [2. Terminology](#2-terminology)
+- [3. Design decisions](#3-design-decisions)
+- [4. Mechanics implementation](#4-mechanics-implementation)
+- [5. Object and feature implementation](#5-object-and-feature-implementation)
+- [6. FEM integration](#6-fem-integration)
+- [7. Test plan](#7-test-plan)
+- [8. Examples](#8-examples)
+- [9. Acceptance criteria](#9-acceptance-criteria)
+- [10. Out of scope / future phases](#10-out-of-scope--future-phases)
+- [11. Open questions](#11-open-questions)
+- [12. Implementation order](#12-implementation-order)
+
+---
+
+## 1. Problem statement
+
+A draped `Composite::Shell` carries a rosette-driven material frame. In the
+FEM workbench this costs real time at export and solve:
+
+- `fem/drape_laminate_provider.py::shell_orientation_provider` walks **every
+  shell element** (`{e: element_info(e) for e in elements}`), fetching
+  element nodes (`femmesh_obj.getElementNodes`, `getNodeById`) and calling
+  `CompositeShell.get_drape_lcs(tris)` per element to build a per-element
+  local coordinate system map.
+- The section is exported as `COMPOSITE,ORIENTATION=…` with an orthotropic
+  material, forcing the solver to carry a distributed material frame.
+
+For a quasi-isotropic layup this is pure overhead: the in-plane response is
+rotation-invariant, so the orientation field carries **zero information**.
+Today a QI layup pays the full draping + per-element-query cost for nothing.
+
+Required: a presentation path in which a QI laminate
+
+1. is validated as genuinely balanced (equal ply counts, evenly spaced
+   angles, B ≈ 0) — at definition time, loudly on failure;
+2. collapses once into a single equivalent isotropic material
+   (`E`, `ν`, `G`, `Density`, `Thickness`);
+3. requires no draping or rosette on the shell;
+4. exports to FEM as a plain isotropic material + shell section, with no
+   `*ORIENTATION`, no per-element querying, no composites-specific
+   machinery in the solver input.
+
+## 2. Terminology
+
+Proposed additions to `CONTEXT.md` (Layup & orientation section):
+
+**Quasi-isotropic (QI) laminate**:
+A stack with equal numbers of plies at evenly spaced orientations
+(typically including 0° and 90°), whose in-plane extensional response is
+rotation-invariant. A QI laminate *presents isotropic* — it needs no
+orientation machinery.
+_Avoid_: isotropic laminate (it is not material-isotropic; only the
+effective response is), balanced laminate (necessary but not sufficient
+without even spacing).
+
+**Isotropic presentation**:
+The collapse of a validated QI laminate into one equivalent isotropic
+material + thickness, computed once at laminate level, consumed by FEM
+without orientation lookup.
+_Avoid_: smearing (a `StackModelType` concept, applies to orthotropic
+merging too), homogenisation (implies micromechanics).
+
+**Balance validation**:
+The loud check that a stack declared isotropic-presenting satisfies the
+QI conditions within tolerance. Runs at definition/recompute time.
+_Avoid_: isotropy test (ambiguous with material isotropy).
+
+**Drape-dependent operation**:
+An operation that consumes the drape solution — texture-plan generation,
+align-fibre rosette, weave-texture rendering, FEM orientation lookup.
+Undefined on an isotropic shell (there is no drape and no fibre frame);
+blocked loudly at command level, not merely at protocol level.
+_Avoid_: draped operation, solver operation.
+
+## 3. Design decisions
+
+### D1 — Declared, then verified (loud failure)
+
+Isotropy of presentation is an explicit user declaration, not an
+inference: a new `IsotropicEquivalent` bool property on the
+`Composite::Laminate` FP feature. When true, the laminate runs the balance
+validation (§4.2) on every recompute. A stack that fails validation is a
+**loud error** (`last_error` recorded, feature marked touched-error),
+exactly like the seam/stiffener failure contract. Rationale: silently
+exporting a pseudo-isotropic material from a hand-entered, nearly-balanced
+stack produces quietly wrong physics; that is worse than an error.
+
+### D2 — Isotropy is a membrane-exact, bending-checked property
+
+For a stack with equal ply fractions at angles {θᵢ}, in-plane isotropy of
+the extensional matrix A is **exact** when the angle set is evenly spaced
+over 180° (e.g. {0, 45, −45, 90} or {+60, 0, −60}): then A₁₁ = A₂₂,
+A₁₆ = A₂₆ = 0, A₆₆ = (A₁₁ − A₁₂)/2 — so the equivalent engineering
+constants automatically satisfy G = E/(2(1+ν)) and a genuine isotropic
+material representation exists with no approximation in membrane response.
+
+Bending (D) isotropy is **not** automatic for every QI family: it is exact
+for e.g. `[0/±60]` but only approximate for `[0/±45/90]s`. The validation
+therefore checks the membrane conditions as a hard error, and the bending
+condition ((D₁₁ − D₁₂)/2 vs D₆₆, D₁₆ = D₂₆ = 0) as a **warning** on the
+read-only deviation property (§5), with the threshold subject to
+confirmation at implementation review.
+
+### D3 — Equivalent constants come from A, once
+
+The equivalent isotropic constants are derived from the merged A matrix
+(not via the determinant route in `merge_clt`, which is kept for the
+orthotropic path) because A-isotropy makes the algebra exact:
+
+- h = Σ t_k (total thickness)
+- ν_eff = A₁₂ / A₁₁
+- E_eff = (A₁₁ − A₁₂)(A₁₁ + A₁₂) / (A₁₁ · h)
+- G_eff = (A₁₁ − A₁₂) / (2 h)   — identically E_eff / (2(1+ν_eff))
+
+Density is the existing thickness-weighted density from `merge_clt`.
+Through-thickness properties (`YoungsModulusZ`, `PoissonRatioXZ/YZ`,
+`ShearModulusXZ/YZ`) are retained on the `HomogeneousLamina` from the
+existing C/H path so the object remains usable for solid-element FEM; the
+FEM shell path (§6) uses only E, ν, G, density, thickness.
+
+### D4 — Draping bypass is structural, not conditional
+
+A shell carrying an isotropic-equivalent laminate never enters the drape
+backend at all — no rosette is required (the `CompositeShellCommand`
+`sel_args` already mark `rosette` optional), no `Rosette` property is set,
+and the shell's drape-LCS protocol functions
+(`get_drape_lcs` etc., `features/CompositeShell.py:624`) fail loudly if
+called, consistent with `_require_valid()`. Rationale: a structural bypass
+cannot regress into "draped but ignored"; an optional-bypass design would
+leave the cost path reachable.
+
+### D5 — FEM export takes the plain-material path
+
+The CalculiX writer (`src/Mod/Fem/femsolver/calculix/write_femelement_geometry.py`)
+already writes a plain material reference when `matgeoset["orientation"]`
+is `None` — no `*ORIENTATION` block, no `ORIENTATION=` suffix on the
+material name. The QI path therefore only requires the Composites
+provider (`fem/drape_laminate_provider.py`) to:
+
+1. **not** supply an `"orientation"` key for QI shells (skip
+   `shell_orientation_provider` entirely);
+2. supply the equivalent isotropic material dict via
+   `indirect_material_provider` (it already flows through
+   `membertools.py::mats_laminate`);
+3. write a single-layer plain shell section (thickness + material name)
+   instead of the ply-by-ply `*SHELL SECTION, COMPOSITE=…`.
+
+Zero per-element work: the orientation provider is never called, the mesh
+is never walked, and the solver input carries one material and one section
+per QI shell.
+
+### D6 — Smeared merge, not new stack machinery
+
+The collapse reuses the existing `StackModelType.Smeared` path through
+`stack_expansion.py` → `merge_clt` (`mechanics/stack_model.py`); the new
+work is an isotropic variant of `merge_clt`'s output stage plus the
+validation function. Nested laminates and core plies are **rejected** in
+isotropic presentation (a core breaks membrane isotropy: phase 1 keeps the
+contract narrow). This may be relaxed later.
+
+### D7 — Drape-dependent operations are blocked at entry level
+
+A QI shell has no drape solution, so every consumer of the draper
+protocol must be protected — not only the FEM provider (D5). The drape
+protocol functions failing loudly (D4) is the backstop, not the guard:
+commands are **blocked at selection/activation time** with a clear
+message, because a mid-execute failure after the user built a selection
+is a bad contract. Known consumers and their required behaviour:
+
+| Consumer | Uses | QI behaviour |
+|---|---|---|
+| `TexturePlan` command (`features/TexturePlan.py`) | `get_boundaries` via `get_stack_assembly` | command blocked at selection: shell is isotropic, no flat-pattern exists |
+| `AlignFibreRosette` (`features/AlignFibreRosette.py`) | `get_draper()` → `get_tex_coord_at_point` | blocked at selection: no fibre direction to align |
+| Weave texture rendering (`features/coin_geometry.py`, `VPCompositeShell`) | `get_tex_coord_at_point` per vertex | render falls back to plain material colour — render-time code must not raise |
+| FEM orientation provider (`fem/drape_laminate_provider.py`) | `get_drape_lcs` per element | provider skipped entirely (D5) |
+| `rosette_solver` / `fibre.py` | `get_draper` / `get_boundaries` | unreachable: no rosette can attach to an isotropic shell (§5.2) |
+
+Rendering is the one exception to loud failure: it is ambient, cannot be
+"blocked", and a missing texture must degrade to a plain colour, never a
+crash or a black shell.
+
+## 4. Mechanics implementation
+
+### 4.1 Isotropic merge path — `mechanics/stack_model.py`
+
+New function alongside `merge_clt`:
+
+```python
+def merge_clt_isotropic(prefix: str, layers: List[Lamina]) -> HomogeneousLamina:
+```
+
+- Computes A via the same `accumulate_ABD` accumulation (or a slimmed
+  A-only variant — implementation detail).
+- Extracts equivalent constants per D3.
+- Builds the material dict via `material_from_dict(mat, orthotropic=False)`
+  — isotropic shape: `YoungsModulus`, `PoissonRatio`, `ShearModulus`
+  (derived, written for completeness), `Density`.
+- Keeps through-thickness properties from the C/H matrices (D3).
+- Returns a single `HomogeneousLamina` with `orientation=0`,
+  `thickness=h`, `description` naming the source stack
+  (e.g. `"QI [0/45/-45/90]s"`).
+- Assembly of the description belongs in this function or its caller; the
+  canonical stack notation comes from `format_orientation` /
+  `format_layer` in `util/geometry_util.py`.
+
+### 4.2 Balance validation — `mechanics/stack_model.py`
+
+New pure function (testable without FreeCAD):
+
+```python
+def validate_quasi_isotropic(
+    A: np.ndarray, D: np.ndarray,
+    membrane_tol: float = ...,
+    bending_tol: float = ...,
+) -> None  # raises QuasiIsotropicError on failure
+```
+
+Checks (A, D are the merged CLT matrices; scale-relative residuals):
+
+| Condition | Type | Note |
+|---|---|---|
+| \|A₁₁ − A₂₂\| / A₁₁ ≤ tol | error | |
+| \|A₁₆\|/A₁₁, \|A₂₆\|/A₁₁ ≤ tol | error | exactly 0 for evenly spaced sets |
+| \|A₆₆ − (A₁₁ − A₁₂)/2\| / A₁₁ ≤ tol | error | implied by the above; kept explicit |
+| \|B\| / A₁₁ ≤ tol (all 9 terms) | error | symmetric stack required |
+| \|D₁₆\|/D₁₁, \|D₂₆\|/D₁₁ ≤ tol | warning | coupling residual surfaced, not raised |
+| \|((D₁₁ − D₁₂)/2 − D₆₆)\|/D₁₁ ≤ tol | warning | bending isotropy residual surfaced |
+
+- Tolerances: membrane tolerance proposed at **1e-6** (relative) — the
+  balanced QI conditions are analytically exact, so only floating-point
+  round-off should register; bending tolerances larger and subject to
+  confirmation (§3 D2, §11). **These thresholds must not be widened
+  without explicit user confirmation** (testing-discipline rule).
+- Failure mode: raise a dedicated exception type; the caller (feature
+  layer, §5) records `last_error` and marks the object touched-error, per
+  the established loud-failure contract.
+- Bending warnings populate read-only properties (§5), never raise.
+
+### 4.3 Stack expansion
+
+`objects/laminate.py::get_layers` is unchanged for the orthotropic paths.
+The isotropic collapse is requested through the existing
+`StackModelType` parameter at the call sites that build FEM layers
+(`features/Laminate.py::get_model` / `get_layers_ccx` in
+`util/fem_util.py`): a new branch (either a new `StackModelType` member or
+a pairing of `Smeared` + the laminate's `IsotropicEquivalent` flag — see
+§11 open question OQ-2) routes to `merge_clt_isotropic` and to validation.
+
+## 5. Object and feature implementation
+
+### 5.1 `Composite::Laminate` (`features/Laminate.py`, `objects/composite_laminate.py`)
+
+New properties on the Laminate FP object:
+
+| Property | Type | Purpose |
+|---|---|---|
+| `IsotropicEquivalent` | `App::PropertyBool` | declares QI presentation; drives validation + collapse |
+| `QIBendingDeviation` | `App::PropertyString` (read-only) | bending residuals from §4.2 ("" when OK); warning surface |
+
+`CompositeLaminate` (dataclass in `objects/composite_laminate.py`) gains a
+matching `isotropic_equivalent: bool = False` field so the non-GUI model
+path mirrors the feature. The existing `Ply.set_missing_child_props`
+mechanism is reused for propagation where applicable.
+
+### 5.2 `Composite::Shell` (`features/CompositeShell.py`)
+
+- `sel_args` already marks `rosette` optional — a QI shell is created with
+  support + laminate only. **No property changes needed.**
+- When the laminate has `IsotropicEquivalent=True`:
+  - the shell does not instantiate the drape backend;
+  - `get_drape_lcs` / `get_lcs_at_point` / `get_tex_coord_at_point` raise
+    loudly ("isotropic shell has no drape frame") rather than returning
+    garbage — structural bypass per D4;
+  - a single helper — e.g. `is_isotropic_shell(obj)` next to the existing
+    `is_composite_shell` / `is_laminate` predicates — is the guard every
+    drape-dependent command tests (D7).
+- Entry-point guards added per D7:
+  - `TexturePlanCommand.Activated` / `sel_args` test: reject a selection
+    containing an isotropic shell with the message "isotropic shell has no
+    drape: no texture plan";
+  - `AlignFibreRosetteCommand`: same guard ("no fibre direction to
+    align"); also unreachable via the normal flow because a rosette
+    cannot attach to an isotropic shell;
+  - `VPCompositeShell` / weave shader path: on `is_isotropic_shell`, skip
+    the `coin_geometry` UV texture build and render with the plain
+    material colour (graceful degradation, never a raise at render time).
+
+### 5.3 Error contract
+
+`QuasiIsotropicError` messages must name the offending residual, e.g.:
+`"not quasi-isotropic: |A16|/A11 = 2.4e-2 exceeds 1e-6 (angle set not evenly spaced?)"`.
+
+## 6. FEM integration
+
+### 6.1 Provider changes — `fem/drape_laminate_provider.py`
+
+- `shell_orientation_provider`: when the shell's laminate
+  `IsotropicEquivalent` is true, return `{}` — no orientation key, no
+  `get_drape_lcs`, no mesh walk. (The CalculiX writer already emits a
+  plain material reference when `orientation` is `None` — verified in
+  `src/Mod/Fem/femsolver/calculix/write_femelement_geometry.py:171`.)
+- `shell_section_provider`: when isotropic, return a single-layer plain
+  section spec (thickness + material name) instead of
+  `laminate.Proxy.write_shell_section(...)` ply composite geo. The
+  existing `write_shell_section_ccx` in `util/fem_util.py` already
+  supports a single `HomogeneousLamina` layer; the smeared isotropic
+  output is one, so the same writer works unchanged.
+- `indirect_material_provider`: unchanged mechanics — the laminate's FEM
+  layer list is a single isotropic `HomogeneousLamina`, and the material
+  writer must emit `*ELASTIC, TYPE=ISO` for it. **Verify** during
+  implementation that the CalculiX material writer accepts an isotropic
+  dict (it already handles isotropic materials elsewhere); if it insists
+  on orthotropic shape for composites materials, extend the writer path
+  in `util/fem_util.py::write_lamina_material_ccx`.
+
+### 6.2 What disappears at export time
+
+For a QI shell the FEM export does:
+
+| Stage | Draped shell | QI shell |
+|---|---|---|
+| Orientation provider | per-element node fetch + drape LCS | not called |
+| Mesh walk | O(N_elements) | none |
+| Material | orthotropic `*ELASTIC, TYPE=ORTHOTROPIC` + `*ORIENTATION` | `*ELASTIC, TYPE=ISO` |
+| Section | `*SHELL SECTION, COMPOSITE=` ply list | single-layer `*SHELL SECTION` |
+| Solver cost | orientation transforms per element | none |
+
+## 7. Test plan
+
+All in `compositestests/`, real objects, no mocks, per the module testing
+philosophy. Tolerances below are proposals for new tests; widening any of
+them requires explicit user confirmation.
+
+### 7.1 Mechanics unit tests — `test_mechanics.py`
+
+New `TestQuasiIsotropic` class, building stacks from the existing
+`_make_glass()` / `_make_resin()` helpers (real unit-conversion path):
+
+- `test_qi_A_matrix_isotropic` — `[0/45/−45/90]` equal plies:
+  `|A11−A22| ≤ 1e-6·A11`, `|A16|, |A26| ≤ 1e-6·A11`
+  (analytically exact zeros; round-off only).
+- `test_qi_G12_identity` — on the equivalent material,
+  `|G − E/(2(1+ν))| ≤ 1e-9 · G` (identity from D3 must hold to
+  round-off).
+- `test_qi_equiv_rotation_invariant` — `material_rotate(equiv, θ)` equals
+  `equiv` for θ ∈ {30°, 61.3°} to `1e-9` relative (the defining property
+  of the presentation).
+- `test_qi_symmetric_stack_B_zero` — `expand_symmetry` with
+  `SymmetryType.Even` produces `|B|/A11 ≤ 1e-6`.
+- `test_unbalanced_stack_rejected` — `[0/45]` raises
+  `QuasiIsotropicError` naming `A11 − A22`.
+- `test_uneven_angle_set_rejected` — `[0/30/90]` (equal counts, not evenly
+  spaced) raises naming `A16`.
+- `test_core_ply_rejected` — stack with `core=True` raises under
+  isotropic presentation.
+- `test_bending_warning_not_error` — `[0/±45/90]s` passes validation with
+  a non-empty `QIBendingDeviation` (bending residuals present, no raise).
+- `test_isotropic_dict_shape` — merged material has `YoungsModulus`,
+  `PoissonRatio`, `Density`; no `YoungsModulusX`.
+
+### 7.2 Drape-dependent operation protection — `test_compositeexamples.py` / new cases in `test_laminate.py`
+
+- `TexturePlan` execution on an isotropic shell raises loudly before any
+  geometry work (entry guard), naming the isotropic shell.
+- `AlignFibreRosette` creation against an isotropic shell is blocked at
+  selection validation.
+- Rendering: an isotropic shell in a headless recompute + view update
+  does not raise and produces no weave-texture geometry (plain colour
+  fallback); covered by the existing shader/headless test patterns in
+  `test_shader_gui.py` / `test_vp_composite_shell_shader_reload.py`.
+- The protocol backstop still holds: calling `get_tex_coord_at_point` or
+  `get_drape_lcs` directly on an isotropic shell raises.
+
+### 7.3 Feature-level tests — `test_laminate.py`
+
+- `get_layers(StackModelType.Smeared)` on a QI-declared laminate returns
+  exactly one `HomogeneousLamina`, isotropic dict shape, correct
+  `thickness = Σ t_k`.
+- `last_error` populated and recompute marked error when
+  `IsotropicEquivalent=True` on an unbalanced stack (loud-failure
+  contract).
+
+### 7.4 FEM provider tests — `test_drape_laminate_provider.py` + new
+
+- Orientation provider returns `{}` for a QI shell (no mesh walk: assert
+  with a small real femmesh).
+- Section writer output for the QI laminate contains exactly one layer
+  line and the isotropic material name; no `ORIENTATION=` token.
+- Generated CalculiX input for a QI shell model: no `*ORIENTATION` block
+  for that elset; material written as isotropic. (Follow the existing
+  provider-test patterns in `test_drape_laminate_provider.py`.)
+
+### 7.5 End-to-end FEM analysis test — new `test_quasi_iso_fem.py`
+
+FreeCAD-integration pattern (`run_freecad_integration_tests.py`
+entrypoint, real FreeCAD process, no mocks):
+
+- Build plate + `Composite::Shell` + QI laminate + FEM analysis; run
+  CalculiX.
+- **Cross-validation:** same stack solved twice — (a) QI isotropic
+  presentation, (b) conventional draped orthotropic per-ply export. Max
+  displacement agreement within a tolerance to be confirmed at
+  implementation review (bending-difference-aware; not to be guessed
+  silently). This is the physics gate: it proves the shortcut preserves
+  the answer.
+- **Performance assertion (soft):** count `get_drape_lcs` calls during
+  export == 0. If instrumented timing is stable, assert export wall-clock
+  not worse than the draped baseline; otherwise keep as a logged metric.
+
+## 8. Examples
+
+### 8.1 Extend — `compositeexamples/examples/quasi_iso_laminate_plate.py`
+
+Add isotropic-presentation output to `build(...)`: declare
+`IsotropicEquivalent`, return the merged equivalent `HomogeneousLamina`
+in the result dict so downstream consumers (and the example runner) can
+inspect E/ν/G/density.
+
+### 8.2 New — `compositeexamples/examples/quasi_iso_fem_plate.py`
+
+Flat plate example running through FEM:
+
+1. rectangular plate, QI laminate `[0/45/−45/90]s` (reuse the carbon/resin
+   materials already in `quasi_iso_laminate_plate.py`),
+2. `Composite::Shell` (no rosette) over the plate,
+3. FreeCAD FEM analysis: shell thickness, constraint + load,
+4. CalculiX solve; result dict includes max displacement and the solver
+   input snippet showing `TYPE=ISO` + single-layer section.
+
+Registered in `compositeexamples/registry.py` (pattern of the existing
+`quasi_iso_laminate_plate` entry), picked up by
+`test_compositeexamples.py` (assertion + build run added there).
+
+## 9. Acceptance criteria
+
+1. A validated QI laminate exports an equivalent **isotropic** material —
+   dict shape and rotation-invariance verified by unit tests.
+2. An unbalanced or unevenly-spaced stack declared `IsotropicEquivalent`
+   fails loudly with a residual-naming error; no silent pseudo-isotropic
+   export.
+3. FEM export of a QI shell performs **zero** per-element orientation
+   queries and produces solver input with no `*ORIENTATION` and no
+   `COMPOSITE,ORIENTATION=`.
+4. Cross-validation: isotropic-presentation solve agrees with the
+   conventional per-ply orthotropic solve of the same stack within the
+   agreed tolerance.
+5. All drape-dependent operations (texture plan, align-fibre rosette)
+   are **blocked at entry** on an isotropic shell with clear messages;
+   direct protocol calls raise; rendering degrades to plain colour
+   without raising.
+6. The `quasi_iso_fem_plate` example builds and solves headless via the
+   example runner; `test_compositeexamples.py` covers it.
+7. `CONTEXT.md` gains the §2 terminology entries.
+
+## 10. Out of scope / future phases
+
+- Failure criteria (Tsai-Wu etc.) for QI shells — `fem/failure_models_composites.py` territory, later.
+- QI stack *generators* (design tools producing `[0/±45/90]s` from a ply count) — a follow-up UX concern; this PRD consumes existing stacks.
+- Solid-element FEM with through-thickness properties (the isotropic dict keeps Z-properties, but no solid path is wired here).
+- Auto-detection of QI-ness without the `IsotropicEquivalent` declaration (OQ-1).
+
+## 11. Open questions
+
+- **OQ-1 enforce vs warn:** currently enforce (D1). Should a near-miss
+  within a coarse "advisory" tolerance be allowed with a warning instead
+  of an error? Default: no — loud failure only.
+- **OQ-2 mechanism:** new `StackModelType` member
+  (`IsotropicEquiv`) vs `Smeared` + laminate flag. The flag approach
+  avoids touching the enum and its `merged_name` dispatch; the enum
+  approach keeps the stack model fully described by one parameter.
+  Decide at implementation start.
+- **OQ-3 bending tolerance threshold:** which residual bound turns the
+  bending warning into actionable information without nagging on the
+  ubiquitous `[0/±45/90]s` family. Needs a small numeric survey before
+  fixing.
+- **OQ-4 naming:** `IsotropicEquivalent` (proposed) vs `QI` vs
+  `IsotropicPresentation`. Must be added to `CONTEXT.md` whichever wins.
+
+## 12. Implementation order
+
+1. **Mechanics:** `merge_clt_isotropic` + `validate_quasi_isotropic` +
+   `QuasiIsotropicError` in `mechanics/stack_model.py` (§4). Pure numpy,
+   FreeCAD-free.
+2. **Mechanics unit tests** (§7.1) — red→green on the pure layer before
+   any feature wiring.
+3. **Objects:** `CompositeLaminate` dataclass flag + `get_layers` routing
+   (§5.1, §4.3).
+4. **Features:** `IsotropicEquivalent` property on `Composite::Laminate`,
+   error contract wiring, `CompositeShell` drape bypass + loud drape-LCS
+   failure (§5.2, §5.3).
+5. **Feature tests** (§7.2, §7.3) + example update (§8.1); entry-point
+   guards for TexturePlan / AlignFibreRosette and the render fallback.
+6. **FEM provider** (§6.1): orientation-provider skip, plain section,
+   material-writer verification for isotropic dicts.
+7. **FEM provider tests** (§7.4) + end-to-end example (§8.2) registered
+   in `registry.py`.
+8. **End-to-end FEM test** (§7.5) with cross-validation run; fix
+   OQ-3/OQ-2 decisions as encountered.
+9. **Docs:** `CONTEXT.md` terminology additions; this PRD's status →
+   implemented.
+10. **Build hygiene:** any new files added to `compositeexamples/` need
+    the CMakeLists touch per the established environment procedure; sync
+    source → `build/debug/` and purge `.pyc` before runtime verification.
