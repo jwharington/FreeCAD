@@ -27,7 +27,9 @@
   loud failures with recorded `last_error`; validation at definition time,
   not at export time; modelling-only scope; isotropy is **declared then
   verified** — an unbalanced stack never silently becomes a pseudo-isotropic
-  material.
+  material; QI **composes through** the stiffener and seam machinery
+  (D8) — isotropic ⊕ isotropic = isotropic, any draped side keeps today's
+  path unchanged.
 
 | | |
 |---|---|
@@ -97,6 +99,12 @@ material + thickness, computed once at laminate level, consumed by FEM
 without orientation lookup.
 _Avoid_: smearing (a `StackModelType` concept, applies to orthotropic
 merging too), homogenisation (implies micromechanics).
+
+QI is a **laminate** property, not a shell type. There is deliberately
+no `QICompositeShell` feature class: a QI shell is any shell carrying a
+laminate with `IsotropicEquivalent=True` — a plain `Composite::Shell`, a
+stiffener web, or a seam/foot shell whose combined laminate derived
+QI-ness from its sides (§5.4).
 
 **Balance validation**:
 The loud check that a stack declared isotropic-presenting satisfies the
@@ -217,6 +225,35 @@ Rendering is the one exception to loud failure: it is ambient, cannot be
 "blocked", and a missing texture must degrade to a plain colour, never a
 crash or a black shell.
 
+### D8 — QI composes through the stiffener and seam machinery
+
+The stiffener and seam flows combine laminates: side stacks are rotated
+into the shared frame by solved transfer angles
+(`SeamCompositeLaminateFP._side_layers`), concatenated
+(`_combined_layers`), and recorded as a literal combined stack with
+`Symmetry` pinned `Assymmetric`. A QI laminate must compose through this
+machinery seamlessly — as a seam side, as a stiffener web, and as a
+derived property of the combined result. The composition algebra:
+
+- **isotropic ⊕ isotropic = isotropic** — the merged A of isotropic
+  layer sets is isotropic, so a combined stack presents isotropic **iff
+  every side is QI**.
+- **a QI side is orientation-free** — its plies enter the literal stack
+  record at their nominal angles with a **fixed rotation of 0**
+  (rotating an isotropic side is meaningless); the solved transfer
+  rosette on that side is *not required*.
+- **any draped side makes the combination draped** — transfers,
+  orientation provider, and rendering run for the draped side exactly as
+  today; the QI side contributes orientation-free plies.
+- **combined QI-ness is derived, never declared** — the combined
+  laminate's `IsotropicEquivalent` is a read-only computation from its
+  sides; when derived-true, the combined stack is re-validated by the
+  §4.2 balance check (expected to pass trivially, but verified loudly
+  rather than assumed).
+
+Details per feature in §5.4. The reserved combination models (interleave,
+taper) inherit the same algebra when implemented.
+
 ## 4. Mechanics implementation
 
 ### 4.1 Isotropic merge path — `mechanics/stack_model.py`
@@ -328,6 +365,34 @@ mechanism is reused for propagation where applicable.
 `QuasiIsotropicError` messages must name the offending residual, e.g.:
 `"not quasi-isotropic: |A16|/A11 = 2.4e-2 exceeds 1e-6 (angle set not evenly spaced?)"`.
 
+### 5.4 Composition — `SeamCompositeLaminate` and `StiffenerCompositeShell`
+
+Both flows reuse the `SeamCompositeLaminateFP` machinery (the stiffener
+foot's combined laminate is built with it — `StiffenerCompositeShell.py`
+imports `CombinationModel, SeamCompositeLaminateFP`). QI changes this
+machinery minimally, per D8:
+
+| Aspect | Change |
+|---|---|
+| Wiring validation | `SeamCompositeLaminateFP._validate_wiring`: a side whose laminate `IsotropicEquivalent=True` may omit its transfer rosette; a draped side still requires it. `StiffenerCompositeShell.validate_composite_wiring`: the web rosette becomes optional when the stiffener's own laminate is QI (today it raises "Rosette must be a rosette feature") |
+| `_side_layers` (QI side) | rotation contribution fixed at 0 — plies enter the record at nominal angles; no transfer resolution for that side |
+| `_seam_angles` / `_update_angle_outputs` | QI sides contribute no solved angle (report `n/a`); they never block the solve of the draped side |
+| Transfer resolution in `execute` | skips `MasterTransfer`/`AttachmentTransfer` stand-ins for QI sides (no `resolve` needed) |
+| Combined presentation | combined laminate's `IsotropicEquivalent` **derived read-only** = all sides QI; re-validated via §4.2 when true |
+| Stiffener web | QI web laminate → no `_WebRosette` auto-creation, web shell renders plain (D7 fallback), web shell has no drape backend |
+| Stiffener foot / seam-region shell | carries the combined laminate; the FEM provider sees an ordinary shell whose laminate flag drives the D5 skip — **no special-casing** in `fem/drape_laminate_provider.py` |
+| Weave rendering on child shells | web / seam / remainder shells fall back to plain colour when their (combined) laminate is QI |
+
+When at least one side is draped, the combination behaves exactly as
+today — the draped side's transfers, angles, and orientation provider
+run unchanged. The remainder shell of a seam extraction carries the
+attachment's own laminate: if that is QI, the remainder is orientation-
+free under the same rules.
+
+`SeamCompositeLaminate` pins `Symmetry = Assymmetric` for the literal
+record; this is untouched — a QI declaration on the *sources* is what
+makes the combined stack isotropic, not symmetry mirroring.
+
 ## 6. FEM integration
 
 ### 6.1 Provider changes — `fem/drape_laminate_provider.py`
@@ -418,7 +483,33 @@ New `TestQuasiIsotropic` class, building stacks from the existing
   `IsotropicEquivalent=True` on an unbalanced stack (loud-failure
   contract).
 
-### 7.4 FEM provider tests — `test_drape_laminate_provider.py` + new
+### 7.4 Composition tests — `test_seam_composite_laminate.py`, `test_stiffener_composite_shell.py`
+
+Seam (QI algebra per D8):
+
+- both sides QI: no transfer rosettes required; wiring validates; the
+  combined laminate's derived `IsotropicEquivalent` is true and the
+  combined stack passes balance validation.
+- draped side + QI side: the draped side's transfer rosette is required
+  and solved; the QI side contributes no angle; the combined laminate is
+  draped (derived flag false).
+- both draped: existing behaviour unchanged (regression guard — no QI
+  wiring may alter the draped path).
+- QI side plies enter the literal record at nominal angles (rotation 0).
+- remainder shell of an extraction with a QI attachment is orientation-
+  free.
+
+Stiffener:
+
+- QI web laminate: stiffener created without rosette;
+  `validate_composite_wiring` passes; no `_WebRosette` created; web
+  shell renders plain without raising.
+- QI stiffener + QI panel: foot combined laminate derives QI, foot shell
+  is orientation-free end to end.
+- QI stiffener + draped panel: foot combined laminate is draped;
+  panel-side transfer machinery unchanged.
+
+### 7.5 FEM provider tests — `test_drape_laminate_provider.py` + new
 
 - Orientation provider returns `{}` for a QI shell (no mesh walk: assert
   with a small real femmesh).
@@ -428,7 +519,7 @@ New `TestQuasiIsotropic` class, building stacks from the existing
   for that elset; material written as isotropic. (Follow the existing
   provider-test patterns in `test_drape_laminate_provider.py`.)
 
-### 7.5 End-to-end FEM analysis test — new `test_quasi_iso_fem.py`
+### 7.6 End-to-end FEM analysis test — new `test_quasi_iso_fem.py`
 
 FreeCAD-integration pattern (`run_freecad_integration_tests.py`
 entrypoint, real FreeCAD process, no mocks):
@@ -486,9 +577,13 @@ Registered in `compositeexamples/registry.py` (pattern of the existing
    are **blocked at entry** on an isotropic shell with clear messages;
    direct protocol calls raise; rendering degrades to plain colour
    without raising.
-6. The `quasi_iso_fem_plate` example builds and solves headless via the
+6. Stiffener and seam flows work seamlessly with QI laminates (D8):
+   QI⊕QI combinations derive isotropic presentation and skip orientation
+   machinery; any draped side keeps today's behaviour exactly; wiring
+   validation accepts QI sides without transfer rosettes / web rosette.
+7. The `quasi_iso_fem_plate` example builds and solves headless via the
    example runner; `test_compositeexamples.py` covers it.
-7. `CONTEXT.md` gains the §2 terminology entries.
+8. `CONTEXT.md` gains the §2 terminology entries.
 
 ## 10. Out of scope / future phases
 
@@ -513,6 +608,16 @@ Registered in `compositeexamples/registry.py` (pattern of the existing
   fixing.
 - **OQ-4 naming:** `IsotropicEquivalent` (proposed) vs `QI` vs
   `IsotropicPresentation`. Must be added to `CONTEXT.md` whichever wins.
+- **OQ-5 stack record for QI sides:** a QI side enters the literal
+  combined record at nominal angles, rotation 0 (D8). Alternative: give
+  the combined laminate an explicit per-side seam-relative angle
+  property for the record even when physics ignores it. Default:
+  nominal, no rotation — the record stays a truthful physical layup
+  record and no meaningless angle is invented.
+- **OQ-6 derived flag on combined laminates:** read-only derived
+  `IsotropicEquivalent` on `SeamCompositeLaminateFP` (default) vs a
+  re-declarable flag re-validated on change. Derived is preferred: the
+  combined stack cannot be more isotropic than its sides.
 
 ## 12. Implementation order
 
@@ -528,14 +633,17 @@ Registered in `compositeexamples/registry.py` (pattern of the existing
    failure (§5.2, §5.3).
 5. **Feature tests** (§7.2, §7.3) + example update (§8.1); entry-point
    guards for TexturePlan / AlignFibreRosette and the render fallback.
-6. **FEM provider** (§6.1): orientation-provider skip, plain section,
+6. **Composition (D8, §5.4):** seam/stiffener wiring relaxation,
+   `_side_layers` zero-rotation for QI sides, derived combined flag +
+   re-validation, `_WebRosette` skip; composition tests (§7.4).
+7. **FEM provider** (§6.1): orientation-provider skip, plain section,
    material-writer verification for isotropic dicts.
-7. **FEM provider tests** (§7.4) + end-to-end example (§8.2) registered
+8. **FEM provider tests** (§7.5) + end-to-end example (§8.2) registered
    in `registry.py`.
-8. **End-to-end FEM test** (§7.5) with cross-validation run; fix
+9. **End-to-end FEM test** (§7.6) with cross-validation run; fix
    OQ-3/OQ-2 decisions as encountered.
-9. **Docs:** `CONTEXT.md` terminology additions; this PRD's status →
+10. **Docs:** `CONTEXT.md` terminology additions; this PRD's status →
    implemented.
-10. **Build hygiene:** any new files added to `compositeexamples/` need
+11. **Build hygiene:** any new files added to `compositeexamples/` need
     the CMakeLists touch per the established environment procedure; sync
     source → `build/debug/` and purge `.pyc` before runtime verification.
