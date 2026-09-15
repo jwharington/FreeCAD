@@ -554,24 +554,33 @@ Stiffener:
   for that elset; material written as isotropic. (Follow the existing
   provider-test patterns in `test_drape_laminate_provider.py`.)
 
-### 7.6 End-to-end FEM analysis test — new `test_quasi_iso_fem.py`
+### 7.6 End-to-end FEM analysis test — new `test_quasi_iso_fem.py`, case: the stiffener panel example
 
-FreeCAD-integration pattern (`run_freecad_integration_tests.py`
-entrypoint, real FreeCAD process, no mocks):
+**The stiffener panel example (§8.2) is the test case for this work**
+(grill 2026-09-15). FreeCAD-integration pattern
+(`run_freecad_integration_tests.py` entrypoint, real FreeCAD process,
+no mocks):
 
-- Build plate + `Composite::Shell` + QI laminate + FEM analysis; run
-  CalculiX.
-- **Cross-validation (membrane gate):** same stack solved twice — (a) QI
-  isotropic presentation, (b) conventional draped orthotropic per-ply
-  export — under an in-plane (membrane-dominated) load case. Max
-  displacement agreement within a tolerance to be confirmed at
-  implementation review (not to be guessed silently). This proves the
-  collapse preserves the membrane answer, which is the whole contract
-  (D2). Bending load-case comparisons would test the solver, not the
-  export, and are out of scope.
+- Build the example in both variants and run CalculiX:
+  - **mixed variant** (draped panel + QI stiffener): foot combined
+    laminate is draped — panel-side orientation machinery runs, no
+    per-element query for the QI web shell; solver input shows the web
+    shell as `TYPE=ISO` single layer and the foot as the existing
+    composite section;
+  - **QI-panel variant** (`panel_qi=True`): entire assembly
+    orientation-free — no `*ORIENTATION` anywhere, all shells `TYPE=ISO`.
+- **Cross-validation (membrane gate):** in the QI-panel variant, the
+  same stack solved twice — (a) QI isotropic presentation, (b)
+  conventional draped orthotropic per-ply export — under an in-plane
+  (membrane-dominated) load case. Max displacement agreement within a
+  tolerance to be confirmed at implementation review (not to be guessed
+  silently). This proves the collapse preserves the membrane answer,
+  which is the whole contract (D2). Bending load-case comparisons would
+  test the solver, not the export, and are out of scope.
 - **Performance assertion (soft):** count `get_drape_lcs` calls during
-  export == 0. If instrumented timing is stable, assert export wall-clock
-  not worse than the draped baseline; otherwise keep as a logged metric.
+  export == 0 for QI shells in both variants. If instrumented timing is
+  stable, assert export wall-clock not worse than the draped baseline;
+  otherwise keep as a logged metric.
 
 ## 8. Examples
 
@@ -582,7 +591,35 @@ Add isotropic-presentation output to `build(...)`: declare
 in the result dict so downstream consumers (and the example runner) can
 inspect E/ν/G/density.
 
-### 8.2 New — `compositeexamples/examples/quasi_iso_fem_plate.py`
+### 8.2 New — `compositeexamples/examples/quasi_iso_stiffener_panel.py`
+
+**The canonical end-to-end test case** (grill 2026-09-15): the
+stiffener panel example with QI stiffeners — the QI property exercised
+through the full composition path, not just a flat plate. A QI variant
+of the existing `stiffener_composite_shell.py` (30° draped panel +
+Z-stiffener with its own laminate, web rosette, solved foot transfers):
+
+1. panel stays a draped composite shell (the realistic baseline);
+2. the stiffener's own laminate becomes QI `[0/±45/90]s` with
+   `IsotropicEquivalent=True` → **no web rosette is created**, the web
+   shell has no drape and renders plain;
+3. the foot combined laminate (stiffener ⊕ panel) is **draped, mixed**:
+   the panel-side foot transfer still solves; the QI side enters the
+   record at nominal angles with rotation 0 (D8);
+4. build flag `panel_qi: bool = False` — when true the panel laminate is
+   also QI, making foot and assembly **fully orientation-free** (the
+   FEM-export shortcut end to end).
+
+Assertions in the example result dict: web rosette absent, derived
+combined flag per variant, weave-render ownership (panel remainder +
+foot weave in the draped-panel variant; all-plain in the QI-panel
+variant).
+
+Registered in `compositeexamples/registry.py` (pattern of the existing
+`stiffener_composite_shell` entry), picked up by
+`test_compositeexamples.py` (assertion + build run added there).
+
+### 8.3 Optional — `compositeexamples/examples/quasi_iso_fem_plate.py`
 
 Flat plate example running through FEM:
 
@@ -593,9 +630,10 @@ Flat plate example running through FEM:
 4. CalculiX solve; result dict includes max displacement and the solver
    input snippet showing `TYPE=ISO` + single-layer section.
 
-Registered in `compositeexamples/registry.py` (pattern of the existing
-`quasi_iso_laminate_plate` entry), picked up by
-`test_compositeexamples.py` (assertion + build run added there).
+A minimal membrane-only companion (kept small); the stiffener panel
+example (§8.2) carries the composition coverage. Registered in
+`compositeexamples/registry.py`, picked up by
+`test_compositeexamples.py`.
 
 ## 9. Acceptance criteria
 
@@ -618,8 +656,11 @@ Registered in `compositeexamples/registry.py` (pattern of the existing
    QI⊕QI combinations derive isotropic presentation and skip orientation
    machinery; any draped side keeps today's behaviour exactly; wiring
    validation accepts QI sides without transfer rosettes / web rosette.
-7. The `quasi_iso_fem_plate` example builds and solves headless via the
-   example runner; `test_compositeexamples.py` covers it.
+7. **The stiffener panel QI example (§8.2) builds and runs headless via
+   the example runner in both variants** (draped panel + QI stiffener;
+   `panel_qi=True`), and the end-to-end FEM test (§7.6) runs CalculiX on
+   it with the membrane cross-validation gate; the flat-plate companion
+   (§8.3) is covered by `test_compositeexamples.py`.
 8. `CONTEXT.md` gains the §2 terminology entries.
 
 ## 10. Out of scope / future phases
@@ -684,14 +725,16 @@ tolerance (§7.6).
 6. **Composition (D8, §5.4):** seam/stiffener wiring relaxation,
    `_side_layers` zero-rotation for QI sides, derived combined flag +
    re-validation, `_WebRosette` skip; composition tests (§7.4).
-7. **FEM provider** (§6.1): orientation-provider skip, single-layer
+7. **Stiffener panel QI example** (§8.2) registered in `registry.py`;
+   composition scenario coverage via the example runner.
+8. **FEM provider** (§6.1): orientation-provider skip, single-layer
    plain section; material writer already ISO-capable (verified).
-8. **FEM provider tests** (§7.5) + end-to-end example (§8.2) registered
-   in `registry.py`.
-9. **End-to-end FEM test** (§7.6) with cross-validation run; fix
-   OQ-2 decisions as encountered.
-10. **Docs:** `CONTEXT.md` terminology additions; this PRD's status →
-   implemented.
-11. **Build hygiene:** any new files added to `compositeexamples/` need
+9. **FEM provider tests** (§7.5) + flat-plate companion example (§8.3)
+   registered in `registry.py`.
+10. **End-to-end FEM test** (§7.6, stiffener panel case) with
+    cross-validation run; fix remaining OQ decisions as encountered.
+11. **Docs:** `CONTEXT.md` terminology additions; this PRD's status →
+    implemented.
+12. **Build hygiene:** any new files added to `compositeexamples/` need
     the CMakeLists touch per the established environment procedure; sync
     source → `build/debug/` and purge `.pyc` before runtime verification.
