@@ -123,29 +123,37 @@ _Avoid_: draped operation, solver operation.
 ### D1 — Declared, then verified (loud failure)
 
 Isotropy of presentation is an explicit user declaration, not an
-inference: a new `IsotropicEquivalent` bool property on the
-`Composite::Laminate` FP feature. When true, the laminate runs the balance
-validation (§4.2) on every recompute. A stack that fails validation is a
-**loud error** (`last_error` recorded, feature marked touched-error),
-exactly like the seam/stiffener failure contract. Rationale: silently
-exporting a pseudo-isotropic material from a hand-entered, nearly-balanced
-stack produces quietly wrong physics; that is worse than an error.
+inference, and it is **two-tier** (resolved during grill 2026-09-15):
 
-### D2 — Isotropy is a membrane-exact, bending-checked property
+- `IsotropicEquivalent` (exact): the stack must satisfy the QI
+  conditions to round-off — loud error otherwise. No advisory tolerance.
+- `ApproximateIsotropicEquivalent`: for deliberately nearly-balanced
+  stacks (e.g. 45°-doubled QI). Passes only when every membrane residual
+  is within a coarse budget (~5% of A₁₁, provisional); the deviation is
+  recorded as a read-only property and never silently ignored. Large
+  residuals (clearly orthotropic stacks) are rejected in **both** tiers.
+  Not usable with core plies.
 
-For a stack with equal ply fractions at angles {θᵢ}, in-plane isotropy of
-the extensional matrix A is **exact** when the angle set is evenly spaced
-over 180° (e.g. {0, 45, −45, 90} or {+60, 0, −60}): then A₁₁ = A₂₂,
-A₁₆ = A₂₆ = 0, A₆₆ = (A₁₁ − A₁₂)/2 — so the equivalent engineering
-constants automatically satisfy G = E/(2(1+ν)) and a genuine isotropic
-material representation exists with no approximation in membrane response.
+A stack that fails its tier's validation is a **loud error**
+(`last_error` recorded, feature marked touched-error), exactly like the
+seam/stiffener failure contract. Rationale: silently exporting a
+pseudo-isotropic material produces quietly wrong physics; that is worse
+than an error. The approximation, when wanted, must be a *named,
+quantified* declaration — never a loose tolerance on the exact one.
 
-Bending (D) isotropy is **not** automatic for every QI family: it is exact
-for e.g. `[0/±60]` but only approximate for `[0/±45/90]s`. The validation
-therefore checks the membrane conditions as a hard error, and the bending
-condition ((D₁₁ − D₁₂)/2 vs D₆₆, D₁₆ = D₂₆ = 0) as a **warning** on the
-read-only deviation property (§5), with the threshold subject to
-confirmation at implementation review.
+### D2 — Isotropy is a membrane property; the solver owns the rest
+
+(resolved during grill 2026-09-15) The workbench's contract ends at the
+exported material: it validates that the declared stack is isotropic
+**in-plane**, computes the equivalent constants, and hands the solver a
+plain isotropic material. Bending, transverse shear, and through-
+thickness behaviour of that equivalent plate are the solver's domain —
+no D-matrix machinery is checked, exported, or warned about in the QI
+path (the D matrix never leaves the workbench there). For a stack with
+equal ply fractions at angles evenly spaced over 180°, the membrane
+conditions A₁₁ = A₂₂, A₁₆ = A₂₆ = 0, A₆₆ = (A₁₁ − A₁₂)/2 hold
+**exactly**, so the equivalent constants satisfy G = E/(2(1+ν)) and a
+genuine isotropic material representation exists.
 
 ### D3 — Equivalent constants come from A, once
 
@@ -201,8 +209,17 @@ The collapse reuses the existing `StackModelType.Smeared` path through
 `stack_expansion.py` → `merge_clt` (`mechanics/stack_model.py`); the new
 work is an isotropic variant of `merge_clt`'s output stage plus the
 validation function. Nested laminates and core plies are **rejected** in
-isotropic presentation (a core breaks membrane isotropy: phase 1 keeps the
-contract narrow). This may be relaxed later.
+isotropic presentation in phase 1. Note (grill 2026-09-15): the core
+rejection is *not* about isotropy — a foam-core QI sandwich is in-plane
+isotropic and the numeric check would pass — it is about substitution
+magnitude: sandwich bending is dominated by core shear and facesheet
+separation, far from a monolithic isotropic plate of thickness h. A
+sandwich QI presentation deserves its own deliberate decision (likely
+facesheet+core export shape); until then, `core=True` raises in both
+tiers with a message pointing at the limitation. The long-term principle
+is **numeric-only** admission: validation residuals are the sole arbiter
+of what may present isotropic; structural exclusions are phase-1 policy,
+not permanent law (see OQ-7).
 
 ### D7 — Drape-dependent operations are blocked at entry level
 
@@ -290,7 +307,8 @@ def validate_quasi_isotropic(
 ) -> None  # raises QuasiIsotropicError on failure
 ```
 
-Checks (A, D are the merged CLT matrices; scale-relative residuals):
+Checks (A is the merged CLT extensional matrix; scale-relative
+residuals):
 
 | Condition | Type | Note |
 |---|---|---|
@@ -298,28 +316,28 @@ Checks (A, D are the merged CLT matrices; scale-relative residuals):
 | \|A₁₆\|/A₁₁, \|A₂₆\|/A₁₁ ≤ tol | error | exactly 0 for evenly spaced sets |
 | \|A₆₆ − (A₁₁ − A₁₂)/2\| / A₁₁ ≤ tol | error | implied by the above; kept explicit |
 | \|B\| / A₁₁ ≤ tol (all 9 terms) | error | symmetric stack required |
-| \|D₁₆\|/D₁₁, \|D₂₆\|/D₁₁ ≤ tol | warning | coupling residual surfaced, not raised |
-| \|((D₁₁ − D₁₂)/2 − D₆₆)\|/D₁₁ ≤ tol | warning | bending isotropy residual surfaced |
 
-- Tolerances: membrane tolerance proposed at **1e-6** (relative) — the
-  balanced QI conditions are analytically exact, so only floating-point
-  round-off should register; bending tolerances larger and subject to
-  confirmation (§3 D2, §11). **These thresholds must not be widened
+- Tolerances: exact tier proposed at **1e-6** (relative) — the balanced
+  QI conditions are analytically exact, so only floating-point
+  round-off should register; approximate tier budget ~**5% of A₁₁** per
+  residual (provisional, D1). **These thresholds must not be widened
   without explicit user confirmation** (testing-discipline rule).
 - Failure mode: raise a dedicated exception type; the caller (feature
   layer, §5) records `last_error` and marks the object touched-error, per
   the established loud-failure contract.
-- Bending warnings populate read-only properties (§5), never raise.
 
 ### 4.3 Stack expansion
 
 `objects/laminate.py::get_layers` is unchanged for the orthotropic paths.
-The isotropic collapse is requested through the existing
-`StackModelType` parameter at the call sites that build FEM layers
-(`features/Laminate.py::get_model` / `get_layers_ccx` in
-`util/fem_util.py`): a new branch (either a new `StackModelType` member or
-a pairing of `Smeared` + the laminate's `IsotropicEquivalent` flag — see
-§11 open question OQ-2) routes to `merge_clt_isotropic` and to validation.
+The isotropic collapse is routed by the **declaration flag, passed as a
+parameter** (resolved during grill 2026-09-15, replacing OQ-2): the
+routing point is `LaminateFP.execute` → `get_layers_ccx(laminate,
+model_type)` (`features/Laminate.py`, `util/fem_util.py`), which passes
+`isotropic=obj.IsotropicEquivalent or obj.ApproximateIsotropicEquivalent`
+down to the merge branch (`merge_clt_isotropic` + validation). The
+`StackModelType` enum is untouched — isotropic presentation is orthogonal
+to how the stack is represented, and an enum member would make it
+combinatorial with the existing members and their `merged_name` dispatch.
 
 ## 5. Object and feature implementation
 
@@ -329,8 +347,8 @@ New properties on the Laminate FP object:
 
 | Property | Type | Purpose |
 |---|---|---|
-| `IsotropicEquivalent` | `App::PropertyBool` | declares QI presentation; drives validation + collapse |
-| `QIBendingDeviation` | `App::PropertyString` (read-only) | bending residuals from §4.2 ("" when OK); warning surface |
+| `IsotropicEquivalent` | `App::PropertyBool` | declares exact QI presentation; drives validation + collapse |
+| `ApproximateIsotropicEquivalent` | `App::PropertyBool` | approximate presentation (D1, two-tier); passes only within the residual budget; deviation magnitude recorded on the object |
 
 `CompositeLaminate` (dataclass in `objects/composite_laminate.py`) gains a
 matching `isotropic_equivalent: bool = False` field so the non-GUI model
@@ -356,14 +374,28 @@ mechanism is reused for propagation where applicable.
   - `AlignFibreRosetteCommand`: same guard ("no fibre direction to
     align"); also unreachable via the normal flow because a rosette
     cannot attach to an isotropic shell;
-  - `VPCompositeShell` / weave shader path: on `is_isotropic_shell`, skip
-    the `coin_geometry` UV texture build and render with the plain
-    material colour (graceful degradation, never a raise at render time).
+  - `VPCompositeShell` / weave shader path: **no new fallback mechanism
+    is needed** (verified during grill 2026-09-15): the weave look is the
+    `MeshGridShader` overlay on drape geometry, and
+    `coin_geometry._map_uv_to_support` already guards a `None` backend.
+    With no drape geometry and no shader, the shell renders as its native
+    Part shape in plain colour; the `DisplayMode="Grid"` switch only
+    occurs when the shader is attached. Covered by a test, not new code.
 
 ### 5.3 Error contract
 
 `QuasiIsotropicError` messages must name the offending residual, e.g.:
 `"not quasi-isotropic: |A16|/A11 = 2.4e-2 exceeds 1e-6 (angle set not evenly spaced?)"`.
+
+Wiring invariants for declared stacks:
+
+- The declaration flags **override** `StackModelType` for FEM layer
+  generation: a declared stack always exports as the single isotropic
+  equivalent, regardless of the discrete/smeared setting (which keeps
+  governing the BOM / stack-record views).
+- A rosette manually attached to an isotropic shell is a wiring error:
+  loud on recompute ("isotropic shell takes no rosette"), consistent
+  with the seam/stiffener wiring-validation style.
 
 ### 5.4 Composition — `SeamCompositeLaminate` and `StiffenerCompositeShell`
 
@@ -409,12 +441,11 @@ makes the combined stack isotropic, not symmetry mirroring.
   supports a single `HomogeneousLamina` layer; the smeared isotropic
   output is one, so the same writer works unchanged.
 - `indirect_material_provider`: unchanged mechanics — the laminate's FEM
-  layer list is a single isotropic `HomogeneousLamina`, and the material
-  writer must emit `*ELASTIC, TYPE=ISO` for it. **Verify** during
-  implementation that the CalculiX material writer accepts an isotropic
-  dict (it already handles isotropic materials elsewhere); if it insists
-  on orthotropic shape for composites materials, extend the writer path
-  in `util/fem_util.py::write_lamina_material_ccx`.
+  layer list is a single isotropic `HomogeneousLamina`. **Verified**
+  (grill 2026-09-15): `write_lamina_material_ccx` (`util/fem_util.py`)
+  already branches on `is_orthotropic(layer.material)` and emits
+  `*ELASTIC, TYPE=ISO` with E, ν and `*DENSITY` for isotropic dicts —
+  **no material-writer changes are needed**.
 
 ### 6.2 What disappears at export time
 
@@ -456,8 +487,12 @@ New `TestQuasiIsotropic` class, building stacks from the existing
   spaced) raises naming `A16`.
 - `test_core_ply_rejected` — stack with `core=True` raises under
   isotropic presentation.
-- `test_bending_warning_not_error` — `[0/±45/90]s` passes validation with
-  a non-empty `QIBendingDeviation` (bending residuals present, no raise).
+- `test_approximate_tier_passes_near_balanced` — 45°-doubled stack passes
+  the approximate tier (each residual ≤ budget) and fails the exact tier.
+- `test_approximate_tier_records_deviation` — residual magnitude stored
+  read-only on the object.
+- `test_approximate_tier_rejects_large_residual` — a clearly orthotropic
+  stack fails both tiers.
 - `test_isotropic_dict_shape` — merged material has `YoungsModulus`,
   `PoissonRatio`, `Density`; no `YoungsModulusX`.
 
@@ -526,12 +561,14 @@ entrypoint, real FreeCAD process, no mocks):
 
 - Build plate + `Composite::Shell` + QI laminate + FEM analysis; run
   CalculiX.
-- **Cross-validation:** same stack solved twice — (a) QI isotropic
-  presentation, (b) conventional draped orthotropic per-ply export. Max
+- **Cross-validation (membrane gate):** same stack solved twice — (a) QI
+  isotropic presentation, (b) conventional draped orthotropic per-ply
+  export — under an in-plane (membrane-dominated) load case. Max
   displacement agreement within a tolerance to be confirmed at
-  implementation review (bending-difference-aware; not to be guessed
-  silently). This is the physics gate: it proves the shortcut preserves
-  the answer.
+  implementation review (not to be guessed silently). This proves the
+  collapse preserves the membrane answer, which is the whole contract
+  (D2). Bending load-case comparisons would test the solver, not the
+  export, and are out of scope.
 - **Performance assertion (soft):** count `get_drape_lcs` calls during
   export == 0. If instrumented timing is stable, assert export wall-clock
   not worse than the draped baseline; otherwise keep as a logged metric.
@@ -587,37 +624,48 @@ Registered in `compositeexamples/registry.py` (pattern of the existing
 
 ## 10. Out of scope / future phases
 
+- **Ply-level stress recovery from a QI shell** (resolved during grill
+  2026-09-15): the QI export is a single smeared isotropic layer, so
+  per-ply solver output is not available — accepted trade. The discrete
+  stack record stays on the laminate feature for layup documentation; a
+  post-processing recovery path is the clean later extension, never a
+  retention of orthotropic export machinery in the QI path.
+
 - Failure criteria (Tsai-Wu etc.) for QI shells — `fem/failure_models_composites.py` territory, later.
 - QI stack *generators* (design tools producing `[0/±45/90]s` from a ply count) — a follow-up UX concern; this PRD consumes existing stacks.
 - Solid-element FEM with through-thickness properties (the isotropic dict keeps Z-properties, but no solid path is wired here).
-- Auto-detection of QI-ness without the `IsotropicEquivalent` declaration (OQ-1).
+- Auto-detection of QI-ness without a declaration (superseded by the
+  two-tier contract, D1).
+
+Grill-session status (2026-09-15): OQ-1..OQ-6 are resolved or accepted
+below; OQ-7 is the deliberately deferred sandwich case; the one remaining
+item deferred to implementation review is the cross-validation test
+tolerance (§7.6).
 
 ## 11. Open questions
 
-- **OQ-1 enforce vs warn:** currently enforce (D1). Should a near-miss
-  within a coarse "advisory" tolerance be allowed with a warning instead
-  of an error? Default: no — loud failure only.
-- **OQ-2 mechanism:** new `StackModelType` member
-  (`IsotropicEquiv`) vs `Smeared` + laminate flag. The flag approach
-  avoids touching the enum and its `merged_name` dispatch; the enum
-  approach keeps the stack model fully described by one parameter.
-  Decide at implementation start.
-- **OQ-3 bending tolerance threshold:** which residual bound turns the
-  bending warning into actionable information without nagging on the
-  ubiquitous `[0/±45/90]s` family. Needs a small numeric survey before
-  fixing.
-- **OQ-4 naming:** `IsotropicEquivalent` (proposed) vs `QI` vs
-  `IsotropicPresentation`. Must be added to `CONTEXT.md` whichever wins.
-- **OQ-5 stack record for QI sides:** a QI side enters the literal
-  combined record at nominal angles, rotation 0 (D8). Alternative: give
-  the combined laminate an explicit per-side seam-relative angle
-  property for the record even when physics ignores it. Default:
-  nominal, no rotation — the record stays a truthful physical layup
-  record and no meaningless angle is invented.
-- **OQ-6 derived flag on combined laminates:** read-only derived
-  `IsotropicEquivalent` on `SeamCompositeLaminateFP` (default) vs a
-  re-declarable flag re-validated on change. Derived is preferred: the
-  combined stack cannot be more isotropic than its sides.
+- **OQ-1 (resolved 2026-09-15):** two-tier contract — exact tier hard-
+  enforces to round-off; near-balanced stacks use the separate
+  `ApproximateIsotropicEquivalent` declaration with a residual budget
+  (D1). No advisory tolerance on the exact tier.
+- **OQ-2 (resolved 2026-09-15):** flag-as-parameter; enum untouched
+  (§4.3).
+- **OQ-3 (resolved 2026-09-15):** bending residuals are out of contract
+  (D2) — no bending checks, no warning property.
+- **OQ-4 (resolved 2026-09-15):** names fixed as
+  `IsotropicEquivalent` / `ApproximateIsotropicEquivalent`; "QI" is the
+  informal prose shorthand, never a property or type name.
+- **OQ-5 (accepted default 2026-09-15):** a QI side enters the literal
+  combined record at nominal angles, rotation 0 — the record stays a
+  truthful physical layup record; no meaningless angle is invented.
+- **OQ-6 (accepted default 2026-09-15):** combined laminates carry a
+  **derived read-only** `IsotropicEquivalent` (= all sides declared);
+  the combined stack cannot be more isotropic than its sides.
+- **OQ-7 sandwich QI presentation (new, grill 2026-09-15):** QI facesheets
+  + isotropic foam core passes the membrane check numerically but the
+  monolithic-plate substitution distorts bending by an order of
+  magnitude. Phase 1 excludes cores (D6); revisit with a deliberate
+  sandwich export shape later.
 
 ## 12. Implementation order
 
@@ -636,12 +684,12 @@ Registered in `compositeexamples/registry.py` (pattern of the existing
 6. **Composition (D8, §5.4):** seam/stiffener wiring relaxation,
    `_side_layers` zero-rotation for QI sides, derived combined flag +
    re-validation, `_WebRosette` skip; composition tests (§7.4).
-7. **FEM provider** (§6.1): orientation-provider skip, plain section,
-   material-writer verification for isotropic dicts.
+7. **FEM provider** (§6.1): orientation-provider skip, single-layer
+   plain section; material writer already ISO-capable (verified).
 8. **FEM provider tests** (§7.5) + end-to-end example (§8.2) registered
    in `registry.py`.
 9. **End-to-end FEM test** (§7.6) with cross-validation run; fix
-   OQ-3/OQ-2 decisions as encountered.
+   OQ-2 decisions as encountered.
 10. **Docs:** `CONTEXT.md` terminology additions; this PRD's status →
    implemented.
 11. **Build hygiene:** any new files added to `compositeexamples/` need

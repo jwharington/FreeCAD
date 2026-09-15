@@ -85,6 +85,35 @@ attachment over the seam region, combined by an explicit model
 (stack / interleave / taper). Replaces the naive virtual laminate.
 _Avoid_: virtual laminate, seam laminate
 
+### Quasi-isotropic
+
+**Quasi-isotropic (QI) laminate**:
+A stack with equal numbers of plies at evenly spaced orientations whose
+in-plane response is rotation-invariant; it presents as an isotropic
+material and needs no fibre-orientation machinery.
+_Avoid_: isotropic laminate (the material is not isotropic — only the
+effective response), balanced laminate (necessary, not sufficient).
+
+**Isotropic presentation**:
+The collapse of a validated QI laminate into one equivalent isotropic
+material, declared on the laminate and computed once — no orientation
+field, no per-element lookup downstream. The workbench guarantees the
+in-plane (membrane) response only; what the solver does with the
+equivalent material is the solver's domain.
+_Avoid_: smearing, homogenisation.
+
+**Approximate isotropic presentation**:
+A deliberate, separately-declared fallback for *nearly* balanced stacks:
+the anisotropy residual is budgeted (small fraction of in-plane
+stiffness), recorded visibly, and presented as isotropic anyway.
+_Avoid_: quasi-isotropic (a near-QI stack is not QI), advisory mode.
+
+**Drape-dependent operation**:
+An operation consuming the drape solution (texture plan, align-fibre
+rosette, weave rendering, FEM orientation lookup); undefined on a QI
+shell and blocked at command entry.
+_Avoid_: draped operation, solver operation.
+
 ## Relationships
 
 - A **Seam extraction** consumes a **Master** and an **Attachment**,
@@ -119,3 +148,8 @@ _Avoid_: virtual laminate, seam laminate
 - **"seam"** was used to mean both the seam *region* (a surface/shell)
   and the seam *operation*. Resolved: **seam region** is the geometry;
   **seam extraction** is the operation.
+- **"QICompositeShell"** was raised as a feature type for quasi-isotropic
+  shells. Resolved: **no new feature class** — QI is a property of a
+  **Laminate**; a QI shell is any shell (Composite::Shell, stiffener
+  web, seam/foot shell) whose laminate has the isotropic declaration.
+  "QICompositeShell" is informal shorthand only.
