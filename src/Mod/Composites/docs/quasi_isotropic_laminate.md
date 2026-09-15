@@ -898,3 +898,89 @@ facts, the change is called out in §5/§6.
   directly). `merge_clt_isotropic` must set Density explicitly.
 - `merge_clt` density: thickness-fraction-weighted (`p_k = t_k/T`),
   consistent with the D3 plan to reuse it.
+
+### A.3 Composition wiring (`features/SeamCompositeLaminate.py`, `features/StiffenerCompositeShell.py`)
+
+**SCL object shape.** `SeamCompositeLaminateFP(CompositeLaminateFP)`:
+`Master` / `Attachment` are visible `PropertyLinkGlobal`; `SeamRegion`,
+`MasterTransfer`, `AttachmentTransfer` are **`PropertyLinkHidden`** —
+back-references/solved-value refs kept hidden specifically to avoid
+shell→SCL→transfer→shell DAG cycles (known-issue #9). Outputs:
+`EffectiveOffsetAngle` (read-only `PropertyAngle`) and `SideAngleReport`
+(read-only `PropertyMap`). `Symmetry` pinned `Assymmetric`
+(read-only + hidden); `Layers` read-only. **The QI derived flag must be
+read-only the same way, and must not become a visible DAG link
+dependency on the sides' laminate flags** — read it via `getattr` in
+execute, not as a link.
+
+**`_validate_wiring` today** requires, in order: Master/Attachment are
+CompositeShells (via `is_composite_shell`, `features/CompositeShell.py:60`);
+both transfers are rosettes (proxy-type check:
+`Composite::Rosette` or `Composite::TransferRosette` — TypeId checks do
+not match these `Part::FeaturePython` features); SeamRegion is a
+CompositeShell; both sides have laminate layers; both sides share a
+boundary edge with the seam region (`TransferRosetteFP._shared_edge` on
+live support geometry). **QI change (§5.4): the transfer requirement
+becomes conditional** — a side whose laminate is QI may omit its
+transfer; the edge checks stay (they are geometry, not orientation).
+
+**`_seam_angles` / `_update_angle_outputs`** read
+`MasterTransfer.Angle.Value` / `AttachmentTransfer.Angle.Value`
+unconditionally and write both output properties. QI sides need
+`None`-tolerant reads and `n/a` entries in `SideAngleReport`;
+`EffectiveOffsetAngle` is only meaningful when both sides are draped.
+
+**Stiffener flow, exact roles.** `_ensure_combined_laminate` wires the
+foot SCL as: **Master = panel** (stays whole), **Attachment = web
+shell** (stiffener's own laminate), SeamRegion = foot shell;
+`MasterTransfer` = `_PanelFootTransfer` (`TransferRosetteFP` — its solve
+seeds the foot shell's drape and it becomes the foot shell's Rosette);
+`AttachmentTransfer` = `_StiffenerFootTransfer`
+(`AnalysisTransferRosetteFP` — analysis only, never the foot's
+Rosette). `CombinationModel` is forced to `StackAttachmentOverMaster`
+(a wiring choice of this flow; the seam flow's default
+`StackMasterOverAttachment` is untouched). Resin is assigned **before**
+the references — wiring the last visible ref fires the SCL's onChanged
+recompute, and it must not run against an empty resin (transient
+traceback gotcha). **QI mapping:** the *Attachment* side is the QI web →
+its analysis transfer (`_StiffenerFootTransfer`) is meaningless when the
+web is isotropic and should be skipped in that case; the *Master* (panel)
+keeps its transfer whenever draped.
+
+**Correction to §5.4/§7.4 as drafted:** `validate_composite_wiring`
+does **not** raise on a missing stiffener rosette — a missing rosette is
+the normal fresh-build state and the flow **auto-creates
+`_WebRosette`** (`_ensure_web_rosette`), never overwriting a
+user-linked one; only a *linked non-rosette* raises. The real QI change
+is therefore: **skip the auto-creation** when the web laminate is QI
+(leave `fp.Rosette = None`), and skip `_ensure_draped(web_shell)`.
+`stiffener_claimed_children` already tolerates absent names (resolves
+to None, skipped) — a web rosette that is legitimately never created
+needs no change there.
+
+**Direct-drive gotcha.** `_ensure_draped(shell)` (stiffener flow) calls
+`shell.Proxy.execute(shell)` directly — "a direct drive is the only
+reliable way inside another object's execute". The QI structural bypass
+(D4) must therefore live **inside `CompositeShell.execute`** (check the
+laminate flag before `_run_drape_sync`), not only in the protocol
+functions — otherwise the stiffener flow's direct drive would re-enter
+the drape path.
+
+**Freshness/fingerprint.** `_flow_fingerprint` hashes the sweep shell
+fingerprint plus the `Laminate`/`Rosette` **names**; a rosette-less QI
+stiffener hashes `Rosette → "None"` — fine, but flipping a laminate's
+QI declaration does **not** change the flow fingerprint (only the
+laminate link name is hashed) — the laminate's own recompute (§5.1
+validation) must propagate the change to dependent shells (it will,
+since the shells link the laminate).
+
+**Visibility order.** `ensure_stiffener_shells_visible` runs *after*
+the creating recompute (visibility set in-execute is overridden when
+the recompute settles); the foot shell only shows when the joint
+exists. The QI variants must go through the same post-recompute
+visibility path — no new visibility logic.
+
+**Duplicate helper note:** `is_composite_shell` exists in both
+`features/CompositeShell.py` and `features/PlaceDart.py` — the new
+`is_isotropic_shell` helper should live next to the former (canonical)
+and the D7 guards should import from there, not add a third copy.
