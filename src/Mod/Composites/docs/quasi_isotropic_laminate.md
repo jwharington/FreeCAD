@@ -495,6 +495,15 @@ New `TestQuasiIsotropic` class, building stacks from the existing
   stack fails both tiers.
 - `test_isotropic_dict_shape` — merged material has `YoungsModulus`,
   `PoissonRatio`, `Density`; no `YoungsModulusX`.
+- `test_thickness_weighted_imbalance_rejected` —
+  `[0(0.2)/45(0.3)/−45(0.3)/90(0.2)]`: equal ply counts, unequal
+  thicknesses — the 45° pair carries 60% of the angled weight. NOT
+  isotropic; the numeric A-check must reject it (the classic hand-built
+  stack mistake; no structural pre-check would catch it).
+- `test_angle_normalisation_equiv` — the same physical stack entered as
+  `[0/135/−135/90]` (mod-180 equivalents of `[0/−45/45/90]`) passes
+  validation; a stack that is only QI-looking before normalisation
+  fails. Validation operates on the `normalise_orientation` set.
 
 ### 7.2 Drape-dependent operation protection — `test_compositeexamples.py` / new cases in `test_laminate.py`
 
@@ -517,6 +526,10 @@ New `TestQuasiIsotropic` class, building stacks from the existing
 - `last_error` populated and recompute marked error when
   `IsotropicEquivalent=True` on an unbalanced stack (loud-failure
   contract).
+- `test_bom_record_unchanged_for_qi` — `get_stack_assembly`/BOM output
+  for a declared-QI laminate is identical to the undeclared one (the
+  literal ply record survives; the flag redirects only FEM export —
+  pins the Q6 precedence decision).
 
 ### 7.4 Composition tests — `test_seam_composite_laminate.py`, `test_stiffener_composite_shell.py`
 
@@ -553,6 +566,13 @@ Stiffener:
 - Generated CalculiX input for a QI shell model: no `*ORIENTATION` block
   for that elset; material written as isotropic. (Follow the existing
   provider-test patterns in `test_drape_laminate_provider.py`.)
+- `test_failure_provider_skips_qi` — a QI shell reaching
+  `fem/failure_models_composites.py` skips loudly/no-ops; the solve never
+  crashes (failure criteria for QI are out of scope, but the interplay
+  must be inert).
+- `test_draped_path_byte_identical` (negative control) — for a *non-QI*
+  stack, the provider changes produce byte-identical solver input to the
+  pre-change path (mechanically pins "draped path unchanged").
 
 ### 7.6 End-to-end FEM analysis test — new `test_quasi_iso_fem.py`, case: the stiffener panel example
 
@@ -619,7 +639,7 @@ Registered in `compositeexamples/registry.py` (pattern of the existing
 `stiffener_composite_shell` entry), picked up by
 `test_compositeexamples.py` (assertion + build run added there).
 
-### 8.3 Optional — `compositeexamples/examples/quasi_iso_fem_plate.py`
+### 8.3 — `compositeexamples/examples/quasi_iso_fem_plate.py`
 
 Flat plate example running through FEM:
 
@@ -634,6 +654,32 @@ A minimal membrane-only companion (kept small); the stiffener panel
 example (§8.2) carries the composition coverage. Registered in
 `compositeexamples/registry.py`, picked up by
 `test_compositeexamples.py`.
+
+### 8.4 New — `compositeexamples/examples/quasi_iso_seam.py`
+
+QI variant of the seam scenario (the composition gap the stiffener
+panel does not cover): two QI panels lap-jointed, seam extraction →
+`SeamCompositeLaminate` with **no transfer rosettes on either side**
+(the wiring-relaxation case, D8) → derived-QI combined laminate → the
+seam-region shell is orientation-free through the *actual extraction
+flow*, not hand-wired fixtures. Assertions: wiring validates without
+transfers, derived combined flag true, seam-region shell exports
+`TYPE=ISO`, remainder shell (QI attachment) likewise.
+
+### 8.5 New (demo) — `compositeexamples/examples/quasi_iso_cylindrical_panel.py`
+
+QI variant of `cylindrical_panel_segment.py`: demonstrates that
+curvature is irrelevant to the QI path — no drape on a curved mould,
+plain render on the curved region, unchanged FEM export. Adds little
+test discrimination beyond the flat case; primarily a demo. Registered
+in `registry.py`, covered by `test_compositeexamples.py` build run.
+
+### 8.6 Benchmark — `compositestests/inspect_qi_export_benchmark.py`
+
+An `inspect_*`-style script (not a CI gate): draped vs QI export
+wall-clock against mesh size on the stiffener panel scenario, logging
+the realised speedup. Complements the soft §7.6 performance assertion
+with real numbers.
 
 ## 9. Acceptance criteria
 
@@ -661,7 +707,12 @@ example (§8.2) carries the composition coverage. Registered in
    `panel_qi=True`), and the end-to-end FEM test (§7.6) runs CalculiX on
    it with the membrane cross-validation gate; the flat-plate companion
    (§8.3) is covered by `test_compositeexamples.py`.
-8. `CONTEXT.md` gains the §2 terminology entries.
+8. **The QI seam example (§8.4) runs through the actual extraction flow**
+   with no transfer rosettes and an orientation-free seam region.
+9. Validation catches thickness-weighted imbalance and mod-180 angle
+   variants correctly (§7.1); BOM record unchanged for declared stacks
+   (§7.3); draped export path byte-identical for non-QI stacks (§7.5).
+10. `CONTEXT.md` gains the §2 terminology entries.
 
 ## 10. Out of scope / future phases
 
