@@ -275,7 +275,7 @@ def merge_clt_isotropic(
         C += p_k * C_k
         density += p_k * layer_density(lay)
 
-    validate_quasi_isotropic(A, B, approximate=approximate)
+    residuals = validate_quasi_isotropic(A, B, approximate=approximate)
 
     A11 = A[0, 0]
     A12 = A[0, 1]
@@ -306,6 +306,7 @@ def merge_clt_isotropic(
         thickness=total_thickness,
         orientation=0,
         orientation_display=0,
+        qi_residuals=residuals,
     )
 
 

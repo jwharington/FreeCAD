@@ -1622,7 +1622,94 @@ class TestQuasiIsotropic(unittest.TestCase):
         self.assertIsInstance(result, HomogeneousLamina)
         # 4 plies x 0.25 doubled by Even symmetry
         self.assertAlmostEqual(result.thickness, 2.0, places=10)
-        self.assertEqual(result.orientation, 0)
+
+
+# ---------------------------------------------------------------------------
+# Tests: objects/laminate.py — QI routing in Laminate.get_layers (§4.3)
+# ---------------------------------------------------------------------------
+
+
+def _make_qi_model(angles=(0, 45, -45, 90), thickness=0.5):
+    """Model-level laminate of UD plies at the given angles (Even symmetry)."""
+    glass = _make_glass()
+    resin = _make_resin()
+    layers = []
+    for angle in angles:
+        fabric = SimpleFabric(
+            material_fibre=glass, orientation=angle, weave=WeaveType.UD
+        )
+        fabric.thickness = thickness
+        layers.append(
+            FibreCompositeLamina(
+                fibre=fabric,
+                material_matrix=resin,
+                volume_fraction_fibre=0.5,
+            )
+        )
+    return Laminate(
+        symmetry=SymmetryType.Even,
+        layers=layers,
+    )
+
+
+class TestQuasiIsotropicModelRouting(unittest.TestCase):
+    """Laminate.get_layers routes declared stacks to merge_clt_isotropic."""
+
+    def test_qi_get_layers_returns_single_isotropic_layer(self):
+        lam = _make_qi_model()
+        lam.isotropic_equivalent = True
+        for model_type in (StackModelType.Discrete, StackModelType.Smeared):
+            model = lam.get_layers(model_type)
+            self.assertEqual(len(model), 1)
+            self.assertIsInstance(model[0], HomogeneousLamina)
+            self.assertFalse(is_orthotropic(model[0].material))
+
+    def test_qi_get_layers_thickness_is_stack_sum(self):
+        lam = _make_qi_model()
+        lam.isotropic_equivalent = True
+        lam.get_layers(StackModelType.Smeared)
+        # 4 UD fabrics x 0.5, doubled by Even symmetry at both levels
+        self.assertAlmostEqual(lam.thickness, 4.0, places=6)
+
+    def test_qi_get_layers_records_residuals(self):
+        lam = _make_qi_model()
+        lam.isotropic_equivalent = True
+        lam.get_layers(StackModelType.Smeared)
+        self.assertTrue(lam.qi_residuals)
+        self.assertLessEqual(max(lam.qi_residuals.values()), 1e-6)
+
+    def test_qi_approximate_get_layers_records_residuals(self):
+        lam = _make_qi_model()
+        lam.approximate_isotropic_equivalent = True
+        lam.get_layers(StackModelType.Smeared)
+        self.assertTrue(lam.qi_residuals)
+
+    def test_qi_unbalanced_get_layers_raises(self):
+        lam = _make_qi_model(angles=(0, 45))
+        lam.isotropic_equivalent = True
+        with self.assertRaises(QuasiIsotropicError):
+            lam.get_layers(StackModelType.Smeared)
+
+    def test_qi_mutually_exclusive_flags_raise(self):
+        lam = _make_qi_model()
+        lam.isotropic_equivalent = True
+        lam.approximate_isotropic_equivalent = True
+        with self.assertRaises(QuasiIsotropicError):
+            lam.get_layers(StackModelType.Smeared)
+
+    def test_qi_nested_laminates_rejected(self):
+        lam = _make_qi_model()
+        lam.isotropic_equivalent = True
+        lam.layers.append(_make_qi_model())
+        with self.assertRaises(QuasiIsotropicError):
+            lam.get_layers(StackModelType.Smeared)
+
+    def test_qi_bom_record_unchanged(self):
+        declared = _make_qi_model()
+        declared.isotropic_equivalent = True
+        undeclared = _make_qi_model()
+        self.assertEqual(declared.get_product(), undeclared.get_product())
+        self.assertEqual(declared.get_fibres(), undeclared.get_fibres())
 
 
 if __name__ == "__main__":

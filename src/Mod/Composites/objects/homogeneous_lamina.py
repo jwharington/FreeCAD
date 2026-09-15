@@ -17,6 +17,9 @@ class HomogeneousLamina(Ply):
     # e.g. core foam, aluminium, etc, or merged
     material: dict = field(default_factory=dict)
     orientation_display: float = 0
+    # residuals of the quasi-isotropic validation that produced this layer
+    # (empty for non-QI merges)
+    qi_residuals: dict = field(default_factory=dict)
 
     @property
     def description(self) -> str:
