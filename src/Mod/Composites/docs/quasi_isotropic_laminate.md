@@ -301,9 +301,9 @@ New pure function (testable without FreeCAD):
 
 ```python
 def validate_quasi_isotropic(
-    A: np.ndarray, D: np.ndarray,
-    membrane_tol: float = ...,
-    bending_tol: float = ...,
+    A: np.ndarray, B: np.ndarray,
+    tol: float = 1e-6,
+    budget: float = 0.05,
 ) -> None  # raises QuasiIsotropicError on failure
 ```
 
@@ -350,9 +350,11 @@ New properties on the Laminate FP object:
 | `IsotropicEquivalent` | `App::PropertyBool` | declares exact QI presentation; drives validation + collapse |
 | `ApproximateIsotropicEquivalent` | `App::PropertyBool` | approximate presentation (D1, two-tier); passes only within the residual budget; deviation magnitude recorded on the object |
 
-`CompositeLaminate` (dataclass in `objects/composite_laminate.py`) gains a
-matching `isotropic_equivalent: bool = False` field so the non-GUI model
-path mirrors the feature. The existing `Ply.set_missing_child_props`
+`CompositeLaminate` (dataclass in `objects/composite_laminate.py`) gains
+matching fields (`isotropic_equivalent: bool = False`,
+`approximate_isotropic_equivalent: bool = False`) so the non-GUI model
+path mirrors the feature, plus a residual-carrier for the approximate
+tier's recorded deviation. The existing `Ply.set_missing_child_props`
 mechanism is reused for propagation where applicable.
 
 ### 5.2 `Composite::Shell` (`features/CompositeShell.py`)
@@ -465,6 +467,40 @@ All in `compositestests/`, real objects, no mocks, per the module testing
 philosophy. Tolerances below are proposals for new tests; widening any of
 them requires explicit user confirmation.
 
+### 7.0 Execution: headless first; validity as an invariant
+
+**Headless-first tiering** — as much testing as possible runs without a
+GUI (canonical commands per `freecad-dev` skill; always the build-tree
+binary `build/debug/bin/FreeCADCmd`):
+
+| Tier | Runs on | How | Covers |
+|---|---|---|---|
+| A — pure | plain python, no FreeCAD | run `test_mechanics.py` new class directly | §7.1 validation + merge (pure numpy) |
+| B — headless | `FreeCADCmd` | `FreeCADCmd -t compositestests.<module>` for single modules; `FreeCADCmd -P src/Mod/Composites/compositestests/run_freecad_integration_tests.py` for the integration set (FreeCADGui mocked before imports) | §7.2–§7.6, examples, provider, e2e |
+| C — GUI | full GUI (MCP session) | only visual checks: weave-vs-plain rendering, rosette symbol layout, and **icon validity** | the one thing headless cannot see |
+
+Run only the modules relevant to the step in progress (testing
+discipline: fail fast, short timeouts, batched); `run-tests.sh` records
+per-test timings to a parseable file for regression comparisons.
+
+**Validity invariant (greyed icons are failures).** A greyed-out icon in
+the GUI is the visible symptom of a feature left in an error state — it
+means something is wrong. Therefore:
+
+- every success-path test asserts `assertNotIn("Invalid", obj.State)`
+  for **every** Composites feature the test created (existing convention
+  in `test_seam_composite_laminate.py` / `test_stiffener_composite_shell.py`
+  — extended here to all QI features: web, foot, seam-region, remainder,
+  combined laminates);
+- the loud-failure path asserts the **opposite**: `Invalid` present *and*
+  `last_error` populated — a rejected declaration must show as a greyed
+  icon, never as a silently valid object;
+- GUI-tier checks additionally eyeball that no icon is greyed after the
+  example recomputes settle (mirrors the State assertions above).
+
+This applies to the D7 render fallback too: a QI shell must render plain
+**and stay valid**, not fail its recompute.
+
 ### 7.1 Mechanics unit tests — `test_mechanics.py`
 
 New `TestQuasiIsotropic` class, building stacks from the existing
@@ -489,8 +525,9 @@ New `TestQuasiIsotropic` class, building stacks from the existing
   isotropic presentation.
 - `test_approximate_tier_passes_near_balanced` — 45°-doubled stack passes
   the approximate tier (each residual ≤ budget) and fails the exact tier.
-- `test_approximate_tier_records_deviation` — residual magnitude stored
-  read-only on the object.
+- `test_approximate_tier_records_deviation` — validation returns the
+  per-residual magnitudes (pure dict, FreeCAD-free); the feature layer
+  stores them read-only (§7.3).
 - `test_approximate_tier_rejects_large_residual` — a clearly orthotropic
   stack fails both tiers.
 - `test_isotropic_dict_shape` — merged material has `YoungsModulus`,
@@ -511,10 +548,11 @@ New `TestQuasiIsotropic` class, building stacks from the existing
   geometry work (entry guard), naming the isotropic shell.
 - `AlignFibreRosette` creation against an isotropic shell is blocked at
   selection validation.
-- Rendering: an isotropic shell in a headless recompute + view update
-  does not raise and produces no weave-texture geometry (plain colour
-  fallback); covered by the existing shader/headless test patterns in
-  `test_shader_gui.py` / `test_vp_composite_shell_shader_reload.py`.
+- Rendering: an isotropic shell in a headless recompute does not raise,
+  stays valid (`State` clean, no greyed icon) and produces no
+  weave-texture geometry; GUI-only confirmation of the plain-colour
+  fallback follows the existing `GuiUp`-guarded patterns
+  (`test_compositeexamples.py` guard blocks) in the GUI tier.
 - The protocol backstop still holds: calling `get_tex_coord_at_point` or
   `get_drape_lcs` directly on an isotropic shell raises.
 
@@ -597,6 +635,10 @@ no mocks):
   silently). This proves the collapse preserves the membrane answer,
   which is the whole contract (D2). Bending load-case comparisons would
   test the solver, not the export, and are out of scope.
+- **Validity sweep:** after every variant build + solve, no created
+  feature (panel, stiffener, web shell, foot shell, combined laminate,
+  seam features if present) is in `Invalid` state — no greyed icons
+  (§7.0).
 - **Performance assertion (soft):** count `get_drape_lcs` calls during
   export == 0 for QI shells in both variants. If instrumented timing is
   stable, assert export wall-clock not worse than the draped baseline;
@@ -712,7 +754,11 @@ with real numbers.
 9. Validation catches thickness-weighted imbalance and mod-180 angle
    variants correctly (§7.1); BOM record unchanged for declared stacks
    (§7.3); draped export path byte-identical for non-QI stacks (§7.5).
-10. `CONTEXT.md` gains the §2 terminology entries.
+10. **Validity invariant:** every success-path test/example leaves all
+    created Composites features out of `Invalid` state (no greyed icons
+    in the GUI); the loud-failure path leaves the rejected feature
+    visibly invalid with `last_error` recorded.
+11. `CONTEXT.md` gains the §2 terminology entries.
 
 ## 10. Out of scope / future phases
 
@@ -768,9 +814,9 @@ tolerance (§7.6).
    any feature wiring.
 3. **Objects:** `CompositeLaminate` dataclass flag + `get_layers` routing
    (§5.1, §4.3).
-4. **Features:** `IsotropicEquivalent` property on `Composite::Laminate`,
-   error contract wiring, `CompositeShell` drape bypass + loud drape-LCS
-   failure (§5.2, §5.3).
+4. **Features:** `IsotropicEquivalent` + `ApproximateIsotropicEquivalent`
+   on `Composite::Laminate`, error contract wiring, `CompositeShell`
+   drape bypass + loud drape-LCS failure (§5.2, §5.3).
 5. **Feature tests** (§7.2, §7.3) + example update (§8.1); entry-point
    guards for TexturePlan / AlignFibreRosette and the render fallback.
 6. **Composition (D8, §5.4):** seam/stiffener wiring relaxation,
