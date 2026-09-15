@@ -610,7 +610,12 @@ Stiffener:
 ### 7.5 FEM provider tests — `test_drape_laminate_provider.py` + new
 
 - Orientation provider returns `{}` for a QI shell (no mesh walk: assert
-  with a small real femmesh).
+  with a small real femmesh). Follow the established fake-registry
+  capture pattern of `test_drape_laminate_provider.py` — inject a fake
+  `femtools.fem_extension_registry` into `sys.modules`, capture the
+  provider callables, exercise them against real Composites objects;
+  the mock boundary is the FEM registry, never the Composites objects
+  (A.4).
 - Section writer output for the QI laminate contains exactly one layer
   line and the isotropic material name; no `ORIENTATION=` token.
 - Generated CalculiX input for a QI shell model: no `*ORIENTATION` block
@@ -629,7 +634,9 @@ Stiffener:
 **The stiffener panel example (§8.2) is the test case for this work**
 (grill 2026-09-15). FreeCAD-integration pattern
 (`run_freecad_integration_tests.py` entrypoint, real FreeCAD process,
-no mocks):
+no mocks); the FEM-analysis construction can reuse the
+`test_conical_panel_full_pipeline_round_trip` pattern
+(`runner.run(..., run_solver=True)` — already solved headless, A.4):
 
 - Build the example in both variants and run CalculiX:
   - **mixed variant** (draped panel + QI stiffener): foot combined
@@ -682,7 +689,9 @@ Z-stiffener with its own laminate, web rosette, solved foot transfers):
    record at nominal angles with rotation 0 (D8);
 4. build flag `panel_qi: bool = False` — when true the panel laminate is
    also QI, making foot and assembly **fully orientation-free** (the
-   FEM-export shortcut end to end).
+   FEM-export shortcut end to end). The runner forwards build kwargs
+   (`runner.run("quasi_iso_stiffener_panel", panel_qi=True)`), so the
+   variant needs no second registry entry (A.4).
 
 Assertions in the example result dict: web rosette absent, derived
 combined flag per variant, weave-render ownership (panel remainder +
