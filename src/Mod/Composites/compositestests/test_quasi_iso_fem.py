@@ -103,12 +103,15 @@ def _add_edge_force(doc, analysis, support, edge_name, tag):
 
 
 def _avg_free_edge_displacement(analysis, mesh_obj, support):
-    """Average displacement magnitude across the free (loaded) edge.
+    """Mean axial displacement (ux) across the free (loaded) edge.
 
     The free edge is the support edge with the largest mean x (the loaded
-    one); the clamped edge is excluded by construction.  Peak displacement
-    is a poor convergence metric — it tracks single-node artefacts — so the
-    edge average is used instead (§7.6 metric, user directive 2026-09-16).
+    one); the clamped edge is excluded by construction.  The **axial
+    component** is used, not the vector magnitude: at the edge corners
+    the Poisson contraction adds uy, so |u| is not uniform along the edge
+    and its average is weighted by the mesh's node distribution.  Mean ux
+    is the well-defined edge extension (§7.6 metric, user directive
+    2026-09-16).
     """
     result = next(
         obj for obj in analysis.Group
@@ -118,18 +121,18 @@ def _avg_free_edge_displacement(analysis, mesh_obj, support):
     # node id (see FreeCAD's femresult.resulttools — the value lists must
     # be zipped with NodeNumbers).  Assuming node-id order misassigns
     # every node's displacement.
-    disp = dict(zip(result.NodeNumbers, result.DisplacementLengths))
+    disp = dict(zip(result.NodeNumbers, result.DisplacementVectors))
     nodes = result.Mesh.FemMesh.Nodes  # compacted result mesh
     max_x = max(v.x for v in nodes.values())
     tol = 1e-6 * max(1.0, abs(max_x))
     edge_vals = [
-        disp[nid]
+        float(disp[nid].x)
         for nid, vec in sorted(nodes.items())
         if abs(vec.x - max_x) <= tol
     ]
     if not edge_vals:
         raise RuntimeError("no mesh nodes found on the free edge")
-    return sum(float(v) for v in edge_vals) / len(edge_vals)
+    return sum(edge_vals) / len(edge_vals)
 
 
 class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
@@ -137,7 +140,15 @@ class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
 
     save_fcstd = False
 
-    def _build_and_solve(self, isotropic, name, mesh_max_size=None):
+    def _build_and_solve(
+        self, isotropic, name, mesh_max_size=None, mesh_template=None
+    ):
+        """Build + solve one variant.
+
+        ``mesh_template`` (an existing FemMeshObject) forces both variants
+        onto the *same* mesh, so the cross-validation is not confounded by
+        gmsh producing a slightly different mesh per build.
+        """
         doc = FreeCAD.newDocument(name)
 
         from Composites.compositeexamples.examples._shell_example_common import (
@@ -190,14 +201,18 @@ class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
         self.assertNotIn("Invalid", shell.State)
 
         analysis, solver, mesh_obj = _create_fem_base(doc, name)
-        if mesh_max_size is not None:
+        if mesh_template is not None:
+            # Reuse the partner variant's mesh verbatim.
+            mesh_obj.FemMesh = mesh_template.FemMesh
+        elif mesh_max_size is not None:
             # gmsh characteristic length: None keeps the (very coarse)
             # default, which is the historical §7.6 configuration.
             mesh_obj.CharacteristicLengthMax = mesh_max_size
         _add_shell_section_and_material(
             doc, analysis, support, name, shell_obj=shell
         )
-        mesher = _mesh_support(mesh_obj, support)
+        if mesh_template is None:
+            _mesh_support(mesh_obj, support)
         min_edge, max_edge = _edge_names_by_x(support)
         _add_fixed_constraint(doc, analysis, support, min_edge, name)
         _add_edge_force(doc, analysis, support, max_edge, name)

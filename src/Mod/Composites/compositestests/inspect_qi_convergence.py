@@ -85,7 +85,7 @@ def _ground_truth(solver_inp):
     result plumbing in the loop.  Coordinates must come from the frd's
     own coordinate block: CalculiX writes a different node space there
     (shell data is expanded to 3-D, so ids/nodes do not match the inp).
-    Returns max |u|, avg |u| over the free-edge (max-x) and clamp-edge
+    Returns max ux and avg ux over the free-edge (max-x) and clamp-edge
     (min-x) nodes, and the summed *CLOAD magnitude.
     """
     inp_path = Path(solver_inp)
@@ -114,16 +114,15 @@ def _ground_truth(solver_inp):
     coords = _records_after("2C")
     disp = _records_after("-4  DISP")
 
-    def mag(v):
-        return sum(c * c for c in v) ** 0.5
-
     xs = [x for x, _, _ in coords.values()]
     free_x, clamp_x = max(xs), min(xs)
     free = [nid for nid, (x, _, _) in coords.items() if abs(x - free_x) <= 1e-9]
     clamp = [nid for nid, (x, _, _) in coords.items() if abs(x - clamp_x) <= 1e-9]
 
-    def avg_over(ids):
-        vals = [mag(disp[nid]) for nid in ids if nid in disp]
+    def avg_ux(ids):
+        # Axial component (ux) — the edge extension, robust to the mesh's
+        # node distribution (|u| is corner-weighted via Poisson uy).
+        vals = [disp[nid][0] for nid in ids if nid in disp]
         return sum(vals) / len(vals) if vals else float("nan")
 
     cload = 0.0
@@ -146,10 +145,10 @@ def _ground_truth(solver_inp):
           f"free={len(free)} clamp={len(clamp)} nan={n_nan} "
           f"free_x={free_x} clamp_x={clamp_x}", flush=True)
     return {
-        "max_u": max(mag(v) for v in disp.values()),
-        "fixed_avg": avg_over(clamp),
-        "free_avg": avg_over(free),
-        "clamp_avg": avg_over(clamp),
+        "max_ux": max(v[0] for v in disp.values()),
+        "fixed_avg": avg_ux(clamp),
+        "free_avg": avg_ux(free),
+        "clamp_avg": avg_ux(clamp),
         "cload": cload,
     }
 
@@ -181,8 +180,8 @@ def profile_edges(result_obj, mesh_obj, tag):
 
 def run_sweep(sizes, html_path, profile=False):
     case = TestQuasiIsoFemCrossValidation("test_cross_validation_membrane")
-    print(f"{'clmax':>8} {'nodes':>8} {'avg free edge':>15} {'max all':>15} "
-          f"{'avg clamp':>15} {'CLOAD sum':>12} {'analytic':>12}", flush=True)
+    print(f"{'clmax':>8} {'nodes':>8} {'avg ux free':>15} {'max ux':>15} "
+          f"{'avg ux clamp':>15} {'CLOAD sum':>12} {'analytic':>12}", flush=True)
     results = []
     analytic = None
     for size in sizes:
@@ -198,22 +197,24 @@ def run_sweep(sizes, html_path, profile=False):
         # result mesh is compacted (importCcxFrdResults); indexing by mesh
         # node id (lengths[nid-1]) misassigns every node (handoff
         # 2026-09-16 lessons).
-        disp = dict(zip(result_obj.NodeNumbers, result_obj.DisplacementLengths))
+        vectors = dict(
+            zip(result_obj.NodeNumbers, result_obj.DisplacementVectors)
+        )
         mesh_nodes = result_obj.Mesh.FemMesh.Nodes
         max_x = max(v.x for v in mesh_nodes.values())
         min_x = min(v.x for v in mesh_nodes.values())
         span = max(abs(max_x), abs(min_x), 1.0)
         free_vals, clamp_vals = [], []
         for nid, vec in sorted(mesh_nodes.items()):
-            if nid not in disp:
+            if nid not in vectors:
                 continue
             if abs(vec.x - max_x) <= 1e-6 * span:
-                free_vals.append(disp[nid])
+                free_vals.append(float(vectors[nid].x))
             elif abs(vec.x - min_x) <= 1e-6 * span:
-                clamp_vals.append(disp[nid])
+                clamp_vals.append(float(vectors[nid].x))
         avg_free = sum(free_vals) / len(free_vals)
         avg_clamp = (sum(clamp_vals) / len(clamp_vals)) if clamp_vals else 0.0
-        max_all = max(float(v) for v in disp.values())
+        max_all = max(float(v.x) for v in vectors.values())
         cload = _cload_total(r["solver_input"])
         gt = _ground_truth(r["solver_inp"])
         modulus, _, thickness = _equivalent_plate_cfg(r["laminate"])
@@ -222,13 +223,13 @@ def run_sweep(sizes, html_path, profile=False):
               f"{max_all:>15.8e} {avg_clamp:>15.3e} {cload:>12.4f} "
               f"{analytic:>12.8e} "
               f"| frd: free {gt['free_avg']:.8e} clamp {gt['clamp_avg']:.3e} "
-              f"fixed {gt['fixed_avg']:.3e} max {gt['max_u']:.8e} "
+              f"fixed {gt['fixed_avg']:.3e} max {gt['max_ux']:.8e} "
               f"cload {gt['cload']:.4f} (E={modulus:.1f} MPa, "
               f"t={thickness:.3f} mm)", flush=True)
         results.append({
             "size": size, "nodes": r["mesh_node_count"],
             "avg_free": avg_free, "max_all": max_all,
-            "frd_free": gt["free_avg"], "frd_max": gt["max_u"],
+            "frd_free": gt["free_avg"], "frd_max": gt["max_ux"],
             "frd_clamp": gt["clamp_avg"], "avg_clamp": avg_clamp,
             "cload": cload,
             "analytic": analytic, "modulus": modulus,
@@ -265,7 +266,7 @@ def _write_convergence_html(results, html_path, analytic):
     series = (
         ("avg free edge (frd ground truth)", [r["frd_free"] for r in results]),
         ("avg free edge (FreeCAD result)", [r["avg_free"] for r in results]),
-        ("max |u| all nodes (frd)", [r["frd_max"] for r in results]),
+        ("max ux (frd)", [r["frd_max"] for r in results]),
         ("avg clamp edge (frd)", [r["frd_clamp"] for r in results]),
     )
     traces = [
