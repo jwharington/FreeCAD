@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft |
+| **Status** | Implemented (FEM verification gate closed at 5%; off-axis material-export fix `1aa33763fe`) |
 | **Date** | 2026-09-15 |
 | **Related** | `handoff-2026-09-16.md` (implementation state + lessons), `stiffener_composite_shell.md` (PRD style/precedent), `adr/0003-quasi-isotropic-presentation-contract.md` (decision record), `../CONTEXT.md` (terminology), `mechanics/stack_model.py`, `fem/drape_laminate_provider.py`, `../compositeexamples/examples/quasi_iso_laminate_plate.py` |
 | **Scope** | QI stack validation, equivalent isotropic material generation, CompositeShell draping bypass, FEM provider shortcut path. |
@@ -51,7 +51,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — plan complete, implementation not started |
+| **Status** | Implemented — see `handoff-2026-09-16.md` for verification state |
 
 ## Table of contents
 
@@ -651,8 +651,13 @@ Stiffener:
   crashes (failure criteria for QI are out of scope, but the interplay
   must be inert).
 - `test_draped_path_byte_identical` (negative control) — for a *non-QI*
-  stack, the provider changes produce byte-identical solver input to the
-  pre-change path (mechanically pins "draped path unchanged").
+  stack, the provider changes leave the section head and per-element
+  `*ORIENTATION` (the QI-vs-draped branching) byte-identical to the
+  pre-change path.  *Scope superseded 2026-09-16:* the per-ply material
+  blocks **did** intentionally change — off-axis plies now export as
+  `TYPE=ANISOTROPIC` to keep the normal-shear coupling (see the handoff
+  §3).  The control therefore pins the provider branching, not the whole
+  solver input.
 
 ### 7.6 End-to-end FEM analysis test — new `test_quasi_iso_fem.py`, case: the stiffener panel example
 
@@ -804,7 +809,9 @@ with real numbers.
    with no transfer rosettes and an orientation-free seam region.
 9. Validation catches thickness-weighted imbalance and mod-180 angle
    variants correctly (§7.1); BOM record unchanged for declared stacks
-   (§7.3); draped export path byte-identical for non-QI stacks (§7.5).
+   (§7.3); the draped section/orientation branching is unchanged for
+   non-QI stacks (§7.5) — the per-ply material blocks now use
+   `TYPE=ANISOTROPIC` (off-axis coupling fix, 2026-09-16).
 10. **Validity invariant:** every success-path test/example leaves all
     created Composites features out of `Invalid` state (no greyed icons
     in the GUI); the loud-failure path leaves the rejected feature
@@ -893,7 +900,7 @@ tolerance (§7.6).
 8. **FEM provider** (§6.1): orientation-provider skip, single-layer
    plain section; material writer already ISO-capable (verified).
 9. **FEM provider tests** (§7.5: provider behaviour, failure-provider
-   guard, byte-identical negative control) + flat-plate companion
+   guard, section/orientation negative control) + flat-plate companion
    example (§8.3) registered in `registry.py`.
 10. **End-to-end FEM test** (§7.6, stiffener panel case) with
     cross-validation run; fix remaining OQ decisions as encountered.

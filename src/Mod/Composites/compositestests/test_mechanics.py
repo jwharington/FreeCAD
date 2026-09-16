@@ -1101,6 +1101,98 @@ class TestMergeSingle(unittest.TestCase):
         self.assertIn("MyPrefix", result.material["Name"])
 
 
+class TestAnisoPlyExport(unittest.TestCase):
+    """Off-axis plies export their full anisotropic stiffness (§4/§6).
+
+    Regression: the FEM writer emitted the *rotated* engineering constants
+    as if they were the principal constants of an orthotropic material
+    (``TYPE=ENGINEERING CONSTANTS``).  A rotated ply is monoclinic, so that
+    form silently drops the normal-shear coupling — for ``[0/45/-45/90]s``
+    it lowered A11 from 58414 to 48210 MPa.mm.
+    """
+
+    # CalculiX *ELASTIC,TYPE=ANISOTROPIC constant order: upper triangle of
+    # the 6x6 stiffness (engineering shear), components 11,22,33,12,13,23.
+    _CCX_UPPER = (
+        (0, 0), (0, 1), (1, 1), (0, 2), (1, 2), (2, 2),
+        (0, 3), (1, 3), (2, 3), (3, 3),
+        (0, 4), (1, 4), (2, 4), (3, 4), (4, 4),
+        (0, 5), (1, 5), (2, 5), (3, 5), (4, 5), (5, 5),
+    )
+
+    @staticmethod
+    def _rotated_ply(angle_deg, material=None):
+        return merge_single(
+            "00",
+            HomogeneousLamina(
+                material=material or _make_glass(),
+                thickness=1.0,
+                orientation=angle_deg,
+                orientation_display=angle_deg,
+            ),
+        )
+
+    def _written_tensor(self, layer):
+        from Composites.util.fem_util import write_lamina_material_ccx
+
+        text = write_lamina_material_ccx(layer)
+        self.assertIn("*ELASTIC,TYPE=ANISOTROPIC", text)
+        self.assertNotIn("ENGINEERING CONSTANTS", text)
+        block = text.split("*ELASTIC,TYPE=ANISOTROPIC\n", 1)[1]
+        block = block.split("\n\n", 1)[0]
+        values = [
+            float(v)
+            for line in block.splitlines()
+            for v in line.split(",")
+            if v.strip()
+        ]
+        self.assertEqual(len(values), 21)
+        tensor = np.zeros((6, 6))
+        for value, (i, j) in zip(values, self._CCX_UPPER):
+            tensor[i, j] = tensor[j, i] = value
+        return tensor
+
+    def test_isotropic_layer_carries_no_tensor(self):
+        # The isotropic path must keep TYPE=ISO, not fall into ANISO.
+        layer = merge_single(
+            "00",
+            HomogeneousLamina(
+                material=_make_resin(), thickness=1.0, orientation=0.0
+            ),
+        )
+        self.assertIsNone(layer.stiffness)
+        from Composites.util.fem_util import write_lamina_material_ccx
+
+        self.assertIn("TYPE=ISO", write_lamina_material_ccx(layer))
+
+    def test_zero_ply_shear_constants_in_expected_slots(self):
+        # Locks the (11,22,33,23,13,12) -> (11,22,33,12,13,23) mapping.
+        d = ortho_material2dict(_make_glass())
+        tensor = self._written_tensor(self._rotated_ply(0.0))
+        self.assertAlmostEqual(tensor[3, 3], d["ShearModulusXY"], places=6)
+        self.assertAlmostEqual(tensor[4, 4], d["ShearModulusXZ"], places=6)
+        self.assertAlmostEqual(tensor[5, 5], d["ShearModulusYZ"], places=6)
+
+    def test_off_axis_ply_keeps_normal_shear_coupling(self):
+        # An engineering-constant form gives zero here; the fix must not.
+        tensor = self._written_tensor(self._rotated_ply(45.0))
+        self.assertGreater(abs(tensor[0, 3]), 1.0)
+        self.assertGreater(abs(tensor[1, 3]), 1.0)
+        # ...and the rotated (12,12) stiffness is far above the principal
+        # G12 — the coupled value, not the naive reconstruction.
+        d = ortho_material2dict(_make_glass())
+        self.assertGreater(tensor[3, 3], 2.0 * d["ShearModulusXY"])
+
+    def test_written_tensor_matches_layer_stiffness(self):
+        layer = self._rotated_ply(30.0)
+        self.assertIsNotNone(layer.stiffness)
+        perm = (0, 1, 2, 5, 4, 3)
+        expected = layer.stiffness[np.ix_(perm, perm)]
+        self.assertTrue(
+            np.allclose(self._written_tensor(layer), expected, rtol=1e-9)
+        )
+
+
 # ---------------------------------------------------------------------------
 # Tests: mechanics/stack_expansion.py – calc_stack_model
 # ---------------------------------------------------------------------------
