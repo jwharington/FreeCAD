@@ -15,6 +15,8 @@ import os
 import sys
 import unittest
 
+from pathlib import Path
+
 import FreeCAD
 import Part
 
@@ -97,13 +99,34 @@ def _add_edge_force(doc, analysis, support, edge_name, tag):
     return force_obj
 
 
-def _max_displacement(analysis):
-    for obj in analysis.Group:
-        if obj.isDerivedFrom("Fem::FemResultObject"):
-            lengths = getattr(obj, "DisplacementLengths", None)
-            if lengths:
-                return max(float(v) for v in lengths)
-    return None
+def _avg_free_edge_displacement(analysis, mesh_obj, support):
+    """Average displacement magnitude across the free (loaded) edge.
+
+    The free edge is the support edge with the largest mean x (the loaded
+    one); the clamped edge is excluded by construction.  Peak displacement
+    is a poor convergence metric — it tracks single-node artefacts — so the
+    edge average is used instead (§7.6 metric, user directive 2026-09-16).
+    """
+    result = next(
+        obj for obj in analysis.Group
+        if obj.isDerivedFrom("Fem::FemResultObject")
+    )
+    # The result vectors are ordered by result.NodeNumbers, NOT by mesh
+    # node id (see FreeCAD's femresult.resulttools — the value lists must
+    # be zipped with NodeNumbers).  Assuming node-id order misassigns
+    # every node's displacement.
+    disp = dict(zip(result.NodeNumbers, result.DisplacementLengths))
+    nodes = result.Mesh.FemMesh.Nodes  # compacted result mesh
+    max_x = max(v.x for v in nodes.values())
+    tol = 1e-6 * max(1.0, abs(max_x))
+    edge_vals = [
+        disp[nid]
+        for nid, vec in sorted(nodes.items())
+        if abs(vec.x - max_x) <= tol
+    ]
+    if not edge_vals:
+        raise RuntimeError("no mesh nodes found on the free edge")
+    return sum(float(v) for v in edge_vals) / len(edge_vals)
 
 
 class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
@@ -111,7 +134,7 @@ class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
 
     save_fcstd = False
 
-    def _build_and_solve(self, isotropic, name):
+    def _build_and_solve(self, isotropic, name, mesh_max_size=None):
         doc = FreeCAD.newDocument(name)
 
         from Composites.compositeexamples.examples._shell_example_common import (
@@ -164,6 +187,10 @@ class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
         self.assertNotIn("Invalid", shell.State)
 
         analysis, solver, mesh_obj = _create_fem_base(doc, name)
+        if mesh_max_size is not None:
+            # gmsh characteristic length: None keeps the (very coarse)
+            # default, which is the historical §7.6 configuration.
+            mesh_obj.CharacteristicLengthMax = mesh_max_size
         _add_shell_section_and_material(
             doc, analysis, support, name, shell_obj=shell
         )
@@ -176,15 +203,18 @@ class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
         solve_result, fem = _run_ccx(analysis, solver, mesh_obj)
         if not solve_result:
             raise RuntimeError(f"CalculiX solve failed for {name}")
-        displacement = _max_displacement(analysis)
+        displacement = _avg_free_edge_displacement(analysis, mesh_obj, support)
         with open(fem.inp_file_name, encoding="utf-8", errors="ignore") as fh:
             solver_input = fh.read()
         return {
             "doc": doc,
+            "analysis": analysis,
             "shell": shell,
             "laminate": laminate,
-            "max_displacement": displacement,
+            "mesh_obj": mesh_obj,
+            "displacement": displacement,
             "solver_input": solver_input,
+            "solver_inp": fem.inp_file_name,
             "mesh_node_count": mesh_obj.FemMesh.NodeCount,
         }
 
@@ -217,21 +247,40 @@ class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
 
         Console.PrintMessage(
             f"\n[QI cross-validation] QI presentation: "
-            f"{qi['max_displacement']:.6e} mm; "
+            f"{qi['displacement']:.6e} mm; "
             f"per-ply draped export: "
-            f"{draped['max_displacement']:.6e} mm\n"
+            f"{draped['displacement']:.6e} mm\n"
         )
         relative = abs(
-            qi["max_displacement"] - draped["max_displacement"]
-        ) / draped["max_displacement"]
+            qi["displacement"] - draped["displacement"]
+        ) / draped["displacement"]
         Console.PrintMessage(
             f"[QI cross-validation] relative difference: {relative:.3e}\n"
         )
 
         # Sanity only — the agreement tolerance is deliberately NOT
         # asserted here (§7.6 stop condition).
-        self.assertGreater(qi["max_displacement"], 0.0)
-        self.assertGreater(draped["max_displacement"], 0.0)
+        self.assertGreater(qi["displacement"], 0.0)
+        self.assertGreater(draped["displacement"], 0.0)
+
+
+def run_qi_convergence(sizes=(None, 30.0, 15.0, 7.5, 4.0)):
+    """Mesh-convergence sweep, QI presentation only (variant (a)).
+
+    The draped variant is intentionally excluded (user directive
+    2026-09-16).  Reports the average free-edge displacement per mesh
+    density; a converging series validates the QI export end to end.
+    """
+    case = TestQuasiIsoFemCrossValidation("test_cross_validation_membrane")
+    print(f"{'clmax':>8} {'nodes':>7} {'avg free-edge disp':>20}")
+    results = []
+    for size in sizes:
+        name = f"QIConv{int(size) if size else 0}"
+        r = case._build_and_solve(isotropic=True, name=name, mesh_max_size=size)
+        print(f"{str(size):>8} {r['mesh_node_count']:>7} {r['displacement']:>20.8e}")
+        results.append(r)
+        FreeCAD.closeDocument(name)
+    return results
 
 
 if __name__ == "__main__":
