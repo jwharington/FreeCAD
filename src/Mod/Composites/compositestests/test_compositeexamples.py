@@ -279,6 +279,16 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
         self.assertFalse(result["seam_shell_draped"])
         self.assertTrue(result["remainder_isotropic"])
         self.assertIsNotNone(result["remainder"])
+        # §8.4: the seam region and the remainder export plain isotropic
+        # material — no composite stack, no per-ply anisotropy.
+        for materials in (
+            result["seam_export_materials"],
+            result["remainder_export_materials"],
+        ):
+            self.assertIsNotNone(materials)
+            self.assertIn("TYPE=ISO", materials)
+            self.assertNotIn("ANISOTROPIC", materials)
+            self.assertNotIn("ENGINEERING CONSTANTS", materials)
 
     def test_quasi_iso_fem_plate_solves_isotropic(self):
         """§8.3: the QI plate solves CalculiX as a plain ISO material."""

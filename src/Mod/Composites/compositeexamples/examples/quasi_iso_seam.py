@@ -155,6 +155,12 @@ def build(doc=None, run_solver=False):
         "remainder_isotropic": (
             is_isotropic(getattr(seam, "Remainder", None))
         ),
+        # §8.4: the seam-region shell and the remainder export plain
+        # isotropic material (no composite layer stack).
+        "seam_export_materials": _export_materials(scl),
+        "remainder_export_materials": _export_materials(
+            getattr(getattr(seam, "Remainder", None), "Laminate", None)
+        ),
     }
 
 
@@ -162,6 +168,17 @@ def is_isotropic(shell):
     from ...features.CompositeShell import is_isotropic_shell
 
     return bool(shell is not None and is_isotropic_shell(shell))
+
+
+def _export_materials(laminate):
+    """The CalcuiX material text a laminate exports (PRD §8.4 check)."""
+    if laminate is None:
+        return None
+    from ...util.fem_util import write_lamina_materials_ccx
+
+    return write_lamina_materials_ccx(
+        laminate.Proxy.FEMLayers, prefix=laminate.Name
+    )
 
 
 def main():
