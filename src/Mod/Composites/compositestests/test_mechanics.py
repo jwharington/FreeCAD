@@ -1463,6 +1463,57 @@ def _qi_reference_layers():
     return _qi_symmetric((0, 45, -45, 90))
 
 
+def _independent_ply_Q(material):
+    """Reduced stiffness (Q11, Q22, Q12, Q66) in MPa from engineering
+    constants via the standard textbook formulas — independent of
+    shell_model's compliance/rotation machinery."""
+    d = ortho_material2dict(material)
+    E1 = d["YoungsModulusX"]
+    E2 = d["YoungsModulusY"]
+    nu12 = d["PoissonRatioXY"]
+    G12 = d["ShearModulusXY"]
+    nu21 = nu12 * E2 / E1
+    denom = 1.0 - nu12 * nu21
+    return {"11": E1 / denom, "22": E2 / denom,
+            "12": nu12 * E2 / denom, "66": G12}
+
+
+def _independent_qbar(q, theta_rad):
+    """Standard engineering Q -> Qbar rotation (no shell_model)."""
+    c = math.cos(theta_rad)
+    s = math.sin(theta_rad)
+    c2, s2 = c * c, s * s
+    c4, s4 = c2 * c2, s2 * s2
+    return {
+        "11": q["11"] * c4 + 2 * (q["12"] + 2 * q["66"]) * s2 * c2
+        + q["22"] * s4,
+        "22": q["11"] * s4 + 2 * (q["12"] + 2 * q["66"]) * s2 * c2
+        + q["22"] * c4,
+        "12": (q["11"] + q["22"] - 4 * q["66"]) * s2 * c2
+        + q["12"] * (c4 + s4),
+        "66": (q["11"] + q["22"] - 2 * q["12"] - 2 * q["66"]) * s2 * c2
+        + q["66"] * (c4 + s4),
+    }
+
+
+def _independent_qi_equivalent(material, angles, thicknesses):
+    """Independent CLT collapse of an angle set to isotropic constants."""
+    q = _independent_ply_Q(material)
+    A = {"11": 0.0, "22": 0.0, "12": 0.0, "66": 0.0}
+    for theta_deg, t in zip(angles, thicknesses):
+        qb = _independent_qbar(q, math.radians(theta_deg))
+        for key in A:
+            A[key] += qb[key] * t
+    h = sum(thicknesses)
+    return {
+        "A": A,
+        "E": (A["11"] - A["12"]) * (A["11"] + A["12"]) / (A["11"] * h),
+        "nu": A["12"] / A["11"],
+        "G": (A["11"] - A["12"]) / (2 * h),
+        "h": h,
+    }
+
+
 class TestQuasiIsotropic(unittest.TestCase):
     """QI balance validation and isotropic merge (PRD §4, tests §7.1)."""
 
@@ -1481,6 +1532,40 @@ class TestQuasiIsotropic(unittest.TestCase):
         )
         G_identity = d["YoungsModulus"] / (2 * (1 + d["PoissonRatio"]))
         self.assertLessEqual(abs(G - G_identity), 1e-9 * G)
+
+    def test_qi_equiv_modulus_matches_independent_clt(self):
+        """Merged equivalent constants equal an independent textbook CLT
+        collapse of the same stack.
+
+        This breaks the self-reference of the FEM bar comparison: the
+        analytic delta there uses the model's own merged E, so it only
+        proves the export/solver reproduces the declared modulus.  Here
+        the equivalent constants are checked against a closure computed
+        from the raw engineering constants with standard Q/Qbar formulas
+        — no shell_model rotation or compliance code involved.
+        """
+        layers = _qi_reference_layers()
+        result = merge_clt_isotropic("Test", layers)
+        d = iso_material2dict(result.material)
+        G_merged = float(
+            FreeCAD.Units.Quantity(
+                result.material["ShearModulus"]
+            ).getValueAs("MPa")
+        )
+
+        ref = _independent_qi_equivalent(
+            _make_glass(),
+            [lay.orientation for lay in layers],
+            [lay.thickness for lay in layers],
+        )
+
+        self.assertLessEqual(
+            abs(d["YoungsModulus"] - ref["E"]), 1e-9 * ref["E"]
+        )
+        self.assertLessEqual(
+            abs(d["PoissonRatio"] - ref["nu"]), 1e-9 * abs(ref["nu"])
+        )
+        self.assertLessEqual(abs(G_merged - ref["G"]), 1e-9 * ref["G"])
 
     def test_qi_equiv_rotation_invariant(self):
         equiv = merge_clt_isotropic("Test", _qi_reference_layers())
