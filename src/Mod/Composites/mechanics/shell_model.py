@@ -85,7 +85,8 @@ def compliance_matrix(
 
         for i in range(3):
             Sp[i, i] = 1 / mat["YoungsModulus"]
-            Sp[i + 3, i + 3] = (1 + mat["PoissonRatio"]) / mat["YoungsModulus"]
+            # Engineering shear compliance: 1/G with G = E/(2(1+ν)).
+            Sp[i + 3, i + 3] = 2 * (1 + mat["PoissonRatio"]) / mat["YoungsModulus"]
         Sp[0, 1] = -mat["PoissonRatio"] / mat["YoungsModulus"]
         Sp[0, 2] = -mat["PoissonRatio"] / mat["YoungsModulus"]
         Sp[1, 0] = -mat["PoissonRatio"] / mat["YoungsModulus"]

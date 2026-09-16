@@ -419,8 +419,8 @@ class TestComplianceMatrix(unittest.TestCase):
         S = compliance_matrix(self._iso())
         nu = 0.36
         E = 3500.0
-        # Sp[i+3,i+3] = (1+nu)/E
-        self.assertAlmostEqual(S[3, 3], (1 + nu) / E, places=12)
+        # Engineering shear compliance: 1/G with G = E/(2(1+nu)).
+        self.assertAlmostEqual(S[3, 3], 2 * (1 + nu) / E, places=12)
 
     def test_iso_compliance_symmetric(self):
         S = compliance_matrix(self._iso())
