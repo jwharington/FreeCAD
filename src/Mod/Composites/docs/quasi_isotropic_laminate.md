@@ -14,10 +14,14 @@
 
 - **Status:** steps 1–10 implemented (commits `a33c7773fc`…`1a39c9727a`,
   plus the approximate-tier budget `4d11341619`/`2811aed465`). The FEM
-  verification gate (§7.6) is **open**: the cross-validation number is
-  untrustworthy (13-node mesh, load-unit bug, metric-mapping bugs — see
-  the handoff's §3/§4 and lessons). Do not re-derive from this PRD alone;
-  the handoff is the source of truth for current state.
+  verification gate (§7.6) is **resolved on the QI side**: the force-unit
+  and result-mapping bugs are fixed and committed (`626a287a5d`,
+  `069d53afaa`), and the QI presentation converges to the uniaxial bar
+  value within 0.69% (clamped-edge effect), with E independently verified
+  against a textbook CLT closure. The only unrun item is the QI-vs-draped
+  cross-validation (variant (b)) — gated on explicit user authorisation.
+  Do not re-derive from this PRD alone; the handoff is the source of truth
+  for current state.
 - **What this is:** quasi-isotropic (QI) laminates — balanced stacks with
   evenly spaced ply angles, e.g. `[0/±45/90]s` or `[0/±60]` — behave as
   isotropic sheets in-plane. They therefore need **no draping, no rosette,
