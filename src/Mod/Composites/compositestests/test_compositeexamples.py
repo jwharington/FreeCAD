@@ -255,27 +255,74 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
         self.assertFalse(result["panel_draped"])
 
     def test_quasi_iso_stiffener_panel_solves_assembly(self):
-        """§7.6/§9.7: the mixed assembly exports as shell sections."""
+        """§7.6/§9.7: the mixed assembly solves and sections correctly.
+
+        The membrane cross-validation for the panel stack is
+        `test_quasi_iso_fem.py` (the isolated plate); here the assembly's
+        export + solve is checked.
+        """
         result = runner.run(
             "quasi_iso_stiffener_panel", run_solver=True, doc=None
         )
         self._saved_doc = result.get("doc")
+        # Validity sweep (§7.6): no feature left Invalid after build+solve.
+        self._assert_composites_features_valid(result["doc"])
         fem = result["fem_job"]
         self.assertIsNotNone(fem)
-        self.assertIn("TYPE=ISO", fem["solver_input"])
+        self.assertTrue(fem["solve_result"], "CalculiX did not finish")
+        text = fem["solver_input"]
+        self.assertIn("TYPE=ISO", text)       # QI web: plain single ISO layer
+        self.assertIn("*ORIENTATION", text)   # draped panel + foot
 
     def test_quasi_iso_stiffener_panel_qi_assembly_orientation_free(self):
-        """§7.6: the QI-panel variant is orientation-free end to end."""
+        """§7.6: the QI-panel variant solves fully orientation-free."""
         result = runner.run(
             "quasi_iso_stiffener_panel", run_solver=True, doc=None,
             panel_qi=True,
         )
         self._saved_doc = result.get("doc")
+        self._assert_composites_features_valid(result["doc"])
         fem = result["fem_job"]
         self.assertIsNotNone(fem)
+        self.assertTrue(fem["solve_result"], "CalculiX did not finish")
         text = fem["solver_input"]
         self.assertNotIn("*ORIENTATION", text)
         self.assertNotIn("ANISOTROPIC", text)
+
+    def test_quasi_iso_stiffener_panel_assembly_qi_no_drape_queries(self):
+        """§7.6 performance: zero get_drape_lcs queries for QI shells."""
+        from Composites.features.CompositeShell import CompositeShellFP
+
+        original = CompositeShellFP.get_drape_lcs
+        for panel_qi in (True, False):
+            called = {"n": 0}
+            proxies = []
+
+            def counted(proxy, tris, called=called, proxies=proxies):
+                called["n"] += 1
+                proxies.append(proxy)
+                return original(proxy, tris)
+
+            CompositeShellFP.get_drape_lcs = counted
+            try:
+                result = runner.run(
+                    "quasi_iso_stiffener_panel",
+                    run_solver=True,
+                    doc=None,
+                    panel_qi=panel_qi,
+                )
+            finally:
+                CompositeShellFP.get_drape_lcs = original
+            self._saved_doc = result.get("doc")
+            if panel_qi:
+                # Whole assembly is QI: no per-element query at all.
+                self.assertEqual(called["n"], 0)
+            else:
+                # Draped panel/foot are walked; the QI web shell is not.
+                self.assertGreater(called["n"], 0)
+                web = result["web_shell"]
+                self.assertIsNotNone(web)
+                self.assertNotIn(web.Proxy, proxies)
 
     def test_quasi_iso_cylindrical_panel_needs_no_drape(self):
         """§8.5: a curved QI panel drapes nothing — curvature is irrelevant."""

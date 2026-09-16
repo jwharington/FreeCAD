@@ -679,7 +679,11 @@ no mocks); the FEM-analysis construction can reuse the
 - **Cross-validation (membrane gate):** in the QI-panel variant, the
   same stack solved twice — (a) QI isotropic presentation, (b)
   conventional draped orthotropic per-ply export — under an in-plane
-  (membrane-dominated) load case. Agreement is measured on the mean axial
+  (membrane-dominated) load case.  Implemented on the **isolated panel
+  plate** (`test_quasi_iso_fem.py`): the stiffener panel's *mixed* variant
+  drapes a different (non-QI demo) laminate, so the *same-stack*
+  QI-vs-draped export comparison is the bare plate, which carries that
+  exact `[0/±45/90]s` stack.  Agreement is measured on the mean axial
   edge displacement (ux; `|u|` is corner-weighted by Poisson uy) and is
   asserted within **5%** (tolerance agreed 2026-09-16; measured ≤1.6% at
   the finest mesh). This proves the collapse preserves the membrane
