@@ -167,19 +167,81 @@ class NextDrapeBackend(DrapeBackend):
             return rotated_bds
         return bds
 
-    def get_lcs(self, tri: Any) -> Any | None:
-        """Return LCS transforms for a triangle facet.
+    def _field_frame(self, origin: Any, result: dict) -> Any | None:
+        """Local frame at `origin` from the drape field's warp/weft.
 
-        Computes the local coordinate system from the draped surface:
-        - Origin: centroid of the triangle
-        - X-axis: warp direction (along the u-direction)
-        - Z-axis: surface normal (cross product of warp and weft)
-        - Y-axis: cross(Z, X) to complete right-handed frame
+        The solve's texture coordinates (u, v) are the fabric coordinates:
+        dP/du is the warp (fibre) direction and dP/dv the weft.  Using the
+        actual field — not the mesh triangle edges, which bear no relation
+        to the fibre layup — is what makes the exported `*ORIENTATION` the
+        fibre frame.  The element takes the frame of the nearest draped
+        quad.
         """
         import FreeCAD
-        import numpy as np
         from scipy.spatial.transform import Rotation
 
+        node_positions = np.asarray(result["node_positions"], dtype=float)
+        quads = result.get("quads", [])
+        tex = result.get("tex_coords")
+        if not quads or tex is None or len(node_positions) == 0:
+            return None
+        tex_coords = np.asarray(tex, dtype=float)
+
+        origin = np.asarray(origin, dtype=float)
+
+        best_idx = None
+        best_d2 = np.inf
+        for q in quads:
+            idx = [int(i) for i in q]
+            centre = node_positions[idx].mean(axis=0)
+            d2 = float(np.sum((origin - centre) ** 2))
+            if d2 < best_d2:
+                best_d2 = d2
+                best_idx = idx
+        if best_idx is None:
+            return None
+
+        # Warp (dP/du) and weft (dP/dv) from a least-squares fit of the
+        # quad's nodes against their fabric coordinates.
+        quad_positions = node_positions[best_idx]
+        d_p = quad_positions - quad_positions.mean(axis=0)
+        quad_uv = tex_coords[best_idx]
+        d_uv = quad_uv - quad_uv.mean(axis=0)
+        jac_t, *_ = np.linalg.lstsq(d_uv, d_p, rcond=None)  # (2, 3)
+        warp, weft = jac_t[0], jac_t[1]
+
+        warp_norm = np.linalg.norm(warp)
+        if warp_norm < 1e-12:
+            return None
+        warp_unit = warp / warp_norm
+        weft_unit = weft - np.dot(weft, warp_unit) * warp_unit
+        weft_norm = np.linalg.norm(weft_unit)
+        if weft_norm < 1e-12:
+            return None
+        weft_unit = weft_unit / weft_norm
+        normal = np.cross(warp_unit, weft_unit)
+        normal_norm = np.linalg.norm(normal)
+        if normal_norm < 1e-12:
+            return None
+        normal_unit = normal / normal_norm
+        y_axis = np.cross(normal_unit, warp_unit)
+
+        rot_matrix = np.column_stack([warp_unit, y_axis, normal_unit])
+        rotation = Rotation.from_matrix(rot_matrix)
+        quat = rotation.as_quat()  # SciPy returns [x, y, z, w]
+
+        placement = FreeCAD.Placement()
+        placement.Rotation = FreeCAD.Rotation(quat[0], quat[1], quat[2], quat[3])
+        placement.Base = FreeCAD.Vector(origin[0], origin[1], origin[2])
+        return placement
+
+    def get_lcs(self, tri: Any) -> Any | None:
+        """LCS for a triangle facet, from the drape field.
+
+        Origin: centroid of the triangle.  Axes: the draped fabric frame
+        (warp/weft/normal) at the nearest draped quad — the actual fibre
+        field, not the mesh triangle edges.
+        """
         r = self._run_solve()
         if not r.get("success"):
             return None
@@ -211,125 +273,14 @@ class NextDrapeBackend(DrapeBackend):
         # Centroid
         centroid = (v0 + v1 + v2) / 3.0
 
-        # Warp direction (edge v0->v1, approximating u-direction)
-        warp = v1 - v0
-        warp_norm = np.linalg.norm(warp)
-        if warp_norm < 1e-10:
-            return None
-        warp_unit = warp / warp_norm
-
-        # Weft direction (edge v0->v2, approximating v-direction)
-        weft_raw = v2 - v0
-        weft_norm = np.linalg.norm(weft_raw)
-        if weft_norm < 1e-10:
-            return None
-
-        # Orthogonalize weft against warp (Gram-Schmidt)
-        weft_unit = weft_raw - np.dot(weft_raw, warp_unit) * warp_unit
-        weft_unit_norm = np.linalg.norm(weft_unit)
-        if weft_unit_norm < 1e-10:
-            return None
-        weft_unit = weft_unit / weft_unit_norm
-
-        # Surface normal (right-hand rule: warp × weft)
-        normal = np.cross(warp_unit, weft_unit)
-        normal_norm = np.linalg.norm(normal)
-        if normal_norm < 1e-10:
-            return None
-        normal_unit = normal / normal_norm
-
-        # Y-axis: cross(Z, X) to complete right-handed frame
-        y_axis = np.cross(normal_unit, warp_unit)
-
-        # Build rotation matrix from basis vectors
-        rot_matrix = np.column_stack([warp_unit, y_axis, normal_unit])
-        rotation = Rotation.from_matrix(rot_matrix)
-
-        # Convert to FreeCAD Placement
-        quat = rotation.as_quat()  # SciPy returns [x, y, z, w]
-        fc_placement = FreeCAD.Placement()
-        fc_placement.Rotation = FreeCAD.Rotation(quat[0], quat[1], quat[2], quat[3])
-        fc_placement.Base = FreeCAD.Vector(centroid[0], centroid[1], centroid[2])
-
-        return fc_placement
+        return self._field_frame(centroid, r)
     def get_lcs_at_point(self, center: Any) -> Any | None:
-        """Return LCS at a 3D point by finding the nearest quad.
-
-        Computes the local coordinate system from the draped surface
-        at the closest quad to the given point.
-        """
-        import FreeCAD
-        import numpy as np
-        from scipy.spatial.transform import Rotation
-
+        """LCS at a 3D point, from the nearest draped quad's field."""
         r = self._run_solve()
         if not r.get("success"):
             return None
 
-        node_positions = np.asarray(r["node_positions"])  # (N, 3)
-        quads = r.get("quads", [])  # list of [i0, i1, i2, i3]
-
-        if not quads or len(node_positions) == 0:
-            return None
-
-        cx, cy, cz = float(center[0]), float(center[1]), float(center[2])
-        cp = np.array([cx, cy, cz])
-
-        best_quad = None
-        best_dist = float("inf")
-
-        for q in quads:
-            i0, i1, i2, i3 = [int(idx) for idx in q]
-            centroid = (node_positions[i0] + node_positions[i1] +
-                       node_positions[i2] + node_positions[i3]) / 4.0
-            dist = np.linalg.norm(cp - centroid)
-            if dist < best_dist:
-                best_dist = dist
-                best_quad = q
-
-        if best_quad is None:
-            return None
-
-        i0, i1, i2, i3 = [int(idx) for idx in best_quad]
-        v0, v1, v2, v3 = node_positions[i0], node_positions[i1], node_positions[i2], node_positions[i3]
-
-        # Centroid
-        centroid = (v0 + v1 + v2 + v3) / 4.0
-
-        # Warp direction (v0->v1)
-        warp = v1 - v0
-        warp_norm = np.linalg.norm(warp)
-        if warp_norm < 1e-10:
-            return None
-        warp_unit = warp / warp_norm
-
-        # Weft direction (v0->v3), orthogonalized against warp
-        weft_raw = v3 - v0
-        weft_unit = weft_raw - np.dot(weft_raw, warp_unit) * warp_unit
-        weft_unit_norm = np.linalg.norm(weft_unit)
-        if weft_unit_norm < 1e-10:
-            return None
-        weft_unit = weft_unit / weft_unit_norm
-
-        # Normal
-        normal = np.cross(warp_unit, weft_unit)
-        normal_norm = np.linalg.norm(normal)
-        if normal_norm < 1e-10:
-            return None
-        normal_unit = normal / normal_norm
-
-        # Y-axis
-        y_axis = np.cross(normal_unit, warp_unit)
-
-        rot_matrix = np.column_stack([warp_unit, y_axis, normal_unit])
-        rotation = Rotation.from_matrix(rot_matrix)
-        quat = rotation.as_quat()  # SciPy returns [x, y, z, w]
-
-        fc_placement = FreeCAD.Placement()
-        fc_placement.Rotation = FreeCAD.Rotation(quat[0], quat[1], quat[2], quat[3])
-        fc_placement.Base = FreeCAD.Vector(centroid[0], centroid[1], centroid[2])
-
-        return fc_placement
+        return self._field_frame(np.asarray(center, dtype=float), r)
 
     def get_tex_coord_at_point(self, point: Any, offset_angle_deg: float = 0) -> Any | None:
         """Return texture coordinate at a 3D point via the engine's query.
