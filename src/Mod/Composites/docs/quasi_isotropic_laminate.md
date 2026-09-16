@@ -4,14 +4,20 @@
 |---|---|
 | **Status** | Draft |
 | **Date** | 2026-09-15 |
-| **Related** | `stiffener_composite_shell.md` (PRD style/precedent), `adr/0003-quasi-isotropic-presentation-contract.md` (decision record), `../CONTEXT.md` (terminology), `mechanics/stack_model.py`, `fem/drape_laminate_provider.py`, `../compositeexamples/examples/quasi_iso_laminate_plate.py` |
+| **Related** | `handoff-2026-09-16.md` (implementation state + lessons), `stiffener_composite_shell.md` (PRD style/precedent), `adr/0003-quasi-isotropic-presentation-contract.md` (decision record), `../CONTEXT.md` (terminology), `mechanics/stack_model.py`, `fem/drape_laminate_provider.py`, `../compositeexamples/examples/quasi_iso_laminate_plate.py` |
 | **Scope** | QI stack validation, equivalent isotropic material generation, CompositeShell draping bypass, FEM provider shortcut path. |
 
 ## Session onboarding
 
-> **New session? Read this block, then skim §§2–7 before touching code.**
+> **New session? Read this block, then the implementation handoff
+> `handoff-2026-09-16.md` (same directory) — then skim §§2–7 before touching code.**
 
-- **Status:** plan complete, **not started** — pick up at Implementation order step 1 (§12).
+- **Status:** steps 1–10 implemented (commits `a33c7773fc`…`1a39c9727a`,
+  plus the approximate-tier budget `4d11341619`/`2811aed465`). The FEM
+  verification gate (§7.6) is **open**: the cross-validation number is
+  untrustworthy (13-node mesh, load-unit bug, metric-mapping bugs — see
+  the handoff's §3/§4 and lessons). Do not re-derive from this PRD alone;
+  the handoff is the source of truth for current state.
 - **What this is:** quasi-isotropic (QI) laminates — balanced stacks with
   evenly spaced ply angles, e.g. `[0/±45/90]s` or `[0/±60]` — behave as
   isotropic sheets in-plane. They therefore need **no draping, no rosette,
