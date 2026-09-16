@@ -786,7 +786,8 @@ def _mesh_has_shell_or_volume_elements(mesh_obj):
     return bool(face_count or volume_count)
 
 
-def _run_ccx(analysis, solver, mesh_obj):
+def _ccx_tools(analysis, solver, mesh_obj):
+    """Build an updated FemToolsCcx ready to write input or run."""
     if not _mesh_has_shell_or_volume_elements(mesh_obj):
         raise RuntimeError(
             "FEM mesh has no shell/volume elements. Regenerate mesh before solve.",
@@ -806,7 +807,26 @@ def _run_ccx(analysis, solver, mesh_obj):
         fem.reset_all()
     if hasattr(fem, "update_objects"):
         fem.update_objects()
+    return fem
 
+
+def _write_ccx_input(analysis, solver, mesh_obj):
+    """Write the CalculiX input *without* running the solver.
+
+    The export half of ``_run_ccx`` — used by the §8.6 export benchmark to
+    time input writing (which is where the per-element orientation work
+    happens) independently of the solve.
+    """
+    fem = _ccx_tools(analysis, solver, mesh_obj)
+    if hasattr(fem, "setup_working_dir"):
+        fem.setup_working_dir()
+    fem.set_inp_file_name()
+    fem.write_inp_file()
+    return fem.inp_file_name, fem
+
+
+def _run_ccx(analysis, solver, mesh_obj):
+    fem = _ccx_tools(analysis, solver, mesh_obj)
     result = fem.run() if hasattr(fem, "run") else None
     # The FemToolsCcx carries the solver input path (inp_file_name) and
     # has loaded the frd results into the analysis on success.

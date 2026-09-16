@@ -146,9 +146,10 @@ class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
     save_fcstd = False
 
     def _build_and_solve(
-        self, isotropic, name, mesh_max_size=None, mesh_template=None
+        self, isotropic, name, mesh_max_size=None, mesh_template=None,
+        solve=True,
     ):
-        """Build + solve one variant.
+        """Build one variant; ``solve=False`` stops after meshing (export-only).
 
         ``mesh_template`` (an existing FemMeshObject) forces both variants
         onto the *same* mesh, so the cross-validation is not confounded by
@@ -223,6 +224,20 @@ class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
         _add_edge_force(doc, analysis, support, max_edge, name)
         doc.recompute()
 
+        if not solve:
+            return {
+                "doc": doc,
+                "analysis": analysis,
+                "solver": solver,
+                "shell": shell,
+                "laminate": laminate,
+                "mesh_obj": mesh_obj,
+                "displacement": None,
+                "solver_input": None,
+                "solver_inp": None,
+                "mesh_node_count": mesh_obj.FemMesh.NodeCount,
+            }
+
         solve_result, fem = _run_ccx(analysis, solver, mesh_obj)
         if not solve_result:
             raise RuntimeError(f"CalculiX solve failed for {name}")
@@ -232,6 +247,7 @@ class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
         return {
             "doc": doc,
             "analysis": analysis,
+            "solver": solver,
             "shell": shell,
             "laminate": laminate,
             "mesh_obj": mesh_obj,
