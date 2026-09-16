@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **Not complete** — see `handoff-2026-09-16.md` §0 for outstanding required work (stiffener-panel + seam solves silently no-op; §8.5/§8.6 missing) |
+| **Status** | Implemented (all PRD items done; see `handoff-2026-09-16.md` §0) |
 | **Date** | 2026-09-15 |
 | **Related** | `handoff-2026-09-16.md` (implementation state + lessons), `stiffener_composite_shell.md` (PRD style/precedent), `adr/0003-quasi-isotropic-presentation-contract.md` (decision record), `../CONTEXT.md` (terminology), `mechanics/stack_model.py`, `fem/drape_laminate_provider.py`, `../compositeexamples/examples/quasi_iso_laminate_plate.py` |
 | **Scope** | QI stack validation, equivalent isotropic material generation, CompositeShell draping bypass, FEM provider shortcut path. |
@@ -51,7 +51,7 @@
 
 | | |
 |---|---|
-| **Status** | **Not complete** — see `handoff-2026-09-16.md` §0 |
+| **Status** | Implemented — see `handoff-2026-09-16.md` §0 |
 
 ## Table of contents
 
