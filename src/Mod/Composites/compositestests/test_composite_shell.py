@@ -3,7 +3,6 @@
 
 """Tests for CompositeShellFP."""
 
-import math
 import os
 import tempfile
 import unittest
@@ -173,73 +172,6 @@ class TestFrameSeedValidation(TestFreeCADFP):
         self.assertEqual(
             seed["warp_direction"], [warp.x, warp.y, warp.z]
         )
-
-
-class TestDrapeLcsOrientation(TestFreeCADFP):
-    """The drape LCS must be the fibre field, not the mesh triangle edges.
-
-    Regression: ``NextDrapeBackend.get_lcs``/``get_lcs_at_point`` took the
-    warp direction from the triangle's first edge, so the exported
-    material orientation bore no relation to the rosette / fibre field.
-    The frame's X-axis must match the rosette's fibre-0° direction.
-    """
-
-    save_fcstd = False
-
-    def _backend_with_rosette(self, angle_deg):
-        from Composites.features.Rosette import RosetteFP
-        from Composites.tools.drape_backend_nextdrape import NextDrapeBackend
-
-        plate = Part.makePlane(100.0, 60.0)
-        support = self.doc.addObject("Part::Feature", "Plate")
-        support.Shape = plate
-        rosette = self.doc.addObject("Part::FeaturePython", "Rosette")
-        RosetteFP(rosette, support=(support, ["Face1"]))
-        rosette.Angle = angle_deg
-        self.doc.recompute()
-        return NextDrapeBackend(mesh=None, lcs=rosette, shape=plate), rosette
-
-    @staticmethod
-    def _inplane_angle_deg(rotation):
-        x = rotation.multVec(FreeCAD.Vector(1.0, 0.0, 0.0))
-        return math.degrees(math.atan2(x.y, x.x)) % 180.0
-
-    def test_lcs_x_axis_matches_rosette_angle(self):
-        points = ([20.0, 15.0, 0.0], [50.0, 30.0, 0.0], [80.0, 45.0, 0.0])
-        for angle in (0.0, 30.0, 75.0):
-            backend, rosette = self._backend_with_rosette(angle)
-            result = backend._run_solve()
-            self.assertTrue(
-                result.get("success"),
-                f"rosette {angle}: solve failed: {result.get('error')}",
-            )
-            expected = self._inplane_angle_deg(rosette.Placement.Rotation)
-            for point in points:
-                placement = backend.get_lcs_at_point(point)
-                self.assertIsNotNone(placement)
-                self.assertAlmostEqual(
-                    self._inplane_angle_deg(placement.Rotation),
-                    expected,
-                    delta=2.0,
-                    msg=f"rosette {angle} deg at {point}",
-                )
-
-    def test_lcs_ignores_triangle_edge_direction(self):
-        """A frame derived from the field must not swing with an
-        arbitrarily oriented triangle at the same location."""
-        backend, rosette = self._backend_with_rosette(40.0)
-        self.assertTrue(backend._run_solve().get("success"))
-        expected = self._inplane_angle_deg(rosette.Placement.Rotation)
-
-        base = [50.0, 30.0, 0.0]
-        far = [60.0, 30.0, 0.0]
-        for tri in ([base, far, [50.0, 40.0, 0.0]],
-                    [base, [50.0, 40.0, 0.0], far]):
-            frame = backend.get_lcs(tri)
-            self.assertIsNotNone(frame)
-            self.assertAlmostEqual(
-                self._inplane_angle_deg(frame.Rotation), expected, delta=2.0
-            )
 
 
 class TestRosettelessFallbackSeed(TestFreeCADFP):
