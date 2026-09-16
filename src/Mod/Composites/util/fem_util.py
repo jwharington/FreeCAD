@@ -48,15 +48,55 @@ def format_material_name(name: str, prefix: str = ""):
     return f"{prefix}:{name}".upper()
 
 
+# CalculiX *ELASTIC,TYPE=ANISOTROPIC constant order: the upper triangle of
+# the 6x6 stiffness (engineering shear), components 11,22,33,12,13,23 —
+# verified against CalculiX's test/aniso.inp and umat.f.
+_ANISO_UPPER_TRIANGLE = (
+    (0, 0), (0, 1), (1, 1), (0, 2), (1, 2), (2, 2),
+    (0, 3), (1, 3), (2, 3), (3, 3),
+    (0, 4), (1, 4), (2, 4), (3, 4), (4, 4),
+    (0, 5), (1, 5), (2, 5), (3, 5), (4, 5), (5, 5),
+)
+
+# shell_model's stiffness tensor orders the shear components
+# (11,22,33,23,13,12); CalculiX uses (11,22,33,12,13,23).  Map the former
+# to the latter before emitting the constants.
+_CCX_FROM_CODE_INDEX = (0, 1, 2, 5, 4, 3)
+
+
+def _aniso_constants_ccx(stiffness):
+    order = _CCX_FROM_CODE_INDEX
+    ccx = [
+        [float(stiffness[order[i]][order[j]]) for j in range(6)]
+        for i in range(6)
+    ]
+    vals = [ccx[i][j] for i, j in _ANISO_UPPER_TRIANGLE]
+    lines = [
+        ",".join(f"{v:.12G}" for v in vals[0:8]),
+        ",".join(f"{v:.12G}" for v in vals[8:16]),
+        ",".join(f"{v:.12G}" for v in vals[16:21]),
+    ]
+    return "\n".join(lines) + "\n\n"
+
+
 def write_lamina_material_ccx(
     layer: HomogeneousLamina,
     prefix: str = "",
 ):
     material_name = format_material_name(layer.description, prefix)
     res = f"*MATERIAL,NAME={material_name}\n"
-    res += "*ELASTIC,"
-    if is_orthotropic(layer.material):
+    stiffness = getattr(layer, "stiffness", None)
+    if is_orthotropic(layer.material) and stiffness is not None:
+        # A rotated (off-axis) ply is monoclinic: its engineering-constant
+        # form drops the normal-shear coupling, so emit the full rotated
+        # stiffness.  The section *ORIENTATION* then maps this tensor from
+        # the fabric frame to global.
         mat = ortho_material2dict(layer.material)
+        res += "*ELASTIC,TYPE=ANISOTROPIC\n"
+        res += _aniso_constants_ccx(stiffness)
+    elif is_orthotropic(layer.material):
+        mat = ortho_material2dict(layer.material)
+        res += "*ELASTIC,"
         res += "TYPE=ENGINEERING CONSTANTS\n"
         res += f"{mat['YoungsModulusX']:.12G},"
         res += f"{mat['YoungsModulusY']:.12G},"
@@ -67,12 +107,14 @@ def write_lamina_material_ccx(
         res += f"{mat['ShearModulusXY']:.12G},"
         res += f"{mat['ShearModulusXZ']:.12G},\n"
         res += f"{mat['ShearModulusYZ']:.12G},"
+        res += "293.15\n\n"
     else:
         mat = iso_material2dict(layer.material)
+        res += "*ELASTIC,"
         res += "TYPE=ISO\n"
         res += f"{mat['YoungsModulus']:.12G},"
         res += f"{mat['PoissonRatio']:.12G},"
-    res += "293.15\n\n"
+        res += "293.15\n\n"
 
     res += "*DENSITY\n"
     res += f"{mat['Density']:.12G}\n"

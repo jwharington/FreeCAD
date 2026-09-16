@@ -20,6 +20,11 @@ class HomogeneousLamina(Ply):
     # residuals of the quasi-isotropic validation that produced this layer
     # (empty for non-QI merges)
     qi_residuals: dict = field(default_factory=dict)
+    # Full 6x6 stiffness in the layer frame for a rotated (off-axis)
+    # orthotropic ply.  The engineering-constant form cannot carry the
+    # normal-shear coupling of a rotated ply, so the FEM writer needs the
+    # tensor itself (np.ndarray); None for isotropic / unrotated layers.
+    stiffness: object = None
 
     @property
     def description(self) -> str:

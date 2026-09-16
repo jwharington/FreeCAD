@@ -11,6 +11,7 @@ from ..objects.lamina import Lamina
 from ..util.geometry_util import normalise_orientation
 from .material_properties import (
     common_material2dict,
+    is_orthotropic,
     material_from_dict,
 )
 from .shell_model import (
@@ -336,9 +337,16 @@ def merge_single(
     # if not hasattr(layer, "orientation") or (layer.orientation == 0):
     #     return layer
 
+    angle_rad = np.radians(layer.orientation)
+    # Keep the full rotated 6x6 stiffness: for an off-axis ply the
+    # engineering constants below lose the normal-shear coupling, so the
+    # FEM writer emits TYPE=ANISO from this tensor instead.
+    stiffness = None
+    if is_orthotropic(layer.material):
+        stiffness, _ = material_shell_properties(layer.material, angle_rad)
     material = material_rotate(
         layer.material,
-        np.radians(layer.orientation),
+        angle_rad,
     )
     material["Name"] = prefix + ": " + layer.description
     return HomogeneousLamina(
@@ -346,4 +354,5 @@ def merge_single(
         thickness=layer.thickness,
         orientation=0,
         orientation_display=layer.orientation,
+        stiffness=stiffness,
     )
