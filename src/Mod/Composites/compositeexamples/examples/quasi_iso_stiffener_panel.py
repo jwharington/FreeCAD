@@ -130,6 +130,7 @@ def _solve_assembly(doc, panel_shell, shells):
         _create_fem_base,
         _mesh_support,
         _run_ccx,
+        _set_constraint_refs,
     )
 
     compound = _make_shape_object(
@@ -141,13 +142,21 @@ def _solve_assembly(doc, panel_shell, shells):
 
     analysis, solver, mesh_obj = _create_fem_base(doc, "StiffenerAssembly")
     for idx, shell in enumerate(shells):
-        _add_shell_section_and_material(
+        thickness, material = _add_shell_section_and_material(
             doc,
             analysis,
             shell.Support,
             f"StiffenerAssembly{idx}",
             shell_obj=shell,
         )
+        # After the stiffener split the panel/web remainder is more than
+        # one face; referencing only "Face1" leaves the other faces'
+        # elements sectionless (gen3delem: first thickness).  Reference
+        # every face of the shell's current shape.
+        faces = [f"Face{i}" for i in range(1, len(shell.Shape.Faces) + 1)]
+        for obj in (thickness, material):
+            if obj is not None:
+                _set_constraint_refs(obj, [(shell, faces)])
     _mesh_support(mesh_obj, compound)
 
     min_edge, max_edge = _edge_names_by_x(panel_shell.Support.Shape)
