@@ -254,6 +254,17 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
         self.assertFalse(result["foot_draped"])
         self.assertFalse(result["panel_draped"])
 
+    def test_quasi_iso_cylindrical_panel_needs_no_drape(self):
+        """§8.5: a curved QI panel drapes nothing — curvature is irrelevant."""
+        result = runner.run(
+            "quasi_iso_cylindrical_panel", run_solver=False, doc=None
+        )
+        self._saved_doc = result.get("doc")
+        self._assert_composites_features_valid(result["doc"])
+        self.assertIsNone(result["rosette"])
+        self.assertTrue(result["isotropic"])
+        self.assertFalse(result["draped"])
+
     def test_quasi_iso_seam_no_transfers(self):
         result = runner.run("quasi_iso_seam", run_solver=False, doc=None)
         self._saved_doc = result.get("doc")
