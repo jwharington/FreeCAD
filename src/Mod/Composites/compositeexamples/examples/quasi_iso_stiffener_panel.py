@@ -100,6 +100,80 @@ def _make_qi_panel(doc, name="QIPanel"):
     return shell
 
 
+def _edge_names_by_x(shape):
+    """Names of the min-x and max-x edges (the tensile load case)."""
+    min_edge = max_edge = None
+    min_x = max_x = None
+    for idx, edge in enumerate(shape.Edges, start=1):
+        x = sum(v.Point.x for v in edge.Vertexes) / len(edge.Vertexes)
+        if min_x is None or x < min_x:
+            min_x, min_edge = x, f"Edge{idx}"
+        if max_x is None or x > max_x:
+            max_x, max_edge = x, f"Edge{idx}"
+    return min_edge, max_edge
+
+
+def _solve_assembly(doc, panel_shell, shells):
+    """Solve the panel + web + foot shells as one shell assembly.
+
+    Meshes a compound of the shells' supports and gives each shell its own
+    shell-section + material, then runs an in-plane (membrane) load case on
+    the panel.  QI shells export plain ``TYPE=ISO`` with no ``*ORIENTATION``
+    (D5); a draped side keeps the composite section.
+    """
+    import Part
+
+    from ._shell_example_common import (
+        _add_fixed_constraint,
+        _add_force_constraint,
+        _add_shell_section_and_material,
+        _create_fem_base,
+        _mesh_support,
+        _run_ccx,
+    )
+
+    compound = _make_shape_object(
+        doc,
+        "StiffenerAssemblySupport",
+        Part.makeCompound([s.Support.Shape for s in shells]),
+    )
+    doc.recompute()
+
+    analysis, solver, mesh_obj = _create_fem_base(doc, "StiffenerAssembly")
+    for idx, shell in enumerate(shells):
+        _add_shell_section_and_material(
+            doc,
+            analysis,
+            shell.Support,
+            f"StiffenerAssembly{idx}",
+            shell_obj=shell,
+        )
+    _mesh_support(mesh_obj, compound)
+
+    min_edge, max_edge = _edge_names_by_x(panel_shell.Support.Shape)
+    _add_fixed_constraint(
+        doc, analysis, panel_shell.Support, min_edge, "StiffenerAssembly"
+    )
+    _add_force_constraint(
+        doc, analysis, panel_shell.Support, max_edge, "StiffenerAssembly"
+    )
+    doc.recompute()
+
+    solve_result, fem = _run_ccx(analysis, solver, mesh_obj)
+    solver_input = None
+    if fem.inp_file_name:
+        with open(fem.inp_file_name, encoding="utf-8", errors="ignore") as fh:
+            solver_input = fh.read()
+    return {
+        "analysis": analysis,
+        "solver": solver,
+        "mesh": mesh_obj,
+        "solve_result": solve_result,
+        "solver_input": solver_input,
+        "inp_file": fem.inp_file_name,
+    }
+
+
 def build(doc=None, run_solver=False, panel_qi=False):
     """Build the QI stiffener panel (``panel_qi=True``: QI panel too)."""
     doc = ensure_document(doc, DOCUMENT_NAME)
@@ -142,6 +216,14 @@ def build(doc=None, run_solver=False, panel_qi=False):
     foot_shell = doc.getObject(f"{stiffener.Name}_Foot")
     scl = foot_shell.Laminate if foot_shell is not None else None
 
+    fem_job = None
+    if run_solver:
+        shells = [
+            s for s in (panel["shell"], web_shell, foot_shell)
+            if s is not None and getattr(s, "Support", None) is not None
+        ]
+        fem_job = _solve_assembly(doc, panel["shell"], shells)
+
     return {
         "doc": doc,
         "stiffener": stiffener,
@@ -157,6 +239,7 @@ def build(doc=None, run_solver=False, panel_qi=False):
         "web_draped": bool(web_shell.DrapeValid) if web_shell else None,
         "foot_draped": bool(foot_shell.DrapeValid) if foot_shell else None,
         "panel_draped": bool(panel["shell"].DrapeValid),
+        "fem_job": fem_job,
     }
 
 

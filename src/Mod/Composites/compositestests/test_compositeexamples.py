@@ -254,6 +254,29 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
         self.assertFalse(result["foot_draped"])
         self.assertFalse(result["panel_draped"])
 
+    def test_quasi_iso_stiffener_panel_solves_assembly(self):
+        """§7.6/§9.7: the mixed assembly exports as shell sections."""
+        result = runner.run(
+            "quasi_iso_stiffener_panel", run_solver=True, doc=None
+        )
+        self._saved_doc = result.get("doc")
+        fem = result["fem_job"]
+        self.assertIsNotNone(fem)
+        self.assertIn("TYPE=ISO", fem["solver_input"])
+
+    def test_quasi_iso_stiffener_panel_qi_assembly_orientation_free(self):
+        """§7.6: the QI-panel variant is orientation-free end to end."""
+        result = runner.run(
+            "quasi_iso_stiffener_panel", run_solver=True, doc=None,
+            panel_qi=True,
+        )
+        self._saved_doc = result.get("doc")
+        fem = result["fem_job"]
+        self.assertIsNotNone(fem)
+        text = fem["solver_input"]
+        self.assertNotIn("*ORIENTATION", text)
+        self.assertNotIn("ANISOTROPIC", text)
+
     def test_quasi_iso_cylindrical_panel_needs_no_drape(self):
         """§8.5: a curved QI panel drapes nothing — curvature is irrelevant."""
         result = runner.run(
