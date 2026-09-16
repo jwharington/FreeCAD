@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Implemented (all PRD items done; see `handoff-2026-09-16.md` §0) |
+| **Status** | Implemented (headless tiers A/B); §7.0 tier-C GUI pass pending |
 | **Date** | 2026-09-15 |
 | **Related** | `handoff-2026-09-16.md` (implementation state + lessons), `stiffener_composite_shell.md` (PRD style/precedent), `adr/0003-quasi-isotropic-presentation-contract.md` (decision record), `../CONTEXT.md` (terminology), `mechanics/stack_model.py`, `fem/drape_laminate_provider.py`, `../compositeexamples/examples/quasi_iso_laminate_plate.py` |
 | **Scope** | QI stack validation, equivalent isotropic material generation, CompositeShell draping bypass, FEM provider shortcut path. |
@@ -12,16 +12,18 @@
 > **New session? Read this block, then the implementation handoff
 > `handoff-2026-09-16.md` (same directory) — then skim §§2–7 before touching code.**
 
-- **Status:** implemented. The FEM verification gate (§7.6) found and
-  fixed a real per-ply material-export defect — rotated engineering
-  constants written as principal, dropping the normal-shear coupling
-  (`1aa33763fe`, `TYPE=ANISOTROPIC`); the draped membrane now matches the
-  QI presentation to ≤~1.6% and the §7.6 tolerance is agreed at **5%**.
-  The stiffener-panel end-to-end solve is wired and runs CalculiX in both
-  variants (`c2b402e784`, multi-face element-set fix `a9f420b46d`); §8.4,
-  §8.5 and §8.6 are done. The only optional item is the ≤~1.6% residual
-  attribution (composite-vs-single-layer shell) — not a requirement. See
-  the handoff (`handoff-2026-09-16.md`) §0 for the completion record.
+- **Status:** implemented (code + headless tiers A/B). The FEM verification
+  gate (§7.6) found and fixed a real per-ply material-export defect —
+  rotated engineering constants written as principal, dropping the
+  normal-shear coupling (`1aa33763fe`, `TYPE=ANISOTROPIC`); the draped
+  membrane now matches the QI presentation to ≤~1.6% and the §7.6
+  tolerance is agreed at **5%**. The stiffener-panel end-to-end solve is
+  wired and runs CalculiX in both variants (`c2b402e784`, multi-face
+  element-set fix `a9f420b46d`); §8.4, §8.5 and §8.6 are done. The §7.0
+  **tier-C GUI/MCP pass has NOT run** (planned — handoff §7): icon
+  validity, weave-vs-plain rendering and rosette symbols are unverified.
+  The only other optional item is the ≤~1.6% residual attribution. See the
+  handoff (`handoff-2026-09-16.md`) §0 for the completion record.
 - **What this is:** quasi-isotropic (QI) laminates — balanced stacks with
   evenly spaced ply angles, e.g. `[0/±45/90]s` or `[0/±60]` — behave as
   isotropic sheets in-plane. They therefore need **no draping, no rosette,
