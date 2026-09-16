@@ -81,7 +81,10 @@ def _add_edge_force(doc, analysis, support, edge_name, tag):
 
     force_obj = ObjectsFem.makeConstraintForce(doc, f"{tag}_Force")
     _set_constraint_refs(force_obj, [(support, edge_name)])
-    force_obj.Force = FORCE_N
+    # PropertyForce stores an internal-unit quantity; a bare float is
+    # interpreted as that internal unit, not Newtons (measured: 1000.0
+    # wrote a 1 N *CLOAD).  Assign unit-explicit.
+    force_obj.Force = f"{FORCE_N} N"
     direction_obj = doc.addObject("App::Line", f"{tag}_ForceDirection")
     direction_obj.Placement = FreeCAD.Placement(
         FreeCAD.Vector(0, 0, 0),

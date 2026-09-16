@@ -743,7 +743,10 @@ def _add_force_constraint(doc, analysis, support, edge_name, tag, force=1000.0):
     )
     _set_constraint_refs(force_obj, [(support, edge_name)])
     if hasattr(force_obj, "Force"):
-        force_obj.Force = force
+        # PropertyForce stores an internal-unit quantity; a bare float is
+        # interpreted as that internal unit, not Newtons (measured: 1000.0
+        # wrote a 1 N *CLOAD).  Assign unit-explicit.
+        force_obj.Force = f"{force} N"
     _add_analysis_member(analysis, force_obj)
     return force_obj
 
