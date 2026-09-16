@@ -5,10 +5,9 @@
 
 Cross-validation gate: the same quasi-isotropic stack solved twice under
 a membrane load case — (a) QI isotropic presentation, (b) the
-conventional draped orthotropic per-ply export. The gate's tolerance is
-deliberately unresolved (implementation review): these tests run both
-solves and report the measured max-displacement difference; asserting
-agreement is added only once the tolerance is agreed.
+conventional draped orthotropic per-ply export — compared on the mean
+axial edge displacement (ux).  The agreement tolerance is 5%
+(`QI_CROSS_VALIDATION_TOLERANCE`, user decision 2026-09-16).
 """
 
 import os
@@ -63,6 +62,12 @@ PLATE_LENGTH = 100.0
 PLATE_WIDTH = 60.0
 QI_ANGLES = (0.0, 45.0, -45.0, 90.0)
 FORCE_N = 1000.0
+
+# §7.6 membrane agreement tolerance between the QI isotropic presentation
+# and the draped per-ply export, agreed at 5% (user, 2026-09-16).  Measured
+# disagreement is <=1.6% at the finest mesh; do not widen without explicit
+# user confirmation.
+QI_CROSS_VALIDATION_TOLERANCE = 0.05
 
 
 def _edge_names_by_x(support):
@@ -243,9 +248,8 @@ class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
     def test_cross_validation_membrane(self):
         """QI presentation vs per-ply draped export, same stack.
 
-        Reports the measured max-displacement difference; the gate
-        tolerance is deliberately unresolved (§7.6) and is asserted
-        only after the implementation review agrees it.
+        Compares the mean axial edge displacement (ux) of the two exports
+        and asserts agreement within the 5% §7.6 tolerance.
         """
         qi = self._build_and_solve(isotropic=True, name="QIVariant")
         draped = self._build_and_solve(isotropic=False, name="DrapedVariant")
@@ -276,10 +280,15 @@ class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
             f"[QI cross-validation] relative difference: {relative:.3e}\n"
         )
 
-        # Sanity only — the agreement tolerance is deliberately NOT
-        # asserted here (§7.6 stop condition).
+        # §7.6 membrane agreement: mean axial ux, 5% tolerance.
         self.assertGreater(qi["displacement"], 0.0)
         self.assertGreater(draped["displacement"], 0.0)
+        self.assertLessEqual(
+            relative,
+            QI_CROSS_VALIDATION_TOLERANCE,
+            f"QI vs draped membrane disagreement {relative:.2%} exceeds "
+            f"{QI_CROSS_VALIDATION_TOLERANCE:.0%}",
+        )
 
 
 def run_qi_convergence(sizes=(None, 30.0, 15.0, 7.5, 4.0)):

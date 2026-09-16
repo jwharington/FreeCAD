@@ -674,11 +674,16 @@ no mocks); the FEM-analysis construction can reuse the
 - **Cross-validation (membrane gate):** in the QI-panel variant, the
   same stack solved twice — (a) QI isotropic presentation, (b)
   conventional draped orthotropic per-ply export — under an in-plane
-  (membrane-dominated) load case. Max displacement agreement within a
-  tolerance to be confirmed at implementation review (not to be guessed
-  silently). This proves the collapse preserves the membrane answer,
-  which is the whole contract (D2). Bending load-case comparisons would
-  test the solver, not the export, and are out of scope.
+  (membrane-dominated) load case. Agreement is measured on the mean axial
+  edge displacement (ux; `|u|` is corner-weighted by Poisson uy) and is
+  asserted within **5%** (tolerance agreed 2026-09-16; measured ≤1.6% at
+  the finest mesh). This proves the collapse preserves the membrane
+  answer, which is the whole contract (D2). Bending load-case comparisons
+  would test the solver, not the export, and are out of scope.
+  *(2026-09-16 finding: the draped per-ply export was ~27% off because
+  rotated plies were emitted as orthotropic engineering constants, which
+  drop the normal-shear coupling; fixed in `1aa33763fe` by emitting
+  `TYPE=ANISOTROPIC`, see the handoff §3.)*
 - **Validity sweep:** after every variant build + solve, no created
   feature (panel, stiffener, web shell, foot shell, combined laminate,
   seam features if present) is in `Invalid` state — no greyed icons
