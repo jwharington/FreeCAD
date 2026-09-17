@@ -12,6 +12,8 @@ suites (test_seam_composite_laminate) pin the shared combination
 machinery.
 """
 
+import math
+
 import FreeCAD
 import Part
 
@@ -431,6 +433,39 @@ class TestStiffenerJointStack(StiffenerCompositeFixture):
         self.assertIsNone(self.doc.getObject(f"{stiffener.Name}_WebRosette"))
 
     # ── pitch scaling ─────────────────────────────────────────────
+
+    def test_foot_inherits_the_panel_warp_not_its_mirror(self):
+        """M2: the foot strip must carry the panel's fibre.
+
+        The foot is the same physical surface as the panel, but its
+        support face normal is opposite.  A transfer solve that measures
+        each side about its own frame normal mirrors the attachment, so
+        the foot lands at -30 deg against a +30 deg panel — and because
+        the rosette frame seeds the drape, the foot strip then drapes the
+        other way.
+        """
+        panel, stiffener = self._make_joint(panel_angle=30.0)
+        foot = self.doc.getObject(f"{stiffener.Name}_Foot")
+        self.assertIsNotNone(foot, "the Z-profile must produce a foot")
+        panel_x = panel.Rosette.LocalCoordinateSystem.Placement.Rotation.multVec(
+            FreeCAD.Vector(1.0, 0.0, 0.0)
+        )
+        foot_x = foot.Rosette.LocalCoordinateSystem.Placement.Rotation.multVec(
+            FreeCAD.Vector(1.0, 0.0, 0.0)
+        )
+        # The warp is an undirected line: parallel and anti-parallel are the
+        # same layup, perpendicular is not.
+        panel_dir = FreeCAD.Vector(panel_x.x, panel_x.y, panel_x.z)
+        foot_dir = FreeCAD.Vector(foot_x.x, foot_x.y, foot_x.z)
+        panel_dir.normalize()
+        foot_dir.normalize()
+        cos = abs(panel_dir.dot(foot_dir))
+        offset = math.degrees(math.acos(max(-1.0, min(1.0, cos))))
+        self.assertLess(
+            offset,
+            1.0,
+            f"foot warp is {offset:.2f} deg off the panel warp",
+        )
 
     def test_pitch_scaled_to_foot_width_and_web_height(self):
         panel, stiffener = self._make_joint()
