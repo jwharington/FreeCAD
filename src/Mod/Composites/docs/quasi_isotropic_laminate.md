@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Implemented (headless tiers A/B); §7.0 tier-C GUI pass pending |
+| **Status** | Implemented; tier-C GUI pass run (rosette fix) — awaiting user sign-off |
 | **Date** | 2026-09-15 |
 | **Related** | `handoff-2026-09-16.md` (implementation state + lessons), `stiffener_composite_shell.md` (PRD style/precedent), `adr/0003-quasi-isotropic-presentation-contract.md` (decision record), `../CONTEXT.md` (terminology), `mechanics/stack_model.py`, `fem/drape_laminate_provider.py`, `../compositeexamples/examples/quasi_iso_laminate_plate.py` |
 | **Scope** | QI stack validation, equivalent isotropic material generation, CompositeShell draping bypass, FEM provider shortcut path. |
@@ -20,10 +20,13 @@
   tolerance is agreed at **5%**. The stiffener-panel end-to-end solve is
   wired and runs CalculiX in both variants (`c2b402e784`, multi-face
   element-set fix `a9f420b46d`); §8.4, §8.5 and §8.6 are done. The §7.0
-  **tier-C GUI/MCP pass has NOT run** (planned — handoff §7): icon
-  validity, weave-vs-plain rendering and rosette symbols are unverified.
-  The only other optional item is the ≤~1.6% residual attribution. See the
-  handoff (`handoff-2026-09-16.md`) §0 for the completion record.
+  **tier-C GUI/MCP pass has now run** (handoff §7): every example is
+  error-free and QI shells render plain; it exposed one defect — QI shells
+  drew a fibre rosette symbol — now fixed (`VPCompositeShell` gates the
+  symbol on laminate isotropy) with a GUI test. Awaiting the user's visual
+  sign-off. The only other optional item is the ≤~1.6% residual
+  attribution. See the handoff (`handoff-2026-09-16.md`) §0 for the
+  completion record.
 - **What this is:** quasi-isotropic (QI) laminates — balanced stacks with
   evenly spaced ply angles, e.g. `[0/±45/90]s` or `[0/±60]` — behave as
   isotropic sheets in-plane. They therefore need **no draping, no rosette,

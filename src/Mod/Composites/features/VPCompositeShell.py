@@ -201,13 +201,15 @@ class ViewProviderCompositeShell:
             obj.DisplayLayer = ["0"]
             obj.DisplayLayer = "0"
 
-        # Fibre orientation rosette: always-visible overlay on the root node
+        # Fibre orientation rosette: overlay on the root node, shown only for
+        # a shell that actually has a fibre direction — an isotropic shell is
+        # suppressed (see _rosette_visible).
         from .RosetteSymbol import RosetteSymbol
 
         self.rosette = RosetteSymbol()
         self.rosette_switch = coin.SoSwitch()
         self.rosette_switch.addChild(self.rosette.separator)
-        self.rosette_switch.whichChild = 0  # visible by default
+        self._apply_rosette_visibility(obj)
         try:
             if root is not None:
                 root.addChild(self.rosette_switch)
@@ -386,9 +388,37 @@ class ViewProviderCompositeShell:
                 return
         self.reload_shader()
 
+    def _rosette_visible(self, vobj):
+        """True when the rosette symbol should be displayed.
+
+        A quasi-isotropic (isotropic-equivalent) shell has no fibre
+        direction, so its rosette symbol is suppressed whatever the
+        ShowRosette preference says (PRD quasi_isotropic_laminate.md: a QI
+        shell needs no rosette).
+        """
+        from .Laminate import is_isotropic_laminate
+
+        if not getattr(vobj, "ShowRosette", True):
+            return False
+        obj = getattr(vobj, "Object", None)
+        return not is_isotropic_laminate(getattr(obj, "Laminate", None))
+
+    def _apply_rosette_visibility(self, vobj):
+        """Point the rosette switch at the symbol only when it is wanted.
+
+        Returns the resulting visibility.
+        """
+        if not hasattr(self, "rosette_switch"):
+            return False
+        visible = self._rosette_visible(vobj)
+        self.rosette_switch.whichChild = 0 if visible else coin.SO_SWITCH_NONE
+        return visible
+
     def update_rosette(self, vobj):
         """Rebuild the rosette symbol from the current laminate and LCS."""
         if not hasattr(self, "rosette"):
+            return
+        if not self._apply_rosette_visibility(vobj):
             return
         obj = vobj.Object
         laminate = obj.Laminate
@@ -454,10 +484,7 @@ class ViewProviderCompositeShell:
                 self.Active = False
                 self.load_shader()
             case "ShowRosette":
-                if hasattr(self, "rosette_switch"):
-                    self.rosette_switch.whichChild = (
-                        0 if vobj.ShowRosette else coin.SO_SWITCH_NONE
-                    )
+                self._apply_rosette_visibility(vobj)
             case "RosetteScale":
                 self.update_rosette(vobj)
             case _:

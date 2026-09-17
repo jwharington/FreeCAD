@@ -502,6 +502,53 @@ class TestCompositeExamplesSmoke(TestCompositeExamplesBase):
                 proxy.raise_render_order()
         _assert_rosette_switches_visible(self, doc)
 
+    def test_shell_rosette_symbol_hidden_for_isotropic_shell(self):
+        """An isotropic shell must not draw the fibre rosette symbol.
+
+        It has no fibre direction, so the overlay is suppressed even though
+        the ShowRosette preference stays True; a draped shell still shows
+        it.  The mixed stiffener variant carries both kinds of shell, so a
+        single build covers both cases (tier-C check, 2026-09-16).
+        """
+        if not getattr(FreeCAD, "GuiUp", False):
+            self.skipTest("GUI not available — scene graph requires MCP/GUI mode")
+        from pivy import coin
+
+        from Composites.features.CompositeShell import is_isotropic_shell
+
+        result = runner.run("quasi_iso_stiffener_panel")
+        doc = result["doc"]
+        self._saved_doc = doc
+        import FreeCADGui
+
+        FreeCADGui.updateGui()
+
+        shells = [
+            obj
+            for obj in doc.Objects
+            if hasattr(
+                getattr(getattr(obj, "ViewObject", None), "Proxy", None),
+                "rosette_switch",
+            )
+        ]
+        isotropic = [o for o in shells if is_isotropic_shell(o)]
+        draped = [o for o in shells if not is_isotropic_shell(o)]
+        self.assertTrue(isotropic, "no isotropic shell in the mixed variant")
+        self.assertTrue(draped, "no draped shell in the mixed variant")
+
+        for shell in shells:
+            expected = (
+                coin.SO_SWITCH_NONE if is_isotropic_shell(shell) else 0
+            )
+            self.assertEqual(
+                shell.ViewObject.Proxy.rosette_switch.whichChild.getValue(),
+                expected,
+                msg=(
+                    f"{shell.Name}: isotropic={is_isotropic_shell(shell)} "
+                    "rosette-symbol visibility wrong"
+                ),
+            )
+
     def test_tubular_shell_builds(self):
         """tubular_shell builds successfully with real FreeCAD objects."""
         result = tubular_shell.build(doc=None, run_solver=False)
