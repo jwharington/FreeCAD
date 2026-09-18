@@ -8,6 +8,9 @@ TopoDS_Shape with zero-copy access — no BREP serialization.
 
 from __future__ import annotations
 
+import json
+import os
+
 import numpy as np
 from typing import TYPE_CHECKING, Any
 
@@ -28,6 +31,27 @@ def _import_engine():
     """
     import Composites_drape
     return Composites_drape.DrapeEngine
+
+
+def _dump_solver_input(shape: Any, seed: dict, params: dict) -> None:
+    """Dump the exact solver inputs to FC_DRAPE_DUMP_DIR when set.
+
+    Reproduction aid for the nextdrape ``drape_cli --shapefile`` harness
+    (the drape-side twin of the mould path's ``FC_PARTING_DUMP_DIR``):
+    write the BREP plus the seed and params dicts that feed
+    ``DrapeEngine.compute``, so a failing solve can be debugged at the
+    nextdrape level on byte-identical geometry.
+    """
+    dump_dir = os.environ.get("FC_DRAPE_DUMP_DIR")
+    if not dump_dir:
+        return
+    bbox = shape.BoundBox
+    tag = (f"{bbox.XLength:.1f}x{bbox.YLength:.1f}x{bbox.ZLength:.1f}"
+           f"_{bbox.Center.x:.1f}_{bbox.Center.y:.1f}_{bbox.Center.z:.1f}")
+    os.makedirs(dump_dir, exist_ok=True)
+    shape.exportBrep(os.path.join(dump_dir, f"{tag}.brep"))
+    with open(os.path.join(dump_dir, f"{tag}.json"), "w") as f:
+        json.dump({"seed": seed, "params": params}, f, indent=2, default=float)
 
 
 class NextDrapeBackend(DrapeBackend):
@@ -82,6 +106,7 @@ class NextDrapeBackend(DrapeBackend):
                 f.flush()
 
             solver_shape = self._cut_shape if self._use_cut_shape else self._shape
+            _dump_solver_input(solver_shape, seed, params)
             self._result = self._engine.compute(solver_shape, seed, params)
 
             with open(debug_file, "a") as f:
