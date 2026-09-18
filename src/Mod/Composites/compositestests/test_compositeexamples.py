@@ -290,20 +290,31 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
         self.assertNotIn("ANISOTROPIC", text)
 
     def test_quasi_iso_stiffener_panel_assembly_qi_no_drape_queries(self):
-        """§7.6 performance: zero get_drape_lcs queries for QI shells."""
+        """§7.6 performance: zero per-element drape queries for QI shells.
+
+        Counts both backend entry points — the single-element query and
+        the bulk batch the provider issues (one call per mesh walk).
+        """
         from Composites.features.CompositeShell import CompositeShellFP
 
-        original = CompositeShellFP.get_drape_lcs
+        original_single = CompositeShellFP.get_drape_lcs
+        original_batch = CompositeShellFP.get_drape_lcs_batch
         for panel_qi in (True, False):
             called = {"n": 0}
             proxies = []
 
-            def counted(proxy, tris, called=called, proxies=proxies):
+            def counted_single(proxy, tris, called=called, proxies=proxies):
                 called["n"] += 1
                 proxies.append(proxy)
-                return original(proxy, tris)
+                return original_single(proxy, tris)
 
-            CompositeShellFP.get_drape_lcs = counted
+            def counted_batch(proxy, tris_batch, called=called, proxies=proxies):
+                called["n"] += 1
+                proxies.append(proxy)
+                return original_batch(proxy, tris_batch)
+
+            CompositeShellFP.get_drape_lcs = counted_single
+            CompositeShellFP.get_drape_lcs_batch = counted_batch
             try:
                 result = runner.run(
                     "quasi_iso_stiffener_panel",
@@ -312,7 +323,8 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
                     panel_qi=panel_qi,
                 )
             finally:
-                CompositeShellFP.get_drape_lcs = original
+                CompositeShellFP.get_drape_lcs = original_single
+                CompositeShellFP.get_drape_lcs_batch = original_batch
             self._saved_doc = result.get("doc")
             if panel_qi:
                 # Whole assembly is QI: no per-element query at all.
