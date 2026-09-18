@@ -39,6 +39,41 @@ STEEL = {
 PLATE_LENGTH = 120.0
 PLATE_WIDTH = 60.0
 
+# A solved transfer must land the attachment's fibre on the master's line;
+# anything above this is a different layup, not a rounding difference.
+WARP_AGREEMENT_DEG = 1.0
+
+
+def warp_axis(shell):
+    """The shell's fibre direction in GLOBAL coordinates, or None.
+
+    The rosette LCS X-axis is the warp the drape seeds from
+    (``NextDrapeBackend._frame_seed``), so it is the direction the shell
+    actually carries — read in world axes, not in the support face's own
+    frame, which is what lets two surfaces with opposite normals be
+    compared at all.
+    """
+    rosette = getattr(shell, "Rosette", None)
+    lcs = getattr(rosette, "LocalCoordinateSystem", None)
+    if lcs is None:
+        return None
+    return lcs.Placement.Rotation.multVec(FreeCAD.Vector(1.0, 0.0, 0.0))
+
+
+def line_offset_deg(a, b):
+    """Undirected angle between two fibre lines, in degrees.
+
+    A warp is an undirected line: identical and 180 deg apart are the same
+    layup, perpendicular is not.
+    """
+    cos = abs(a.dot(b)) / (a.Length * b.Length)
+    return math.degrees(math.acos(max(-1.0, min(1.0, cos))))
+
+
+def azimuth_deg(v):
+    """Azimuth of a global vector about world Z, for failure messages."""
+    return math.degrees(math.atan2(v.y, v.x))
+
 
 def z_profile_points():
     """A Z-section as an OPEN polyline: base flange, web, top flange."""
@@ -447,23 +482,12 @@ class TestStiffenerJointStack(StiffenerCompositeFixture):
         panel, stiffener = self._make_joint(panel_angle=30.0)
         foot = self.doc.getObject(f"{stiffener.Name}_Foot")
         self.assertIsNotNone(foot, "the Z-profile must produce a foot")
-        panel_x = panel.Rosette.LocalCoordinateSystem.Placement.Rotation.multVec(
-            FreeCAD.Vector(1.0, 0.0, 0.0)
-        )
-        foot_x = foot.Rosette.LocalCoordinateSystem.Placement.Rotation.multVec(
-            FreeCAD.Vector(1.0, 0.0, 0.0)
-        )
-        # The warp is an undirected line: parallel and anti-parallel are the
-        # same layup, perpendicular is not.
-        panel_dir = FreeCAD.Vector(panel_x.x, panel_x.y, panel_x.z)
-        foot_dir = FreeCAD.Vector(foot_x.x, foot_x.y, foot_x.z)
-        panel_dir.normalize()
-        foot_dir.normalize()
-        cos = abs(panel_dir.dot(foot_dir))
-        offset = math.degrees(math.acos(max(-1.0, min(1.0, cos))))
+        panel_dir = warp_axis(panel)
+        foot_dir = warp_axis(foot)
+        offset = line_offset_deg(panel_dir, foot_dir)
         self.assertLess(
             offset,
-            1.0,
+            WARP_AGREEMENT_DEG,
             f"foot warp is {offset:.2f} deg off the panel warp",
         )
 
@@ -1054,3 +1078,48 @@ class TestQuasiIsotropicStiffener(StiffenerCompositeFixture):
         report = dict(scl.SideAngleReport)
         self.assertNotEqual(report["master_angle_at_seam"], "n/a")
         self.assertEqual(report["attachment_angle_at_seam"], "n/a")
+
+    def test_joint_surfaces_carry_one_global_fibre_orientation(self):
+        """One uniform panel + a QI stiffener: the shapes must agree globally.
+
+        Narrow case: a single flat panel draped at a uniform 30 deg, then a
+        quasi-isotropic stiffener set into it.  That makes three shapes —
+        master (the panel remainder), foot (the base strip) and attachment
+        (the web).  The foot strip is the SAME physical plane as the panel,
+        so the only logical orientation is one fibre direction in global
+        coordinates across all three: identical, or 180 deg apart.  The web
+        is QI and carries no frame at all, which is asserted below so its
+        exemption is a measured fact rather than an untested hole.
+
+        It fails today because the foot's support face normal is opposite
+        the panel's and ``TransferRosette._axis_angle`` measures each side
+        about its OWN normal: the mirrored warp then reads the same signed
+        angle, the mod-pi fold makes the residual exactly zero, and the
+        solve settles 60 deg off the panel it is supposed to inherit.
+        """
+        panel = self._make_panel(rosette_angle=30.0)
+        stiffener = self._make_stiffener(
+            panel, laminate=self._make_qi_laminate(name="WebLam")
+        )
+        self._assert_all_valid(panel, *self._qi_children())
+        foot = self.doc.getObject(f"{stiffener.Name}_Foot")
+        web = self.doc.getObject(f"{stiffener.Name}_Web")
+        self.assertIsNotNone(foot, "the Z-profile must produce a foot")
+        self.assertIsNotNone(web, "the Z-profile must produce a web")
+
+        # The attachment side is orientation-free (QI): no rosette, no
+        # drape, so it cannot disagree with the panel's fibre.
+        self.assertIsNone(warp_axis(web))
+
+        panel_dir = warp_axis(panel)
+        foot_dir = warp_axis(foot)
+        self.assertIsNotNone(panel_dir)
+        self.assertIsNotNone(foot_dir, "the foot must inherit a frame")
+        offset = line_offset_deg(panel_dir, foot_dir)
+        self.assertLess(
+            offset,
+            WARP_AGREEMENT_DEG,
+            f"master and foot disagree by {offset:.2f} deg in global "
+            f"coordinates (master {azimuth_deg(panel_dir):+.2f} deg, "
+            f"foot {azimuth_deg(foot_dir):+.2f} deg)",
+        )

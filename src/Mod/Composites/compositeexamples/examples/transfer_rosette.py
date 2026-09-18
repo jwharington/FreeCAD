@@ -107,3 +107,44 @@ def build(doc=None, run_solver=False):
         "master_shell": master["shell"],
         "attachment_shell": attachment["shell"],
     }
+
+
+def _report_continuity(transfer, master, tag):
+    """Print the solved angle and the warp crossing at the bend line."""
+    proxy = transfer.Proxy
+    master_rotation = proxy._master_frame(master)
+    edge = proxy._shared_edge(
+        proxy._shape_of(master), proxy._shape_of(transfer.AttachmentShell)
+    )
+    rotation = transfer.LocalCoordinateSystem.Placement.Rotation
+    master_warp = master_rotation.multVec(FreeCAD.Vector(1.0, 0.0, 0.0))
+    warp = rotation.multVec(FreeCAD.Vector(1.0, 0.0, 0.0))
+    print(f"{tag}: solved Angle = {float(transfer.Angle):+.3f} deg")
+    print(f"  world warp  master {master_warp}  attachment {warp}")
+    for point, tangent in proxy._sample_edge(edge, 4):
+        phi_m = math.degrees(proxy._axis_angle(master_rotation, tangent))
+        phi_a = math.degrees(proxy._axis_angle(rotation, tangent))
+        print(
+            f"  bend-line crossing at x={point.x:5.1f}: "
+            f"master {phi_m:+7.3f} deg, attachment {phi_a:+7.3f} deg"
+        )
+
+
+def main():
+    """Solve the transfer, then re-lay the master and watch it re-solve."""
+    case = build()
+    transfer = case["transfer"]
+    master = case["master_shell"]
+    _report_continuity(transfer, master, "fabric laid at 30 deg on the leg")
+
+    master.Rosette.Angle = 45.0
+    case["doc"].recompute()
+    transfer.Proxy.resolve(transfer)
+    case["doc"].recompute()
+    _report_continuity(
+        transfer, master, "master re-laid at 45 deg, transfer re-solved"
+    )
+
+
+if __name__ == "__main__":
+    main()
