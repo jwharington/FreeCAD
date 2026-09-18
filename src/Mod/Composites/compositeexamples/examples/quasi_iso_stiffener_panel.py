@@ -17,6 +17,13 @@ exercised through the full composition path:
    assembly become fully orientation-free (the FEM-export shortcut end
    to end).
 
+The panel plane carries **three** faces that must all share one fibre
+orientation in global coordinates: the two remainder faces either side of
+
+the foot strip (the panel shell) and the foot strip itself (the foot
+shell, whose orientation the panel→foot transfer solves).  The web is the
+rest of the stiffener and is QI, so it carries no orientation at all.
+
 See docs/quasi_isotropic_laminate.md and
 docs/adr/0003-quasi-isotropic-presentation-contract.md.
 """
@@ -42,8 +49,6 @@ from ._shell_example_common import (
     ensure_document,
 )
 from .stiffener import (
-    PLATE_LENGTH,
-    PLATE_WIDTH,
     _make_shape_object,
     _make_sketch,
     plate_cut_surface,
@@ -53,6 +58,13 @@ from .stiffener import (
 FABRIC_OFFSET_ANGLE = 30.0  # fabric laid at 30 degrees on the draped panel
 DRAPE_PITCH = 5.0
 QI_ANGLES = (0.0, 45.0, -45.0, 90.0)
+
+# The panel is deliberately larger than the shared stiffener plate: the
+# foot strip cuts the remainder into two faces either side of it, and both
+# must carry the panel's fibre, so both need room to be draped and
+# sampled.  The cut stays at the panel's mid-width.
+PANEL_LENGTH = 180.0
+PANEL_WIDTH = 120.0
 
 DOCUMENT_NAME = "Composites_QuasiIso_Stiffener_Panel"
 
@@ -91,7 +103,7 @@ def _make_qi_panel(doc, name="QIPanel"):
     from ...features.CompositeShell import CompositeShellFP
 
     support = _make_shape_object(
-        doc, f"{name}Plate", Part.makePlane(PLATE_LENGTH, PLATE_WIDTH)
+        doc, f"{name}Plate", Part.makePlane(PANEL_LENGTH, PANEL_WIDTH)
     )
     laminate = _make_qi_laminate(doc, f"{name}Laminate")
     shell = doc.addObject("Part::FeaturePython", name)
@@ -192,7 +204,7 @@ def build(doc=None, run_solver=False, panel_qi=False):
     else:
         # The panel: a draped composite shell at 30 degrees (baseline).
         panel_plate = _make_shape_object(
-            doc, "PanelPlate", Part.makePlane(PLATE_LENGTH, PLATE_WIDTH)
+            doc, "PanelPlate", Part.makePlane(PANEL_LENGTH, PANEL_WIDTH)
         )
         panel = create_composite_feature_stack(doc, panel_plate, name_prefix="Panel")
         panel["rosette"].Angle = FABRIC_OFFSET_ANGLE
@@ -207,7 +219,8 @@ def build(doc=None, run_solver=False, panel_qi=False):
         stiffener,
         support=panel["shell"],
         cut_surface=_make_shape_object(
-            doc, "ZStiffenerCutSurface", plate_cut_surface()
+            doc, "ZStiffenerCutSurface",
+            plate_cut_surface(PANEL_LENGTH, PANEL_WIDTH),
         ),
         profile=_make_sketch(doc, "ZStiffenerProfile", _z_profile()),
     )

@@ -103,13 +103,19 @@ def _z_profile():
     ]
 
 
-def plate_cut_surface():
-    """A surface standing on the plate, cutting a straight path across it."""
+def plate_cut_surface(length=None, width=None):
+    """A surface standing on the plate, cutting a straight path across it.
+
+    Defaults to the module plate; callers with their own panel size pass
+    ``length``/``width`` so the cut stays at the panel's mid-width.
+    """
+    length = PLATE_LENGTH if length is None else length
+    width = PLATE_WIDTH if width is None else width
     corners = [
-        FreeCAD.Vector(-10.0, PLATE_WIDTH / 2.0, -20.0),
-        FreeCAD.Vector(PLATE_LENGTH + 10.0, PLATE_WIDTH / 2.0, -20.0),
-        FreeCAD.Vector(PLATE_LENGTH + 10.0, PLATE_WIDTH / 2.0, 80.0),
-        FreeCAD.Vector(-10.0, PLATE_WIDTH / 2.0, 80.0),
+        FreeCAD.Vector(-10.0, width / 2.0, -20.0),
+        FreeCAD.Vector(length + 10.0, width / 2.0, -20.0),
+        FreeCAD.Vector(length + 10.0, width / 2.0, 80.0),
+        FreeCAD.Vector(-10.0, width / 2.0, 80.0),
     ]
     return Part.Face(Part.makePolygon(corners + corners[:1]))
 
