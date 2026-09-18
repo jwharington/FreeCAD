@@ -35,6 +35,10 @@ class DrapeBackend(ABC):
     def get_lcs(self, tri: Any) -> Any | None:
         return None
 
+    def get_lcs_batch(self, elements: Any) -> list[Any]:
+        """One frame per element, in input order (default: loop)."""
+        return [self.get_lcs(element) for element in elements]
+
     def get_lcs_at_point(self, center: Any) -> Any | None:
         return None
 

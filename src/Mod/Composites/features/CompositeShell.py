@@ -668,6 +668,11 @@ class CompositeShellFP(CompositeBaseFP):
         self._require_valid()
         return self._backend.get_lcs(tris)
 
+    def get_drape_lcs_batch(self, elements):
+        """Bulk form of :meth:`get_drape_lcs` — one call for all elements."""
+        self._require_valid()
+        return self._backend.get_lcs_batch(elements)
+
     def get_boundaries(self, offset_angle_deg):
         self._require_valid()
         return self._backend.get_boundaries(

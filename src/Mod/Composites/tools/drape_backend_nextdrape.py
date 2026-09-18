@@ -192,91 +192,76 @@ class NextDrapeBackend(DrapeBackend):
             return rotated_bds
         return bds
 
-    def get_lcs(self, tri: Any) -> Any | None:
-        """Return LCS transforms for a triangle facet.
+    def _element_centroid(self, element):
+        """Centroid of a 3-node (triangle) or 4-node (quad) element.
 
-        Computes the local coordinate system from the draped surface:
-        - Origin: centroid of the triangle
-        - X-axis: warp direction (along the u-direction)
-        - Z-axis: surface normal (cross product of warp and weft)
-        - Y-axis: cross(Z, X) to complete right-handed frame
+        Accepts coordinate points (FreeCAD.Vector, tuple, list) or drape
+        node indices.
         """
+        if not isinstance(element, (list, tuple)) or len(element) < 3:
+            return None
+        if isinstance(element[0], (int, np.integer)):
+            r = self._run_solve()
+            if not r.get("success"):
+                return None
+            pos = np.asarray(r["node_positions"], dtype=float)
+            try:
+                pts = np.array([pos[int(k)] for k in element[:4]])
+            except (IndexError, ValueError):
+                return None
+        else:
+            try:
+                pts = np.array(
+                    [np.asarray(p, dtype=float).reshape(3) for p in element[:4]]
+                )
+            except (TypeError, ValueError):
+                return None
+        return pts.mean(axis=0)
+
+    @staticmethod
+    def _placement(warp, normal, origin):
+        """FreeCAD Placement with X = warp, Z = normal, right-handed."""
         import FreeCAD
-        import numpy as np
         from scipy.spatial.transform import Rotation
 
-        r = self._run_solve()
-        if not r.get("success"):
+        w = np.asarray(warp, dtype=float)
+        n = np.asarray(normal, dtype=float)
+        w = w / np.linalg.norm(w)
+        n = n / np.linalg.norm(n)
+        y_axis = np.cross(n, w)
+        rot = Rotation.from_matrix(np.column_stack([w, y_axis, n]))
+        q = rot.as_quat()  # scipy order [x, y, z, w]
+        plc = FreeCAD.Placement()
+        plc.Rotation = FreeCAD.Rotation(q[0], q[1], q[2], q[3])
+        plc.Base = FreeCAD.Vector(
+            float(origin[0]), float(origin[1]), float(origin[2])
+        )
+        return plc
+
+    def get_lcs(self, element: Any) -> Any | None:
+        """Material frame at a mesh element (3- or 4-node), from the drape.
+
+        The element's centroid is located on the drape by nextdrape's own
+        k-d tree lookup (``DrapeEngine.lookup_lcs``), which returns the
+        located quad's warp/weft/normal — the material frame the solver
+        actually laid down, and therefore already carrying the shell's
+        rosette angle.  No flat-lattice indices are used here.
+        """
+        centroid = self._element_centroid(element)
+        if centroid is None:
             return None
-
-        node_positions = np.asarray(r["node_positions"])  # (N, 3)
-        quads = r.get("quads", [])  # list of [i0, i1, i2, i3]
-
-        if not quads or len(node_positions) == 0:
+        frame = self._engine.lookup_lcs(
+            [float(centroid[0]), float(centroid[1]), float(centroid[2])]
+        )
+        if frame is None:
             return None
+        warp, _weft, normal = frame
+        return self._placement(warp, normal, centroid)
 
-        # Extract triangle vertices from the tri argument
-        # tri is expected to be a tuple/list of 3 vertex indices or 3D points
-        if isinstance(tri, (list, tuple)) and len(tri) == 3:
-            # Could be indices or points
-            first = tri[0]
-            if isinstance(first, (int, np.integer)):
-                # Indices
-                i0, i1, i2 = [int(idx) for idx in tri]
-                v0, v1, v2 = node_positions[i0], node_positions[i1], node_positions[i2]
-            else:
-                # FreeCAD.Vector, tuples, lists, or any iterable of 3 floats
-                try:
-                    v0, v1, v2 = np.asarray(tri[0]), np.asarray(tri[1]), np.asarray(tri[2])
-                except Exception:
-                    return None
-        else:
-            return None
+    def get_lcs_batch(self, elements) -> list:
+        """Material frames for many elements, in input order."""
+        return [self.get_lcs(element) for element in elements]
 
-        # Centroid
-        centroid = (v0 + v1 + v2) / 3.0
-
-        # Warp direction (edge v0->v1, approximating u-direction)
-        warp = v1 - v0
-        warp_norm = np.linalg.norm(warp)
-        if warp_norm < 1e-10:
-            return None
-        warp_unit = warp / warp_norm
-
-        # Weft direction (edge v0->v2, approximating v-direction)
-        weft_raw = v2 - v0
-        weft_norm = np.linalg.norm(weft_raw)
-        if weft_norm < 1e-10:
-            return None
-
-        # Orthogonalize weft against warp (Gram-Schmidt)
-        weft_unit = weft_raw - np.dot(weft_raw, warp_unit) * warp_unit
-        weft_unit_norm = np.linalg.norm(weft_unit)
-        if weft_unit_norm < 1e-10:
-            return None
-        weft_unit = weft_unit / weft_unit_norm
-
-        # Surface normal (right-hand rule: warp × weft)
-        normal = np.cross(warp_unit, weft_unit)
-        normal_norm = np.linalg.norm(normal)
-        if normal_norm < 1e-10:
-            return None
-        normal_unit = normal / normal_norm
-
-        # Y-axis: cross(Z, X) to complete right-handed frame
-        y_axis = np.cross(normal_unit, warp_unit)
-
-        # Build rotation matrix from basis vectors
-        rot_matrix = np.column_stack([warp_unit, y_axis, normal_unit])
-        rotation = Rotation.from_matrix(rot_matrix)
-
-        # Convert to FreeCAD Placement
-        quat = rotation.as_quat()  # SciPy returns [x, y, z, w]
-        fc_placement = FreeCAD.Placement()
-        fc_placement.Rotation = FreeCAD.Rotation(quat[0], quat[1], quat[2], quat[3])
-        fc_placement.Base = FreeCAD.Vector(centroid[0], centroid[1], centroid[2])
-
-        return fc_placement
     def get_lcs_at_point(self, center: Any) -> Any | None:
         """Return LCS at a 3D point by finding the nearest quad.
 

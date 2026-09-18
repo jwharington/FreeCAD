@@ -123,11 +123,20 @@ class _FrameFixture(unittest.TestCase):
         return shell
 
     @staticmethod
-    def _face_frame(shell, u=0.5, v=0.5):
-        """Return (point, face-U direction, face normal) at (u, v)."""
+    def _face_frame(shell, u_frac=0.5, v_frac=0.5):
+        """Return (point, face-U direction, face normal) at a face point.
+
+        The fractions are of the face's own parameter range: a planar
+        face is parameterised in mm, so ``valueAt(0.5, 0.5)`` is a corner
+        point, not the centre.
+        """
         face = shell.Support.Shape.Face1
+        u0, u1, v0, v1 = face.ParameterRange
+        u = u0 + (u1 - u0) * u_frac
+        v = v0 + (v1 - v0) * v_frac
         point = face.valueAt(u, v)
-        u_axis = face.valueAt(min(u + 1e-4, 1.0), v) - point
+        step = (u1 - u0) * 1e-4
+        u_axis = face.valueAt(min(u + step, u1), v) - point
         u_axis.normalize()
         return point, u_axis, face.normalAt(u, v)
 
@@ -248,7 +257,14 @@ class TestDrapeFrameBatch(_FrameFixture):
         """
         shell = self._make_shell(rosette_angle=0.0)
         backend = shell.Proxy.get_draper()
-        backend._lcs_field()
+        triangles = []
+        for u in (0.2, 0.4, 0.6, 0.8):
+            point, u_axis, normal = self._face_frame(shell, u, u)
+            triangles.append(self._triangle(point, u_axis, normal))
+
+        # Warm the drape index through the public API; the second batch
+        # must be served from it without re-entering the solve.
+        shell.Proxy.get_drape_lcs_batch(triangles)
 
         original = backend._run_solve
         calls = []
@@ -259,10 +275,6 @@ class TestDrapeFrameBatch(_FrameFixture):
 
         backend._run_solve = counting_solve
         try:
-            triangles = []
-            for u in (0.2, 0.4, 0.6, 0.8):
-                point, u_axis, normal = self._face_frame(shell, u, u)
-                triangles.append(self._triangle(point, u_axis, normal))
             frames = shell.Proxy.get_drape_lcs_batch(triangles)
         finally:
             backend._run_solve = original
@@ -300,19 +312,14 @@ class TestDrapeFrameBatch(_FrameFixture):
 class TestFrameAgreesWithTheRosetteOnARealAssembly(_FrameFixture):
     """The frame must match the shell's own rosette across the surface.
 
-    The plain-plate tests miss this: there the drape happens to be seeded
-    from the rosette, so a naive dP/du agrees by construction.  The
-    stiffener panel's 120x60 plate is where the defect showed -- the
-    drape's parametrisation folds on its mid-line, and a frame taken
-    straight from dP/du disagreed with the declared fibre there (measured
-    8.1 deg and 12.8 deg against a rosette of 30), while a mesh-edge frame
-    disagreed everywhere.  Every point must also yield a frame: the field
-    is defined on the whole surface, never ``None``.
+    The panel of the stiffener example is the *remainder*: its support
+    is the two faces either side of the foot strip.  Every point of
+    those faces must yield a frame, and that frame must carry the
+    rosette's fibre direction.
     """
 
-    PLATE_LENGTH = 120.0
-    PLATE_WIDTH = 60.0
     MAX_OFFSET_DEG = 1.0
+    SAMPLES_PER_AXIS = 6
 
     def test_the_whole_panel_matches_its_rosette(self):
         result = runner.run("quasi_iso_stiffener_panel", run_solver=False)
@@ -324,34 +331,37 @@ class TestFrameAgreesWithTheRosetteOnARealAssembly(_FrameFixture):
         )
 
         checked = 0
-        for ix in range(1, 12):
-            for iy in range(1, 6):
-                x = self.PLATE_LENGTH * ix / 12.0
-                y = self.PLATE_WIDTH * iy / 6.0
-                point = FreeCAD.Vector(x, y, 0.0)
-                frame = shell.Proxy.get_drape_lcs(
-                    [
-                        point,
-                        point + FreeCAD.Vector(1.0, 0.0, 0.0),
-                        point + FreeCAD.Vector(0.0, 1.0, 0.0),
-                    ]
-                )
-                self.assertIsNotNone(
-                    frame,
-                    msg=f"no frame at ({x:.1f}, {y:.1f}) — field not defined",
-                )
-                warp = self._warp(frame)
-                dot = max(-1.0, min(1.0, warp.dot(fibre)))
-                offset = math.degrees(math.acos(dot))
-                self.assertLess(
-                    offset,
-                    self.MAX_OFFSET_DEG,
-                    msg=(
-                        f"frame at ({x:.1f}, {y:.1f}) is {offset:.2f} deg "
-                        "off the rosette fibre"
-                    ),
-                )
-                checked += 1
+        for face in shell.Support.Shape.Faces:
+            u0, u1, v0, v1 = face.ParameterRange
+            for iu in range(1, self.SAMPLES_PER_AXIS + 1):
+                for iv in range(1, self.SAMPLES_PER_AXIS + 1):
+                    point = face.valueAt(
+                        u0 + (u1 - u0) * iu / (self.SAMPLES_PER_AXIS + 1),
+                        v0 + (v1 - v0) * iv / (self.SAMPLES_PER_AXIS + 1),
+                    )
+                    frame = shell.Proxy.get_drape_lcs(
+                        [
+                            point,
+                            point + FreeCAD.Vector(1.0, 0.0, 0.0),
+                            point + FreeCAD.Vector(0.0, 1.0, 0.0),
+                        ]
+                    )
+                    self.assertIsNotNone(
+                        frame,
+                        msg=f"no frame at {tuple(point)} — field not defined",
+                    )
+                    warp = self._warp(frame)
+                    dot = max(-1.0, min(1.0, warp.dot(fibre)))
+                    offset = math.degrees(math.acos(dot))
+                    self.assertLess(
+                        offset,
+                        self.MAX_OFFSET_DEG,
+                        msg=(
+                            f"frame at {tuple(point)} is {offset:.2f} deg "
+                            "off the rosette fibre"
+                        ),
+                    )
+                    checked += 1
         self.assertGreaterEqual(checked, 50)
 
 

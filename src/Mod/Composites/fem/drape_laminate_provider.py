@@ -34,21 +34,23 @@ def get_compshell_obj(shellth_obj):
 
 
 def get_drape_lcs(compshell_obj, femmesh_obj, elements):
-    def element_info(e):
-        element_nodes = femmesh_obj.getElementNodes(e)
-        if len(element_nodes) in [3, 6]:
-            face_def = {1: [0, 1, 2]}
-        else:  # quad element
-            face_def = {1: [0, 1, 2, 3]}
+    """Per-element material frames, resolved in one bulk backend call.
 
-        for key in face_def:
-            tris = []
-            for node_idx in face_def[key]:
-                n = femmesh_obj.getNodeById(element_nodes[node_idx])
-                tris.append(n)
-            return compshell_obj.Proxy.get_drape_lcs(tris)
-
-    return {e: element_info(e) for e in elements}
+    A 3-node (triangle) element passes its three face nodes, a 4-node
+    (quad) element all four; the backend locates each element's centroid
+    on the drape lattice, so the node count is not constrained.  The
+    former per-element call also passed quads to a triangle-only lookup
+    and so returned ``None`` for every quad element.
+    """
+    node_lists = []
+    for element in elements:
+        node_ids = femmesh_obj.getElementNodes(element)
+        count = 3 if len(node_ids) in (3, 6) else 4
+        node_lists.append(
+            [femmesh_obj.getNodeById(node_ids[i]) for i in range(count)]
+        )
+    frames = compshell_obj.Proxy.get_drape_lcs_batch(node_lists)
+    return dict(zip(elements, frames))
 
 
 def get_laminate(shellth_obj):

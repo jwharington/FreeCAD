@@ -293,7 +293,35 @@ PYBIND11_MODULE(Composites_drape, m) {
              },
              py::arg("point"),
              "Return (u, v) texture coordinate at a 3D point on the last "
-             "compute() result, or None if no quad is reachable.");
+             "compute() result, or None if no quad is reachable.")
+        .def("lookup_lcs",
+             [](const nextdrape::DrapeEngine& self, py::object point_obj) -> py::object {
+                 nextdrape::Vec3 p{0.0, 0.0, 0.0};
+                 try {
+                     py::sequence seq(point_obj);
+                     if (py::len(seq) < 3) {
+                         return py::none();
+                     }
+                     p.x = py::cast<double>(seq[0]);
+                     p.y = py::cast<double>(seq[1]);
+                     p.z = py::cast<double>(seq[2]);
+                 } catch (const std::exception&) {
+                     return py::none();
+                 }
+                 const auto frame = self.LookupFrame(p);
+                 if (!frame) {
+                     return py::none();
+                 }
+                 return py::make_tuple(
+                     py::make_tuple(frame->warp.x, frame->warp.y, frame->warp.z),
+                     py::make_tuple(frame->weft.x, frame->weft.y, frame->weft.z),
+                     py::make_tuple(frame->normal.x, frame->normal.y, frame->normal.z));
+             },
+             py::arg("point"),
+             "Return the fabric frame at a 3D point on the last compute() "
+             "result as ((warp), (weft), (normal)) 3D vectors, or None if no "
+             "quad is reachable.  The frame is the located quad's own "
+             "warp/weft/normal, so no flat-lattice indices are involved.");
 
     // ── solve(): thin wrapper over a temporary DrapeEngine ──────
     // Retained for backward compatibility / one-shot use. Holding a
