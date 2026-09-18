@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Investigation — Ring-stiffener web drape failure (2026-09-10)</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 900px; margin: 40px auto; color: #222; line-height: 1.55; }
+  h1 { font-size: 1.6em; border-bottom: 3px solid #8b0000; padding-bottom: 8px; }
+  h2 { font-size: 1.25em; color: #8b0000; margin-top: 1.8em; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+  h3 { color: #333; margin-top: 1.2em; }
+  code, pre { font-family: "SF Mono", Consolas, monospace; background: #f4f4f4; border-radius: 4px; }
+  code { padding: 1px 4px; }
+  pre { padding: 10px 14px; overflow-x: auto; font-size: 0.85em; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.9em; }
+  th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
+  th { background: #f0ece4; }
+  .toc { float: right; width: 250px; border: 1px solid #ccc; background: #faf8f4;
+         padding: 12px 18px; margin: 0 0 20px 20px; font-size: 0.85em; }
+  .toc h3 { margin-top: 0; font-size: 1em; }
+  .key { border-left: 4px solid #8b0000; background: #faf3f3; padding: 10px 16px; margin: 1em 0; }
+  .warn { border-left: 4px solid #b8860b; background: #fdf8ec; padding: 10px 16px; margin: 1em 0; }
+  ul { padding-left: 1.4em; }
+</style>
+</head>
+<body>
+
+<h1>Ring-stiffener web drape failure — investigation</h1>
+<p><b>Date:</b> 2026-09-10 · <b>Scope:</b> read-only diagnosis, no solver changes<br>
+<b>Question:</b> the <code>web_band</code> nextdrape testshape (100% coverage) clearly is
+<i>not</i> the geometry failing on the FreeCAD closed-ring stiffener webs (~0.26 coverage). Which
+two mechanisms produce the observed failure — partial web-face coverage, and no wrap onto the
+flange face?</p>
+
+<div class="toc">
+<h3>Contents</h3>
+<ol>
+  <li><a href="#verdict">Verdict</a></li>
+  <li><a href="#repro">Reproduction chain</a></li>
+  <li><a href="#topology">The real web topology vs web_band</a></li>
+  <li><a href="#problemA">Problem A — coverage wedge</a></li>
+  <li><a href="#problemB">Problem B — no wrap to flange</a></li>
+  <li><a href="#shared">One structural root cause</a></li>
+  <li><a href="#open">Open sub-questions</a></li>
+  <li><a href="#artifacts">Artifacts & tooling</a></li>
+</ol>
+</div>
+
+<h2 id="verdict">1. Verdict</h2>
+<div class="key">
+<p><b>Confirmed: <code>web_band</code> is not the failing shape.</b> It is an analytic
+<em>periodic</em> cylinder (<code>IsUPeriodic()=1</code>), so the baseline10 seam-stop law
+(<code>RelocateSeedOffSeam</code> + stop-at-seam) engages and it solves 1.0 coverage.
+The production web compound has <em>different topology on both faces</em>, and both observed
+failures trace to that difference — plus one genuine solver-side rejection that the
+periodic cylinder never exercises.</p>
+</div>
+
+<h2 id="repro">2. Reproduction chain (byte-identical geometry)</h2>
+<table>
+<tr><th>Step</th><th>Result</th></tr>
+<tr><td>FreeCAD production dump (<code>FC_DRAPE_DUMP_DIR</code> hook in
+<code>drape_backend_nextdrape.py</code>, aborted example run)</td>
+<td>exact solver inputs captured: web compound BREP + seed <code>(0,0,0)/(1,0,0)</code>,
+pitch 2.5</td></tr>
+<tr><td>nextdrape <code>drape_cli --shapefile</code> (new flag, mirrors
+<code>mould_cli --load-shapefile</code>)</td>
+<td><b>coverage = 0.2576</b> — FreeCAD's ~0.26 reproduced exactly</td></tr>
+<tr><td>Good on-surface seed <code>(100,0,50)/(0,1,0)</code></td><td>0.2622 — collapse is
+seed-independent</td></tr>
+<tr><td>Pitch ladder 5.0 / 2.5 / 1.25</td><td>0.2506 / 0.2576 / 0.2523 — pitch-independent
+(matches the example's "0.26 at every pitch")</td></tr>
+</table>
+<p>Node-cap ruled out (the wide_rect fix is intact): cap ≈ 3·20420/2.5² + 1000 ≈ 10.8k vs
+6849 nodes used. The freeze is not the cap.</p>
+
+<h2 id="topology">3. The real web topology vs web_band</h2>
+<p>The dumped compound (<code>RingStiffenerA_Web</code>, 220×246.5×20 mm, two faces):</p>
+<table>
+<tr><th></th><th>face0 — flange band (seed face)</th><th>face1 — vertical band</th></tr>
+<tr><td>Surface</td><td><code>Geom_BSplineSurface</code> degrees <b>(11,1)</b></td>
+<td>Trimmed periodic cylinder</td></tr>
+<tr><td>U domain</td><td>[0, 2π], <b>UPeriodic = 0</b>, UClosed = 1</td><td>[0, 2π], UPeriodic = 1</td></tr>
+<tr><td>V domain</td><td>[0, 1] ≈ 10.5 mm band width</td><td>[0, 20] mm, z 40→60</td></tr>
+<tr><td>Area</td><td>6597 mm² (32% of compound)</td><td>13823 mm² (68%)</td></tr>
+<tr><td>u-edge 3D gap</td><td><b>1.1e-13 mm</b> (self-closing)</td><td>2.7e-14 mm</td></tr>
+<tr><td>Nodes accepted</td><td>1321 (valid)</td><td><b>0</b></td></tr>
+</table>
+<p><code>web_band</code> by contrast is one analytic cylinder face with
+<code>IsUPeriodic()=1</code> — the flag everything downstream keys on.</p>
+
+<h2 id="problemA">4. Problem A — the web face doesn't cover (0.26, wedge)</h2>
+<p>Evidence from <code>ND_SOLVE_DEBUG</code>/<code>ND_QUAD_DEBUG</code> runs and the full
+result JSON:</p>
+<ul>
+<li>The seed lands <b>on the v=0 domain edge</b> of face0 (node (0,0): uv = (4.712,
+0.000000) at r=100, z=60). On a periodic face, <code>RelocateSeedOffSeam</code> would move
+it off the seam; here the periodicity flag is absent, so no relocation.</li>
+<li>The plain weft advance off that edge fails immediately:
+<code>SolveAdvancePoint</code>'s <em>first</em> metric candidate lands at v&lt;0 — outside the
+domain — and is rejected before any Newton iteration or border-clamp path (1067 events,
+sources spread over the whole u range).</li>
+<li>1311 further nodes <em>are</em> accepted at j&lt;0 (u spans 0.006→6.278 — the march
+<i>did</i> wrap the u-seam, and 183 of them sit at v≈0). These come from the fallback
+placement routes (atlas / edge transport), not the plain march.</li>
+<li>But the cells they occupy are rejected by the quad builder:
+<b>745 <code>pushed-invalid</code> quads</b>, the canonical pattern being
+<code>quad (0,-1) corners-valid: 0 0 1 1</code> — cells straddling the seed edge row and
+the fallback rows have mixed-valid corners (uv-outside), so no fabric is emitted there.
+Coverage in nodes ≠ coverage in fabric.</li>
+<li>The frontier then stagnates (<code>openRemaining=17</code>, massive
+<code>re_solve</code> churn) and the coverage freezes at ≈ the flange-band fraction.</li>
+</ul>
+<div class="warn"><p><b>Residual unknown (A):</b> why the warp wedge terminates at
+i ∈ [−51, 49] (±73° around the seed) — nothing geometrically special sits there. The
+stagnation threshold (<code>noGrowthRoundsThreshold = 8</code>) is the likely freezer once
+both weft directions block, but the trigger for the warp columns themselves was not pinned
+in this pass.</p></div>
+
+<h2 id="problemB">5. Problem B — no wrap around the edge onto the flange</h2>
+<p>The crossing machinery <em>does</em> find the shared edge (r=110, z=60) between face0 and
+face1: <code>SEAM-MARCH</code> logs show exit edge + crossing point + arc split
+(arcA=0.54 mm, arcB=1.96 mm) — the trace, adjacency and chirality stages all pass. The
+failure is uniformly at the landing solve:</p>
+<pre>SEAM-MARCH cell(27,0) src=(26,0) crossing=(64.37,-89.20,60)
+    arcA=0.539 arcB=1.961  rejected by landing solve</pre>
+<p><b>1067 of 1067 crossing attempts rejected this way.</b> The landing step runs
+<code>SolveAdvancePoint</code> on face1 from the crossing point (which sits <em>on</em>
+face1's v=0 edge) with the kinked direction; its initial metric candidate lands at
+v &lt; 0 — outside face1's domain — and is rejected outright (strict
+<code>uvSlack = tol</code>, added in the baseline10 seam fix). With no landing point the
+fold law has nothing to weld, <code>crossFace = 0</code>, and face1 stays empty.</p>
+<div class="warn"><p><b>Residual unknown (B):</b> whether the landing direction genuinely
+points off face1 (kink/chirality sign error on this trimmed-cylinder pair) or whether the
+initial candidate construction is degenerate when the source sits exactly on the domain
+edge. One targeted instrumented pass inside <code>ApplySeamStep</code> would discriminate —
+not done here (solver untouched, per instruction).</p></div>
+
+<h2 id="shared">6. The shared structural root cause</h2>
+<div class="key">
+<p>Both failures share one trigger: <b>the swept web/flange band is geometrically
+self-closed but carries no periodicity flag</b> (<code>IsUPeriodic()=0</code>,
+<code>IsUClosed()=1</code>, full 2π domain, u-edge gap ~1e-13 mm). Everything the solver
+does for a self-connected surface — seed relocation off the seam, wrap of the advance across
+the parameter seam, stop-at-seam classification — is keyed on the flag, so on this face the
+machinery behaves as if the band were an open patch with two coincident boundary edges:</p>
+<ul>
+<li>the seed is not relocated off the boundary edge → weft starts from the edge;</li>
+<li>off-edge/off-domain advances fall through to fallback placement, which lands
+edge-sliding/wrapped nodes whose cells the quad builder rejects;</li>
+<li>crossings onto the neighbour face die at the landing solve's strict domain test
+(this part would need a genuine solver-side fix regardless of flags).</li>
+</ul>
+<p>This matches the handoff's follow-up guidance: detect self-connection
+<em>geometrically</em> (domain-edge coincidence — here 1e-13 mm — or a seed round-trip
+probe), not by surface type. The C++-side probe would see exactly what
+<code>drape_cli --shapefile</code> now prints.</p>
+</div>
+
+<h2 id="open">7. Open sub-questions before any fix attempt</h2>
+<ol>
+<li>Pin the warp-wedge terminus (±51 steps) with one instrumented frontier run.</li>
+<li>Decompose the face1 landing rejection: direction geometry (kink sign) vs
+initial-candidate degeneracy at an on-edge source.</li>
+<li>Decide whether the fix is (a) geometric self-connection detection feeding the existing
+seam law (matches handoff guidance), or (b) a landing-solve boundary-row path for
+cross-face steps — the evidence suggests both are needed: A is flag-gated, B fails on a
+genuinely periodic face1 whose landing candidate still goes off-domain.</li>
+</ol>
+
+<h2 id="artifacts">8. Artifacts & tooling (all committed, none touch solver logic)</h2>
+<ul>
+<li><b>FreeCAD</b>: <code>drape_backend_nextdrape.py</code> — env-gated
+<code>FC_DRAPE_DUMP_DIR</code> input dump (BREP + seed/params JSON), twin of the mould
+side's <code>FC_PARTING_DUMP_DIR</code>; <code>compositestests/inspect_ring_stiffener_web.py</code>
+— geometry-only web-face dumper + surface characterisation (0.8 s, no solver run).</li>
+<li><b>nextdrape</b>: <code>drape_cli --shapefile &lt;file.brep&gt;</code> with per-face
+characterisation print (type, degrees, periodicity, UV bounds, u-edge gap).</li>
+<li><b>Repro one-liner</b>:
+<pre>pixi run ./build/pixi-debug/drape_cli \
+  --shapefile /tmp/fc-drape-dump/220.0x246.5x20.0_-0.0_0.0_50.0.brep \
+  --sx 0 --sy 0 --sz 0 --dx 1 --dy 0 --dz 0 --pitch 2.5 --out /tmp/nd-webface</pre></li>
+<li><b>Reports</b>: <code>/tmp/nd-webface{,2,-p5.0,-p1.25}/draping-visualization-report.html</code>;
+evidence logs <code>/tmp/nd-dbg.err</code>, <code>/tmp/nd-log.err</code>,
+<code>/tmp/nd-webface-fj/shapefile_result.json</code>.</li>
+<li>Dumps: <code>/tmp/fc-drape-dump/</code> — RingStiffenerA/B_Web BREPs (geometry-only,
+via the inspector) plus the production-captured web/panel solves from the aborted example
+run.</li>
+</ul>
+
+</body>
+</html>
