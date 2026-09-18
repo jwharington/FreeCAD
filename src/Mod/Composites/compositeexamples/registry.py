@@ -43,9 +43,37 @@ EXAMPLES = {
         "module": ".examples.seam_extraction",
         "name": "Seam extraction (two-panel overlap)",
     },
-    "stiffener": {
-        "module": ".examples.stiffener",
-        "name": "Stiffener (sweep profile along an intersected path)",
+    "stiffener_rect_plate": {
+        "module": ".examples.stiffener_rect_plate",
+        "name": "Rect-section stiffener on a planar plate",
+    },
+    "stiffener_z_plate": {
+        "module": ".examples.stiffener_z_plate",
+        "name": "Z-section stiffener on a planar plate",
+    },
+    "stiffener_z_cyl_ring": {
+        "module": ".examples.stiffener_z_cyl_ring",
+        "name": "Z-section annular stiffener frame on a cylinder",
+    },
+    "stiffener_z_cone_ring": {
+        "module": ".examples.stiffener_z_cone_ring",
+        "name": "Z-section annular stiffener frame on a cone",
+    },
+    "stiffener_t_cone_panel": {
+        "module": ".examples.stiffener_t_cone_panel",
+        "name": "Thin-T stiffener on a conical panel",
+    },
+    "non_planar_mould_demo_box": {
+        "module": ".examples.non_planar_mould_demo_box",
+        "name": "Non-planar mould parting demo — box (degenerate planar part line)",
+    },
+    "non_planar_mould_demo_loft": {
+        "module": ".examples.non_planar_mould_demo_loft",
+        "name": "Non-planar mould parting demo — cambered loft",
+    },
+    "non_planar_mould_demo_blade": {
+        "module": ".examples.non_planar_mould_demo_blade",
+        "name": "Non-planar mould parting demo — twisted blade profile",
     },
     "rosette": {
         "module": ".examples.rosette",

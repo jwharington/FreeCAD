@@ -4,23 +4,26 @@
 """Stiffener examples — sweep profiles along the path an intersecting surface
 cuts from a support.
 
-Each stiffener lives in its own document, one example per document. The result
-still names a single ``doc`` — the first case's — because that is what the
-example runner and its smoke test read.
+Implementation module for the five registered stiffener examples, each of
+which builds exactly one document (single-document runner contract):
 
-Builds:
-
-1. ``Composites_Stiffener_RectPlate`` — rectangular section on a planar plate,
-   path cut by a surface standing on the plate.
-2. ``Composites_Stiffener_ZPlate`` — Z-section on a planar plate. The Z is an
-   OPEN polyline (base flange, web, top flange), so the stiffener is the web +
-   top flange (an L), distinct from the closed rect box.
-3. ``Composites_Stiffener_ZCylRing`` / ``Composites_Stiffener_ZConeRing`` —
+1. ``stiffener_rect_plate`` → ``Composites_Stiffener_RectPlate`` — rectangular
+   section on a planar plate, path cut by a surface standing on the plate.
+2. ``stiffener_z_plate`` → ``Composites_Stiffener_ZPlate`` — Z-section on a
+   planar plate. The Z is an OPEN polyline (base flange, web, top flange), so
+   the stiffener is the web + top flange (an L), distinct from the closed rect
+   box.
+3. ``stiffener_z_cyl_ring`` / ``stiffener_z_cone_ring`` →
+   ``Composites_Stiffener_ZCylRing`` / ``Composites_Stiffener_ZConeRing`` —
    Z-section as an annular frame, swept around a cylinder / cone. The path is
    the ring the cut surface intersects from the curved surface, and the
    profile's base row stays on that surface.
-4. ``Composites_Stiffener_TConePanel`` — thin T on a 270-degree conical
-   panel, swept along the open ellipse a tilted cut plane traces on it.
+4. ``stiffener_t_cone_panel`` → ``Composites_Stiffener_TConePanel`` — thin T
+   on a 270-degree conical panel, swept along the open ellipse a tilted cut
+   plane traces on it.
+
+The registry-visible ``build()`` entry points live in the per-example modules
+(``stiffener_rect_plate.py`` etc.) and delegate here.
 """
 
 import FreeCAD
@@ -205,53 +208,36 @@ def _build_tilted_t_on_conical_panel(doc, name, document_name):
     return _add_stiffener(doc, name, support, cut, _t_profile())
 
 
-def build(doc=None, run_solver=False):
-    """Build the stiffener examples, one document per example.
-
-    Parameters
-    ----------
-    doc
-        Optional FreeCAD document; when given, the first stiffener
-        (rect plate) is built into it. The others use their own documents.
-    run_solver
-        Accepted for runner parity.
-
-    Returns
-    -------
-    dict
-        ``doc`` names the document the first case went into, and ``cases``
-        holds one entry per stiffener with its own ``doc``, ``stiffener``
-        feature and swept ``shape``.
-    """
-    cases = {
-        "rect_plate": _build_on_plate(
-            doc, "RectOnPlate", "Composites_Stiffener_RectPlate", _rect_profile()
-        ),
-        "z_plate": _build_on_plate(None, "ZOnPlate", "Composites_Stiffener_ZPlate", _z_profile()),
-        "z_cylinder_ring": _build_ring(
-            None, "ZCylRing", "Composites_Stiffener_ZCylRing", "cylinder", _z_profile()
-        ),
-        "z_cone_ring": _build_ring(
-            None, "ZConeRing", "Composites_Stiffener_ZConeRing", "cone", _z_profile()
-        ),
-        "t_cone_panel": _build_tilted_t_on_conical_panel(
-            None, "TConePanel", "Composites_Stiffener_TConePanel"
-        ),
-    }
-    return {"doc": cases["rect_plate"]["doc"], "cases": cases}
+def build_rect_plate(doc=None, run_solver=False):
+    """Rectangular-section stiffener on a planar plate, in its own document."""
+    return _build_on_plate(
+        doc, "RectOnPlate", "Composites_Stiffener_RectPlate", _rect_profile()
+    )
 
 
-def main():
-    """Run the stiffener examples."""
-    for key, case in build()["cases"].items():
-        shape = case["shape"]
-        box = shape.BoundBox
-        print(
-            f"{key}: {shape.ShapeType} | null={shape.isNull()} | "
-            f"bbox={round(box.XLength, 1)}x{round(box.YLength, 1)}x{round(box.ZLength, 1)} | "
-            f"remainders={len(case['remainders'])}"
-        )
+def build_z_plate(doc=None, run_solver=False):
+    """Z-section stiffener on a planar plate, in its own document."""
+    return _build_on_plate(
+        doc, "ZOnPlate", "Composites_Stiffener_ZPlate", _z_profile()
+    )
 
 
-if __name__ == "__main__":
-    main()
+def build_z_cyl_ring(doc=None, run_solver=False):
+    """Z-section annular frame swept around a cylinder, in its own document."""
+    return _build_ring(
+        doc, "ZCylRing", "Composites_Stiffener_ZCylRing", "cylinder", _z_profile()
+    )
+
+
+def build_z_cone_ring(doc=None, run_solver=False):
+    """Z-section annular frame swept around a cone, in its own document."""
+    return _build_ring(
+        doc, "ZConeRing", "Composites_Stiffener_ZConeRing", "cone", _z_profile()
+    )
+
+
+def build_t_cone_panel(doc=None, run_solver=False):
+    """Thin-T stiffener on a conical panel, in its own document."""
+    return _build_tilted_t_on_conical_panel(
+        doc, "TConePanel", "Composites_Stiffener_TConePanel"
+    )

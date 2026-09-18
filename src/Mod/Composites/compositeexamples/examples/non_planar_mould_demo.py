@@ -1,9 +1,10 @@
-"""Non-planar mould analysis demo — part line + mould halves on box, loft, blade.
+"""Non-planar mould analysis demos — part line + mould halves, one shape per doc.
 
-Creates three source shapes, runs the non-planar parting solver on each,
-and adds the part line + mould halves to separate documents for visualisation.
-The freeform examples use shape-specific draw directions.
-Run via FreeCAD's example runner or the MCP execute_code tool.
+Implementation module for the three registered single-document examples
+(``non_planar_mould_demo_box``, ``non_planar_mould_demo_loft``,
+``non_planar_mould_demo_blade``). Each runs the non-planar parting solver on
+one source shape and adds the part line + mould halves to its own document.
+The freeform shapes use shape-specific draw directions.
 """
 import FreeCAD
 import Part
@@ -81,8 +82,19 @@ def _run_analysis(doc, label, shape, draw_dir):
     return result
 
 
-def _run_demo(document_name, label, shape, draw_dir):
-    doc = FreeCAD.newDocument(document_name)
+def _new_document(doc, name):
+    """Return ``doc`` or open a fresh document with the given name."""
+    if doc is not None:
+        return doc
+    existing = FreeCAD.listDocuments().get(name)
+    if existing is not None:
+        FreeCAD.closeDocument(existing.Name)
+    return FreeCAD.newDocument(name)
+
+
+def _build_shape(doc, document_name, label, shape, draw_dir):
+    """Build one mould-analysis demo document for a single source shape."""
+    doc = _new_document(doc, document_name)
     _run_analysis(doc, label, shape, draw_dir)
     doc.recompute()
     FreeCAD.setActiveDocument(doc.Name)
@@ -92,24 +104,32 @@ def _run_demo(document_name, label, shape, draw_dir):
     return doc
 
 
-def main():
-    for document_name in ("MouldDemo_box", "MouldDemo_loft", "MouldDemo_blade"):
-        if document_name in FreeCAD.listDocuments():
-            FreeCAD.closeDocument(document_name)
-
-    # 1. Box — simple degenerate parting (planar at z_mid).
-    _run_demo("MouldDemo_box", "box", Part.makeBox(20.0, 20.0, 20.0), (0, 0, 1))
-
-    # 2. Loft — cambered, slightly twisted blade-like shape. Draw along Y
-    #    (the thin direction) so the parting ring closes cleanly; a diagonal
-    #    (0,1,1) draw leaves the outer-ring skirt corner unplaceable.
-    _run_demo("MouldDemo_loft", "loft", _make_loft_shape(), (0, 1, 0))
-
-    # 3. Blade — tapered, twisted blade profile. Same thin-direction draw.
-    _run_demo("MouldDemo_blade", "blade", _make_blade_shape(), (0, 1, 0))
+def build_box(doc=None, run_solver=False):
+    """Box: simple degenerate parting (planar at z_mid), in its own document."""
+    return {
+        "doc": _build_shape(
+            doc, "Composites_MouldDemo_Box", "box", Part.makeBox(20.0, 20.0, 20.0), (0, 0, 1)
+        )
+    }
 
 
-# Run under both direct execution (``python non_planar_mould_demo.py``) and
-# MCP/``exec`` (where ``__name__`` is not ``"__main__"``). Without this,
-# ``exec(open(...).read())`` silently defines functions and nothing happens.
-main()
+def build_loft(doc=None, run_solver=False):
+    """Cambered, slightly twisted loft, in its own document.
+
+    Draw along Y (the thin direction) so the parting ring closes cleanly; a
+    diagonal (0,1,1) draw leaves the outer-ring skirt corner unplaceable.
+    """
+    return {
+        "doc": _build_shape(
+            doc, "Composites_MouldDemo_Loft", "loft", _make_loft_shape(), (0, 1, 0)
+        )
+    }
+
+
+def build_blade(doc=None, run_solver=False):
+    """Tapered, twisted blade profile, in its own document (thin-direction draw)."""
+    return {
+        "doc": _build_shape(
+            doc, "Composites_MouldDemo_Blade", "blade", _make_blade_shape(), (0, 1, 0)
+        )
+    }

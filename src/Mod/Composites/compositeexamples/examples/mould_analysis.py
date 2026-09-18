@@ -8,8 +8,8 @@ Builds a ``Composite::MouldAnalysis`` FeaturePython object (from
 that the analysis is *parametric*: changing the linked source geometry and
 recomputing regenerates the parting surface and both mould halves.
 
-This contrasts with the one-shot ``non_planar_mould_demo``, which calls
-``analyze_source_shape`` once and freezes the results into plain
+This contrasts with the ``non_planar_mould_demo_*`` examples, which call
+``analyze_source_shape`` once and freeze the results into plain
 ``Part::Feature`` objects. Here the mould is a feature object whose
 ``execute()`` re-runs the analysis on every recompute.
 """

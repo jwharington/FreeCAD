@@ -565,16 +565,24 @@ class TestStiffenerFP(TestFreeCADFP):
         self.assertTrue(stiffener.Shape.isNull())
 
     def test_example_build(self):
-        """The registered stiffener example builds one document per example."""
+        """Each registered stiffener example builds exactly one document."""
         from Composites.compositeexamples import runner
 
-        result = runner.run("stiffener", run_solver=False)
-        self.assertIsNotNone(result["doc"])
-        for key, case in result["cases"].items():
-            self.assertFalse(case["shape"].isNull(), f"{key} should be non-null")
-            self.assertEqual(case["shape"].ShapeType, "Compound", f"{key} should be a compound")
-        documents = [case["doc"].Name for case in result["cases"].values()]
-        self.assertEqual(len(set(documents)), len(documents))
+        for example_id in (
+            "stiffener_rect_plate",
+            "stiffener_z_plate",
+            "stiffener_z_cyl_ring",
+            "stiffener_z_cone_ring",
+            "stiffener_t_cone_panel",
+        ):
+            with self.subTest(example=example_id):
+                result = runner.run(example_id, run_solver=False)
+                self.assertIsNotNone(result["doc"])
+                shape = result["shape"]
+                self.assertFalse(shape.isNull(), f"{example_id} should be non-null")
+                self.assertEqual(
+                    shape.ShapeType, "Compound", f"{example_id} should be a compound"
+                )
 
     def test_save_load_round_trip(self):
         support = self._make_support("SaveLoadSupport", Part.makePlane(120.0, 60.0))
