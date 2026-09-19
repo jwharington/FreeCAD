@@ -494,6 +494,25 @@ class ViewProviderCompositeShell:
         self.remove_shader()
         return True
 
+    def enter_coin_capture(self):
+        """Switch to Coin-native weave rendering for an offscreen capture.
+
+        The GLSL weave shader is the interactive renderer, but captures
+        (saveImage / offscreen renders) do not reproduce it faithfully.
+        See :mod:`Composites.features.CoinWeaveCapture`. Returns True when
+        the shell was switched, False when it has no drape geometry
+        (render it natively in that case).
+        """
+        from .CoinWeaveCapture import enter_coin_capture
+
+        return enter_coin_capture(self)
+
+    def exit_coin_capture(self):
+        """Leave Coin-native capture mode and restore the weave shader."""
+        from .CoinWeaveCapture import exit_coin_capture
+
+        exit_coin_capture(self)
+
     def _raise_rosette_render_order(self, vobj):
         """Re-raise rosettes linked to this shell above the weave shader.
 
