@@ -740,6 +740,8 @@ class TestCompositeExamplesSmoke(TestCompositeExamplesBase):
 
     def test_all_examples_build(self):
         """Every example builds successfully with run_solver=False."""
+        from Composites.features.Laminate import is_isotropic_laminate
+
         for example_id in registry.list_examples():
             with self.subTest(example=example_id):
                 result = runner.run(example_id, run_solver=False, doc=None)
@@ -748,6 +750,51 @@ class TestCompositeExamplesSmoke(TestCompositeExamplesBase):
                 self.assertIsNotNone(result["doc"])
                 if "laminate" in result:
                     self.assertIsNotNone(result["laminate"])
+                doc = result["doc"]
+                plans = [o for o in doc.Objects if "TexturePlan" in o.Name]
+                shells = [
+                    o for o in doc.Objects
+                    if o.TypeId == "Part::FeaturePython" and hasattr(o, "DrapeValid")
+                ]
+                woven = [
+                    s for s in shells
+                    if s.DrapeValid and s.Laminate is not None
+                    and getattr(s.Laminate, "Layers", None)
+                    and not is_isotropic_laminate(s.Laminate)
+                ]
+                if woven:
+                    # every woven draped shell example demonstrates its
+                    # flat pattern (QI stacks are excluded by the D7 gate;
+                    # empty stacks have no plies and no plan)
+                    self.assertGreaterEqual(
+                        len(plans), 1,
+                        f"{example_id}: woven draped shell without a texture plan",
+                    )
+                    for plan in plans:
+                        plan_shells = [
+                            s for s in getattr(plan, "CompositeShell", [])
+                            if hasattr(s, "DrapeValid")
+                        ]
+                        drape_ok = all(
+                            s.DrapeValid for s in plan_shells
+                        ) if plan_shells else False
+                        if drape_ok:
+                            self.assertFalse(
+                                plan.Shape.isNull(),
+                                f"{example_id}: null plan on a validly draped shell",
+                            )
+                            self.assertGreater(
+                                len(plan.Shape.Edges), 0,
+                                f"{example_id}: texture plan has no boundaries",
+                            )
+                        # a plan over an invalidated shell (e.g. re-supported
+                        # by the seam workflow) stays touched/invalid with a
+                        # null shape until the shell re-solves — correct
+                else:
+                    self.assertEqual(
+                        len(plans), 0,
+                        f"{example_id}: texture plan on a shell with no woven drape",
+                    )
 
 
 if __name__ == "__main__":

@@ -439,6 +439,35 @@ def create_composite_feature_stack(
         doc.recompute()
         record_diagnostic_event(diagnostics, "feature_stack.recompute.done")
 
+    # Texture plan: every woven draped shell demonstrates its flat pattern.
+    # QI (isotropic-equivalent) stacks have no drape and no flat pattern —
+    # no plan (D7 gate, same rule as the TexturePlan command).
+    texture_plan_obj = None
+    if shell_obj is not None and laminate_obj is not None:
+        try:
+            from Composites.features.Laminate import is_isotropic_laminate
+            if (
+                not is_isotropic_laminate(laminate_obj)
+                and getattr(laminate_obj, "Layers", None)
+            ):
+                from Composites.features.TexturePlan import TexturePlanFP
+                texture_plan_obj = doc.addObject(
+                    "Part::FeaturePython", f"{name_prefix}TexturePlan",
+                )
+                TexturePlanFP(texture_plan_obj, shells=[shell_obj])
+                if hasattr(doc, "recompute") and not skip_recompute:
+                    doc.recompute()
+        except Exception as exc:
+            record_diagnostic_event(
+                diagnostics, "feature_stack.texture_plan.error", error=str(exc),
+            )
+            texture_plan_obj = None
+    record_diagnostic_event(
+        diagnostics,
+        "feature_stack.texture_plan.done",
+        has_plan=texture_plan_obj is not None,
+    )
+
     if shell_obj is not None:
         _hide_support_shape(support)
 
@@ -462,6 +491,7 @@ def create_composite_feature_stack(
         "rosette": rosette_obj,
         "shell": shell_obj,
         "shell_error": shell_error,
+        "texture_plan": texture_plan_obj,
     }
 
 
