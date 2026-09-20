@@ -295,7 +295,10 @@ class TestFreeCADIntegration(unittest.TestCase):
 
     def test_texture_plan_on_real_shell_geometry(self):
         self._ensure_freecadgui()
-        from Composites.features.TexturePlan import TexturePlanFP
+        from Composites.features.TexturePlan import (
+            TexturePlanFP,
+            ViewProviderTexturePlan,
+        )
 
         doc_name = "CompositesTexturePlanIntegrationTest"
 
@@ -317,6 +320,16 @@ class TestFreeCADIntegration(unittest.TestCase):
             self.assertIsNotNone(texture_plan.Shape)
             self.assertFalse(texture_plan.Shape.isNull())
             self.assertEqual(texture_plan.Shape.ShapeType, "Compound")
+
+            # The FP must attach its own view provider (tree greys out and
+            # the plan renders nothing otherwise — seen 2026-09-18).
+            vobj = texture_plan.ViewObject
+            if vobj is None:
+                self.skipTest("no GUI — view provider attach requires GUI mode")
+            self.assertIsInstance(vobj.Proxy, ViewProviderTexturePlan)
+            offered = vobj.Proxy.getDisplayModes(vobj)
+            self.assertIn(vobj.Proxy.getDefaultDisplayMode(), offered)
+            self.assertEqual(vobj.DisplayMode, "Wireframe")
         finally:
             pass
 

@@ -31,6 +31,29 @@ class TexturePlanFP(CompositePartFP):
 
         super().__init__(obj)
 
+        # Attach ViewProvider so it persists in the saved document
+        # (same pattern as CompositeShellFP). Without it the object has
+        # no Python view provider: the tree greys it out, DisplayMode
+        # stays None and the unwrapped ply boundaries render nothing.
+        vobj = obj.ViewObject
+        if vobj is not None:
+            vobj.Proxy = ViewProviderTexturePlan(vobj)
+
+    def onDocumentRestored(self, fp):
+        """Re-attach the ViewProvider after a document load.
+
+        FreeCAD serialises the view provider's Proxy as an int (memory
+        address) on save, so on restore it is not a Python object any
+        more. Detect the corruption and re-attach.
+        """
+        try:
+            vobj = fp.ViewObject
+            if vobj is not None and isinstance(getattr(vobj, "Proxy", None), int):
+                vobj.Proxy = ViewProviderTexturePlan(vobj)
+        except Exception:
+            pass
+        super().onDocumentRestored(fp)
+
     def execute(self, fp):
         import FreeCAD
 
