@@ -161,9 +161,9 @@ class TestFreeCADIntegration(unittest.TestCase):
         finally:
             pass
 
-    def test_get_shape_for_solver_embeds_cut_wires(self):
+    def test_dart_wire_shapes_collected_for_solver(self):
         self._ensure_freecadgui()
-        from Composites.compositetools.drape_task import _get_shape_for_solver
+        from Composites.compositetools.drape_task import _dart_wire_shapes
 
         doc_name = "CompositesCutWireHelperTest"
 
@@ -171,14 +171,11 @@ class TestFreeCADIntegration(unittest.TestCase):
         try:
             cut_wire = self._make_cut_wire(doc)
             fp = types.SimpleNamespace(Document=doc, DrapeCuts=[cut_wire])
-            combined, uses_cut_shape = _get_shape_for_solver(
-                fp,
-                Part.makeBox(10.0, 10.0, 10.0),
-            )
+            wires = _dart_wire_shapes(fp)
 
-            self.assertTrue(uses_cut_shape)
-            self.assertEqual(combined.ShapeType, "Compound")
-            self.assertEqual(len(combined.Solids), 1)
+            self.assertIsNotNone(wires)
+            self.assertEqual(len(wires), 1)
+            self.assertEqual(wires[0].ShapeType, "Wire")
         finally:
             pass
 

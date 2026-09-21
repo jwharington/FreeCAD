@@ -16,79 +16,33 @@ if TYPE_CHECKING:
     import FreeCAD  # noqa: F401
 
 
-def _tessellate_cut_wires(fp: Any) -> list[list[tuple[float, float, float]]] | None:
-    """Tessellate DrapeCuts wires into lists of 3D point coordinates.
+def _dart_wire_shapes(fp: Any) -> list[Any] | None:
+    """Collect DrapeCuts projection shapes for the solver.
 
-    Returns ``None`` if no cut wires are specified, or the list
-    tessellated 3D point sequences otherwise.
+    Returns ``None`` if no cut wires are specified, otherwise the list of
+    the projection objects' Part.Shape wires. These are passed to the
+    solver as genuine wires (``dart_wires``) — the C++ layer locates each
+    wire's owning face and samples its p-curves natively, so no compound
+    embedding or tessellation is involved.
     """
     cuts = getattr(fp, "DrapeCuts", None)
     if not cuts or not hasattr(fp, "DrapeCuts") or len(fp.DrapeCuts) == 0:
         return None
 
-    result: list[list[tuple[float, float, float]]] = []
     import FreeCAD
 
     doc = fp.Document
+    result: list[Any] = []
     for obj_ref in fp.DrapeCuts:
         # obj_ref may be a document object (GUI) or a string name.
         obj = obj_ref if hasattr(obj_ref, "Shape") else doc.getObject(obj_ref)
         if obj is None:
             continue
-        wire = obj.Shape if hasattr(obj, "Shape") else None
-        if wire is None:
+        shape = obj.Shape if hasattr(obj, "Shape") else None
+        if shape is None or shape.isNull():
             continue
-        for edge in wire.Edges:
-            try:
-                vals = edge.tessellate(50)
-                pts: list[tuple[float, float, float]] = [
-                    (float(v[0]), float(v[1]), float(v[2])) for v in vals[1]
-                ]
-                if len(pts) >= 2:
-                    result.append(pts)
-            except Exception:
-                continue
+        result.append(shape)
     return result if result else None
-
-
-def _get_shape_for_solver(fp: Any, default_shape: Any) -> tuple[Any, bool]:
-    """Return a shape for the solver, embedding cut wires if present.
-
-    Returns (shape, uses_cut_shape).  When DrapeCuts is non-empty we
-    create a compound containing the support Shape + each cut wire, so
-    the C++ layer can discover them via DiscoverCutWires().
-    """
-    cuts = getattr(fp, "DrapeCuts", None)
-    if not cuts or not hasattr(fp, "DrapeCuts") or len(fp.DrapeCuts) == 0:
-        return default_shape, False
-
-    try:
-        import FreeCAD
-        from Part import makeCompound
-
-        shapes = []
-        base_shape = getattr(default_shape, "Shape", default_shape)
-        if hasattr(base_shape, "ShapeType"):
-            shapes.append(base_shape)
-        else:
-            shapes = [base_shape]
-
-        cut_count = len(shapes)
-        for obj_ref in cuts:
-            obj = (
-                obj_ref if hasattr(obj_ref, "Shape") else fp.Document.getObject(obj_ref)
-            )
-            if obj is None:
-                continue
-            wire = obj.Shape if hasattr(obj, "Shape") else None
-            if wire is None:
-                continue
-            shapes.append(wire)
-
-        combined = makeCompound(shapes)
-        return combined, True
-    except Exception:
-        return default_shape, False
 
 
 def run_drape_task(
@@ -110,23 +64,17 @@ def run_drape_task(
             def __init__(self, pitch):
                 self.pitch = float(pitch)
 
-        tess = _tessellate_cut_wires(fp)
-        solver_shape, use_cut = _get_shape_for_solver(fp, shape)
+        dart_wires = _dart_wire_shapes(fp)
 
         # 3. Create backend and run diagnostics
         backend = NextDrapeBackend(
             _SolverParams(fp.DrapePitch), lcs, shape,
-            cut_wires=tess,
-            cut_shape=solver_shape,
-            use_cut_shape=use_cut,
+            dart_wires=dart_wires,
         )
         diag = backend.diagnostics()
 
         # 4. Run the C++ solve
-        if use_cut:
-            solve_result = backend._run_solve()
-        else:
-            solve_result = backend._run_solve()
+        solve_result = backend._run_solve()
 
         # 5. Build draped mesh Coin3D geometry
         from Composites.features.coin_geometry import build_drapecd_coin

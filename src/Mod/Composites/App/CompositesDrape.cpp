@@ -17,6 +17,7 @@
 
 // OpenCASCADE
 #include <TopoDS_Shape.hxx>
+#include <TopoDS.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Dir.hxx>
 #include <BRepTools.hxx>
@@ -56,6 +57,26 @@ static TopoDS_Shape extract_topods_shape(PyObject* obj) {
     return topo->getShape();
 }
 
+namespace {
+
+/// Human-readable name for a TopAbs shape type (error identity in
+/// dart-wire extraction).
+std::string ShapeTypeToString(TopAbs_ShapeEnum type) {
+    switch (type) {
+        case TopAbs_COMPOUND: return "compound";
+        case TopAbs_COMPSOLID: return "compsolid";
+        case TopAbs_SOLID: return "solid";
+        case TopAbs_SHELL: return "shell";
+        case TopAbs_FACE: return "face";
+        case TopAbs_WIRE: return "wire";
+        case TopAbs_EDGE: return "edge";
+        case TopAbs_VERTEX: return "vertex";
+        default: return "shape";
+    }
+}
+
+}  // namespace
+
 // ── Shared helpers (used by both the solve() free function and the
 //    DrapeEngine.compute() method, so the dict shape stays identical) ──
 
@@ -91,6 +112,41 @@ static nextdrape::DrapeParams build_params(const py::dict& params_dict) {
         params.cutWires.blockQuadsCrossingWire =
             pybind11::cast<bool>(
                 params_dict["cut_wires_block_quads"]);
+
+    // Caller-provided darts: each entry is either a Part.Shape (wire) on
+    // the support surface (take-up 0 — plain slit annotation) or a
+    // (wire, take-up degrees) pair — the prescribed wedge the dart cuts
+    // from the flat pattern. Extraction traps at the call site: a bad
+    // entry fails the solve with the entry's index, never a silent skip.
+    if (params_dict.contains("dart_wires")) {
+        const py::sequence dartList = params_dict["dart_wires"];
+        for (std::size_t i = 0; i < dartList.size(); ++i) {
+            py::object entry = py::reinterpret_borrow<py::object>(dartList[i]);
+            py::object wireObj = entry;
+            double takeupDeg = 0.0;
+            if (py::isinstance<py::sequence>(entry) && py::len(entry) == 2) {
+                py::sequence pair = py::reinterpret_borrow<py::sequence>(entry);
+                wireObj = pair[0];
+                takeupDeg = pair[1].cast<double>();
+            }
+            TopoDS_Shape dartShape;
+            try {
+                dartShape = extract_topods_shape(wireObj.ptr());
+            } catch (const std::exception& e) {
+                throw std::runtime_error(
+                    std::string("dart_wires[") + std::to_string(i) +
+                    "]: not a Part.Shape wire (" + e.what() + ")");
+            }
+            if (dartShape.ShapeType() != TopAbs_WIRE) {
+                throw std::runtime_error(
+                    "dart_wires[" + std::to_string(i) +
+                    "]: expected a wire, got a " +
+                    ShapeTypeToString(dartShape.ShapeType()));
+            }
+            params.cutWires.darts.push_back(
+                nextdrape::DartSpec{TopoDS::Wire(dartShape), takeupDeg});
+        }
+    }
 
     return params;
 }

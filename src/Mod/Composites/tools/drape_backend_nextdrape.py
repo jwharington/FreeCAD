@@ -67,6 +67,7 @@ class NextDrapeBackend(DrapeBackend):
         cut_wires: list | None = None,
         cut_shape: Any = None,
         use_cut_shape: bool = False,
+        dart_wires: list | None = None,
     ) -> None:
         # Persistent frontend: compute() builds the UV-query index that
         # lookup_uv() then serves. The engine owns the algorithm choice
@@ -79,6 +80,9 @@ class NextDrapeBackend(DrapeBackend):
         self._cut_wires = cut_wires
         self._cut_shape = cut_shape
         self._use_cut_shape = use_cut_shape
+        # Dart wires as Part.Shape objects — passed to the solver as
+        # genuine wires (dartWires), not tessellated point lists.
+        self._dart_wires = dart_wires
         self._result: dict | None = None
         self._valid = True
 
@@ -498,11 +502,14 @@ class NextDrapeBackend(DrapeBackend):
             "use_geodesic": getattr(mesh, "use_geodesic", False),
         }
         # When cut wires are specified, enable the C++ cut-wire blocking
-        # engine. The wires are embedded in the compound support Shape
-        # so C++ DiscoverCutWires() can discover them natively.
-        if self._cut_wires:
+        # engine. The dart wires themselves go through "dart_wires" as
+        # genuine Part.Shape wires — the C++ layer unwraps them and
+        # discovers their owning faces natively.
+        if self._cut_wires or self._dart_wires:
             params["cut_wires_enabled"] = True
             params["cut_wires_proximity_tol"] = 0.5
             params["cut_wires_block_nodes"] = True
             params["cut_wires_block_quads"] = True
+        if self._dart_wires:
+            params["dart_wires"] = self._dart_wires
         return params
