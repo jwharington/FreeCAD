@@ -16,6 +16,41 @@ if TYPE_CHECKING:
     import FreeCAD  # noqa: F401
 
 
+def _tessellate_cut_wires(fp: Any) -> list[list[tuple[float, float, float]]] | None:
+    """Tessellate DrapeCuts wires into lists of 3D point coordinates.
+
+    Returns ``None`` if no cut wires are specified, or the list
+    tessellated 3D point sequences otherwise.
+    """
+    cuts = getattr(fp, "DrapeCuts", None)
+    if not cuts or not hasattr(fp, "DrapeCuts") or len(fp.DrapeCuts) == 0:
+        return None
+
+    result: list[list[tuple[float, float, float]]] = []
+    import FreeCAD
+
+    doc = fp.Document
+    for obj_ref in fp.DrapeCuts:
+        # obj_ref may be a document object (GUI) or a string name.
+        obj = obj_ref if hasattr(obj_ref, "Shape") else doc.getObject(obj_ref)
+        if obj is None:
+            continue
+        wire = obj.Shape if hasattr(obj, "Shape") else None
+        if wire is None:
+            continue
+        for edge in wire.Edges:
+            try:
+                vals = edge.tessellate(50)
+                pts: list[tuple[float, float, float]] = [
+                    (float(v[0]), float(v[1]), float(v[2])) for v in vals[1]
+                ]
+                if len(pts) >= 2:
+                    result.append(pts)
+            except Exception:
+                continue
+    return result if result else None
+
+
 def _dart_wire_shapes(fp: Any) -> list[Any] | None:
     """Collect DrapeCuts projection shapes for the solver.
 
@@ -65,6 +100,10 @@ def run_drape_task(
                 self.pitch = float(pitch)
 
         dart_wires = _dart_wire_shapes(fp)
+
+        # Display cut-wire walks for the overlay (pure presentation data
+        # from the feature's own wires — the solver receives the shapes).
+        tess = _tessellate_cut_wires(fp)
 
         # 3. Create backend and run diagnostics
         backend = NextDrapeBackend(
