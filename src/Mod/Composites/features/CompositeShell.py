@@ -638,6 +638,9 @@ class CompositeShellFP(CompositeBaseFP):
                 # pitch.  DrapePitch is a plain float property committed
                 # per edit — no continuous slider, so no per-tick solve.
                 fp.enforceRecompute()
+                # Flag the proxy too: the persisted-drape checks read this
+                # to refuse stale results until the deferred recompute runs.
+                self._needs_recompute = True
 
             case "Support":
                 fp.recompute()
