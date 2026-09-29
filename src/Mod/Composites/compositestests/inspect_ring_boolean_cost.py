@@ -250,6 +250,39 @@ def _make_qi_laminate(doc, name):
     return laminate
 
 
+def _make_draped_laminate(doc, name):
+    """A non-isotropic laminate, so the panel is draped and its transfers
+    (and therefore the rosette solve) actually run."""
+    from Composites.features.HomogeneousLamina import HomogeneousLaminaFP
+    from Composites.features.Laminate import LaminateFP
+
+    carbon = {
+        "Name": "Carbon",
+        "Density": "1750.0 kg/m^3",
+        "PoissonRatioXY": "0.27",
+        "PoissonRatioXZ": "0.27",
+        "PoissonRatioYZ": "0.45",
+        "ShearModulusXY": "5000 MPa",
+        "ShearModulusXZ": "5000 MPa",
+        "ShearModulusYZ": "3500 MPa",
+        "YoungsModulusX": "135 GPa",
+        "YoungsModulusY": "9.5 GPa",
+        "YoungsModulusZ": "9.5 GPa",
+    }
+    laminate = doc.addObject("Part::FeaturePython", name)
+    LaminateFP(laminate)
+    plies = []
+    for index, angle in enumerate((30.0, -30.0)):
+        ply = doc.addObject("Part::FeaturePython", f"{name}_Ply{index}")
+        HomogeneousLaminaFP(ply)
+        ply.Angle = angle
+        ply.Thickness = 0.5
+        ply.Material = carbon
+        plies.append(ply)
+    laminate.Layers = plies
+    return laminate
+
+
 def _make_panel(doc, name, sleeve, laminate):
     from Composites.features.CompositeShell import CompositeShellFP
 
@@ -302,6 +335,12 @@ def _parse_args(argv):
     parser.add_argument("--rings", type=int, default=2)
     parser.add_argument("--height", type=float, default=48.0)
     parser.add_argument("--width", type=float, default=36.0)
+    parser.add_argument(
+        "--draped",
+        action="store_true",
+        help="give the sleeve a non-isotropic (draped) laminate so the "
+        "stiffener transfers, and therefore the rosette solve, run",
+    )
     return parser.parse_args(shlex.split(argv))
 
 
@@ -332,7 +371,10 @@ def main(argv=""):
     _instrument()
 
     doc = FreeCAD.newDocument("ring_boolean_cost")
-    laminate = _make_qi_laminate(doc, "FrameQILaminate")
+    if args.draped:
+        laminate = _make_draped_laminate(doc, "PanelLaminate")
+    else:
+        laminate = _make_qi_laminate(doc, "FrameQILaminate")
     started = time.perf_counter()
     for index in range(args.rings):
         name = f"Ring{index}"
