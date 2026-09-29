@@ -96,22 +96,40 @@ def shape_stamp(shape) -> str:
 
 
 def shares_boundary_edge(shape_a, shape_b, tolerance: float = 1e-3) -> bool:
-    """Whether the two shapes have a boundary edge in common.
+    """Whether one shape's boundary lies on the other.
 
-    A cheap alternative to sectioning the two shapes.  The contract this
-    checks is literally "they share a boundary edge", so it compares their
-    boundary edges directly (edge-to-edge distance within *tolerance*),
-    which avoids the surface-by-surface intersection — the composite flow's
-    most expensive operation, and one that builds Boolean history the
-    callers never use.
+    The contract this checks is "they share a boundary": the seam region is
+    *part of* the surface of the shape it laps onto, so its boundary curves
+    lie on that surface.  Those curves are on the other shape's boundary in
+    the simple case (a plate, a sleeve ring whose seat spans the support)
+    but *inside* its faces once supports chain — a stiffener's seat sitting
+    in the middle of the region left by an earlier one.  Comparing boundary
+    edges against each other therefore works only for the simple case (it
+    failed the chained ones), so each side's edges are tested against the
+    other whole shape instead.
 
-    Edge counts here are small (a support face and a seam strip: a handful
-    each), so the pairwise test is a few dozen 1-D distance queries, not
-    the surface intersection a section performs.
+    A cheap alternative to sectioning the two shapes: a handful of 1-D
+    distance queries against a face, instead of the surface-by-surface
+    intersection — the composite flow's most expensive operation, and one
+    that builds Boolean history the callers never use.
     """
+    # Either relationship counts: an edge of one lying on the other shape
+    # (the interior case, where the seam laps inside a support region), or
+    # two coincident boundary edges (the simple case, where the seam spans
+    # the support and its rows *are* that support's boundaries).  Both are
+    # cheap; keeping both means neither case can regress.
+    for edges, other in (
+        (shape_a.Edges, shape_b),
+        (shape_b.Edges, shape_a),
+    ):
+        for edge in edges:
+            try:
+                distance = other.distToShape(edge)[0]
+            except Exception:
+                continue
+            if distance <= tolerance:
+                return True
     edges_b = list(shape_b.Edges)
-    if not edges_b:
-        return False
     for edge_a in shape_a.Edges:
         for edge_b in edges_b:
             try:
