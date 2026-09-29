@@ -89,17 +89,17 @@ def _record(label, arguments, elapsed):
     entry["keys"][arguments] = entry["keys"].get(arguments, 0) + 1
 
 
-def _shape_key(*shapes):
-    """Record both candidate keys for the two shapes.
+def _keys_for(*shapes):
+    """Three candidate cache keys for the same shapes.
 
-    ``hashCode`` follows the underlying OCCT shape (stable across Python
-    re-wraps); ``fingerprint`` is content-based.  Reporting both shows
-    which one a cache can actually hit: if fingerprints differ while
-    hashCodes agree, fingerprinting is what defeats content keying.
+    Recorded side by side so the report shows calls versus distinct keys
+    for each scheme: a scheme whose distinct count collapses to the number
+    of real argument pairs is usable for memoisation; one that stays near
+    the call count is not.
     """
-    from Composites.util.geometry_util import shape_fingerprint
+    from Composites.util.geometry_util import shape_fingerprint, shape_stamp
 
-    codes, fingerprints = [], []
+    codes, fingerprints, stamps = [], [], []
     for shape in shapes:
         try:
             codes.append(shape.hashCode())
@@ -109,7 +109,15 @@ def _shape_key(*shapes):
             fingerprints.append(shape_fingerprint(shape))
         except Exception:
             fingerprints.append(None)
-    return (tuple(codes), tuple(fingerprints))
+        try:
+            stamps.append(shape_stamp(shape))
+        except Exception:
+            stamps.append(None)
+    return {
+        "hashCode": tuple(codes),
+        "fingerprint": tuple(fingerprints),
+        "stamp": tuple(stamps),
+    }
 
 
 def _caller() -> str:
@@ -123,9 +131,40 @@ def _caller() -> str:
     return "?"
 
 
+def _wrap_static(cls, name, label):
+    """Count and time a staticmethod in place."""
+    original = getattr(cls, name)
+
+    def wrapper(*args, **kwargs):
+        started = time.perf_counter()
+        try:
+            return original(*args, **kwargs)
+        finally:
+            _record(f"{label} <- {_caller()}", None, time.perf_counter() - started)
+
+    setattr(cls, name, staticmethod(wrapper))
+
+
+def _wrap_method(cls, name, label):
+    """Count and time an instance method in place."""
+    original = getattr(cls, name)
+
+    def wrapper(self, *args, **kwargs):
+        started = time.perf_counter()
+        try:
+            return original(self, *args, **kwargs)
+        finally:
+            _record(f"{label}", None, time.perf_counter() - started)
+
+    setattr(cls, name, wrapper)
+
+
 def _instrument():
     """Wrap the Python boolean entry points with counters and timers."""
     from Composites.features.TransferRosette import TransferRosetteFP
+    from Composites.features.SeamCompositeLaminate import (
+        SeamCompositeLaminateFP,
+    )
     from Composites.tools import stiffener as stiffener_tools
 
     original_edge = TransferRosetteFP._shared_edge
@@ -135,13 +174,30 @@ def _instrument():
         try:
             return original_edge(master, attachment)
         finally:
-            _record(
-                f"_shared_edge <- {_caller()}",
-                _shape_key(master, attachment),
-                time.perf_counter() - started,
-            )
+            elapsed = time.perf_counter() - started
+            caller = _caller()
+            for scheme, key in _keys_for(master, attachment).items():
+                _record(
+                    f"_shared_edge [{scheme}] <- {caller}",
+                    key,
+                    elapsed if scheme == "stamp" else 0.0,
+                )
 
     TransferRosetteFP._shared_edge = staticmethod(shared_edge)
+
+    # The rest of the solve's per-evaluation cost: the brute-force
+    # nearest-face normal per sample, and the edge sampling itself.
+    _wrap_static(TransferRosetteFP, "_surface_normal", "_surface_normal")
+    _wrap_static(TransferRosetteFP, "_sample_edge", "_sample_edge")
+    # The validation and its gate, so their own share is separable from
+    # the sections they call (rows nest: _validate_wiring includes its
+    # _shared_edge calls).
+    _wrap_method(
+        SeamCompositeLaminateFP, "_validate_wiring", "_validate_wiring"
+    )
+    _wrap_method(
+        SeamCompositeLaminateFP, "_input_fingerprint", "_input_fingerprint"
+    )
 
     original_paths = stiffener_tools.intersection_paths
 
@@ -152,7 +208,7 @@ def _instrument():
         finally:
             _record(
                 "tools.stiffener.intersection_paths",
-                _shape_key(support, cut_surface),
+                _keys_for(support, cut_surface)["stamp"],
                 time.perf_counter() - started,
             )
 
