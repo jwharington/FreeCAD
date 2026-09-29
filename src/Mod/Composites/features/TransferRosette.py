@@ -115,7 +115,14 @@ class TransferRosetteFP(RosetteFP):
     # the fingerprint, and the SCL re-executes via its own direct shell
     # links.
 
-    def __init__(self, obj, support=None, master_shell=None, attachment_shell=None):
+    def __init__(
+        self,
+        obj,
+        support=None,
+        master_shell=None,
+        attachment_shell=None,
+        direct_contact=False,
+    ):
         # Suppress any solve while the defining references are being set up.
         # Set before super().__init__ (which may trigger onChanged).
         self._solving = True
@@ -132,6 +139,18 @@ class TransferRosetteFP(RosetteFP):
             group="References",
             doc="Attachment composite shell whose rosette this is",
         ).AttachmentShell = attachment_shell
+        obj.addProperty(
+            type="App::PropertyBool",
+            name="DirectContact",
+            group="Solve",
+            doc=(
+                "Measure warp continuity at the rosette's own contact point "
+                "instead of averaging along the shells' shared boundary "
+                "edge.  Valid for insertion joints, where the stiffener "
+                "must follow the panel where it sits, and it needs no "
+                "section at all; the edge solve remains for seam joints."
+            ),
+        ).DirectContact = bool(direct_contact)
         self._solving = False
         if master_shell is not None and attachment_shell is not None:
             # The property-set onChanged calls above were suppressed by the
@@ -260,21 +279,25 @@ class TransferRosetteFP(RosetteFP):
         """
         master = fp.MasterShell
         attachment = fp.AttachmentShell
-        # The two shells must share a topological boundary edge. If they don't
-        # (e.g. a glued assembly with no common edge), this is a misuse of
-        # the feature — raise a clear error rather than silently solving
-        # against a zero residual.
-        edge = self._shared_edge(
-            self._shape_of(master), self._shape_of(attachment)
-        )
-        if edge is None:
-            raise ValueError(
-                "TransferRosette: master and attachment shells share no "
-                "boundary edge — cannot transfer warp orientation."
-            )
         self._ensure_wired(fp)
+        # Insertion joints measure at the rosette's own contact point: the
+        # residual is a difference of two frame angles about a shared
+        # reference, so one point on the contact line is sufficient and no
+        # section is needed.  Everything else — the seam flow, and a joint
+        # whose rosette has no contact point — averages along the shells'
+        # shared boundary edge, which also validates that the edge exists.
+        target = self._contact_point(fp)
+        if target is None:
+            target = self._shared_edge(
+                self._shape_of(master), self._shape_of(attachment)
+            )
+            if target is None:
+                raise ValueError(
+                    "TransferRosette: master and attachment shells share no "
+                    "boundary edge — cannot transfer warp orientation."
+                )
         angle = wrap_angle(float(getattr(fp, "Angle", 0.0) or 0.0))
-        residual = self._residual_at(fp, angle, edge)
+        residual = self._residual_at(fp, angle, target)
         for _ in range(3):
             if abs(residual) <= _ANGLE_TOL_RAD:
                 _debug(
@@ -282,7 +305,7 @@ class TransferRosetteFP(RosetteFP):
                     f"(residual {residual:.3g} rad)"
                 )
                 return
-            slope = self._residual_slope(fp, angle, edge)
+            slope = self._residual_slope(fp, angle, target)
             if abs(slope) < _MIN_SLOPE_MAGNITUDE:
                 raise RosetteSolveError(
                     f"TransferRosette {fp.Name}: residual is insensitive "
@@ -290,40 +313,193 @@ class TransferRosetteFP(RosetteFP):
                     f"warp continuity on this joint geometry"
                 )
             angle = wrap_angle(angle - residual / slope)
-            residual = self._residual_at(fp, angle, edge)
+            residual = self._residual_at(fp, angle, target)
         raise RosetteSolveError(
             f"TransferRosette {fp.Name}: warp-continuity residual did not "
             f"settle within tolerance (last angle {angle:.4f} deg, "
             f"residual {residual:.3g} rad)"
         )
 
-    def _residual_at(self, fp, angle: float, edge=None) -> float:
+    def _residual_at(self, fp, angle: float, target=None) -> float:
         """Place the LCS at *angle* and read the residual in radians.
 
-        *edge* is the joint's shared edge.  Pass it when the caller has
-        already derived it (the solve does): it depends only on the two
-        shells, never on the angle, and the section that derives it is the
-        flow's most expensive operation.
+        *target* is the joint's shared edge (averaged along it) or, for an
+        insertion joint, a single contact point.  Pass it when the caller
+        has it: the target does not depend on the angle, while measuring it
+        again would (for an edge) rebuild the flow's most expensive section.
         """
         fp.Angle = angle
         self.execute(fp)  # place the LCS for the current angle
-        return self._edge_angle_error(fp, edge)
+        if isinstance(target, FreeCAD.Vector):
+            return self._point_angle_error(fp, target)
+        return self._edge_angle_error(fp, target)
 
-    def _residual_slope(self, fp, angle: float, edge=None) -> float:
+    def _residual_slope(self, fp, angle: float, target=None) -> float:
         """Measured residual slope, radians of residual per degree of Angle.
 
         Two free probes one degree either side, with the mod-pi fold
         unwrapped so a probe pair straddling a fold boundary still reads
         the true linear slope instead of its wrapped complement.
         """
-        r_lo = self._residual_at(fp, angle - _SLOPE_PROBE_DEG, edge)
-        r_hi = self._residual_at(fp, angle + _SLOPE_PROBE_DEG, edge)
+        r_lo = self._residual_at(fp, angle - _SLOPE_PROBE_DEG, target)
+        r_hi = self._residual_at(fp, angle + _SLOPE_PROBE_DEG, target)
         delta = r_hi - r_lo
         if delta > _HALF_PI:
             delta -= math.pi
         elif delta < -_HALF_PI:
             delta += math.pi
         return delta / (2.0 * _SLOPE_PROBE_DEG)
+
+    @staticmethod
+    def _contact_point(fp):
+        """A robust point on the contact line, for direct solving.
+
+        None unless the rosette asks for direct contact alignment: the
+        general solve's edge measurement (and its boundary-edge validation)
+        stays in force for seam joints.
+
+        The point is the centre of mass of the rosette's support face, not
+        the LCS origin: the origin is the face's *parametric* centre, which
+        on a closed cylinder sits exactly on the face's seam line.  There
+        the nearest-face lookup can flip between the seam's two halves,
+        flipping the measurement normal and jumping the residual by pi
+        between two probe calls — measured as a slope of -0.0012 rad/deg
+        where 0.0175 was expected, so the solve refused to converge.  The
+        centre of mass is an interior point, well away from any seam.
+        """
+        if not bool(getattr(fp, "DirectContact", False)):
+            return None
+        support = getattr(fp, "Support", None)
+        if support is not None:
+            try:
+                basis, sub = support
+                for geom in basis.getSubObject(sub) or []:
+                    centre = getattr(geom, "CenterOfMass", None)
+                    if centre is not None:
+                        return FreeCAD.Vector(centre)
+            except Exception:
+                pass
+        lcs = getattr(fp, "LocalCoordinateSystem", None)
+        if lcs is None:
+            return None
+        return FreeCAD.Vector(lcs.Placement.Base)
+
+    def _point_angle_error(self, fp, point) -> float:
+        """Warp mismatch at one contact point.
+
+        The same measurement the edge path makes, evaluated at a single
+        point on the contact line: each side's signed warp angle about the
+        joint normal, against one shared reference tangent.  The reference
+        tangent cancels in the difference but must not lie along either
+        warp (that puts both angles at an atan2 limit and the residual goes
+        flat in Angle), so it is built from the master's surface *U*
+        direction at the point, which is independent of both rosettes.
+        """
+        master = fp.MasterShell
+        master_shape = self._shape_of(master)
+        master_normal = self._surface_normal(master_shape, point)
+        if master_normal is None:
+            return 0.0
+        lcs = getattr(fp, "LocalCoordinateSystem", None)
+        if lcs is None:
+            return 0.0
+        tangent = self._surface_tangent(master_shape, point, master_normal)
+        if tangent is None:
+            return 0.0
+        # Reference the measurement to the MASTER's warp: the tangent then
+        # cancels for the master side and the residual reads directly as the
+        # angle still to apply.  It must not be left exactly on the mod-pi
+        # fold cut, which is what happens when the two warps start 90 deg
+        # apart, so a warp-aligned tangent is rotated a quarter of the joint
+        # angle away from the attachment warp is unnecessary here: the value
+        # at the cut is handled by the solve's probe unwrap, and the contact
+        # point (not the tangent) was what made the measurement discontinuous.
+
+        attachment_shape = self._shape_of(fp.AttachmentShell)
+        attachment_normal = self._surface_normal(attachment_shape, point)
+        master_rotation = self._master_frame(master)
+        attachment_rotation = lcs.Placement.Rotation
+        coplanar = (
+            attachment_normal is not None
+            and abs(master_normal.dot(attachment_normal))
+            > 1.0 - _COPLANAR_DOT_TOL
+        )
+        if coplanar:
+            phi_m = self._axis_angle_about(
+                master_rotation, tangent, master_normal
+            )
+            phi_a = self._axis_angle_about(
+                attachment_rotation, tangent, master_normal
+            )
+        else:
+            phi_m = self._axis_angle(master_rotation, tangent)
+            phi_a = self._axis_angle(attachment_rotation, tangent)
+        residual = (phi_a - phi_m + _HALF_PI) % math.pi - _HALF_PI
+        _debug(
+            "point %s: angle=%.4f coplanar=%s tangent=(%.4f,%.4f,%.4f) "
+            "n_m=(%.4f,%.4f,%.4f) n_a=%s phi_m=%+.6f phi_a=%+.6f "
+            "residual=%+.6f"
+            % (
+                fp.Name,
+                float(fp.Angle),
+                coplanar,
+                tangent.x,
+                tangent.y,
+                tangent.z,
+                master_normal.x,
+                master_normal.y,
+                master_normal.z,
+                "None"
+                if attachment_normal is None
+                else "(%.4f,%.4f,%.4f)"
+                % (
+                    attachment_normal.x,
+                    attachment_normal.y,
+                    attachment_normal.z,
+                ),
+                phi_m,
+                phi_a,
+                residual,
+            )
+        )
+        return residual
+
+    @staticmethod
+    def _surface_tangent(shape, point, normal):
+        """A unit tangent of the face of *shape* nearest *point*.
+
+        Taken from the surface's own parameter axes (the U direction), so it
+        does not depend on any rosette and cannot coincide with a warp by
+        construction.
+        """
+        vertex = Part.Vertex(point)
+        best = None
+        for face in shape.Faces:
+            try:
+                dist, _points, _info = face.distToShape(vertex)
+            except Exception:
+                continue
+            if best is None or dist < best[0]:
+                best = (dist, face)
+        if best is None:
+            return None
+        face = best[1]
+        u, v = face.Surface.parameter(point)
+        d = 1e-6
+        try:
+            first = face.valueAt(u, v)
+            second = face.valueAt(min(u + d, 1.0), v)
+            if (second - first).Length <= 1e-9:
+                second = face.valueAt(u, min(v + d, 1.0))
+            tangent = FreeCAD.Vector(second) - FreeCAD.Vector(first)
+        except Exception:
+            return None
+        if tangent.Length <= 1e-9:
+            return None
+        tangent = tangent - normal * tangent.dot(normal)
+        if tangent.Length <= 1e-9:
+            return None
+        return tangent.normalize()
 
     def _edge_angle_error(self, fp, edge=None) -> float:
         """Signed mean of (phi_attachment - phi_master) along the shared edge.

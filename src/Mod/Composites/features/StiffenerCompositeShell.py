@@ -493,6 +493,31 @@ def _drop_foot_strip(doc, fp) -> None:
             _hide(obj)
 
 
+def _foot_contact_edge_support(foot_shell):
+    """The foot shell's support, addressed at a boundary edge of the foot
+    strip rather than its face.
+
+    A transfer rosette supported on the foot *face* takes its frame from
+    that face's U direction, which on a narrow strip runs **across** the
+    strip — radially, i.e. along the panel normal — so the "warp" the
+    direct contact measurement reads is not a tangential fibre direction at
+    all.  Measured consequence: for the attachment side both ``warp x
+    tangent`` and ``warp . tangent`` vanish, ``atan2(0, 0)`` returns +/-pi,
+    and the residual starts on the fold cut (+pi/2 instead of -pi/2) with a
+    solve slope of -0.0012 rad/deg instead of 0.0175.
+
+    A boundary edge of the strip lies along the contact line, so its U
+    direction is the line's direction: the frame is tangential, and its
+    midpoint is a point on the contact line, which is exactly where the
+    insertion measurement wants to be.
+    """
+    support = getattr(foot_shell, "Support", None)
+    shape = getattr(support, "Shape", None)
+    if shape is not None and len(getattr(shape, "Edges", [])) >= 1:
+        return (support, ["Edge1"])
+    return (support, ["Face1"])
+
+
 def _ensure_panel_foot_transfer(doc, fp, panel, foot_shell):
     """Create/update the solved TransferRosette panel → foot.
 
@@ -506,11 +531,16 @@ def _ensure_panel_foot_transfer(doc, fp, panel, foot_shell):
         transfer = doc.addObject("Part::FeaturePython", name)
         TransferRosetteFP(
             transfer,
-            support=(foot_shell.Support, ["Face1"]),
+            support=_foot_contact_edge_support(foot_shell),
             master_shell=panel,
             attachment_shell=foot_shell,
+            direct_contact=True,
         )
         attach_rosette_view_provider(transfer)
+    elif hasattr(transfer, "DirectContact"):
+        # Existing (e.g. reloaded) transfer: a stiffener insertion is a
+        # direct-contact joint, so adopt the cheaper measurement.
+        transfer.DirectContact = True
     return transfer
 
 
@@ -527,11 +557,14 @@ def _ensure_stiffener_foot_transfer(doc, fp, web_shell, foot_shell):
         rosette = doc.addObject("Part::FeaturePython", name)
         AnalysisTransferRosetteFP(
             rosette,
-            support=(foot_shell.Support, ["Face1"]),
+            support=_foot_contact_edge_support(foot_shell),
             master_shell=web_shell,
             attachment_shell=foot_shell,
+            direct_contact=True,
         )
         attach_rosette_view_provider(rosette)
+    elif hasattr(rosette, "DirectContact"):
+        rosette.DirectContact = True
     return rosette
 
 
