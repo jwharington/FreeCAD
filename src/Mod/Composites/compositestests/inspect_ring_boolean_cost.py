@@ -328,6 +328,127 @@ def _make_ring(doc, name, panel, laminate, station_x, cut_x):
     return stiffener
 
 
+def _dump_direct_quantities(doc, name):
+    """Print what a contact-point measurement reads, at two Angle values.
+
+    Written because a direct single-point residual came back flat in Angle
+    (slope -0.0012 rad/deg against an expected 0.0175) and the cause has to
+    come from the numbers, not from theory: this shows whether the LCS warp
+    rotates, whether the two surface normals resolve, and what each side's
+    signed angle does.
+    """
+    from Composites.features.TransferRosette import TransferRosetteFP
+    from Composites.util.geometry_util import live_support_shape
+
+    transfer = doc.getObject(name)
+    if transfer is None:
+        print(f"DIAG {name}: object not found", flush=True)
+        return
+    proxy = transfer.Proxy
+    for angle in (0.0, 20.0):
+        transfer.Angle = angle
+        proxy.execute(transfer)
+        lcs = transfer.LocalCoordinateSystem
+        rotation = lcs.Placement.Rotation
+        warp = rotation.multVec(FreeCAD.Vector(1.0, 0.0, 0.0))
+        axis = FreeCAD.Vector(0.0, 0.0, 1.0)
+        rotated = rotation.multVec(axis)
+        point = lcs.Placement.Base
+        master = transfer.MasterShell
+        master_shape = live_support_shape(master)
+        attachment_shape = live_support_shape(transfer.AttachmentShell)
+        master_normal = TransferRosetteFP._surface_normal(master_shape, point)
+        attachment_normal = TransferRosetteFP._surface_normal(
+            attachment_shape, point
+        )
+        master_rotation = TransferRosetteFP._master_frame(master)
+        master_warp = master_rotation.multVec(FreeCAD.Vector(1.0, 0.0, 0.0))
+        # A fixed reference tangent, so the two angles are directly comparable.
+        tangent = FreeCAD.Vector(1.0, 0.0, 0.0)
+        print(
+            f"DIAG {name} angle={angle:5.1f} "
+            f"point=({point.x:.2f},{point.y:.2f},{point.z:.2f}) "
+            f"lcs_warp=({warp.x:+.3f},{warp.y:+.3f},{warp.z:+.3f}) "
+            f"lcs_z=({rotated.x:+.3f},{rotated.y:+.3f},{rotated.z:+.3f}) "
+            f"master_warp=({master_warp.x:+.3f},{master_warp.y:+.3f},"
+            f"{master_warp.z:+.3f})",
+            flush=True,
+        )
+        for label, normal in (
+            ("master", master_normal),
+            ("attach", attachment_normal),
+        ):
+            if normal is None:
+                print(f"DIAG   n_{label}=None", flush=True)
+                continue
+            print(
+                f"DIAG   n_{label}=({normal.x:+.3f},{normal.y:+.3f},"
+                f"{normal.z:+.3f})",
+                flush=True,
+            )
+        if master_normal is not None:
+            phi_m = TransferRosetteFP._axis_angle_about(
+                master_rotation, tangent, master_normal
+            )
+            phi_a = TransferRosetteFP._axis_angle_about(
+                rotation, tangent, master_normal
+            )
+            surface_u = TransferRosetteFP._surface_tangent(
+                master_shape, point, master_normal
+            )
+            if surface_u is None:
+                print("DIAG   surface_u=None", flush=True)
+            else:
+                u_m = TransferRosetteFP._axis_angle_about(
+                    master_rotation, surface_u, master_normal
+                )
+                u_a = TransferRosetteFP._axis_angle_about(
+                    rotation, surface_u, master_normal
+                )
+                print(
+                    f"DIAG   surface_u=({surface_u.x:+.3f},"
+                    f"{surface_u.y:+.3f},{surface_u.z:+.3f}) "
+                    f"u_phi_m={u_m:+.6f} u_phi_a={u_a:+.6f} "
+                    f"u_residual={u_a - u_m:+.6f} rad",
+                    flush=True,
+                )
+            print(
+                f"DIAG   phi_m={phi_m:+.6f} phi_a={phi_a:+.6f} "
+                f"residual={phi_a - phi_m:+.6f} rad",
+                flush=True,
+            )
+
+
+def _trace_point_solves():
+    """Print every point-measurement the solve makes: the Angle it is at and
+    the residual it read.  A residual that is 1:1 by hand but flat inside
+    the solve shows up here directly."""
+    from Composites.features.TransferRosette import TransferRosetteFP
+
+    original = TransferRosetteFP._point_angle_error
+    seen = {"n": 0}
+
+    def wrapper(self, fp, point):
+        residual = original(self, fp, point)
+        if seen["n"] < 24:
+            seen["n"] += 1
+            lcs = getattr(fp, "LocalCoordinateSystem", None)
+            warp = FreeCAD.Vector(0, 0, 0)
+            if lcs is not None:
+                warp = lcs.Placement.Rotation.multVec(
+                    FreeCAD.Vector(1.0, 0.0, 0.0)
+                )
+            print(
+                f"TRACE {fp.Name} angle={float(fp.Angle):+8.4f} "
+                f"warp=({warp.x:+.4f},{warp.y:+.4f},{warp.z:+.4f}) "
+                f"residual={residual:+.6f} rad",
+                flush=True,
+            )
+        return residual
+
+    TransferRosetteFP._point_angle_error = wrapper
+
+
 def _parse_args(argv):
     import argparse
 
@@ -369,6 +490,10 @@ def _report(rings, wall):
 def main(argv=""):
     args = _parse_args(argv or os.environ.get("RING_BOOL_ARGS", ""))
     _instrument()
+    if args.draped:
+        from Composites.features import TransferRosette as _tr
+        _tr.debug = True
+        _trace_point_solves()
 
     doc = FreeCAD.newDocument("ring_boolean_cost")
     if args.draped:
@@ -386,6 +511,9 @@ def main(argv=""):
         _make_ring(doc, name, panel, laminate, station_x, cut_x)
         print(f"{name}: {time.perf_counter() - ring_started:.1f}s", flush=True)
     _report(args.rings, time.perf_counter() - started)
+    if args.draped:
+        for index in range(args.rings):
+            _dump_direct_quantities(doc, f"Ring{index}_PanelFootTransfer")
     return 0
 
 
