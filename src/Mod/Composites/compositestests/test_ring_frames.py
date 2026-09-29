@@ -203,6 +203,44 @@ class TestRingFrames(StiffenerCompositeFixture):
             self.assertEqual(len(remainder.Shape.Faces), 0)
             self.assertGreater(panel.Support.Shape.Area, 0.0)
 
+    def test_seat_cut_leaves_the_sleeve_margins(self):
+        """Cutting the ring's seat out of the lofted sleeve leaves margins.
+
+        The seat (the profile's base row, swept along the ring) lies ON the
+        sleeve, so subtracting it is a coplanar-face Boolean.  On a lofted
+        sleeve that returns an *empty* shape — measured: zero pieces, so
+        the panel's weave exclusivity silently disappeared on exactly the
+        geometry the real parts use.  A planar plate happens to survive the
+        same cut, which is why the suite never caught it.
+
+        The sleeve spans the frame width plus a margin at each end, so a
+        correct cut leaves two pieces, one per margin, neither overlapping
+        the seat's span.
+        """
+        _, built = self._build_all_rings()
+        name, panel, _ = built[0]
+        station_x = STATIONS[0][0]
+        cut_x = station_x + SLEEVE_MARGIN
+
+        remainder = self.doc.getObject(f"{name}_RemainderSupport")
+        pieces = list(remainder.Shape.Faces)
+        self.assertGreaterEqual(
+            len(pieces),
+            2,
+            f"seat cut left {len(pieces)} piece(s): the sleeve margins "
+            f"should survive as separate pieces",
+        )
+        for piece in pieces:
+            box = piece.BoundBox
+            in_outboard_margin = box.XMax <= cut_x + 1e-6
+            in_inboard_margin = box.XMin >= cut_x + FRAME_SECTION - 1e-6
+            self.assertTrue(
+                in_outboard_margin or in_inboard_margin,
+                f"piece spans X[{box.XMin:.3f}, {box.XMax:.3f}], which "
+                f"overlaps the seat span [{cut_x:.3f}, "
+                f"{cut_x + FRAME_SECTION:.3f}]",
+            )
+
     def test_ring_recompute_is_stable(self):
         """A second recompute keeps the rings wired and the panels whole."""
         _, built = self._build_all_rings()
