@@ -549,6 +549,31 @@ def _support_remainders(support: Part.Shape, stiffener: Part.Shape):
     return pieces
 
 
+# Separation below which a stiffener face is taken to meet the support face:
+# a seat lies *on* the support, so its faces are at zero distance, and a tool
+# further than this cannot split the face at all.
+_MEETING_TOLERANCE = 1e-3
+
+
+def _tools_meeting(face, stiffener: Part.Shape):
+    """The stiffener's faces that meet the support face.
+
+    A cheap prefilter in front of the general fuse: a tool that does not
+    reach the face cannot split it, and passing it anyway is what shortened
+    the fuse's provenance map and lost the untouched piece (see
+    ``_pieces_around``).  A face whose distance cannot be measured is kept —
+    the fuse decides its fate rather than the prefilter dropping it.
+    """
+    meeting = []
+    for candidate in stiffener.Faces:
+        try:
+            if face.distToShape(candidate)[0] <= _MEETING_TOLERANCE:
+                meeting.append(candidate)
+        except Exception:
+            meeting.append(candidate)
+    return meeting
+
+
 def _pieces_around(face, stiffener: Part.Shape):
     """The parts of *face* that belong to the support, not to the seat.
 
@@ -567,12 +592,25 @@ def _pieces_around(face, stiffener: Part.Shape):
     tried to repair it by filtering on centre of mass, which is arbitrary
     and unnecessary when the fuse already records each piece's owner.
 
+    Only the tools that *meet* the face are passed.  The fuse can split a
+    face only where a tool reaches it, and asking it to split with a
+    disjoint tool leaves the provenance map short — OCCT reports "Map entry
+    0 is empty.  Source-to-piece correspondence information is probably
+    incomplete." and ``piecesFromSource`` then returns nothing for the
+    support, so the whole untouched piece was lost (measured on the chained
+    fixture: a face 20 mm from the seat disappeared from the remainder, and
+    with it half of the plate).  A face no tool meets is therefore returned
+    whole, without a fuse.
+
     Tools are wrapped in compounds, as FreeCAD's own Part Slice does, so
     their pieces cannot contaminate the result.  Falls back to the bare
     subtraction if the fuse or the provenance lookup raises, so a support
     this path cannot handle behaves as it did before.
     """
-    tools = [Part.makeCompound([candidate]) for candidate in stiffener.Faces]
+    meeting = _tools_meeting(face, stiffener)
+    if not meeting:
+        return list(face.Faces)
+    tools = [Part.makeCompound([candidate]) for candidate in meeting]
     shapes = [face] + tools
     try:
         from BOPTools.GeneralFuseResult import GeneralFuseResult

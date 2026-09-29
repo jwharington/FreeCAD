@@ -47,6 +47,32 @@ from .TransferRosette import TransferRosetteFP
 from ..util.geometry_util import shares_boundary_edge
 
 
+def _edge_mismatch_detail(side, side_shape, seam_shape) -> str:
+    """Describe why the shared-edge check failed, for the raised message.
+
+    A loud failure should say *which* geometry it looked at: the side's
+    support object (the panel's pointer moves along a chained support, so
+    which remainder it names is the first thing to establish), the face
+    counts and areas on both sides, and the closest approach between them.
+    A shape distance at zero with no shared edge means the pieces meet but
+    their curves do not coincide — a different repair from pieces that are
+    apart.
+    """
+    support = getattr(side, "Support", None)
+    try:
+        gap = side_shape.distToShape(seam_shape)[0]
+    except Exception as exc:
+        gap = f"unmeasurable ({exc})"
+    return (
+        f" [support={getattr(support, 'Name', support)}, "
+        f"faces={len(side_shape.Faces)}, "
+        f"area={side_shape.Area:.4g}, "
+        f"seam faces={len(seam_shape.Faces)}, "
+        f"seam area={seam_shape.Area:.4g}, "
+        f"gap={gap}]"
+    )
+
+
 class CombinationModel:
     """Names of the supported seam combination models.
 
@@ -297,12 +323,13 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
         # ~15 s ring).
         seam_shape = TransferRosetteFP._shape_of(seam)
         for name in ("Master", "Attachment"):
-            if not shares_boundary_edge(
-                TransferRosetteFP._shape_of(getattr(obj, name)), seam_shape
-            ):
+            side = getattr(obj, name)
+            side_shape = TransferRosetteFP._shape_of(side)
+            if not shares_boundary_edge(side_shape, seam_shape):
                 raise ValueError(
                     f"{type(self).__name__}: {name} shares no boundary "
                     f"edge with the seam region"
+                    f"{_edge_mismatch_detail(side, side_shape, seam_shape)}"
                 )
 
     # ── angle analysis ────────────────────────────────────────────
