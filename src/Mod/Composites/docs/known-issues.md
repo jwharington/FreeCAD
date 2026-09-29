@@ -468,6 +468,27 @@ the validation too. One line of instrumentation settles which: print the
 Master shape's face count and each clause's outcome inside `_validate_wiring`
 while running `TestMultipleStiffenersOnOnePanel`.
 
+**RESOLVED, same day (`49ec29c8a2`).** Two rules together give the exact
+remainder, and the symptom this entry describes was their absence:
+
+1. A piece belongs to the remainder when the general fuse records that it came
+   from the support **alone** (`16b15a71ec`); the stiffener's own faces are
+   never listed again, and the centre-of-mass filter that hid them is gone.
+2. Only the stiffener faces that *meet* a support face are passed to the fuse.
+   A disjoint tool shortened the provenance map (OCCT: *"Map entry 0 is empty.
+   Source-to-piece correspondence information is probably incomplete."*) and
+   the untouched piece disappeared — measured on the chained fixture, the face
+   at y[50,60] was lost, leaving the second remainder at 1200 instead of 2400
+   and the panel's weave short by half the plate. That lost piece, not a
+   validation contract, was why every chained seam reported no shared edge.
+
+Ring remainder: empty, which is the geometry's own answer (the sleeve *is* the
+frame section, so no support surface lies beyond the seat). Plate remainder:
+the margins. 137 tests pass across the seven stiffener/seam/transfer modules,
+including `test_t_section_on_a_tilted_cut_of_a_conical_panel` (the 60-vs-80
+cone case, #13). `compositestests/inspect_chain_remainders.py` is the
+committed diagnostic that settled it.
+
 ## #13 — OCCT's 2D row offset fails on interior sections of a lofted surface
 
 **Status:** OPEN (mitigated 2026-09-29; the cone case still differs)
