@@ -261,7 +261,9 @@ def _sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire:
         return row
     if len(row.Edges) == 1 and isinstance(row.Edges[0].Curve, Part.Line):
         return _translated_sideways(row, ordinate, normal)
-    return _occt_sideways(row, ordinate, normal)
+    if len(row.Edges) == 1:
+        return _occt_sideways(row, ordinate, normal)
+    return _creased_sideways(row, ordinate, normal)
 
 
 def _translated_sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire:
@@ -308,6 +310,46 @@ def _occt_sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire
             <= OFFSET_DIRECTION_TOLERANCE
         ):
             return _oriented_by_travel(Part.Wire(pieces), normal)
+    raise ValueError(
+        "neither offset direction moved the profile row along the height "
+        "direction"
+    )
+
+
+def _creased_sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire:
+    """The row moved sideways where it has a crease, joined at the crease.
+
+    A parallel curve is defined only for a smooth curve.  At a crease — a row
+    crossing a fold in the support — the two exact offsets do not meet, and
+    connecting them is a separate decision (OCCT's ``GeomAbs_Arc`` or
+    ``GeomAbs_Intersection`` join), which ``Geom_OffsetCurve`` does not make.
+    ``makeOffset2D`` does make it and returns one continuous wire, which is
+    what such a row needs; it also approximates each piece, which is why it is
+    used *only* here, the smooth row having the exact offset instead.
+
+    The direction comes from the exact offset of the row's first edge, which
+    is a smooth curve even when the whole row is not: an exact evaluation at
+    the probe parameter, not a distance-to-shape solve.
+    """
+    probe_edge = row.Edges[0]
+    probe_parameter = probe_edge.FirstParameter
+    probe = probe_edge.valueAt(probe_parameter)
+    expected = probe + _height_at(row, probe, normal) * ordinate
+    low = min(probe_edge.FirstParameter, probe_edge.LastParameter)
+    high = max(probe_edge.FirstParameter, probe_edge.LastParameter)
+    for sign in (1.0, -1.0):
+        exact = Part.Edge(
+            Part.OffsetCurve(probe_edge.Curve, sign * ordinate, normal), low, high
+        )
+        if (
+            exact.valueAt(probe_parameter).distanceToPoint(expected)
+            > OFFSET_DIRECTION_TOLERANCE
+        ):
+            continue
+        lifted = row.makeOffset2D(sign * ordinate, openResult=True)
+        if lifted.isNull():
+            continue
+        return _oriented_by_travel(lifted, normal)
     raise ValueError(
         "neither offset direction moved the profile row along the height "
         "direction"
