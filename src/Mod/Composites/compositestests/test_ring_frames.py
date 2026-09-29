@@ -164,7 +164,8 @@ class TestRingFrames(StiffenerCompositeFixture):
         StiffenerFP(
             stiffener, support=panel, cut_surface=cut_surface, profile=profile
         )
-        stiffener.Laminate = laminate
+        if laminate is not None:
+            stiffener.Laminate = laminate
         self.doc.recompute()
         return stiffener
 
@@ -278,6 +279,33 @@ class TestRingFrames(StiffenerCompositeFixture):
             frame_section,
             delta=0.5,
         )
+
+    def test_mirrored_ring_sweep_without_the_composite_flow(self):
+        """The pare-back: the mirrored sweep alone, nothing else attached.
+
+        Same sleeve, same station, same profile as the case above — but the
+        support is a bare face, not a CompositeShell, and the stiffener
+        carries no laminate, so there is no drape, no seam wiring and no
+        re-support anywhere in the path.  Whatever is left is the sweep.
+        """
+        station_x, height, width = -10.0, 565.0, 460.0
+        centre_z, frame_section = -78.0, 34.0
+        support = self.doc.addObject("Part::Feature", "PlainSleeve")
+        support.Shape = sleeve_shape(
+            station_x, height, width, frame_section, centre_z
+        )
+        stiffener = self._make_ring(
+            "PlainRing",
+            support,
+            None,
+            station_x,
+            frame_section=frame_section,
+            box_span=2.0 * height,
+        )
+        stiffener.MirrorY = True
+        self.doc.recompute()
+        error = getattr(stiffener.Proxy, "last_error", None)
+        self.assertIsNone(error, f"mirrored sweep failed: {error}")
 
     def test_seat_cut_is_justified_by_the_geometry(self):
         """The ring's remainder is empty because the seat covers the sleeve.

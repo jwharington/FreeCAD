@@ -8,6 +8,20 @@
 - When debugging, do not fix symptoms — discover and address the root cause.
 - A fix that silences an error without solving the underlying problem will surface again elsewhere. Always trace the error chain back to its origin.
 
+## No retry-until-success
+- Never re-run a flaky operation until it passes — not by hand, not in a shell
+  loop, and not in a test harness.
+- A flaky failure is a serious bug, not an inconvenience. Retrying masks it,
+  wastes the wall-clock that would have exposed it, and ships a defect that
+  surfaces later as a broken build, a corrupt document, or a wrong answer.
+- Diagnose the nondeterminism instead. Find what varies between runs —
+  unordered iteration over a set or object-keyed dict, parallel execution in a
+  boolean, a stale recompute, a cache key that changes while the geometry does
+  not — and fix that.
+- A retry is acceptable only where an external boundary genuinely requires it,
+  and then it is an explicit, documented property of that boundary. It is
+  never a route past a red result.
+
 ## FreeCAD object model
 - FreeCAD's `ViewObject.Proxy.Object.Proxy` often returns a *different Python object* than the FeaturePython object listed in `doc.Objects` — they share the same underlying C++ pointer but have different Python identities (different `id()`).
 - Never rely on `getattr(vobj.Proxy.Object, "SomeProp", None)` to find a property set on the FP object in `doc.Objects`. They are different Python objects.

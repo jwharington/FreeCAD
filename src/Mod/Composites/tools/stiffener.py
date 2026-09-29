@@ -275,19 +275,62 @@ def _translated_sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Par
 
 
 def _occt_sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire:
-    """Offset by ordinate in the row's plane, taking the sign that runs along b.
+    """The row moved `ordinate` sideways along b = t x N, exactly.
 
-    OCCT offsets by expanding or shrinking the enclosed area, which agrees with
-    b = t x N for a closed curve but not necessarily for an open one, so the
-    direction is read back rather than assumed.
+    ``Part.OffsetCurve`` wraps OCCT's ``Geom_OffsetCurve``: the exact offset
+    curve, one curve per basis curve, taking its parametrisation from the
+    basis — so the parallel of an ellipse stays a single curve.  The
+    approximating wire offset (``makeOffset2D``, i.e.
+    ``BRepOffsetAPI_MakeOffset``) splits that same parallel into four
+    pieces, and ``Part.makeLoft`` then refuses to rule between a row and its
+    own offset: that is the ring sweep's coin flip, measured on the
+    fuselage's frames and reproduced by
+    ``test_ring_sweeps_on_a_fuselage_scale_sleeve``.  It also made every
+    swept row approximate; this keeps it exact.
+
+    The sign of the displacement depends on how the row is wound, so it is
+    determined rather than assumed — the same reason the previous
+    implementation probed it, but here with an exact point comparison at the
+    probe parameter instead of a distance-to-shape solve.
     """
-    probe = row.Edges[0].valueAt(row.Edges[0].FirstParameter)
+    probe_edge = row.Edges[0]
+    probe_parameter = probe_edge.FirstParameter
+    probe = probe_edge.valueAt(probe_parameter)
     expected = probe + _height_at(row, probe, normal) * ordinate
     for sign in (1.0, -1.0):
-        lifted = row.makeOffset2D(sign * ordinate, openResult=True)
-        if lifted.distToShape(Part.Vertex(expected))[0] < OFFSET_DIRECTION_TOLERANCE:
-            return _oriented_by_travel(lifted, normal)
-    raise ValueError("offsetting the profile row did not move it along the height direction")
+        pieces = _offset_pieces(row, sign * ordinate, normal)
+        # An exact point comparison at the probe parameter, not a
+        # distance-to-shape solve: the offset curve keeps its basis
+        # parametrisation, so the piece's value at that parameter is either
+        # the point asked for or the one on the other side.
+        if (
+            pieces[0].valueAt(probe_parameter).distanceToPoint(expected)
+            <= OFFSET_DIRECTION_TOLERANCE
+        ):
+            return _oriented_by_travel(Part.Wire(pieces), normal)
+    raise ValueError(
+        "neither offset direction moved the profile row along the height "
+        "direction"
+    )
+
+
+def _offset_pieces(row: Part.Wire, distance: float, normal: Vector):
+    """Each edge of the row offset by *distance*, as exact offset curves.
+
+    ``Part.OffsetCurve`` keeps the basis parametrisation, so the piece is
+    trimmed with the edge's own parameters and reversed to match the edge's
+    direction of travel.
+    """
+    pieces = []
+    for edge in row.Edges:
+        curve = Part.OffsetCurve(edge.Curve, distance, normal)
+        low = min(edge.FirstParameter, edge.LastParameter)
+        high = max(edge.FirstParameter, edge.LastParameter)
+        piece = Part.Edge(curve, low, high)
+        if edge.Orientation == "Reversed":
+            piece.reverse()
+        pieces.append(piece)
+    return pieces
 
 
 def _loci_over_plane(
@@ -332,11 +375,30 @@ def _curve_through(points):
     return curve.toShape()
 
 
-def get_xsect(sketch):
+def _profile_edges(profile):
+    """The profile's edges: a sketch's Geometry, or a shape's own edges.
+
+    A profile does not have to be a Sketcher object.  This build's GUI
+    cannot restore a sketch ("Extension: Extension type not set", raised
+    from App/Extension.cpp when the Sketcher object's extension type is not
+    registered in the restoring process), so a document whose profiles are
+    plain wires is a document that reopens — and nothing in a sweep needs
+    the sketch, only its edges.
+    """
+    geometry = getattr(profile, "Geometry", None)
+    if geometry is not None:
+        return [geo.toShape() for geo in geometry]
+    shape = getattr(profile, "Shape", None)
+    if shape is not None:
+        return list(shape.Edges)
+    return list(getattr(profile, "Edges", []) or [])
+
+
+def get_xsect(profile):
     """The profile's edges, with repeated vertices merged."""
     points = {}
     links = []
-    for geo in sketch.Geometry:
+    for edge in _profile_edges(profile):
 
         def add_vertex(v):
             p = v.Point
@@ -351,8 +413,9 @@ def get_xsect(sketch):
             points[key] = p
             return key
 
-        edge = geo.toShape()
-        links.append([add_vertex(edge.firstVertex()), add_vertex(edge.lastVertex())])
+        links.append(
+            [add_vertex(edge.firstVertex()), add_vertex(edge.lastVertex())]
+        )
 
     return [
         Part.LineSegment(points[start], points[end]).toShape() for start, end in links
@@ -399,8 +462,7 @@ def _loft_failure_detail(coords, curves) -> str:
             parts.append(f"seam gap unreadable: {exc}")
     return ", ".join(parts)
 
-
-def _loft_profile(xsect, loci, mirror: ProfileMirror):
+def _loft_profile(xsect, loci, mirror: ProfileMirror, normal=None):
     """One lofted face per profile edge, ruled between its two vertex loci.
 
     Returns the faces with their provenance: the foot faces are the lofts
