@@ -24,12 +24,6 @@ DEGENERATE_AREA_FRACTION = 1e-9
 SURFACE_TOLERANCE = 1e-9
 OFFSET_DIRECTION_TOLERANCE = 1e-6
 COORD_PRECISION = 6
-DIRECTION_PROBE_SAMPLES = 3
-
-# Samples along a row when rebuilding it at a sideways offset.  Rows are
-# section curves (closed rings, hundreds of millimetres across), so a hundred
-# points resolve the offset well below modelling tolerance.
-OFFSET_SAMPLES = 120
 # Ordinate below which a profile vertex counts as sitting on the base row
 # (y = 0, the support surface). Keys are rounded to COORD_PRECISION.
 BASE_ORDINATE_TOLERANCE = 1e-6
@@ -267,62 +261,17 @@ def _sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire:
         return row
     if len(row.Edges) == 1 and isinstance(row.Edges[0].Curve, Part.Line):
         return _translated_sideways(row, ordinate, normal)
-    return _offset_sideways(row, ordinate, normal)
+    return _occt_sideways(row, ordinate, normal)
 
 
 def _translated_sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire:
     """A straight row lifted sideways: b is constant, so this is a rigid move."""
     lifted = row.copy()
-    lifted.translate(_height_at(row, row.discretize(2)[0], normal) * ordinate)
+    lifted.translate(
+        _height_at(row, row.Edges[0].valueAt(row.Edges[0].FirstParameter), normal)
+        * ordinate
+    )
     return lifted
-
-
-def _offset_sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire:
-    """The row moved *ordinate* sideways along b = t x N, in its own plane.
-
-    OCCT's 2D offset is tried first and kept as the geometry of record: it
-    is exact where it works, and swapping it wholesale for a rebuilt row
-    changed swept geometry on a cone (a measured 60 against 80) and made the
-    seat cut fragment a plate differently.  It returns null, though, for a
-    row that is an *interior* section of a lofted surface — measured on
-    every interior row of a plain lofted sleeve — while it happens to work
-    on the sections of a surface that has been through a Boolean operation.
-    Parts were therefore handed over pre-trimmed by a boolean just to make
-    this offset succeed, and that trim left the surface unsplittable, which
-    silently defeated the seat cut.  Only that failing case is rebuilt here.
-    """
-    try:
-        return _occt_sideways(row, ordinate, normal)
-    except Exception:
-        # The 2D offset returns null for an interior section of a lofted
-        # surface (see above), so that row is rebuilt from its own points
-        # instead.  Only that case changes behaviour: every row the offset
-        # can handle keeps the exact geometry it had before.
-        return _rebuilt_sideways(row, ordinate, normal)
-
-
-def _rebuilt_sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire:
-    """The sideways move built point by point along the row.
-
-    Each point is moved by the local ``b`` direction (oriented by travel), so
-    the direction is right by construction rather than read back from an
-    area-expanding offset.
-    """
-    oriented = _oriented_by_travel(row, normal)
-    length = oriented.Length
-    if length <= 0.0:
-        raise ValueError("row has no length")
-    moved = []
-    for index in range(OFFSET_SAMPLES):
-        frac = (index + 0.5) / OFFSET_SAMPLES
-        param = oriented.getParameterByLength(frac * length)
-        point = oriented.valueAt(param)
-        moved.append(point + _height_at(oriented, point, normal) * ordinate)
-    if len(moved) < 3:
-        raise ValueError("row too coarse to rebuild")
-    curve = Part.BSplineCurve()
-    curve.interpolate(moved, oriented.isClosed())
-    return Part.Wire(curve.toShape())
 
 
 def _occt_sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire:
@@ -332,7 +281,7 @@ def _occt_sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire
     b = t x N for a closed curve but not necessarily for an open one, so the
     direction is read back rather than assumed.
     """
-    probe = row.discretize(DIRECTION_PROBE_SAMPLES)[0]
+    probe = row.Edges[0].valueAt(row.Edges[0].FirstParameter)
     expected = probe + _height_at(row, probe, normal) * ordinate
     for sign in (1.0, -1.0):
         lifted = row.makeOffset2D(sign * ordinate, openResult=True)
@@ -410,6 +359,47 @@ def get_xsect(sketch):
     ]
 
 
+# How far apart the two curves' start points may be before a ruled loft
+# between them is twisting rather than merely seam-misaligned.
+_LOFT_TWIST_WARNING = 1.0
+
+
+def _loft_failure_detail(coords, curves) -> str:
+    """Describe the curves a ruled loft was given, for the raised message.
+
+    A ruled loft between two closed curves (every profile vertex of a ring
+    traces one) fails as ``StdFail_NotDone`` with no other clue, and the
+    useful question is whether a curve is degenerate, unclosed, or a seam
+    that has drifted round to the opposite side of the ring — so report
+    each curve's extent and closure, and how far its start point sits from
+    its partner's.
+    """
+    parts = []
+    for coord, curve in zip(coords, curves):
+        try:
+            box = curve.BoundBox
+            parts.append(
+                f"[{coord.x:.3f},{coord.y:.3f}]"
+                f"(edges={len(curve.Edges)},closed={curve.isClosed()},"
+                f"valid={curve.isValid()},"
+                f"parts={len(curve.Wires)},"
+                f"x[{box.XMin:.1f},{box.XMax:.1f}],"
+                f"y[{box.YMin:.1f},{box.YMax:.1f}],"
+                f"z[{box.ZMin:.1f},{box.ZMax:.1f}])"
+            )
+        except Exception as exc:
+            parts.append(f"[{coord.x:.3f},{coord.y:.3f}](unreadable: {exc})")
+    if len(curves) == 2:
+        try:
+            gap = curves[0].Vertexes[0].Point.distanceToPoint(
+                curves[1].Vertexes[0].Point
+            )
+            parts.append(f"seam gap={gap:.3f}")
+        except Exception as exc:
+            parts.append(f"seam gap unreadable: {exc}")
+    return ", ".join(parts)
+
+
 def _loft_profile(xsect, loci, mirror: ProfileMirror):
     """One lofted face per profile edge, ruled between its two vertex loci.
 
@@ -419,13 +409,16 @@ def _loft_profile(xsect, loci, mirror: ProfileMirror):
     every other face is a web face.
     """
     faces, foot_faces, web_faces = [], [], []
-    for edge in xsect:
+    for index, edge in enumerate(xsect):
         coords = [mirror.apply(vertex.Point) for vertex in edge.Vertexes]
-        face = Part.makeLoft(
-            [loci[_coordinate_key(coord)] for coord in coords],
-            solid=False,
-            ruled=True,
-        )
+        curves = [loci[_coordinate_key(coord)] for coord in coords]
+        try:
+            face = Part.makeLoft(curves, solid=False, ruled=True)
+        except Exception as error:
+            raise ValueError(
+                f"lofting profile edge {index} of {len(xsect)} failed "
+                f"({_loft_failure_detail(coords, curves)})"
+            ) from error
         faces.append(face)
         if all(abs(coord.y) <= BASE_ORDINATE_TOLERANCE for coord in coords):
             foot_faces.append(face)

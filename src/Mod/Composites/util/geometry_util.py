@@ -95,50 +95,75 @@ def shape_stamp(shape) -> str:
     return h.hexdigest()[:16]
 
 
+# Angular tolerance for direction-carrying curve data (a line's direction, a
+# plane's normal).  A zero-scale-independent companion to the linear one.
+_ANGULAR_TOLERANCE = 1e-6
+
+
 def shares_boundary_edge(shape_a, shape_b, tolerance: float = 1e-3) -> bool:
-    """Whether one shape's boundary lies on the other.
+    """Whether the two shapes share a boundary edge.
 
-    The contract this checks is "they share a boundary": the seam region is
-    *part of* the surface of the shape it laps onto, so its boundary curves
-    lie on that surface.  Those curves are on the other shape's boundary in
-    the simple case (a plate, a sleeve ring whose seat spans the support)
-    but *inside* its faces once supports chain — a stiffener's seat sitting
-    in the middle of the region left by an earlier one.  Comparing boundary
-    edges against each other therefore works only for the simple case (it
-    failed the chained ones), so each side's edges are tested against the
-    other whole shape instead.
+    Two faces share a boundary edge when they have the same edge — the same
+    curve over the same span — so edges are compared to edges, and nothing
+    is approximated: sub-shape identity first (OCCT shares sub-shapes
+    freely, so a common edge is often literally the same ``TopoDS_Edge``),
+    then the curve itself through ``Geometry.isSame``, which compares each
+    curve type's defining data exactly — poles, knots and weights for a
+    B-spline, the basis circle or line and the trimmed range for a conic.
 
-    A cheap alternative to sectioning the two shapes: a handful of 1-D
-    distance queries against a face, instead of the surface-by-surface
-    intersection — the composite flow's most expensive operation, and one
-    that builds Boolean history the callers never use.
+    No ``distToShape``: asking a *curve* for its distance to a whole
+    *surface* is a full curve/surface extrema, seconds of work on a
+    fuselage-sized shell, for a question that is a comparison of defining
+    data.  No discretisation either: sampling approximates a question that
+    has an exact answer.
     """
-    # Either relationship counts: an edge of one lying on the other shape
-    # (the interior case, where the seam laps inside a support region), or
-    # two coincident boundary edges (the simple case, where the seam spans
-    # the support and its rows *are* that support's boundaries).  Both are
-    # cheap; keeping both means neither case can regress.
-    for edges, other in (
-        (shape_a.Edges, shape_b),
-        (shape_b.Edges, shape_a),
-    ):
-        for edge in edges:
-            try:
-                distance = other.distToShape(edge)[0]
-            except Exception:
-                continue
-            if distance <= tolerance:
-                return True
     edges_b = list(shape_b.Edges)
     for edge_a in shape_a.Edges:
         for edge_b in edges_b:
-            try:
-                distance = edge_a.distToShape(edge_b)[0]
-            except Exception:
-                continue
-            if distance <= tolerance:
+            if _same_edge(edge_a, edge_b, tolerance):
                 return True
     return False
+
+
+def _same_edge(edge_a, edge_b, tolerance: float) -> bool:
+    """Whether two edges lie on the same curve over an overlapping span.
+
+    Not only *identical* edges.  A Boolean splits one side's boundary and
+    not the other's, so an edge is often a **part** of its counterpart (the
+    T-junction case), and requiring equal spans misses exactly those pairs.
+
+    ``Edge.Curve`` is the edge's **basis** curve, untrimmed — it comes from
+    ``BRepAdaptor_Curve`` in ``TopoShapeEdgePyImp`` — and the edge's own
+    ``FirstParameter``/``LastParameter`` are its span on that basis.  So the
+    same curve is detected by comparing the two bases exactly (``isSame``:
+    each curve type's defining data — poles, knots and weights, or a conic's
+    basis and parameters) and the spans by overlap, counting a subset either
+    way round.  Nothing is discretised and no distance is measured.
+    """
+    try:
+        if edge_a.isSame(edge_b):
+            return True
+    except Exception:
+        pass
+    try:
+        same_curve = edge_a.Curve.isSame(
+            edge_b.Curve, tolerance, _ANGULAR_TOLERANCE
+        )
+    except Exception:
+        # ``Edge.Curve`` raises for GeomAbs_OtherCurve, which cannot be
+        # compared as a curve — an honest miss, not a silent pass.
+        return False
+    return bool(same_curve) and _spans_overlap(edge_a, edge_b, tolerance)
+
+
+def _spans_overlap(edge_a, edge_b, tolerance: float) -> bool:
+    """Whether two edges' parameter spans on their shared curve overlap."""
+    try:
+        span_a = sorted((edge_a.FirstParameter, edge_a.LastParameter))
+        span_b = sorted((edge_b.FirstParameter, edge_b.LastParameter))
+    except Exception:
+        return False
+    return max(span_a[0], span_b[0]) <= min(span_a[1], span_b[1]) + tolerance
 
 
 def expand_symmetry(

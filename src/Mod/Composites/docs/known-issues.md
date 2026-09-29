@@ -551,3 +551,31 @@ the frame section, so the support has no surface beyond the seat. Committed as
 `16b15a71ec` **without a test run**; see `docs/handoff-2026-09-29.md` §2 for
 the expected outcomes and §3.1 for the chained-validation blocker that
 provenance selection exposes.
+
+## #14 Shared-boundary detection: what OCCT offers, and what FreeCAD binds
+
+The seam contract is "the seam region laps onto the master/attachment
+surface — they share a boundary edge".  The primitives were surveyed rather
+than guessed at:
+
+| primitive | verdict |
+|---|---|
+| `TopoDS_Shape::IsSame` / `IsPartner` (TShape + Location) | Exact and free.  The canonical OCCT forum answer for a shared edge, with the warning that sharing requires **the same instance**, so it finds only genuinely shared sub-shapes. |
+| `Geometry::isSame(other, tol, angular)` | Exact per-curve-type comparison of defining data (poles, knots, weights; a conic's basis and parameters).  `Edge.Curve` is the **untrimmed basis** (`BRepAdaptor_Curve` in `TopoShapeEdgePyImp`) and `First/LastParameter` is the edge's span on it, so same-curve-plus-overlapping-span also catches an edge that is a **subset** of its counterpart (the T-junction a Boolean leaves behind).  No discretisation, no distance query. |
+| `IntTools_EdgeFace::IsCoincident()` | OCCT's dedicated edge-on-face test, with `UseQuickCoincidenceCheck` for its documented precondition (endpoints on the face, no boundary crossing).  **Not bound in FreeCAD** — there is no `IntTools` module in the Python API; only C++-internal uses exist. |
+| `BRepExtrema_ShapeProximity` | Finds overlapping/touching faces (`OverlapSubShapes1/2`), but is **approximate**: it works from the face triangulation and "the solution is approximate and corresponds to the deflection used for triangulation".  Unusable where exactness matters. |
+| `ShapeAnalysis_ShapeContents`, `ShapeAnalysis_Shell` | Shared/free-edge counts and oriented-shell checks **within one shape**.  `ShapeAnalysis_Shell` is bound; a two-shape equivalent is not. |
+| `BOPTools.Utils.HashableShape` | Hash a sub-shape to use in dicts/sets — the FreeCAD-blessed way to build an edge→faces map. |
+
+**Consequence.**  There is no bound exact predicate for "this edge lies on
+that face", so a joint whose seam is *contained inside* a face (the seat
+covering a whole support, which `_resupport_panel` deliberately keeps rather
+than weaving an empty remainder) cannot be validated geometrically without
+either an extrema solve or a triangulation-based approximation.  Such a join
+has to be established **by construction** — the shells must share real
+sub-shapes — and then checked by identity, which is what OCCT itself does.
+
+A related pitfall: two faces built by different paths (a `makeLoft` between
+station ellipses versus a `makeLoft` between two offset rows) are equal as
+point sets and still have different curve data, so **no** curve comparison can
+match them.  `gap == 0.0` with no matching edge pair is that signature.
