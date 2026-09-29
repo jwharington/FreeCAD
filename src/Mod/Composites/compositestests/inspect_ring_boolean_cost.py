@@ -52,29 +52,19 @@ def ellipse_wire(station_x, height, width):
 
 
 def sleeve_shape(station_x, height, width, cut_offset):
-    """A ruled elliptical sleeve spanning the frame section plus a margin
-    at each end, passed through a boolean ``common`` against the frame
-    slab.
+    """A plain ruled loft spanning exactly the frame section.
 
-    The boolean is what makes the ring's two row planes offsettable in
-    this OCCT build; without it the sweep cannot run at all on a lofted
-    face.  It is also part of the cost being measured.
-
-    The station plane sits *inside* the outboard margin, so both row
-    planes cut the face transversally.
+    No boolean ``common`` treatment: that was a workaround so the seat's
+    rows (interior sections of a wider sleeve) would be offsettable, and it
+    left the support face in a state the Boolean engine cannot split at all
+    (measured: cutting it with the stiffener's faces returns nothing; the
+    same cut on this plain loft returns the expected pieces).  Spanning
+    exactly the frame section puts both rows on the face's *own* boundary
+    sections, which a plain loft sections and offsets correctly.
     """
-    outboard = ellipse_wire(station_x, height, width)
-    inboard = ellipse_wire(
-        station_x + 2.0 * SLEEVE_MARGIN + FRAME_SECTION, height, width
-    )
-    long_face = Part.makeLoft([outboard, inboard], False, True).Faces[0]
-    slab = Part.makeBox(
-        FRAME_SECTION,
-        BOX_SPAN,
-        BOX_SPAN,
-        FreeCAD.Vector(cut_offset, -BOX_SPAN / 2.0, -BOX_SPAN / 2.0),
-    )
-    return long_face.common(slab)
+    outboard = ellipse_wire(cut_offset, height, width)
+    inboard = ellipse_wire(cut_offset + FRAME_SECTION, height, width)
+    return Part.makeLoft([outboard, inboard], False, True).Faces[0]
 
 
 # ── instrumentation ────────────────────────────────────────────────────
@@ -544,6 +534,245 @@ def _measure_cut_variants(doc, name):
             )
 
 
+def _measure_curve_split(doc, name, station_x, height, width):
+    """Split the support with the seat's BOUNDARY CURVES."""
+    from Composites.util.geometry_util import live_support_shape
+
+    print(f"CUTDIAG {name} curve-split: start", flush=True)
+    stiffener = doc.getObject(name)
+    if stiffener is None:
+        print(f"CUTDIAG {name} curve-split: no stiffener", flush=True)
+        return
+    support = live_support_shape(stiffener.Support)
+    face = max(support.Faces, key=lambda f: f.Area)
+    foot = doc.getObject(f"{name}_Foot")
+    if foot is None:
+        print(f"CUTDIAG {name} curve-split: no foot child", flush=True)
+        return
+    foot_shape = live_support_shape(foot)
+    edges = [edge for f in foot_shape.Faces for edge in f.Edges]
+    print(
+        f"CUTDIAG {name} curve-split: {len(edges)} boundary edges, "
+        f"support area={face.Area:.1f}",
+        flush=True,
+    )
+
+    for label, call in (
+        ("generalFuse(curves)", "fuse"),
+        ("cut(curves)", "cut"),
+    ):
+        print(f"CUTDIAG {name} curve-split: calling {label}", flush=True)
+        started = time.perf_counter()
+        try:
+            if call == "fuse":
+                _result, mapping = face.generalFuse(edges)
+                own = list(mapping[0]) if mapping else []
+                pieces = [f for piece in own for f in piece.Faces]
+            else:
+                pieces = list(face.cut(edges).Faces)
+            areas = [f.Area for f in pieces]
+            spans = ", ".join(
+                f"[{p.BoundBox.XMin:.2f},{p.BoundBox.XMax:.2f}]"
+                for p in pieces
+            )
+            print(
+                f"CUTDIAG {name} {label}: pieces={len(pieces)} "
+                f"areas={[round(a, 1) for a in areas]} spans={spans} "
+                f"({time.perf_counter() - started:.2f}s)",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"CUTDIAG {name} {label}: EXCEPTION {str(exc)[:70]}",
+                flush=True,
+            )
+    # The curves the MODEL derives: the seat's boundary rows are the
+    # support's own sections with the station planes, so they lie on the
+    # support exactly.  These are the ones that must be cuttable.
+    plane = doc.getObject(f"{name}Plane")
+    if plane is not None and plane.Shape.Faces:
+        seat_face = plane.Shape.Faces[0]
+        try:
+            normal = seat_face.normalAt(0.0, 0.0)
+        except Exception:
+            normal = seat_face.Surface.Axis
+        rows = []
+        for offset in (0.0, FRAME_SECTION):
+            moved = seat_face.copy()
+            moved.translate(normal * offset)
+            rows.extend(support.section(moved).Edges)
+        print(
+            f"CUTDIAG {name} curve-split: model rows={len(rows)} "
+            f"(sectioned at 0 and {FRAME_SECTION})",
+            flush=True,
+        )
+        for label, call in (
+            ("generalFuse(rows)", "fuse"),
+            ("cut(rows)", "cut"),
+            ("generalFuse(rows, fuzzy 1e-3)", "fuse"),
+            ("generalFuse(rows, fuzzy 1e-2)", "fuse"),
+            ("cut(rows, tol 1e-3)", "cut"),
+        ):
+            started = time.perf_counter()
+            try:
+                if call == "fuse":
+                    fuzzy = 0.0
+                    if "fuzzy 1e-3" in label:
+                        fuzzy = 1e-3
+                    elif "fuzzy 1e-2" in label:
+                        fuzzy = 1e-2
+                    _result, mapping = face.generalFuse(rows, fuzzy)
+                    own = list(mapping[0]) if mapping else []
+                    pieces = [f for piece in own for f in piece.Faces]
+                else:
+                    tolerance = 1e-3 if "tol 1e-3" in label else 0.0
+                    pieces = list(face.cut(rows, tolerance).Faces)
+                spans = ", ".join(
+                    f"[{p.BoundBox.XMin:.2f},{p.BoundBox.XMax:.2f}]"
+                    for p in pieces
+                )
+                print(
+                    f"CUTDIAG {name} {label}: pieces={len(pieces)} "
+                    f"areas={[round(f.Area, 1) for f in pieces]} "
+                    f"spans={spans} ({time.perf_counter() - started:.2f}s)",
+                    flush=True,
+                )
+            except Exception as exc:
+                print(
+                    f"CUTDIAG {name} {label}: EXCEPTION {str(exc)[:70]}",
+                    flush=True,
+                )
+    # FreeCAD's own Slice: generalFuse with each tool wrapped in a compound
+    # (its "prevent contamination" hack) and the base's pieces taken from the
+    # map.  This is the primitive path the module should use.
+    try:
+        from BOPTools import SplitAPI
+    except Exception as exc:
+        print(f"CUTDIAG {name} slice: import failed {exc}", flush=True)
+        return
+    row_compound = Part.makeCompound(rows) if rows else None
+    # (a) Settle the raw-vs-processed area difference: print what each face
+    # actually is, and cut both with the seat.
+    from Composites.util.geometry_util import live_support_shape
+
+    ring_support = live_support_shape(stiffener.Support)
+    ring_face = max(ring_support.Faces, key=lambda f: f.Area)
+    wide_out = ellipse_wire(station_x - SLEEVE_MARGIN, height, width)
+    wide_in = ellipse_wire(
+        station_x + FRAME_SECTION + SLEEVE_MARGIN, height, width
+    )
+    wide_face = Part.makeLoft([wide_out, wide_in], False, True).Faces[0]
+    for label, candidate in (
+        ("ring support (plain loft)", ring_face),
+        ("wide plain loft (margins)", wide_face),
+    ):
+        box = candidate.BoundBox
+        print(
+            f"CUTDIAG {name} {label}: area={candidate.Area:.1f} "
+            f"faces={len(candidate.Faces)} edges={len(candidate.Edges)} "
+            f"span[{box.XMin:.2f},{box.XMax:.2f}]",
+            flush=True,
+        )
+        started = time.perf_counter()
+        try:
+            result = SplitAPI.slice(candidate, [foot_shape], "Split")
+            pieces = list(result.Faces)
+            spans = ", ".join(
+                f"[{p.BoundBox.XMin:.2f},{p.BoundBox.XMax:.2f}]"
+                for p in pieces
+            )
+            print(
+                f"CUTDIAG {name} {label} cut by seat: pieces={len(pieces)} "
+                f"areas={[round(p.Area, 1) for p in pieces]} "
+                f"spans={spans} ({time.perf_counter() - started:.2f}s)",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"CUTDIAG {name} {label} cut by seat: EXCEPTION "
+                f"{str(exc)[:60]}",
+                flush=True,
+            )
+    for label, tools in (
+        ("slice(foot faces)", [foot_shape]),
+        ("slice(model rows)", [row_compound] if row_compound else []),
+    ):
+        if not tools:
+            continue
+        started = time.perf_counter()
+        try:
+            result = SplitAPI.slice(face, tools, "Split")
+            pieces = list(result.Faces)
+            spans = ", ".join(
+                f"[{p.BoundBox.XMin:.2f},{p.BoundBox.XMax:.2f}]"
+                for p in pieces
+            )
+            print(
+                f"CUTDIAG {name} {label}: pieces={len(pieces)} "
+                f"areas={[round(p.Area, 1) for p in pieces]} spans={spans} "
+                f"({time.perf_counter() - started:.2f}s)",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"CUTDIAG {name} {label}: EXCEPTION {str(exc)[:70]}",
+                flush=True,
+            )
+
+
+def _measure_slice_forms(doc, name):
+    """Compare the tool-list forms for SplitAPI.slice on the ring support.
+
+    My module change passed the meeting faces as a list of separate tools and
+    the flow fell back to the bare subtraction (2.5 s instead of 0.01 s),
+    so slice raised.  The earlier probe passed ONE tool that was a compound
+    of faces.  This pins which form actually works.
+    """
+    from Composites.util.geometry_util import live_support_shape
+
+    stiffener = doc.getObject(name)
+    foot = doc.getObject(f"{name}_Foot")
+    if stiffener is None or foot is None:
+        return
+    support = live_support_shape(stiffener.Support)
+    face = max(support.Faces, key=lambda f: f.Area)
+    foot_faces = list(live_support_shape(foot).Faces)
+    meeting = [
+        f
+        for f in face.Faces
+        if True
+    ]  # placeholder, replaced below
+    meeting = []
+    for candidate in live_support_shape(foot).Faces:
+        meeting.append(candidate)
+
+    from BOPTools import SplitAPI
+
+    forms = (
+        ("[compound(foot faces)]", [Part.makeCompound(foot_faces)]),
+        ("foot faces as separate tools", foot_faces),
+        ("[stiffener shell]", [stiffener.Shape]),
+    )
+    for label, tools in forms:
+        started = time.perf_counter()
+        try:
+            result = SplitAPI.slice(face, tools, "Split")
+            pieces = list(result.Faces)
+            print(
+                f"CUTDIAG {name} slice {label}: pieces={len(pieces)} "
+                f"areas={[round(p.Area, 1) for p in pieces]} "
+                f"({time.perf_counter() - started:.2f}s)",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"CUTDIAG {name} slice {label}: EXCEPTION "
+                f"{type(exc).__name__} {str(exc)[:60]} "
+                f"({time.perf_counter() - started:.2f}s)",
+                flush=True,
+            )
+
+
 def _parse_args(argv):
     import argparse
 
@@ -599,7 +828,9 @@ def main(argv=""):
     for index in range(args.rings):
         name = f"Ring{index}"
         station_x = -80.0 * index
-        cut_x = station_x + SLEEVE_MARGIN
+        # The seat's outboard plane is the station itself: the sleeve spans
+        # exactly the frame section, so the rows are its boundary sections.
+        cut_x = station_x
         sleeve = sleeve_shape(station_x, args.height, args.width, cut_x)
         panel = _make_panel(doc, name, sleeve, laminate)
         ring_started = time.perf_counter()
@@ -607,6 +838,10 @@ def main(argv=""):
         print(f"{name}: {time.perf_counter() - ring_started:.1f}s", flush=True)
     _report(args.rings, time.perf_counter() - started)
     for index in range(args.rings):
+        _measure_curve_split(
+            doc, f"Ring{index}", -80.0 * index, args.height, args.width
+        )
+        _measure_slice_forms(doc, f"Ring{index}")
         _measure_cut_variants(doc, f"Ring{index}")
     if args.draped:
         for index in range(args.rings):
