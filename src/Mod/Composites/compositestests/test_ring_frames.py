@@ -54,10 +54,12 @@ STATIONS = (
 BOX_SPAN = 80.0
 
 
-def ellipse_wire(station_x, height, width):
+def ellipse_wire(station_x, height, width, centre_z=0.0):
     """An ellipse in the station plane, major axis vertical: height along
-    model Z, width along model Y."""
-    point = FreeCAD.Vector(station_x, 0.0, 0.0)
+    model Z, width along model Y, centred at ``centre_z``.  A real station is
+    not concentric with the model origin, and the centre is part of the case
+    (see ``test_ring_sweeps_on_a_fuselage_scale_sleeve``)."""
+    point = FreeCAD.Vector(station_x, 0.0, centre_z)
     ellipse = Part.Ellipse(point, height / 2.0, width / 2.0)
     rotation = FreeCAD.Rotation(
         FreeCAD.Vector(1.0, 0.0, 0.0), FreeCAD.Vector(0.0, 0.0, 1.0)
@@ -66,7 +68,9 @@ def ellipse_wire(station_x, height, width):
     return ellipse.toShape()
 
 
-def sleeve_shape(station_x, height, width):
+def sleeve_shape(
+    station_x, height, width, frame_section=FRAME_SECTION, centre_z=0.0
+):
     """The ring's helper sleeve: a plain ruled loft spanning exactly the
     frame section.
 
@@ -78,8 +82,8 @@ def sleeve_shape(station_x, height, width):
     the frame section puts both rows on the face's own boundary sections,
     which a plain loft sections and offsets correctly.
     """
-    outboard = ellipse_wire(station_x, height, width)
-    inboard = ellipse_wire(station_x + FRAME_SECTION, height, width)
+    outboard = ellipse_wire(station_x, height, width, centre_z)
+    inboard = ellipse_wire(station_x + frame_section, height, width, centre_z)
     return Part.makeLoft([outboard, inboard], False, True).Faces[0]
 
 
@@ -96,13 +100,21 @@ class TestRingFrames(StiffenerCompositeFixture):
             isotropic=True,
         )
 
-    def _make_sleeve_panel(self, name, station_x, height, width):
+    def _make_sleeve_panel(
+        self,
+        name,
+        station_x,
+        height,
+        width,
+        frame_section=FRAME_SECTION,
+        centre_z=0.0,
+    ):
         """A QI composite panel draped over the ring's helper sleeve.
 
         No rosette: an isotropic-equivalent (QI) shell has no fibre frame
         to seed one from, and the feature rejects a linked rosette.
         """
-        sleeve = sleeve_shape(station_x, height, width)
+        sleeve = sleeve_shape(station_x, height, width, frame_section, centre_z)
         return self._make_panel(
             name=f"{name}Panel",
             plate=sleeve,
@@ -110,7 +122,15 @@ class TestRingFrames(StiffenerCompositeFixture):
             with_rosette=False,
         )
 
-    def _make_ring(self, name, panel, laminate, station_x):
+    def _make_ring(
+        self,
+        name,
+        panel,
+        laminate,
+        station_x,
+        frame_section=FRAME_SECTION,
+        box_span=BOX_SPAN,
+    ):
         """A full-composite ring stiffener on `panel`, sweeping inboard
         from the station plane."""
         cut_surface = self.doc.addObject("Part::Feature", f"{name}Plane")
@@ -118,9 +138,9 @@ class TestRingFrames(StiffenerCompositeFixture):
         # the outboard side, so the profile rows are re-cut inboard.
         box = Part.makeBox(
             1.0,
-            BOX_SPAN,
-            BOX_SPAN,
-            FreeCAD.Vector(station_x - 1.0, -BOX_SPAN / 2.0, -BOX_SPAN / 2.0),
+            box_span,
+            box_span,
+            FreeCAD.Vector(station_x - 1.0, -box_span / 2.0, -box_span / 2.0),
         )
         cut_surface.Shape = [
             face
@@ -132,9 +152,9 @@ class TestRingFrames(StiffenerCompositeFixture):
         profile = self.doc.addObject("Sketcher::SketchObject", f"{name}Profile")
         points = [
             FreeCAD.Vector(0.0, 0.0, 0.0),
-            FreeCAD.Vector(FRAME_SECTION, 0.0, 0.0),
-            FreeCAD.Vector(FRAME_SECTION, FRAME_SECTION, 0.0),
-            FreeCAD.Vector(0.0, FRAME_SECTION, 0.0),
+            FreeCAD.Vector(frame_section, 0.0, 0.0),
+            FreeCAD.Vector(frame_section, frame_section, 0.0),
+            FreeCAD.Vector(0.0, frame_section, 0.0),
             FreeCAD.Vector(0.0, 0.0, 0.0),
         ]
         for start, end in zip(points, points[1:]):
@@ -197,6 +217,67 @@ class TestRingFrames(StiffenerCompositeFixture):
             remainder = self.doc.getObject(f"{name}_RemainderSupport")
             self.assertEqual(len(remainder.Shape.Faces), 0)
             self.assertGreater(panel.Support.Shape.Area, 0.0)
+
+    def test_ring_sweeps_on_a_fuselage_scale_sleeve(self):
+        """The same ring on a fuselage-sized sleeve — the real part's scale.
+
+        Nothing differs from the small stations but the scale: same sleeve
+        shape, same rectangular profile, same wiring.  What the scale
+        changes is the *structure of the rows the profile sweeps*: the
+        sleeve's section at a profile abscissa, and that same row offset
+        sideways by an ordinate.  At test scale both come back as
+        single-edge closed wires; at fuselage scale the offset returns a
+        multi-edge wire while the plain row stays single-edge, and the
+        ruled loft between two closed wires of different edge count fails —
+        which is where the real fuselage's frame_0 (565 x 460, section 34)
+        died.
+        """
+        station_x, height, width = -10.0, 565.0, 460.0
+        centre_z = -78.0
+        frame_section = 34.0
+        laminate = self._make_qi_laminate()
+        panel = self._make_sleeve_panel(
+            "BigRing",
+            station_x,
+            height,
+            width,
+            frame_section=frame_section,
+            centre_z=centre_z,
+        )
+        stiffener = self._make_ring(
+            "BigRing",
+            panel,
+            laminate,
+            station_x,
+            frame_section=frame_section,
+            box_span=2.0 * height,
+        )
+        self.doc.recompute()
+
+        last_error = getattr(stiffener.Proxy, "last_error", None)
+        self.assertIsNone(last_error, f"ring sweep failed: {last_error}")
+        self.assertNotIn("Invalid", stiffener.State)
+        swept = stiffener.Shape.childShapes()[0]
+        self.assertAlmostEqual(swept.BoundBox.XLength, frame_section, delta=0.5)
+
+        # The part then flips the ring inboard: `_assert_inboard` in
+        # FuselageV2.py finds the as-swept ring standing outboard of the
+        # skin, sets MirrorY, and recomputes.  A mirrored profile is a
+        # *different* sweep — every ordinate changes sign, so the row the
+        # web is ruled to is the inward one — and the fuselage's frame_0
+        # fails exactly there, on its second execute, with the offsets
+        # (-0.000, -34.000) the mirror produces.
+        self.assertFalse(stiffener.MirrorY)
+        stiffener.MirrorY = True
+        self.doc.recompute()
+        again = getattr(stiffener.Proxy, "last_error", None)
+        self.assertIsNone(again, f"mirrored ring re-sweep failed: {again}")
+        self.assertNotIn("Invalid", stiffener.State)
+        self.assertAlmostEqual(
+            stiffener.Shape.childShapes()[0].BoundBox.XLength,
+            frame_section,
+            delta=0.5,
+        )
 
     def test_seat_cut_is_justified_by_the_geometry(self):
         """The ring's remainder is empty because the seat covers the sleeve.
