@@ -61,6 +61,40 @@ def shape_fingerprint(shape) -> str:
     return h.hexdigest()[:16]
 
 
+def shape_stamp(shape) -> str:
+    """An order-independent content stamp for a shape.
+
+    ``shape_fingerprint`` walks vertices in traversal order, which is not
+    stable for a compound that gets *rebuilt*: the same geometry can come
+    back with its sub-shapes in a different order, so the fingerprint
+    changes and every gate keyed on it misses.  This stamp uses only
+    order-independent data — bounding box, element counts, total area and
+    the sorted set of surface kinds — so it is stable across rebuilds
+    that do not change the geometry.
+
+    Use it for "has this geometry changed?" gates; use
+    ``shape_fingerprint`` when a change in internal structure must also
+    invalidate.
+    """
+    h = hashlib.sha256()
+    h.update(b"stamp:v1:")
+    bb = shape.BoundBox
+    h.update(
+        f"{bb.XMin:.6f},{bb.YMin:.6f},{bb.ZMin:.6f},"
+        f"{bb.XMax:.6f},{bb.YMax:.6f},{bb.ZMax:.6f};".encode()
+    )
+    h.update(
+        f"f{len(shape.Faces)}e{len(shape.Edges)}v{len(shape.Vertexes)};".encode()
+    )
+    try:
+        h.update(f"a{float(shape.Area):.6f};".encode())
+    except Exception:
+        h.update(b"a?;")
+    kinds = "".join(sorted({f.Surface.__class__.__name__ for f in shape.Faces}))
+    h.update(kinds.encode())
+    return h.hexdigest()[:16]
+
+
 def expand_symmetry(
     li: List,
     sym: Optional["SymmetryType"] = None,

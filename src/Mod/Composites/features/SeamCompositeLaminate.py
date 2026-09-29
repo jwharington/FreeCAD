@@ -189,6 +189,55 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
         side = getattr(obj, side_name, None)
         return is_isotropic_laminate(getattr(side, "Laminate", None))
 
+    def _input_fingerprint(self, obj) -> str:
+        """Hash everything the derived stack depends on.
+
+        Covers the live support geometry of the two sides and the seam
+        region, their laminates, the solved transfer angles and the
+        combination model — everything ``execute`` reads.  A change in any
+        of them re-derives the stack; nothing else does.
+
+        Content stamps (not ``Shape.hashCode()`` and not
+        ``shape_fingerprint``, whose traversal-order dependence makes it
+        miss on rebuilt compounds) are used: an unstable stamp costs a
+        redundant re-derivation, never a wrong skip.
+        """
+        import hashlib
+
+        from ..util.geometry_util import shape_stamp
+
+        def shape_part(holder):
+            support = getattr(holder, "Support", None)
+            shape = getattr(support, "Shape", None)
+            placement = str(getattr(support, "Placement", ""))
+            if shape is None:
+                return "no-shape"
+            try:
+                return f"{shape_stamp(shape)}|{placement}"
+            except Exception:
+                return "shape-error"
+
+        parts = []
+        for name in ("Master", "Attachment"):
+            shell = getattr(obj, name, None)
+            parts.append(getattr(shell, "Name", "None"))
+            parts.append(shape_part(shell))
+            parts.append(getattr(getattr(shell, "Laminate", None), "Name", "None"))
+            # The derived stack follows the sides' rosette angles: rotating
+            # a side rosette re-solves its transfer and must re-derive here.
+            parts.append(str(getattr(getattr(shell, "Rosette", None), "Angle", "None")))
+        seam = getattr(obj, "SeamRegion", None)
+        parts.append(getattr(seam, "Name", "None"))
+        parts.append(shape_part(seam))
+        for name in ("MasterTransfer", "AttachmentTransfer"):
+            parts.append(str(getattr(getattr(obj, name, None), "Angle", "None")))
+        parts.append(str(getattr(obj, "CombinationModel", "None")))
+
+        digest = hashlib.sha256()
+        for part in parts:
+            digest.update(str(part).encode())
+        return digest.hexdigest()
+
     def _validate_wiring(self, obj) -> None:
         """Raise on every violated structural invariant (§3.2 of the PRD)."""
         for name in ("Master", "Attachment"):
@@ -404,6 +453,17 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
         # Python writer could set Symmetry = Odd and mirror the stack.
         obj.Symmetry = SymmetryType.Assymmetric.name
         try:
+            # Skip when nothing the stack depends on changed.  Wiring writes
+            # several properties on this object, and each write re-executes
+            # it; without the gate the validation's sections (panel against
+            # seam region, twice per execute) run several times per joint —
+            # measured at 8 section builds per ring, more than half the
+            # ring's build time.  Fingerprint-driven freshness mirrors
+            # SeamExtraction._sync_virtual_inputs.
+            current = self._input_fingerprint(obj)
+            if current == getattr(self, "_last_input_fingerprint", None):
+                self.last_error = None
+                return
             self._validate_wiring(obj)
             # Pull-based freshness: the transfer rosettes' angles are
             # frozen at solve time; re-solve them when their inputs
@@ -427,6 +487,11 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
             # resolved materials from the side laminates, and
             # ResinMaterial is only a smearing fallback for fabric plies.
             LaminateFP.execute(self, obj)
+            # Recorded only after the body succeeds: a failing execute must
+            # re-run (and re-raise) on the next recompute rather than be
+            # skipped as "unchanged", which would silently clear the error
+            # the loud-failure contract requires it to keep surfacing.
+            self._last_input_fingerprint = current
         except Exception as exc:
             # Loud-failure contract: record the reason, leave previous
             # outputs untouched, and surface the error so the feature
