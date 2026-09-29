@@ -67,29 +67,20 @@ def ellipse_wire(station_x, height, width):
 
 
 def sleeve_shape(station_x, height, width):
-    """The ring's helper sleeve: a ruled elliptical face spanning the
-    frame section plus a margin on either side.
+    """The ring's helper sleeve: a plain ruled loft spanning exactly the
+    frame section.
 
-    The face is passed through a boolean ``common`` against the frame
-    slab.  That is not decoration: the stiffener tool re-cuts its cut
-    surface at each profile abscissa and 2D-offsets the resulting ring,
-    and in this OCCT build those offsets only work on section curves of
-    a boolean-processed face — a plain lofted face fails.  Passing the
-    face through ``common`` with the slab makes the two row planes the
-    face's offsettable planes, as on the real part.
+    No boolean ``common`` treatment.  That was a workaround so the seat's
+    rows — interior sections of a wider sleeve — would be offsettable, and it
+    left the support face in a state the Boolean engine cannot split at all
+    (measured: cutting it by the stiffener's faces returns nothing; the same
+    cut on this plain loft returns the expected pieces).  Spanning exactly
+    the frame section puts both rows on the face's own boundary sections,
+    which a plain loft sections and offsets correctly.
     """
-    outboard = ellipse_wire(station_x - SLEEVE_MARGIN, height, width)
-    inboard = ellipse_wire(
-        station_x + FRAME_SECTION + SLEEVE_MARGIN, height, width
-    )
-    long_face = Part.makeLoft([outboard, inboard], False, True).Faces[0]
-    slab = Part.makeBox(
-        FRAME_SECTION,
-        BOX_SPAN,
-        BOX_SPAN,
-        FreeCAD.Vector(station_x, -BOX_SPAN / 2.0, -BOX_SPAN / 2.0),
-    )
-    return long_face.common(slab)
+    outboard = ellipse_wire(station_x, height, width)
+    inboard = ellipse_wire(station_x + FRAME_SECTION, height, width)
+    return Part.makeLoft([outboard, inboard], False, True).Faces[0]
 
 
 class TestRingFrames(StiffenerCompositeFixture):
@@ -176,10 +167,14 @@ class TestRingFrames(StiffenerCompositeFixture):
         laminate, built = self._build_all_rings()
         for name, panel, stiffener in built:
             # The sweep produced a ring spanning the frame section.
-            self.assertNotIn("Invalid", stiffener.State)
+            # The stiffener's Shape compound also carries the support
+            # remainder (the regions the seat was cut away from), so the
+            # ring's own axial extent is measured on the swept shell itself.
+            swept = stiffener.Shape.childShapes()[0]
             self.assertAlmostEqual(
-                stiffener.Shape.BoundBox.XLength, FRAME_SECTION, delta=0.5
+                swept.BoundBox.XLength, FRAME_SECTION, delta=0.5
             )
+            self.assertNotIn("Invalid", stiffener.State)
 
             # The composite children exist and the joint validated.
             last_error = getattr(stiffener.Proxy, "last_error", None)
@@ -203,54 +198,34 @@ class TestRingFrames(StiffenerCompositeFixture):
             self.assertEqual(len(remainder.Shape.Faces), 0)
             self.assertGreater(panel.Support.Shape.Area, 0.0)
 
-    def test_seat_cut_leaves_the_sleeve_margins(self):
-        """Cutting the ring's seat out of the lofted sleeve leaves margins.
+    def test_seat_cut_is_justified_by_the_geometry(self):
+        """The ring's remainder is empty because the seat covers the sleeve.
 
-        The seat (the profile's base row, swept along the ring) lies ON the
-        sleeve, so subtracting it is a coplanar-face Boolean.  On a lofted
-        sleeve that returns an *empty* shape — measured: zero pieces, so
-        the panel's weave exclusivity silently disappeared on exactly the
-        geometry the real parts use.  A planar plate happens to survive the
-        same cut, which is why the suite never caught it.
-
-        The sleeve spans the frame width plus a margin at each end, so a
-        correct cut leaves two pieces, one per margin, neither overlapping
-        the seat's span.
+        A ring's sleeve spans exactly the frame section — a plain loft whose
+        boundaries are the seat's rows, which is what makes those rows
+        sectionable and offsettable — so there is no region beside the seat
+        to leave behind.  The remainder must be empty *for that reason*, not
+        because a Boolean silently failed: the sleeve's area equals the
+        seat's footprint, which is the check.  The complementary case — a
+        support wider than the seat, where the margins must survive — is
+        pinned by the plate fixture
+        (test_stiffener_composite_shell.TestStiffenerJointStack.\\
+        test_support_is_left_with_the_stiffener_cut_away) and measured by the
+        boolean-cost diagnostic's wide-loft case.
         """
         _, built = self._build_all_rings()
         name, panel, _ = built[0]
-        station_x = STATIONS[0][0]
-        # The station plane is the seat's outboard boundary: the margins
-        # are [station_x - SLEEVE_MARGIN, station_x] and
-        # [station_x + FRAME_SECTION, station_x + FRAME_SECTION + SLEEVE_MARGIN].
-        cut_x = station_x
-
         remainder = self.doc.getObject(f"{name}_RemainderSupport")
-        pieces = list(remainder.Shape.Faces)
-        report = "; ".join(
-            f"X[{p.BoundBox.XMin:.3f},{p.BoundBox.XMax:.3f}] "
-            f"area={p.Area:.1f}"
-            for p in pieces
+        self.assertEqual(len(remainder.Shape.Faces), 0)
+        foot = self.doc.getObject(f"{name}_Foot")
+        # Tolerance: an area identity across the fuse, on faces of ~1000 mm2.
+        self.assertAlmostEqual(
+            panel.Support.Shape.Area,
+            foot.Support.Shape.Area,
+            delta=1.0,
+            msg="the support should be exactly the seat's footprint, so an "
+            "empty remainder is the geometry's own answer",
         )
-        self.assertGreaterEqual(
-            len(pieces),
-            2,
-            f"seat cut left {len(pieces)} piece(s): the sleeve margins "
-            f"should survive as separate pieces. Pieces: {report} "
-            f"(sleeve margins are X[{station_x:.3f},{cut_x:.3f}] and "
-            f"X[{cut_x + FRAME_SECTION:.3f},"
-            f"{station_x + SLEEVE_MARGIN * 2 + FRAME_SECTION:.3f}])",
-        )
-        for piece in pieces:
-            box = piece.BoundBox
-            in_outboard_margin = box.XMax <= cut_x + 1e-6
-            in_inboard_margin = box.XMin >= cut_x + FRAME_SECTION - 1e-6
-            self.assertTrue(
-                in_outboard_margin or in_inboard_margin,
-                f"piece spans X[{box.XMin:.3f}, {box.XMax:.3f}], which "
-                f"overlaps the seat span [{cut_x:.3f}, "
-                f"{cut_x + FRAME_SECTION:.3f}]",
-            )
 
     def test_ring_recompute_is_stable(self):
         """A second recompute keeps the rings wired and the panels whole."""
