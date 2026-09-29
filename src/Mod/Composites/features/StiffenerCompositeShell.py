@@ -535,6 +535,10 @@ def _ensure_panel_foot_transfer(doc, fp, panel, foot_shell):
             master_shell=panel,
             attachment_shell=foot_shell,
             direct_contact=True,
+            # The foot band is cut from the panel's own faces: one surface,
+            # one weave — the rosette is the master's frame by construction,
+            # and the warp-continuity solve has nothing to solve.
+            shared_surface=True,
         )
         attach_rosette_view_provider(transfer)
     elif hasattr(transfer, "DirectContact"):

@@ -122,6 +122,7 @@ class TransferRosetteFP(RosetteFP):
         master_shell=None,
         attachment_shell=None,
         direct_contact=False,
+        shared_surface=False,
     ):
         # Suppress any solve while the defining references are being set up.
         # Set before super().__init__ (which may trigger onChanged).
@@ -151,6 +152,19 @@ class TransferRosetteFP(RosetteFP):
                 "section at all; the edge solve remains for seam joints."
             ),
         ).DirectContact = bool(direct_contact)
+        obj.addProperty(
+            type="App::PropertyBool",
+            name="SharedSurface",
+            group="Solve",
+            doc=(
+                "The two sides carry one surface: the attachment's rosette "
+                "is placed directly at the master's frame (calculated at a "
+                "point on the contact boundary edge) and no warp-continuity "
+                "solve runs — a stiffener's foot band is cut from its "
+                "panel's own faces, so the foot bears the orientation the "
+                "support sets."
+            ),
+        ).SharedSurface = bool(shared_surface)
         self._solving = False
         if master_shell is not None and attachment_shell is not None:
             # The property-set onChanged calls above were suppressed by the
@@ -169,6 +183,11 @@ class TransferRosetteFP(RosetteFP):
     def execute(self, fp):
         # Place the LCS from Support + Angle only; the iterative solve is
         # driven from onChanged so it never recurses into execute().
+        # A joint whose two sides carry one surface has no angle to solve:
+        # the rosette is placed straight from the master's frame.
+        if getattr(fp, "SharedSurface", False) or self._support_lies_on_master(fp):
+            self._place_from_master(fp)
+            return
         super().execute(fp)
 
     def resolve(self, fp) -> None:
@@ -260,26 +279,24 @@ class TransferRosetteFP(RosetteFP):
     def _solve(self, fp) -> None:
         """Solve the attachment rosette Angle for warp continuity.
 
-        Phase-1 frame solve: the rosette frame rotates exactly with
-        ``Angle`` and the laminates treat drape deviation as zero (the
-        approximation stated in the combined-laminate report), so the
-        warp-continuity residual is exact-linear in the angle between
-        the fold boundaries — only the master's drape is read, and
-        every measurement is free of attachment re-draping.  The slope,
-        magnitude AND sign, is measured with two free probes: the sign
-        depends on the joint geometry (a coplanar-flipped joint rotates
-        the attachment frame against the measurement normal), and
-        assuming it is what previously converged the solve to the
-        mirrored fibre.  Each step is wrapped into the fabric's
-        principal period rather than clamped (a warp is undirected:
-        0 deg is the same layup as 180 deg).  The old per-iteration
-        re-drape was both wasteful (a full drape per candidate angle)
-        and self-defeating: boundary-snapped lattice rows quantise the
-        residual into steps no root-finder can meet.
+        A joint whose two sides carry ONE surface — the stiffener's foot band
+        is cut from its panel's own faces — has its warp continuity by
+        construction: the rosette is placed directly at the master's frame,
+        calculated at a point on the contact boundary edge, and no residual
+        solve runs.  The iterative solve's probes would be meaningless there:
+        the edge-referenced LCS rotates about world Z, and on an inclined
+        joint the residual then moves at cos(inclination) rad per degree —
+        measured 0.000174 on the fuselage's spar joint, a hundredth of the
+        true rate, which the slope check rightly refuses as insensitive.
+        Same spirit as the seam remainder, which simply carries the
+        attachment's own rosette.
         """
         master = fp.MasterShell
         attachment = fp.AttachmentShell
         self._ensure_wired(fp)
+        if getattr(fp, "SharedSurface", False) or self._support_lies_on_master(fp):
+            self._place_from_master(fp)
+            return
         # Insertion joints measure at the rosette's own contact point: the
         # residual is a difference of two frame angles about a shared
         # reference, so one point on the contact line is sufficient and no
@@ -319,6 +336,102 @@ class TransferRosetteFP(RosetteFP):
             f"settle within tolerance (last angle {angle:.4f} deg, "
             f"residual {residual:.3g} rad)"
         )
+
+    def _support_lies_on_master(self, fp) -> bool:
+        """Whether the attachment's support lies on the master's mould.
+
+        One surface carried by both sides of the joint: the stiffener's foot
+        band, cut from its panel's own faces.  The master's live support is
+        the remainder once the seat is consumed — the band lies on the mould
+        the panel started from (``SupportBackup``), not on the remainder —
+        so the mould is what the test reads.  Decided by the attachment's
+        support vertices, every one of which must lie on that shape (the
+        band's vertices sit on the panel to ~1e-13; a seam strip spanning a
+        junction has vertices off either surface).
+        """
+        try:
+            attachment = self._shape_of(fp.AttachmentShell)
+        except Exception:
+            return False
+        master = self._master_mould_shape(fp)
+        if attachment is None or master is None or not attachment.Vertexes:
+            return False
+        try:
+            return all(
+                master.distToShape(Part.Vertex(vertex.Point))[0] <= 1e-6
+                for vertex in attachment.Vertexes
+            )
+        except Exception:
+            return False
+
+    def _master_mould_shape(self, fp):
+        """The master's mould surface: the captured pre-stiffener support
+        when the seat has been consumed, else the live support."""
+        master = fp.MasterShell
+        backup = getattr(master, "SupportBackup", None)
+        if backup is not None and hasattr(backup, "Shape"):
+            return backup.Shape
+        return self._shape_of(master)
+
+    def _place_from_master(self, fp) -> None:
+        """Place the rosette directly at the master's frame.
+
+        The phase-1 warp field is the rosette's own frame, so on a joint whose
+        sides share one surface the master's rosette rotation IS the
+        attachment's.  The LCS is calculated at a point on the contact
+        boundary edge — the direct-contact support's own edge centre, else
+        the centre of the edge the shells share — and set directly; no angle
+        is solved and none is needed.
+        """
+        point = self._on_contact_geometry(fp)
+        if point is None:
+            point = self._contact_point(fp)
+        if point is None:
+            edge = self._shared_edge(
+                self._shape_of(fp.MasterShell), self._shape_of(fp.AttachmentShell)
+            )
+            if edge is None:
+                raise ValueError(
+                    "TransferRosette: master and attachment shells share no "
+                    "boundary edge — cannot place the rosette from the master."
+                )
+            point = edge.CenterOfMass
+        rotation = self._master_frame(fp.MasterShell)
+        lcs = getattr(fp, "LocalCoordinateSystem", None)
+        if lcs is None:
+            return
+        lcs.Placement.Base = FreeCAD.Vector(point)
+        lcs.Placement.Rotation = rotation
+        lcs.purgeTouched()
+        _debug(
+            f"TransferRosette {fp.Name}: placed from the master's frame at "
+            f"{point} (SharedSurface joint; no solve)"
+        )
+
+    def _on_contact_geometry(self, fp):
+        """A point ON the rosette's referenced contact geometry.
+
+        The direct-contact support names an edge of the attachment's support;
+        its centre of mass is on an open edge but is the *centre of the
+        curve* for a closed one (a full ring band's base-row ellipse centres
+        on the ring's axis, well off the surface) — and the seed point must
+        be on the surface to grow from.  The length midpoint is on either.
+        """
+        support = getattr(fp, "Support", None)
+        if support is None:
+            return None
+        try:
+            basis, sub = support
+            for geom in basis.getSubObject(sub) or []:
+                if isinstance(geom, Part.Edge):
+                    t = geom.getParameterByLength(0.5 * geom.Length)
+                    return FreeCAD.Vector(geom.valueAt(t))
+                centre = getattr(geom, "CenterOfMass", None)
+                if centre is not None:
+                    return FreeCAD.Vector(centre)
+        except Exception:
+            return None
+        return None
 
     def _residual_at(self, fp, angle: float, target=None) -> float:
         """Place the LCS at *angle* and read the residual in radians.

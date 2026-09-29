@@ -95,31 +95,11 @@ class NextDrapeBackend(DrapeBackend):
 
     def _run_solve(self) -> dict:
         """Run the solver once and cache the result."""
-        debug_file = "/tmp/nextdrape_debug.txt"
-        with open(debug_file, "a") as f:
-            f.write(f"[_run_solve] START, _result={self._result}\n")
-            f.flush()
         if self._result is None:
             seed = self._build_seed()
             params = self._build_params()
-            with open(debug_file, "a") as f:
-                f.write(f"[_run_solve] seed: {seed}\n")
-                f.write(f"[_run_solve] params: {params}\n")
-                f.write(f"[_run_solve] shape type: {type(self._shape)}\n")
-                f.write("[_run_solve] calling solve...\n")
-                f.flush()
-
             solver_shape = self._cut_shape if self._use_cut_shape else self._shape
-            _dump_solver_input(solver_shape, seed, params)
             self._result = self._engine.compute(solver_shape, seed, params)
-
-            with open(debug_file, "a") as f:
-                f.write(f"[_run_solve] solved, success={self._result.get('success')}\n")
-                if not self._result.get("success"):
-                    f.write(f"[_run_solve] error={self._result.get('error')}\n")
-                # Always dump full result for diagnostics
-                f.write(f"[_run_solve] result keys: {list(self._result.keys())}\n")
-                f.flush()
             if not self._result.get("success"):
                 self._valid = False
         return self._result
