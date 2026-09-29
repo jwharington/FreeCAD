@@ -12,6 +12,7 @@ support surface. See docs/stiffener-design.md.
 
 from dataclasses import dataclass
 
+import FreeCAD
 import Part
 from FreeCAD import Console, Vector
 
@@ -157,8 +158,45 @@ def _section_groups(support: Part.Shape, cut_surface: Part.Shape):
         edges = support.section(cut_surface).Edges
     else:
         edges = [edge for face in support.Faces for edge in face.section(cut_surface).Edges]
+    edges = _unique_edges(edges)
     _debug(f"_section_groups: section edges={len(edges)}")
     return Part.sortEdges(edges)
+
+
+# Below which two section edges count as the same curve: measured on the
+# fuselage's unsewn skin junctions, the duplicated edge (one per face) matches
+# its twin to ~1e-13 in length and sampled points — seven orders above that
+# noise, and far below the separation of any two distinct cut curves.
+_EDGE_DUPLICATE_TOLERANCE = 1e-6
+
+
+def _unique_edges(edges):
+    """The section edges, with geometrically coincident duplicates dropped.
+
+    An unsewn support's faces meet along coincident boundary edges — separate
+    TShapes carrying the same curve — so a cut surface crossing the junction
+    sections the curve once per face.  The duplicates chain into one path
+    traversed twice (measured on the fuselage: the frame_3 station's path
+    length 1897 = 2 × 948.5), which breaks every loft built against it.  Two
+    edges are duplicates when they have the same length and each lies on the
+    other; paths that merely touch at a point differ in length and survive.
+    """
+    unique = []
+    for edge in edges:
+        if any(_edges_coincident(edge, kept) for kept in unique):
+            continue
+        unique.append(edge)
+    return unique
+
+
+def _edges_coincident(a: Part.Edge, b: Part.Edge):
+    """Whether two edges carry the same curve over the same extent."""
+    if abs(a.Length - b.Length) > _EDGE_DUPLICATE_TOLERANCE * max(1.0, a.Length):
+        return False
+    return all(
+        b.distToShape(Part.Vertex(point))[0] <= _EDGE_DUPLICATE_TOLERANCE
+        for point in a.discretize(9)
+    )
 
 
 def generate_intersection_path(support: Part.Shape, cut_surface: Part.Shape) -> Part.Wire:
@@ -255,6 +293,22 @@ def _height_at(curve: Part.Wire, point: Vector, normal: Vector) -> Vector:
     return Station.at(point, tangent.normalize(), normal).height
 
 
+def _height_at_parameter(edge: Part.Edge, parameter: float, normal: Vector) -> Vector:
+    """The height direction b = t x N on `edge` at `parameter`, in the edge's
+    own direction of travel.
+
+    The caller knows the edge and the parameter it is probing — the tangent
+    comes straight from the edge, with no point-to-edge membership search:
+    a boolean-produced edge's exposed basis curve evaluates up to ~1e-9 mm
+    off the edge's own geometry (and microns off at the trimmed range
+    endpoints), which a membership search at surface tolerance would reject.
+    """
+    tangent = edge.tangentAt(parameter)
+    if edge.Orientation == "Reversed":
+        tangent = -tangent
+    return Station.at(edge.valueAt(parameter), tangent.normalize(), normal).height
+
+
 def _sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire:
     """The row moved `ordinate` sideways along b = t x N, staying in its plane."""
     if abs(ordinate) <= SURFACE_TOLERANCE:
@@ -262,8 +316,51 @@ def _sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire:
     if len(row.Edges) == 1 and isinstance(row.Edges[0].Curve, Part.Line):
         return _translated_sideways(row, ordinate, normal)
     if len(row.Edges) == 1:
-        return _occt_sideways(row, ordinate, normal)
+        try:
+            return _occt_sideways(row, ordinate, normal)
+        except Part.OCCError:
+            # The exact offset refuses some basis curves outright — a section
+            # of a lofted surface is a C0 B-spline at its seam, and
+            # ``Geom_OffsetCurve`` raises "Offset on C0 curve" on it.  The row
+            # is then rebuilt by sampling: its own points moved along the
+            # local height direction.  That is the web's definition of record
+            # (each point `ordinate` off the surface along b), only
+            # approximated between samples.
+            return _sampled_sideways(row, ordinate, normal)
     return _creased_sideways(row, ordinate, normal)
+
+
+def _sampled_sideways(row: Part.Wire, ordinate: float, normal: Vector, per_edge: int = 12):
+    """The row rebuilt from sampled points, each moved along local b.
+
+    The escape for rows the exact offset refuses (a lofted surface's C0
+    section, see :func:`_sideways`).  Each edge is sampled at strictly
+    interior parameters — a boolean-produced edge's trimmed range endpoints
+    evaluate up to microns off the curve, which _edge_holding rightly
+    refuses — each sample is lifted by `ordinate` along the height direction
+    b = t x N measured on its own edge, and the lifted points are
+    interpolated; a closed row interpolates periodically.
+    """
+    points = []
+    for edge in row.Edges:
+        low = min(edge.FirstParameter, edge.LastParameter)
+        high = max(edge.FirstParameter, edge.LastParameter)
+        span = high - low
+        # Sample in the edge's own direction of travel: a reversed edge's
+        # parametrisation runs backward along the wire.
+        fractions = [(i + 0.5) / per_edge for i in range(per_edge)]
+        if edge.Orientation == "Reversed":
+            fractions = list(reversed(fractions))
+        for fraction in fractions:
+            parameter = low + span * fraction
+            point = edge.valueAt(parameter)
+            points.append(
+                point + _height_at_parameter(edge, parameter, normal) * ordinate
+            )
+    closed = row.isClosed()
+    curve = Part.BSplineCurve()
+    curve.interpolate(points, PeriodicFlag=closed)
+    return _oriented_by_travel(Part.Wire([curve.toShape()]), normal)
 
 
 def _translated_sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire:
@@ -296,9 +393,15 @@ def _occt_sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.Wire
     probe parameter instead of a distance-to-shape solve.
     """
     probe_edge = row.Edges[0]
-    probe_parameter = probe_edge.FirstParameter
+    # Probe at an interior parameter: a boolean-produced edge's trimmed range
+    # endpoints are imprecise (measured 4.8e-6 mm off the true endpoint on a
+    # fuselage skin section), and _edge_holding rightly refuses a point that
+    # far off the row.  Interior parameters evaluate exactly on the curve.
+    low = min(probe_edge.FirstParameter, probe_edge.LastParameter)
+    high = max(probe_edge.FirstParameter, probe_edge.LastParameter)
+    probe_parameter = (low + high) / 2.0
     probe = probe_edge.valueAt(probe_parameter)
-    expected = probe + _height_at(row, probe, normal) * ordinate
+    expected = probe + _height_at_parameter(probe_edge, probe_parameter, normal) * ordinate
     for sign in (1.0, -1.0):
         pieces = _offset_pieces(row, sign * ordinate, normal)
         # An exact point comparison at the probe parameter, not a
@@ -332,17 +435,19 @@ def _creased_sideways(row: Part.Wire, ordinate: float, normal: Vector) -> Part.W
     the probe parameter, not a distance-to-shape solve.
     """
     probe_edge = row.Edges[0]
-    probe_parameter = probe_edge.FirstParameter
-    probe = probe_edge.valueAt(probe_parameter)
-    expected = probe + _height_at(row, probe, normal) * ordinate
     low = min(probe_edge.FirstParameter, probe_edge.LastParameter)
     high = max(probe_edge.FirstParameter, probe_edge.LastParameter)
+    # Interior probe parameter — see _occt_sideways.
+    probe_parameter = (low + high) / 2.0
+    probe = probe_edge.valueAt(probe_parameter)
     for sign in (1.0, -1.0):
         exact = Part.Edge(
             Part.OffsetCurve(probe_edge.Curve, sign * ordinate, normal), low, high
         )
         if (
-            exact.valueAt(probe_parameter).distanceToPoint(expected)
+            exact.valueAt(probe_parameter).distanceToPoint(
+                probe + _height_at_parameter(probe_edge, probe_parameter, normal) * ordinate
+            )
             > OFFSET_DIRECTION_TOLERANCE
         ):
             continue
@@ -504,17 +609,24 @@ def _loft_failure_detail(coords, curves) -> str:
             parts.append(f"seam gap unreadable: {exc}")
     return ", ".join(parts)
 
-def _loft_profile(xsect, loci, mirror: ProfileMirror, normal=None):
+def _loft_profile(xsect, loci, mirror: ProfileMirror, normal=None, skip_base=False):
     """One lofted face per profile edge, ruled between its two vertex loci.
 
     Returns the faces with their provenance: the foot faces are the lofts
     whose generating profile edge lies at y = 0 (both vertex ordinates on
     the base row) — the part of the stiffener that runs along the support;
-    every other face is a web face.
+    every other face is a web face.  With `skip_base` the base edges are not
+    lofted at all: on a planar cut the foot comes from the support's own
+    band (:func:`_foot_bands`), and ruling between two independently
+    booleaned section rows can fail outright (measured: OCCT cannot unify
+    the two arcs' knot structures — the lofted foot would be discarded
+    anyway).
     """
     faces, foot_faces, web_faces = [], [], []
     for index, edge in enumerate(xsect):
         coords = [mirror.apply(vertex.Point) for vertex in edge.Vertexes]
+        if skip_base and all(abs(coord.y) <= BASE_ORDINATE_TOLERANCE for coord in coords):
+            continue
         curves = [loci[_coordinate_key(coord)] for coord in coords]
         try:
             face = Part.makeLoft(curves, solid=False, ruled=True)
@@ -567,9 +679,11 @@ def make_stiffener(
 
     Returns a :class:`StiffenerSweep`: the stiffener as one compound; the
     remainders of the support with the stiffener cut away, one shape per
-    piece; and the lofted faces split into foot faces (generated from base
-    edges — the profile edges lying at y = 0) and web faces (everything
-    above the base rows).  A profile with no base edge yields no foot faces.
+    piece; and the lofted faces split into foot faces and web faces.  On a
+    planar cut surface the foot is *not* lofted: the foot is the band of the
+    support's own surface between the base rows (see :func:`_foot_bands`),
+    exact at edge and interior alike.  A profile with no base edge yields no
+    foot faces.
     """
     if support.ShapeType == "Solid":
         raise ValueError(
@@ -584,26 +698,94 @@ def make_stiffener(
 
     coords = _profile_coords(xsect, mirror)
     normal = plane_normal(cut_surface)
+    intervals = _base_edge_intervals(xsect, mirror)
     faces, foot_faces, web_faces = [], [], []
     for path in paths:
         if normal is None:
             loci = _loci_over_surface(support, cut_surface, path, coords)
+            path_faces, path_foot, path_web = _loft_profile(xsect, loci, mirror)
+            faces.extend(path_faces)
+            foot_faces.extend(path_foot)
+            web_faces.extend(path_web)
         else:
             loci = _loci_over_plane(support, cut_surface, path, coords, normal)
-        path_faces, path_foot, path_web = _loft_profile(xsect, loci, mirror)
-        faces.extend(path_faces)
-        foot_faces.extend(path_foot)
-        web_faces.extend(path_web)
+            _, _, path_web = _loft_profile(xsect, loci, mirror, skip_base=True)
+            faces.extend(path_web)
+            web_faces.extend(path_web)
+    if normal is not None and intervals:
+        bands = _foot_bands(support, cut_surface, normal, intervals)
+        faces.extend(bands)
+        foot_faces.extend(bands)
 
     shell = Part.makeCompound(faces)
+    remainders = (
+        _remainder_outside_bands(support, cut_surface, normal, intervals)
+        if normal is not None and intervals
+        else _support_remainders(support, shell)
+    )
     return StiffenerSweep(
         shell=shell,
-        remainders=_support_remainders(support, shell),
+        remainders=remainders,
         foot_faces=foot_faces,
         web_faces=web_faces,
         foot_width=_base_edge_width(xsect, mirror),
         web_height=max((abs(coord.y) for coord in coords.values()), default=0.0),
     )
+
+
+def _base_edge_intervals(xsect, mirror: ProfileMirror):
+    """The abscissa span of each base edge — the profile edges lying at y = 0.
+
+    The foot runs along the support between those abscissas; the band of
+    support surface between the planes at the interval's ends is the foot's
+    geometry of record.  Degenerate spans (no extent along the support) are
+    skipped — they carry no foot.
+    """
+    intervals = []
+    for edge in xsect:
+        coords = [mirror.apply(vertex.Point) for vertex in edge.Vertexes]
+        if all(abs(coord.y) <= BASE_ORDINATE_TOLERANCE for coord in coords):
+            low, high = sorted(coord.x for coord in coords)
+            if high - low > SURFACE_TOLERANCE:
+                intervals.append((low, high))
+    return intervals
+
+
+def _band_slab(cut_surface: Part.Shape, normal: Vector, low: float, high: float):
+    """The prism between the cut surface and the parallel plane `high` along
+    the normal, starting from the plane at `low`."""
+    moved = cut_surface.copy()
+    moved.translate(normal * low)
+    return moved.extrude(normal * (high - low))
+
+
+def _foot_bands(support: Part.Shape, cut_surface: Part.Shape, normal: Vector, intervals):
+    """The support's own surface between each base edge's abscissa planes.
+
+    The foot is cut from the support, not lofted: a ruled loft between two
+    section rows leaves the surface wherever it curves, which lifts the foot
+    off the support, silently breaks the seat's weave exclusivity (a boolean
+    cannot split a support by a tool that only rides it) and leaves the foot
+    mesh disconnected from the panel's.  The band is the surface's own patch
+    — exact at edge and interior alike — and the remainder is what the same
+    cut leaves behind.
+    """
+    faces = []
+    for low, high in intervals:
+        faces.extend(support.common(_band_slab(cut_surface, normal, low, high)).Faces)
+    return faces
+
+
+def _remainder_outside_bands(support: Part.Shape, cut_surface: Part.Shape, normal: Vector, intervals):
+    """The support with every foot band cut away, one face per piece.
+
+    The complement of :func:`_foot_bands` on the same cut — so the weave
+    exclusivity is exact by construction, not a boolean approximation of it.
+    """
+    rest = support
+    for low, high in intervals:
+        rest = rest.cut(_band_slab(cut_surface, normal, low, high))
+    return list(rest.Faces)
 
 
 def _base_edge_width(xsect, mirror: ProfileMirror) -> float | None:

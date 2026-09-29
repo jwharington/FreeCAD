@@ -92,6 +92,76 @@ def radius_span(shape, samples=9):
     return min(radii), max(radii)
 
 
+def faces_with_all_vertices_on(shape, support, tolerance=1e-7):
+    """The faces of `shape` every vertex of which lies on `support`.
+
+    On a curved support this is the foot's signature: its base row (the path)
+    and its free-edge row (a section of the support) both lie on the surface,
+    while every web and top-flange vertex stands off it.
+    """
+    result = []
+    for face in shape.Faces:
+        if all(
+            support.distToShape(Part.Vertex(vertex.Point))[0] <= tolerance
+            for vertex in face.Vertexes
+        ):
+            result.append(face)
+    return result
+
+
+def max_interior_lift(face, support, samples=7):
+    """The largest distance from `support` of a parametric grid of `face`."""
+    worst = 0.0
+    umin, umax, vmin, vmax = face.ParameterRange
+    for i in range(samples + 1):
+        for j in range(samples + 1):
+            u = umin + (umax - umin) * i / samples
+            v = vmin + (vmax - vmin) * j / samples
+            worst = max(worst, support.distToShape(Part.Vertex(face.valueAt(u, v)))[0])
+    return worst
+
+
+def lofted_skin_face(sections):
+    """A lofted BSpline skin face through fuselage-scale ellipse sections.
+
+    Each section is ``(station_x, height, width)`` — an ellipse in the station
+    plane, major axis vertical (height along z, width along y), built the way
+    the real frames' station wires are built (an ellipse rotated into the
+    station plane).  The smooth non-ruled loft is what a real skin loft is;
+    its B-spline faces are the surfaces a ring must be swept on.
+    """
+    wires = []
+    for station_x, height, width in sections:
+        point = FreeCAD.Vector(station_x, 0.0, 0.0)
+        ellipse = Part.Ellipse(point, height / 2.0, width / 2.0)
+        rotation = FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), FreeCAD.Vector(0, 0, 1))
+        ellipse.rotate(FreeCAD.Placement(point, rotation))
+        wires.append(ellipse.toShape())
+    solid = Part.makeLoft(wires, solid=True, ruled=False)
+    return next(face for face in solid.Faces if isinstance(face.Surface, Part.BSplineSurface))
+
+
+def standalone_station_plane(side, x, normal=FreeCAD.Vector(1, 0, 0)):
+    """A station plane as a plain ``Part.makePlane`` face, centred on its axis.
+
+    The face is placed by its centre (the ``centred_rectangle`` pattern), not
+    by a corner: ``makePlane`` builds the face in the local frame of the
+    rotation that maps z onto the normal, and for an x-directed normal that
+    frame's second axis runs along **minus** global y — a corner-placed face
+    lands shifted a full side in y and never meets the part.  A plane that
+    misses reads identically to an intersection that fails, and this exact
+    misplacement was once misdiagnosed as an OCCT sectioning defect (see the
+    lofted-support test below).
+    """
+    rotation = FreeCAD.Rotation(FreeCAD.Vector(0, 0, 1), normal)
+    face = Part.makePlane(side, side)
+    corner = rotation.multVec(FreeCAD.Vector(side / 2.0, side / 2.0, 0.0))
+    face.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(x, 0.0, 0.0) - corner, rotation
+    )
+    return face
+
+
 class TestStiffenerFP(TestFreeCADFP):
     """Tests for StiffenerFP."""
 
@@ -297,6 +367,117 @@ class TestStiffenerFP(TestFreeCADFP):
         self.assert_valid_stiffener(stiffener)
         nearest, farthest = radius_span(stiffener.Shape)
         self.assertGreater(farthest, nearest)
+
+    def test_foot_follows_the_cone_surface(self):
+        """A foot-carrying ring on a cone: the foot lies on the cone itself.
+
+        The contract the fuselage's frames violated: the profile's base row is
+        swept along the support, so the whole foot band — its free-edge row as
+        much as its base row — is part of the support surface.  On a cone the
+        rows are sections of the cone and the band between them is the cone's
+        own surface (a cone is ruled between coaxial sections), so the foot is
+        exact — measured to 1e-9, horizontal and tilted cuts alike.  This pins
+        the surface-following contract the lofted-support test below extends.
+        """
+        support = open_cone(45.0, 20.0, 120.0)
+        cuts = (
+            horizontal_cut(120.0, -60.0, 60.0),
+            centred_rectangle(
+                FreeCAD.Vector(0.0, 0.0, 60.0), FreeCAD.Vector(0.0, 0.6, 0.8), 160.0
+            ),
+        )
+        for cut in cuts:
+            with self.subTest(cut="horizontal" if cut is cuts[0] else "tilted"):
+                stiffener, _, _, _ = self._build_stiffener(
+                    self._make_support("ConeFootSupport", support),
+                    cut,
+                    self._z_profile_points(),
+                )
+
+                self.assert_valid_stiffener(stiffener)
+                feet = faces_with_all_vertices_on(stiffener_part(stiffener), support)
+                self.assertEqual(len(feet), 1, "the Z's base flange is the only all-on-support face")
+                self.assertLessEqual(max_interior_lift(feet[0], support), 1e-6)
+
+                remainders = stiffener.Proxy.remainders
+                self.assertEqual(len(remainders), 2)
+                for remainder in remainders:
+                    self.assertTrue(remainder.isValid())
+
+    def test_foot_follows_a_lofted_support_cut_by_a_standalone_plane(self):
+        """A ring's foot follows the true lofted skin, cut by a plain plane.
+
+        The fuselage's frames were swept on per-frame ruled sleeves — a
+        workaround for a misdiagnosis: a station plane built by corner-placing
+        a ``makePlane`` face with an x-directed normal lands a full side off
+        the part in y (``makePlane``'s local frame flips that axis), the
+        section returns nothing, and the empty result was read as "OCCT
+        cannot section a lofted surface with a standalone plane".  Sectioned
+        correctly — centred, as this test's helper does — a plain plane cuts
+        the lofted skin exactly, horizontal or tilted.
+
+        The sleeves were the damage that remained: a sleeve extrapolates the
+        skin straight along the station normal, so the feet rode that
+        extrapolation instead of the skin — foot free edges up to 6.35 mm off
+        the surface on a 34 mm flange.  Swept on the true support the foot's
+        rows are sections of the skin and its edges lie on the skin.
+
+        Tolerance note: the foot is the support's own band between the two
+        base rows — a patch of the skin surface, not a ruled loft — so its
+        edges *and* interior lie on the support exactly.
+        """
+        sections = (
+            (-10.0, 565.0, 460.0),
+            (200.0, 495.0, 400.0),
+            (420.0, 415.0, 330.0),
+            (630.0, 355.0, 280.0),
+        )
+        support = lofted_skin_face(sections)
+        cut = standalone_station_plane(1200.0, 200.0)
+
+        stiffener, _, _, _ = self._build_stiffener(
+            self._make_support("LoftedSkinSupport", support),
+            cut,
+            self._z_profile_points(),
+        )
+
+        self.assert_valid_stiffener(stiffener)
+        swept = stiffener_part(stiffener)
+        # The band face reports its underlying B-spline surface's pole box (a
+        # trimmed B-spline face's BoundBox is loose), so the swept shell's
+        # extent is measured on the web faces and on the band's own points.
+        self.assertAlmostEqual(
+            max(
+                point.x
+                for face in stiffener.Proxy.web_faces
+                for edge in face.Edges
+                for point in edge.discretize(9)
+            )
+            - min(
+                point.x
+                for face in stiffener.Proxy.web_faces
+                for edge in face.Edges
+                for point in edge.discretize(9)
+            ),
+            20.0,
+            delta=1e-6,
+        )
+
+        feet = faces_with_all_vertices_on(swept, support)
+        self.assertEqual(len(feet), 1, "the Z's base flange is the only all-on-support face")
+        self.assertLessEqual(max_interior_lift(feet[0], support), 1e-6)
+
+        remainders = stiffener.Proxy.remainders
+        self.assertEqual(len(remainders), 2)
+        for remainder in remainders:
+            self.assertTrue(remainder.isValid())
+        foot_band_area = feet[0].Area
+        self.assertAlmostEqual(
+            sum(remainder.Area for remainder in remainders),
+            support.Area - foot_band_area,
+            delta=1.0,
+            msg="the remainder is the support minus the foot band",
+        )
 
     def test_stiffener_geometry_is_non_degenerate(self):
         support = self._make_support("PlanarSupport", Part.makePlane(120.0, 60.0))
