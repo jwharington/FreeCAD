@@ -260,7 +260,7 @@ class TransferRosetteFP(RosetteFP):
             )
         self._ensure_wired(fp)
         angle = wrap_angle(float(getattr(fp, "Angle", 0.0) or 0.0))
-        residual = self._residual_at(fp, angle)
+        residual = self._residual_at(fp, angle, edge)
         for _ in range(3):
             if abs(residual) <= _ANGLE_TOL_RAD:
                 _debug(
@@ -268,7 +268,7 @@ class TransferRosetteFP(RosetteFP):
                     f"(residual {residual:.3g} rad)"
                 )
                 return
-            slope = self._residual_slope(fp, angle)
+            slope = self._residual_slope(fp, angle, edge)
             if abs(slope) < _MIN_SLOPE_MAGNITUDE:
                 raise RosetteSolveError(
                     f"TransferRosette {fp.Name}: residual is insensitive "
@@ -276,28 +276,34 @@ class TransferRosetteFP(RosetteFP):
                     f"warp continuity on this joint geometry"
                 )
             angle = wrap_angle(angle - residual / slope)
-            residual = self._residual_at(fp, angle)
+            residual = self._residual_at(fp, angle, edge)
         raise RosetteSolveError(
             f"TransferRosette {fp.Name}: warp-continuity residual did not "
             f"settle within tolerance (last angle {angle:.4f} deg, "
             f"residual {residual:.3g} rad)"
         )
 
-    def _residual_at(self, fp, angle: float) -> float:
-        """Place the LCS at *angle* and read the residual in radians."""
+    def _residual_at(self, fp, angle: float, edge=None) -> float:
+        """Place the LCS at *angle* and read the residual in radians.
+
+        *edge* is the joint's shared edge.  Pass it when the caller has
+        already derived it (the solve does): it depends only on the two
+        shells, never on the angle, and the section that derives it is the
+        flow's most expensive operation.
+        """
         fp.Angle = angle
         self.execute(fp)  # place the LCS for the current angle
-        return self._edge_angle_error(fp)
+        return self._edge_angle_error(fp, edge)
 
-    def _residual_slope(self, fp, angle: float) -> float:
+    def _residual_slope(self, fp, angle: float, edge=None) -> float:
         """Measured residual slope, radians of residual per degree of Angle.
 
         Two free probes one degree either side, with the mod-pi fold
         unwrapped so a probe pair straddling a fold boundary still reads
         the true linear slope instead of its wrapped complement.
         """
-        r_lo = self._residual_at(fp, angle - _SLOPE_PROBE_DEG)
-        r_hi = self._residual_at(fp, angle + _SLOPE_PROBE_DEG)
+        r_lo = self._residual_at(fp, angle - _SLOPE_PROBE_DEG, edge)
+        r_hi = self._residual_at(fp, angle + _SLOPE_PROBE_DEG, edge)
         delta = r_hi - r_lo
         if delta > _HALF_PI:
             delta -= math.pi
@@ -305,8 +311,12 @@ class TransferRosetteFP(RosetteFP):
             delta += math.pi
         return delta / (2.0 * _SLOPE_PROBE_DEG)
 
-    def _edge_angle_error(self, fp) -> float:
+    def _edge_angle_error(self, fp, edge=None) -> float:
         """Signed mean of (phi_attachment - phi_master) along the shared edge.
+
+        *edge* is the joint's shared edge.  When not supplied it is derived
+        here; the solve derives it once and passes it in, because the
+        section is the flow's most expensive operation.
 
         Phase-1 frame measurement: both sides are read from rosette
         frames — the master's rosette frame and this rosette's own LCS —
@@ -336,13 +346,17 @@ class TransferRosetteFP(RosetteFP):
         tangent varies along a curved edge, so each sample compares
         against its own local tangent.
         """
-        master = fp.MasterShell
-        master_shape = self._shape_of(master)
-        attachment_shape = self._shape_of(fp.AttachmentShell)
-        edge = self._shared_edge(master_shape, attachment_shape)
+        if edge is None:
+            edge = self._shared_edge(
+                self._shape_of(fp.MasterShell),
+                self._shape_of(fp.AttachmentShell),
+            )
         if edge is None:
             return 0.0
 
+        master = fp.MasterShell
+        master_shape = self._shape_of(master)
+        attachment_shape = self._shape_of(fp.AttachmentShell)
         samples = self._sample_edge(edge, _EDGE_SAMPLES)
         if not samples:
             return 0.0
@@ -452,7 +466,16 @@ class TransferRosetteFP(RosetteFP):
 
     @staticmethod
     def _shared_edge(master_shape, attachment_shape):
-        """Return the longest edge shared by the two shell shapes."""
+        """Return the longest edge shared by the two shell shapes.
+
+        This builds a full section of the two shells — the most expensive
+        operation in the composite flow — so callers that need it more
+        than once (the alignment solve reads a residual per probe) must
+        derive it once and pass it down.  It cannot be cached across
+        calls by shape key: ``_shape_of`` re-derives the support shape on
+        every call, so neither ``hashCode`` (identity) nor the content
+        fingerprint is stable for the same geometry.
+        """
         try:
             shared = master_shape.section(attachment_shape)
         except Exception:
