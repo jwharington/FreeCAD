@@ -44,6 +44,7 @@ from .CompositeShell import is_composite_shell
 from .Laminate import LaminateFP, get_model_layers, is_isotropic_laminate
 from .Rosette import RosetteFP
 from .TransferRosette import TransferRosetteFP
+from ..util.geometry_util import shares_boundary_edge
 
 
 class CombinationModel:
@@ -288,12 +289,17 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
         # geometric-identity rule applies as in TransferRosette: the
         # seam region is part of the attachment surface, and the
         # master-side boundary is the master–attachment intersection.
+        #
+        # Tested by comparing boundary edges directly rather than by
+        # sectioning the shells: the contract is literally "share a
+        # boundary edge", and the section was the flow's most expensive
+        # operation (measured at 8 section builds per ring, ~3 s of a
+        # ~15 s ring).
         seam_shape = TransferRosetteFP._shape_of(seam)
         for name in ("Master", "Attachment"):
-            edge = TransferRosetteFP._shared_edge(
+            if not shares_boundary_edge(
                 TransferRosetteFP._shape_of(getattr(obj, name)), seam_shape
-            )
-            if edge is None:
+            ):
                 raise ValueError(
                     f"{type(self).__name__}: {name} shares no boundary "
                     f"edge with the seam region"

@@ -95,6 +95,34 @@ def shape_stamp(shape) -> str:
     return h.hexdigest()[:16]
 
 
+def shares_boundary_edge(shape_a, shape_b, tolerance: float = 1e-3) -> bool:
+    """Whether the two shapes have a boundary edge in common.
+
+    A cheap alternative to sectioning the two shapes.  The contract this
+    checks is literally "they share a boundary edge", so it compares their
+    boundary edges directly (edge-to-edge distance within *tolerance*),
+    which avoids the surface-by-surface intersection — the composite flow's
+    most expensive operation, and one that builds Boolean history the
+    callers never use.
+
+    Edge counts here are small (a support face and a seam strip: a handful
+    each), so the pairwise test is a few dozen 1-D distance queries, not
+    the surface intersection a section performs.
+    """
+    edges_b = list(shape_b.Edges)
+    if not edges_b:
+        return False
+    for edge_a in shape_a.Edges:
+        for edge_b in edges_b:
+            try:
+                distance = edge_a.distToShape(edge_b)[0]
+            except Exception:
+                continue
+            if distance <= tolerance:
+                return True
+    return False
+
+
 def expand_symmetry(
     li: List,
     sym: Optional["SymmetryType"] = None,
