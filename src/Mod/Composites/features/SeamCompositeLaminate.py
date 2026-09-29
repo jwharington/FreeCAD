@@ -73,6 +73,23 @@ def _edge_mismatch_detail(side, side_shape, seam_shape) -> str:
     )
 
 
+def _master_shape(obj):
+    """The master-side geometry to judge this joint's seam against.
+
+    The joint's own support remainder when the flow recorded one, else the
+    Master shell's live support.  ``Master`` is the whole panel, and the
+    panel supports several joints: its Support pointer moves to the deepest
+    remainder as stiffeners are wired, and is put back to the root while an
+    earlier stiffener re-wires, so it does not describe *this* joint's
+    panel-side surface.  The remainder does — the seat was cut from it — and
+    its boundary is therefore the seam's boundary.
+    """
+    support = getattr(obj, "MasterSupport", None)
+    if support is not None:
+        return support.Shape
+    return TransferRosetteFP._shape_of(getattr(obj, "Master"))
+
+
 class CombinationModel:
     """Names of the supported seam combination models.
 
@@ -114,6 +131,19 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
                 "Master",
                 "References",
                 "Master composite shell (stays whole in seam extraction)",
+            )
+            obj.addProperty(
+                # The panel-side surface *this joint* owns: the support
+                # remainder the stiffener's seat was cut from.  The panel's
+                # own Support pointer chains to the deepest link in the
+                # chain — and is restored to the root while an earlier
+                # stiffener re-wires — so reading it can land on a surface
+                # this joint does not touch.  Unset where the seat consumed
+                # the whole support; there the live support is right.
+                "App::PropertyLinkHidden",
+                "MasterSupport",
+                "References",
+                "Master-side support this joint was wired against",
             )
             obj.addProperty(
                 "App::PropertyLinkGlobal",
@@ -245,6 +275,10 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
                 return "shape-error"
 
         parts = []
+        try:
+            parts.append(shape_stamp(_master_shape(obj)))
+        except Exception:
+            parts.append("master-shape-error")
         for name in ("Master", "Attachment"):
             shell = getattr(obj, name, None)
             parts.append(getattr(shell, "Name", "None"))
@@ -324,7 +358,11 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
         seam_shape = TransferRosetteFP._shape_of(seam)
         for name in ("Master", "Attachment"):
             side = getattr(obj, name)
-            side_shape = TransferRosetteFP._shape_of(side)
+            side_shape = (
+                _master_shape(obj)
+                if name == "Master"
+                else TransferRosetteFP._shape_of(side)
+            )
             if not shares_boundary_edge(side_shape, seam_shape):
                 raise ValueError(
                     f"{type(self).__name__}: {name} shares no boundary "

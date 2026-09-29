@@ -591,6 +591,18 @@ def _ensure_combined_laminate(
     # failure healed on the next recompute but logged a traceback.
     scl.ResinMaterial = SeamShellFP._side_resin(panel, web_shell)
     scl.Master = panel
+    # The seam belongs to one joint, so hand it the panel-side surface that
+    # joint was cut into.  The panel's own Support pointer chains to the
+    # deepest remainder — and is restored to the root while an earlier
+    # stiffener re-wires — so the master's live shape can be a surface this
+    # joint never touches.  Left unset when the seat consumed the whole
+    # support (no remainder), where the live support is the right thing.
+    remainder = doc.getObject(f"{fp.Name}_RemainderSupport")
+    scl.MasterSupport = (
+        remainder
+        if remainder is not None and bool(remainder.Shape.Faces)
+        else None
+    )
     scl.Attachment = web_shell
     scl.SeamRegion = foot_shell
     scl.MasterTransfer = panel_foot
