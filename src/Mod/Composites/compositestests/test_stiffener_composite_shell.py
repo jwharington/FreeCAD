@@ -143,13 +143,16 @@ class StiffenerCompositeFixture(TestFreeCADFP):
         rosette_angle=0.0,
         isotropic=False,
         with_rosette=True,
+        plate=None,
     ):
         """A composite panel shell on a planar plate (the joint's Master)."""
         from Composites.features.CompositeShell import CompositeShellFP
         from Composites.features.Rosette import RosetteFP
 
         support = self.doc.addObject("Part::Feature", f"{name}_Support")
-        support.Shape = Part.makePlane(PLATE_LENGTH, PLATE_WIDTH)
+        support.Shape = plate if plate is not None else Part.makePlane(
+            PLATE_LENGTH, PLATE_WIDTH
+        )
         panel = self.doc.addObject("Part::FeaturePython", name)
         CompositeShellFP(panel, support)
         if with_laminate:
@@ -670,6 +673,34 @@ class TestStiffenerJointStack(StiffenerCompositeFixture):
         self.assertLess(remainder_support.Shape.Area, original_area)
         # The joint pipeline still validates against the re-support.
         scl = self.doc.getObject(f"{stiffener.Name}_CombinedLaminate")
+        self.assertNotIn("Invalid", scl.State)
+
+    def test_panel_keeps_its_support_when_the_seat_leaves_no_remainder(self):
+        """A seat that covers the whole panel leaves nothing to weave on.
+
+        The panel must stay supported on its own support: re-supporting
+        it on the empty remainder erases the joint's master geometry, so
+        the shared-edge check finds no boundary against the foot strip.
+        """
+        plate = Part.makePlane(
+            PLATE_LENGTH, 20.0, FreeCAD.Vector(0.0, PLATE_CUT_Y, 0.0)
+        )
+        panel = self._make_panel(plate=plate)
+        original_support = panel.Support
+        panel, stiffener = self._make_joint(panel=panel)
+
+        # The remainder is empty: the flange (20 wide) spans the plate.
+        remainder = self.doc.getObject(f"{stiffener.Name}_RemainderSupport")
+        self.assertEqual(len(remainder.Shape.Faces), 0)
+        # The panel kept its support, and the sweep still ran on the
+        # captured base geometry.
+        self.assertIs(panel.Support, original_support)
+        self.assertIs(stiffener.SupportBase, original_support)
+        self.assertGreater(panel.Support.Shape.Area, 0.0)
+        # The joint wires against the living panel geometry.
+        scl = self.doc.getObject(f"{stiffener.Name}_CombinedLaminate")
+        self.assertIsNotNone(scl)
+        self.assertNotIn("Invalid", stiffener.State)
         self.assertNotIn("Invalid", scl.State)
 
     def test_resupport_idempotent_across_recomputes(self):

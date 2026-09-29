@@ -174,6 +174,10 @@ def _resupport_panel(doc, fp, panel, sweep) -> None:
     geometry is preserved in ``SupportBase`` and drives every recompute
     (idempotence).
 
+    A seat that covers the entire support face has no remainder to
+    weave on; the panel then keeps its support whole (see below) and
+    its weave overlaps the seat.
+
     With several stiffeners on one panel the remainders chain: a later
     stiffener captures the earlier one's remainder as its SupportBase,
     so each remainder is a pure cut of its own capture and the panel
@@ -189,11 +193,19 @@ def _resupport_panel(doc, fp, panel, sweep) -> None:
         rem_sup = doc.addObject("Part::Feature", rem_name)
         _hide(rem_sup)
     rem_sup.Shape = Part.makeCompound(sweep.remainders)
+    # A seat that consumes the whole captured support leaves no
+    # remainder to weave on.  Re-supporting the panel onto the empty
+    # remainder would erase the panel's weave and orphan the joint's
+    # master side — the seam's shared-edge check then finds no boundary
+    # against the foot.  Keep the panel on its support instead: its
+    # weave overlaps the seat, which is the only weave left to have.
+    has_remainder = bool(sweep.remainders)
     if getattr(fp, "SupportBase", None) is None:
         # First wiring: capture and claim the panel's support.
         fp.SupportBase = panel.Support
         _capture_panel_support_backup(panel)
-        panel.Support = rem_sup
+        if has_remainder:
+            panel.Support = rem_sup
     elif (
         panel.Support is fp.SupportBase
         or not _is_remainder_support(panel.Support)
@@ -205,7 +217,8 @@ def _resupport_panel(doc, fp, panel, sweep) -> None:
         # was deleted (the chain below is dead).  (Re-)claim it.  When
         # a later stiffener owns the pointer, leave it: only this
         # stiffener's remainder geometry was refreshed.
-        panel.Support = rem_sup
+        if has_remainder:
+            panel.Support = rem_sup
 
 
 def _is_remainder_support(obj) -> bool:
