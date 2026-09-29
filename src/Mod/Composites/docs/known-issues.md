@@ -403,3 +403,117 @@ support `Shape` to `Part.Compound()`, recompute — weave persists,
 Fix direction: the fast path should treat a null/empty support shape as
 a cache miss and route through `_mark_failed` (loud breakage), never
 silently reusing a solve for geometry that no longer exists.
+
+## #11 — A Boolean-processed support surface cannot be split or cut
+
+**Status:** OPEN (found 2026-09-29 while porting a fuselage to the workbench)
+
+**Symptom.** `_support_remainders` returns *no* pieces on a lofted sleeve
+support, so "the support with the stiffener's seat cut away" is empty and the
+panel's weave silently keeps running under the seat. A planar plate supports
+the same cut fine, which is why no test caught it.
+
+**Diagnosis.** The sleeves were handed over pre-trimmed by a boolean `common`
+against a slab — a workaround for the row offsetting in #13. A face that has
+been through that operation is *blind to interference*: measured on it, `cut`
+alone returns an empty shape in 0.02 s; `generalFuse` returns the face
+unsplit in 0.01 s (1.57 s with all stiffener faces as tools);
+`BOPTools.SplitAPI.slice` (the pattern FreeCAD's own Part Slice uses — tools
+wrapped in compounds, base pieces taken from the map) returns it unsplit in
+0.01–0.02 s; `fuzzy_value` 1e-3 and 1e-2 change nothing; `cut` with 1-D tools
+raises `Null shape`. The *same* operations on a plain loft of the same
+geometry return the expected pieces: a wide loft cut by the seat gives three
+pieces whose areas sum exactly to the support's (795.7 + 1061.0 + 795.7 =
+2652.4).
+
+**Workaround / rule.** Hand the stiffener a **plain loft**. Never pre-trim a
+support surface with a Boolean: it costs ~3 s per ring and makes the seat cut
+silently vanish. `FuselageV2.py`'s `_frame_sleeve` still carries the trim
+(scaffolding only — the airframe geometry is unaffected) and should be
+reduced to a plain loft spanning the frame section.
+
+## #12 — The seat filter leaves tool-side fragments in the remainder
+
+**Status:** OPEN (found 2026-09-29; the blocker for the ring/plate counts)
+
+**Symptom.** Remainder piece counts come out high: `6` against the expected
+`2` on the plate fixtures (`test_support_is_left_with_the_stiffener_cut_away`,
+`test_remainder_filter_tracks_the_stiffener`) and `5` against `0` on the ring
+(`test_ring_frames.test_seat_cut_is_justified_by_the_geometry`). The pieces
+wanted are present; extra ones belonging to the *tools* leak in.
+
+**Diagnosis.** `_support_remainders` takes every face the general fuse
+returns, which includes pieces generated from the stiffener's own faces. The
+exact filter is the fuse's provenance map — `GeneralFuseResult.piecesFromSource(shapes[0])`
+keeps only the support's pieces (what `SplitAPI.slice` relies on) — and a
+piece is then the seat when its **centre of mass** lies on the stiffener.
+Distance cannot decide the seat: a margin piece *touches* the seat along its
+boundary row, so its nearest point is at zero distance too.
+
+**Blocker.** Turning provenance selection on fixes the counts but breaks the
+multi-stiffener chain: `SeamCompositeLaminateFP: Master shares no boundary
+edge with the seam region`. The Master's live shape comes from the panel's
+support, which for a chained stiffener has been re-pointed to the previous
+remainder — and with provenance that shape can be empty or lack the contact
+the check looks for. The centre-only drop (committed) passes the whole
+multi-stiffener suite and leaves the counts wrong, so the two are currently
+trade-offs.
+
+**Fix direction.** Provenance selection + centre drop, plus one of:
+(a) in `SeamCompositeLaminate._validate_wiring`, when the Master's live shape
+is empty, fall back to the panel's captured pre-insertion support
+(`SupportBackup`) instead of raising; or (b) reconcile with the
+`_resupport_panel` contract so a consumed remainder is a legitimate state for
+the validation too. One line of instrumentation settles which: print the
+Master shape's face count and each clause's outcome inside `_validate_wiring`
+while running `TestMultipleStiffenersOnOnePanel`.
+
+## #13 — OCCT's 2D row offset fails on interior sections of a lofted surface
+
+**Status:** OPEN (mitigated 2026-09-29; the cone case still differs)
+
+**Symptom.** `offsetting the profile row did not move it along the height
+direction` on every *interior* row of a plain lofted sleeve; rows that are the
+surface's own boundary sections offset correctly.
+
+**Diagnosis / current state.** `_sideways` moved rows with `makeOffset2D`,
+which is what the pre-trim workaround of #11 existed to prop up. The offset is
+now tried first and kept as the geometry of record, with a sampled rebuild
+(`_rebuilt_sideways`: move the row's own points along the local `b = t x N`)
+used **only** when the offset returns null. A plain-loft sleeve therefore
+sweeps cleanly (no offset or sweep errors; ring built in 2.6 s), while every
+row the offset can handle keeps its exact geometry.
+
+**Still open.** Replacing the offset wholesale was measured to change swept
+geometry on a cone (`test_t_section_on_a_tilted_cut_of_a_conical_panel`: 60
+against 80) and to fragment a plate's seat cut differently (6 pieces against
+2), which is why the offset stays primary. The cone case fails because *there
+too* the offset gives up and the rebuilt row differs by 20 units — the rebuild
+needs to reproduce the offset's geometry for that surface (its generator is
+conical and the cut is tilted).
+
+## Recently fixed (2026-09-29)
+
+- **Seat cut on a plain support.** `_support_remainders` splits the support
+  with `generalFuse` (tools wrapped in compounds) and drops the seat piece by
+  its centre of mass, so the weave exclusivity exists where it used to vanish.
+- **Seam attachment rule.** `shares_boundary_edge` now accepts an edge of one
+  shape lying on the other, not only two coincident boundary edges: once
+  supports chain, a later stiffener's seam laps *inside* a region left by an
+  earlier one and shares no outer edge, while being perfectly attached.
+- **Stiffener transfer measured at the contact point.** The rosette solve no
+  longer sections the two shells per residual evaluation: it measures the
+  master's warp at the new rosette's contact point (a strip's *face* frame is
+  radial across the strip, which put the measurement on an atan2 branch cut;
+  its boundary edge gives a tangential frame). No solve sections; the
+  web-to-foot probes read exactly 1:1.
+- **Seam validation by edge comparison, gated per input.** `_validate_wiring`
+  compares edges instead of sectioning the shells, and `execute` skips when
+  its inputs are unchanged (an order-independent `shape_stamp` key; content
+  fingerprints are traversal-order dependent and missed on rebuilt compounds).
+- **Shared edge memoised** on the same stamp: 8 calls collapse to 4 distinct
+  argument pairs at the validation site (identity keys and content
+  fingerprints both missed on every call).
+- **Throughput.** Two-ring build: 44.4 s and 50 section operations before
+  these changes, 20.0 s and 20 after; a draped ring's validation went
+  14.6 s → 9.7 s; the ring test module ~250 s → ~30 s.
