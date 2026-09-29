@@ -199,6 +199,25 @@ def _instrument():
         SeamCompositeLaminateFP, "_input_fingerprint", "_input_fingerprint"
     )
 
+    # The feet-cut: cutting the stiffener's seat (foot sweep) out of the
+    # support.  Timed and counted with its RESULT, so "is this slow" and
+    # "does it produce a remainder" are both answered by data — log-message
+    # counting cannot answer either (only Section announces itself; Cut /
+    # Common / Fuse print nothing that distinguishes them here).
+    original_remainders = stiffener_tools._support_remainders
+
+    def support_remainders(support, stiffener):
+        started = time.perf_counter()
+        pieces = original_remainders(support, stiffener)
+        _record(
+            "_support_remainders (feet cut)",
+            (f"support_faces={len(support.Faces)}", f"pieces={len(pieces)}"),
+            time.perf_counter() - started,
+        )
+        return pieces
+
+    stiffener_tools._support_remainders = support_remainders
+
     original_paths = stiffener_tools.intersection_paths
 
     def intersection_paths(support, cut_surface):
@@ -449,6 +468,71 @@ def _trace_point_solves():
     TransferRosetteFP._point_angle_error = wrapper
 
 
+def _measure_cut_variants(doc, name):
+    """Time the support cut with different tools, to isolate why the
+    feet-cut returns nothing.
+
+    The flow cuts the support face with the whole swept shell.  The foot
+    faces of that shell are *coplanar* with the support (they are the base
+    rows, laid on it), which is the classic degenerate Boolean case.  This
+    separates the tools: foot faces alone, web faces alone, and both.
+    """
+    from Composites.util.geometry_util import live_support_shape
+
+    stiffener = doc.getObject(name)
+    if stiffener is None:
+        print(f"CUTDIAG {name}: not found", flush=True)
+        return
+    panel = stiffener.Support
+    support = live_support_shape(panel)
+    face = max(support.Faces, key=lambda f: f.Area)
+
+    def child_shape(suffix):
+        child = doc.getObject(f"{name}{suffix}")
+        if child is None:
+            return None
+        return live_support_shape(child)
+
+    foot = child_shape("_Foot")
+    web = child_shape("_Web")
+    # A thickened foot: extruding the coplanar strip off the surface makes
+    # the tool transverse to it, so the Boolean is not the degenerate
+    # coincident-face case.  Both directions are covered by unioning the two
+    # offset solids, so the strip is cut through wherever it lies.
+    thickened = None
+    if foot is not None:
+        try:
+            solid_up = foot.extrude(face.normalAt(0.0, 0.0) * 0.5)
+            solid_down = foot.extrude(face.normalAt(0.0, 0.0) * -0.5)
+            thickened = Part.makeCompound([solid_up, solid_down])
+        except Exception as exc:
+            print(f"CUTDIAG {name} thicken failed: {exc}", flush=True)
+
+    for label, shape in (
+        ("foot only (coplanar)", foot),
+        ("web only (transverse)", web),
+        ("thickened foot (transverse)", thickened),
+        ("foot + web (the flow)", stiffener.Shape),
+    ):
+        if shape is None:
+            print(f"CUTDIAG {name} {label}: no shape", flush=True)
+            continue
+        started = time.perf_counter()
+        try:
+            result = face.cut(shape)
+            pieces = len(result.Faces)
+            area = result.Area
+            note = f"faces={pieces} area={area:.1f}"
+        except Exception as exc:
+            note = f"EXCEPTION {str(exc)[:60]}"
+        print(
+            f"CUTDIAG {name} {label}: {note} "
+            f"({time.perf_counter() - started:.2f}s) "
+            f"[support face area={face.Area:.1f}]",
+            flush=True,
+        )
+
+
 def _parse_args(argv):
     import argparse
 
@@ -511,6 +595,8 @@ def main(argv=""):
         _make_ring(doc, name, panel, laminate, station_x, cut_x)
         print(f"{name}: {time.perf_counter() - ring_started:.1f}s", flush=True)
     _report(args.rings, time.perf_counter() - started)
+    for index in range(args.rings):
+        _measure_cut_variants(doc, f"Ring{index}")
     if args.draped:
         for index in range(args.rings):
             _dump_direct_quantities(doc, f"Ring{index}_PanelFootTransfer")
