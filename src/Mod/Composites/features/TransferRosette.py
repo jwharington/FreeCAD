@@ -20,6 +20,7 @@ so the solve's own ``Angle`` writes do not recurse.
 """
 
 import math
+from collections import OrderedDict
 from typing import List
 
 import FreeCAD
@@ -61,6 +62,19 @@ _SLOPE_PROBE_DEG = 1.0
 _MIN_SLOPE_MAGNITUDE = math.pi / 180.0 * 0.25
 
 _HALF_PI = math.pi / 2.0
+
+# Shared-edge memo: the edge depends only on the two shell shapes, while
+# the seam validation and any remaining solve ask for it repeatedly for the
+# same pair (measured: 4 calls for 2 distinct pairs per ring, and 14 per
+# solve before the solve passed its edge down).
+#
+# Keyed by the order-independent shape stamp.  Two other keys were tried
+# and miss on every call here: Shape.hashCode() follows a re-wrapped copy,
+# and shape_fingerprint walks vertices in traversal order, so a rebuilt
+# compound fingerprints differently for identical geometry.  The stamp
+# collapses those calls to the number of real argument pairs.
+_SHARED_EDGE_CACHE_MAX = 64
+_SHARED_EDGE_CACHE = OrderedDict()
 
 
 debug = False
@@ -468,22 +482,30 @@ class TransferRosetteFP(RosetteFP):
     def _shared_edge(master_shape, attachment_shape):
         """Return the longest edge shared by the two shell shapes.
 
-        This builds a full section of the two shells — the most expensive
-        operation in the composite flow — so callers that need it more
-        than once (the alignment solve reads a residual per probe) must
-        derive it once and pass it down.  It cannot be cached across
-        calls by shape key: ``_shape_of`` re-derives the support shape on
-        every call, so neither ``hashCode`` (identity) nor the content
-        fingerprint is stable for the same geometry.
+        Memoised per pair of shape stamps: this builds a full section of
+        the two shells — the most expensive operation in the composite
+        flow — and callers ask for it repeatedly for the same pair (the
+        seam validation twice, the solve once per residual evaluation
+        before it began passing its edge down).  A stamp that does not
+        match simply recomputes, so the cache is never wrong, only
+        occasionally redundant.
         """
+        from ..util.geometry_util import shape_stamp
+
+        key = (shape_stamp(master_shape), shape_stamp(attachment_shape))
+        if key in _SHARED_EDGE_CACHE:
+            return _SHARED_EDGE_CACHE[key]
         try:
             shared = master_shape.section(attachment_shape)
         except Exception:
-            return None
-        edges = getattr(shared, "Edges", None)
-        if not edges:
-            return None
-        return max(edges, key=lambda e: e.Length)
+            edge = None
+        else:
+            edges = getattr(shared, "Edges", None)
+            edge = max(edges, key=lambda e: e.Length) if edges else None
+        _SHARED_EDGE_CACHE[key] = edge
+        if len(_SHARED_EDGE_CACHE) > _SHARED_EDGE_CACHE_MAX:
+            _SHARED_EDGE_CACHE.popitem(last=False)
+        return edge
 
     @staticmethod
     def _sample_edge(edge, n):
