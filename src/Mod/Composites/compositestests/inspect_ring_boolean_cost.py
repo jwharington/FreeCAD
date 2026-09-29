@@ -495,23 +495,9 @@ def _measure_cut_variants(doc, name):
 
     foot = child_shape("_Foot")
     web = child_shape("_Web")
-    # A thickened foot: extruding the coplanar strip off the surface makes
-    # the tool transverse to it, so the Boolean is not the degenerate
-    # coincident-face case.  Both directions are covered by unioning the two
-    # offset solids, so the strip is cut through wherever it lies.
-    thickened = None
-    if foot is not None:
-        try:
-            solid_up = foot.extrude(face.normalAt(0.0, 0.0) * 0.5)
-            solid_down = foot.extrude(face.normalAt(0.0, 0.0) * -0.5)
-            thickened = Part.makeCompound([solid_up, solid_down])
-        except Exception as exc:
-            print(f"CUTDIAG {name} thicken failed: {exc}", flush=True)
-
     for label, shape in (
         ("foot only (coplanar)", foot),
         ("web only (transverse)", web),
-        ("thickened foot (transverse)", thickened),
         ("foot + web (the flow)", stiffener.Shape),
     ):
         if shape is None:
@@ -531,6 +517,31 @@ def _measure_cut_variants(doc, name):
             f"[support face area={face.Area:.1f}]",
             flush=True,
         )
+
+    # generalFuse: the splitting algorithm, not a subtraction.  The map
+    # tells us which pieces came from the support itself (map[0]); no
+    # extrusion, no solids, nothing converted.
+    tools = [shape for shape in (foot, web) if shape is not None]
+    if tools:
+        started = time.perf_counter()
+        try:
+            result, mapping = face.generalFuse(tools)
+            own = list(mapping[0]) if mapping else []
+            own_faces = [f for piece in own for f in piece.Faces]
+            own_area = sum(f.Area for f in own_faces)
+            print(
+                f"CUTDIAG {name} generalFuse: own_pieces={len(own)} "
+                f"own_faces={len(own_faces)} own_area={own_area:.1f} "
+                f"total_faces={len(result.Faces)} "
+                f"({time.perf_counter() - started:.2f}s) "
+                f"[support area={face.Area:.1f}]",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"CUTDIAG {name} generalFuse: EXCEPTION {str(exc)[:60]}",
+                flush=True,
+            )
 
 
 def _parse_args(argv):

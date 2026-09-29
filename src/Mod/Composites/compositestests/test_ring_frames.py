@@ -220,15 +220,26 @@ class TestRingFrames(StiffenerCompositeFixture):
         _, built = self._build_all_rings()
         name, panel, _ = built[0]
         station_x = STATIONS[0][0]
-        cut_x = station_x + SLEEVE_MARGIN
+        # The station plane is the seat's outboard boundary: the margins
+        # are [station_x - SLEEVE_MARGIN, station_x] and
+        # [station_x + FRAME_SECTION, station_x + FRAME_SECTION + SLEEVE_MARGIN].
+        cut_x = station_x
 
         remainder = self.doc.getObject(f"{name}_RemainderSupport")
         pieces = list(remainder.Shape.Faces)
+        report = "; ".join(
+            f"X[{p.BoundBox.XMin:.3f},{p.BoundBox.XMax:.3f}] "
+            f"area={p.Area:.1f}"
+            for p in pieces
+        )
         self.assertGreaterEqual(
             len(pieces),
             2,
             f"seat cut left {len(pieces)} piece(s): the sleeve margins "
-            f"should survive as separate pieces",
+            f"should survive as separate pieces. Pieces: {report} "
+            f"(sleeve margins are X[{station_x:.3f},{cut_x:.3f}] and "
+            f"X[{cut_x + FRAME_SECTION:.3f},"
+            f"{station_x + SLEEVE_MARGIN * 2 + FRAME_SECTION:.3f}])",
         )
         for piece in pieces:
             box = piece.BoundBox
