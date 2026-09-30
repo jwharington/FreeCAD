@@ -588,3 +588,57 @@ fold stall.  Both are recorded in
 `src/3rdParty/nextdrape/docs/known-issues/drape-test-baseline-2026-09-30.md`;
 the full account of the fix is in
 `src/3rdParty/nextdrape/docs/handoff-2026-09-29-boundary-snap.md` §11.
+
+## #16 — The drape input was a sewn shell of boolean fragments — FIXED (FuselageV2 `_cut_unsewn`)
+
+**Status:** RESOLVED (found 2026-10-01 on the fuselage L/R build; owner
+diagnosis — "the solver is correctly running to the boundary you gave it",
+"this is a problem of what you have selected to drape")
+
+**Symptom.** The aft skin halves draped 42.1% (both sides, identical) in the
+full build, while the *same faces* drape 97.8–99.3% on their own. The solver
+reported zero diagnostics and healthy shear — nothing was wrong with the
+solve itself.
+
+**Misdiagnosis trail** (recorded so the sequence is not repeated). First
+blamed the multi-group seeding and fixed a real but unrelated defect (the
+extra-group seed landed on its own inflated-bbox trim, nextdrape `c50f0d1`);
+then blamed the boundary traps (#15 class); then the cut ordering
+(pre-drape vs post-drape — no change). Three engine-side hypotheses before
+looking at the *input shape*.
+
+**Diagnosis.** `faces_probe` on the exact solver input (the
+`FC_DRAPE_DUMP_DIR` dump):
+
+| input | structure | faces | shared edges | coverage |
+|---|---|---|---|---|
+| pre-cut halves | compound (unsewn) | 3 | 0 | 97.8–99.3% |
+| post-cut halves (whole-shape boolean) | **shell (sewn)** | 3 | **2** | **42.1%** |
+
+A whole-shape boolean (`shape.cut(tool)`) let OCCT sew the fragment result:
+a partially-joined boundary — some edges shared, some free — that the drape
+frontier cannot traverse (measured: 101 k of 240 k mm² covered). The same
+faces unsewn are separate groups, each draped from its own centre by the
+multi-group path: 97.8–99.3%. The solver ran exactly to the boundary it was
+given; the boundary was wrong.
+
+**Rule.** Never hand the draper a whole-shape boolean result. Cut **per
+face** and recompound — every piece keeps its own edges — the same structure
+`_split_at_symmetry_plane` produces. The unsewn compound is the input
+structure the multi-group path is proven on. Quick check on any suspected
+input: `tools/probes/bin/faces_probe <dump.brep>` — free vs shared edge
+counts; `shared > 0` on a support that should be unsewn is the defect.
+
+**Fix.** `FuselageV2._cut_unsewn` (per-face cut + recompound) for the
+engine-bay opening, and the cut moved **before** any draping: the common
+drape solves once on the final support — a post-drape boolean cut forces a
+re-drape, which is the same disease the seat re-drape had (the lap-joint
+change removed it for the rings; the bay cut must not reintroduce it).
+
+**Measured after.** FuselageSkin L/R: 100.0% / 99.1% (was 42.1% both); ring
+feet 99.8%/99.8% quality PASS.
+
+**Residual (open).** Quality FAILs on 100%-coverage shells
+(FuselageSkinFwdR, FuselageSkinL) — the boundary-defect gates on the cut
+edges, the #15 class; and the engine-bay wall shell fails with
+`gp_Vec::Normalize() - vector has zero norm`.
