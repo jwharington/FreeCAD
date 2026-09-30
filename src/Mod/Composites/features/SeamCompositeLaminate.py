@@ -47,6 +47,50 @@ from .TransferRosette import TransferRosetteFP
 from ..util.geometry_util import shares_boundary_edge
 
 
+def _bbox_gap(a, b) -> float:
+    """The separation of two bounding boxes, 0 when they overlap."""
+    dx = max(b.XMin - a.XMax, a.XMin - b.XMax, 0.0)
+    dy = max(b.YMin - a.YMax, a.YMin - b.YMax, 0.0)
+    dz = max(b.ZMin - a.ZMax, a.ZMin - b.ZMax, 0.0)
+    return (dx * dx + dy * dy + dz * dz) ** 0.5
+
+
+def _closest_approach(side_shape, seam_shape) -> float:
+    """A usable closest-approach figure between two shells, cheaply.
+
+    ``distToShape`` between two B-spline shells runs surface-to-surface
+    extrema — measured at 93 s on the fuselage's half-ring, a diagnostic
+    costing two orders of magnitude more than the work it describes (and
+    it runs on the failure path, which the fingerprint gate re-runs for
+    every wiring write until the joint passes).  The message needs zero
+    versus nonzero, so the figure is bounded instead:
+
+    * separated bounding boxes settle it outright — the boxes bound the
+      shapes, so the box gap is a positive lower bound;
+    * overlapping boxes reduce to edge-pair extrema over candidates whose
+      own boxes could still beat the running best.  A seat-to-seam gap is
+      realised on boundary curves, and curve/curve extrema skip the
+      surface work entirely.
+
+    The edge-pair figure is an upper bound when the true closest approach
+    lies interior to faces; on the joint geometries this serves (seats
+    touch along their boundary rows) it is the actual gap.
+    """
+    box_gap = _bbox_gap(side_shape.BoundBox, seam_shape.BoundBox)
+    if box_gap > 0.0:
+        return box_gap
+    best = float("inf")
+    for edge_a in side_shape.Edges:
+        box_a = edge_a.BoundBox
+        for edge_b in seam_shape.Edges:
+            if _bbox_gap(box_a, edge_b.BoundBox) > best:
+                continue
+            best = min(best, edge_a.distToShape(edge_b)[0])
+            if best == 0.0:
+                return best
+    return best
+
+
 def _edge_mismatch_detail(side, side_shape, seam_shape) -> str:
     """Describe why the shared-edge check failed, for the raised message.
 
@@ -60,7 +104,7 @@ def _edge_mismatch_detail(side, side_shape, seam_shape) -> str:
     """
     support = getattr(side, "Support", None)
     try:
-        gap = side_shape.distToShape(seam_shape)[0]
+        gap = _closest_approach(side_shape, seam_shape)
     except Exception as exc:
         gap = f"unmeasurable ({exc})"
     return (
