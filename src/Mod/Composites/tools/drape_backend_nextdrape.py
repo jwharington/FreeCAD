@@ -125,17 +125,19 @@ class NextDrapeBackend(DrapeBackend):
                 "failure_reason": r.get("error", "solve failed"),
             }
         d = r.get("diagnostics", {})
-        return {
+        payload = {
             "backend": self.backend_name,
             "status": "valid",
             "solver": "nextdrape",
             "nodes": d.get("total_nodes", 0),
             "quads": len(r.get("quads", [])),
-            "coverage_ratio": d.get("coverage_ratio", 0.0),
+            "coverage_ratio": d.get("coverage_ratio"),  # None when unmeasured
             "max_shear_deg": d.get("max_shear_deg", 0.0),
             "max_strain": d.get("max_strain", 0.0),
             "solve_time_ms": d.get("solve_time_ms", 0.0),
+            "failure_diagnostics": d.get("failure_diagnostics", []),
         }
+        return payload
 
     def get_tex_coords(self, offset_angle_deg: float = 0) -> list[Any] | None:
         """Return texture (UV) coordinates as a list of FreeCAD Vectors."""
@@ -480,6 +482,11 @@ class NextDrapeBackend(DrapeBackend):
             "projection_tol": getattr(mesh, "projection_tol", 0.5),
             "boundary_tol": getattr(mesh, "boundary_tol", 1e-3),
             "use_geodesic": getattr(mesh, "use_geodesic", False),
+            # Real coverage measurement (the sampling analysis): opt-in here
+            # because the 95 % coverage gate reads it.  The C++ default is
+            # off (O(samples x quads + quads^2)); tests and the CLI opt in
+            # on their own side.
+            "analyze_coverage": True,
         }
         # When cut wires are specified, enable the C++ cut-wire blocking
         # engine. The dart wires themselves go through "dart_wires" as

@@ -94,6 +94,9 @@ static nextdrape::DrapeParams build_params(const py::dict& params_dict) {
         params.boundaryTol = params_dict["boundary_tol"].cast<double>();
     if (params_dict.contains("strain_fail"))
         params.strainFail = params_dict["strain_fail"].cast<double>();
+    if (params_dict.contains("analyze_coverage"))
+        params.analyzeCoverage = pybind11::cast<bool>(
+            params_dict["analyze_coverage"]);
 
     // === CUT-WIRE CONFIG ===
     params.cutWires.enabled = false;
@@ -238,7 +241,8 @@ static py::dict pack_result(const nextdrape::DrapeResult& result) {
 
     py::dict diag;
     diag["status"] = static_cast<int>(result.status);
-    diag["coverage_ratio"] = result.coverageRatio;
+    if (result.coverageMeasured)
+        diag["coverage_ratio"] = result.coverageRatio;
     diag["max_shear_deg"] = result.maxShearDeg;
     diag["max_strain"] = result.maxStrain;
     diag["solve_time_ms"] = result.solveTimeMs;
@@ -267,6 +271,22 @@ static py::dict pack_result(const nextdrape::DrapeResult& result) {
     }
     cut_diag["blocked_wire_descriptions"] = blocked_descs;
     res["cut_wire_diagnostics"] = cut_diag;
+
+    // Failure diagnostics (locations + codes): the re-drape shear questions
+    // ("where is the worst quad?") are answered here, not by re-deriving
+    // them from the mesh.
+    py::list fail_list;
+    for (const auto& d : result.diagnostics) {
+        py::dict entry;
+        entry["code"] = d.code;
+        entry["shear_deg"] = d.shearDeg;
+        entry["x"] = d.location.X();
+        entry["y"] = d.location.Y();
+        entry["z"] = d.location.Z();
+        entry["message"] = d.message;
+        fail_list.append(entry);
+    }
+    res["failure_diagnostics"] = fail_list;
 
     return res;
 }
