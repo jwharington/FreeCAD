@@ -642,3 +642,57 @@ feet 99.8%/99.8% quality PASS.
 (FuselageSkinFwdR, FuselageSkinL) — the boundary-defect gates on the cut
 edges, the #15 class; and the engine-bay wall shell fails with
 `gp_Vec::Normalize() - vector has zero norm`.
+
+### #16 residual — fold-line slivers at the row-collapse transition (OPEN)
+
+The quality FAILs on the fuselage fwd-R half (fold_line_edges = 3) are
+reversed-winding sliver cells at the belly trim, fully instrumented
+(offtrim_probe + the BOUNDARY-SNAP-PLACE trace):
+
+* the march's rows approaching the trim: j=-7 at y~44-54, j=-8 at y~5-16
+  (the geodesic converged the row to 5.4 mm from the trim — node 197),
+  j=-9 (the trim row) failed everywhere;
+* the snap then filled the EMPTY j=-8 slots with on-trim nodes across the
+  eastern stretch (x=+272..+22) — geometrically right, there the j=-8 row
+  IS the rim (the weft collapsed onto it) — while the western rim got
+  j=-9 nodes (x=-27, -21, -76);
+* the rim's row index therefore changes from j=-9 to j=-8 along the trim,
+  and cell (-3,-9) straddles the transition: corners 251 (j=-9, x=-21),
+  249 (j=-9, x=-27), 197 (j=-8, march, y=5.42), 231 (j=-8, snap, on-trim
+  at x=+22 — 49 mm away) — the reversed sliver.
+
+**Fix direction:** the quad assembly must recognise the row-collapse
+transition and pinch the collapsed columns at the nearest rim node (a
+thin/degenerate boundary cell or a column merge), instead of building a
+full quad from grid corners that span the transition. The atlas and
+snap-plane placement fixes (7c80225, a03ffb5) are in but do not reach
+this: node 197 is a legitimate geodesic landing and the on-trim j=-8
+placements are geometrically correct individually — the defect is in the
+cell assembly across the transition.
+
+### #16 residual — fold-line slivers at the row-collapse transition (OPEN)
+
+The quality FAILs on the fuselage fwd-R half (fold_line_edges = 3) are
+reversed-winding sliver cells at the belly trim, fully instrumented
+(offtrim_probe + the BOUNDARY-SNAP-PLACE trace):
+
+* the march's rows approaching the trim: j=-7 at y~44-54, j=-8 at y~5-16
+  (the geodesic converged the row to 5.4 mm from the trim — node 197),
+  j=-9 (the trim row) failed everywhere;
+* the snap then filled the EMPTY j=-8 slots with on-trim nodes across the
+  eastern stretch (x=+272..+22) — geometrically right, there the j=-8 row
+  IS the rim (the weft collapsed onto it) — while the western rim got
+  j=-9 nodes (x=-27, -21, -76);
+* the rim's row index therefore changes from j=-9 to j=-8 along the trim,
+  and cell (-3,-9) straddles the transition: corners 251 (j=-9, x=-21),
+  249 (j=-9, x=-27), 197 (j=-8, march, y=5.42), 231 (j=-8, snap, on-trim
+  at x=+22 — 49 mm away) — the reversed sliver.
+
+**Fix direction:** the quad assembly must recognise the row-collapse
+transition and pinch the collapsed columns at the nearest rim node (a
+thin/degenerate boundary cell or a column merge), instead of building a
+full quad from grid corners that span the transition. The atlas and
+snap-plane placement fixes (nextdrape 7c80225, a03ffb5) are in but do
+not reach this: node 197 is a legitimate geodesic landing and the
+on-trim j=-8 placements are geometrically correct individually — the
+defect is in the cell assembly across the transition.
