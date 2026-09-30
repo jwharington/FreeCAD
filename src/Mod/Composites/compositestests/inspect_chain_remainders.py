@@ -41,7 +41,7 @@ def report(label: str, shape) -> None:
 
 def main() -> int:
     case = TestMultipleStiffenersOnOnePanel(
-        "test_two_stiffeners_build_a_chained_remainder"
+        "test_two_stiffeners_record_their_seats_one_drape"
     )
     case.setUp()
     try:

@@ -156,36 +156,29 @@ def wire_composite_stiffener(host, fp, sweep) -> None:
     panel = fp.Support
 
     web_shell = _build_web_shell(doc, fp, sweep)
-    _resupport_panel(doc, fp, panel, sweep)
-    # The panel's weave must re-cover the fresh remainder: execute
-    # directly (self-guarding — the fingerprint fast path no-ops when
-    # the remainder is unchanged), since reassigning nothing would
-    # never wake it.
-    panel.Proxy.execute(panel)
+    _record_joint_remainder(doc, fp, panel, sweep)
     _build_foot_strip(doc, fp, panel, web_shell, sweep)
     _hide_compound_filters(doc, fp)
 
 
-def _resupport_panel(doc, fp, panel, sweep) -> None:
-    """Weave exclusivity on the panel (PRD §6.3): re-support the panel
-    on the support remainder — the panel minus the stiffener seat — so
-    its weave is exclusive of the foot strip by construction, exactly
-    as the seam flow re-supports its attachment.  The pre-stiffener
-    geometry is preserved in ``SupportBase`` and drives every recompute
-    (idempotence).
+def _record_joint_remainder(doc, fp, panel, sweep) -> None:
+    """Record the stiffener's seat remainder — the joint's master side.
 
-    A seat that covers the entire support face has no remainder to
-    weave on; the panel then keeps its support whole (see below) and
-    its weave overlaps the seat.
+    Lap joint (owner decision 2026-09-30, replacing the weave-exclusivity
+    re-support): the panel drapes once, before any stiffener, on its own
+    full support, and its weave runs continuously under every foot — a
+    re-drape of the panel on the cut remainder was what produced the
+    multi-island coverage defect (one island dead on a boundary seed).
+    What the joint machinery still needs is the seat's cut geometry as
+    the master-side surface of THIS joint — the remainder's cut edges are
+    what the foot shares — so the sweep's remainders are recorded on
+    ``<stiffener>_RemainderSupport`` and handed to the combined laminate
+    through ``MasterSupport``.  The panel's Support pointer never moves.
 
-    With several stiffeners on one panel the remainders chain: a later
-    stiffener captures the earlier one's remainder as its SupportBase,
-    so each remainder is a pure cut of its own capture and the panel
-    weaves on the deepest link.  The panel's Support pointer therefore
-    moves only at wiring time — a later recompute of an earlier
-    stiffener refreshes its own remainder's geometry but must not steal
-    the pointer down to its shallower link, which would resurrect a
-    later stiffener's seat into the panel weave.
+    ``SupportBase`` still captures the panel's support at first wiring
+    (the sweep reads it); under the common drape it is the panel's own
+    support for every stiffener, so the old remainder-chain healing
+    paths are inert.
     """
     rem_name = f"{fp.Name}_RemainderSupport"
     rem_sup = doc.getObject(rem_name)
@@ -193,32 +186,8 @@ def _resupport_panel(doc, fp, panel, sweep) -> None:
         rem_sup = doc.addObject("Part::Feature", rem_name)
         _hide(rem_sup)
     rem_sup.Shape = Part.makeCompound(sweep.remainders)
-    # A seat that consumes the whole captured support leaves no
-    # remainder to weave on.  Re-supporting the panel onto the empty
-    # remainder would erase the panel's weave and orphan the joint's
-    # master side — the seam's shared-edge check then finds no boundary
-    # against the foot.  Keep the panel on its support instead: its
-    # weave overlaps the seat, which is the only weave left to have.
-    has_remainder = bool(sweep.remainders)
     if getattr(fp, "SupportBase", None) is None:
-        # First wiring: capture and claim the panel's support.
         fp.SupportBase = panel.Support
-        _capture_panel_support_backup(panel)
-        if has_remainder:
-            panel.Support = rem_sup
-    elif (
-        panel.Support is fp.SupportBase
-        or not _is_remainder_support(panel.Support)
-        or _remainder_owner_gone(panel.Support)
-    ):
-        # This stiffener is the chain tip (nobody chained beyond it),
-        # or the panel's support was restored/changed outside the chain
-        # — or it sits on an orphaned remainder whose owning stiffener
-        # was deleted (the chain below is dead).  (Re-)claim it.  When
-        # a later stiffener owns the pointer, leave it: only this
-        # stiffener's remainder geometry was refreshed.
-        if has_remainder:
-            panel.Support = rem_sup
 
 
 def _is_remainder_support(obj) -> bool:
@@ -243,28 +212,6 @@ def _remainder_owner_gone(obj) -> bool:
         obj.Document is None
         or obj.Document.getObject(obj.Name[: -len("_RemainderSupport")]) is None
     )
-
-
-def _capture_panel_support_backup(panel) -> None:
-    """Remember the panel's pre-stiffener support (hidden link).
-
-    The remainder chain loses its root when a stiffener earlier in the
-    chain is deleted: its remainder object dies (or is orphaned) and
-    with it the ``SupportBase`` of every later stiffener.  The backup
-    lets a surviving stiffener re-capture the panel's original support
-    and re-cut its remainder without the deleted stiffener's seat.
-    """
-    if _is_remainder_support(panel.Support):
-        return
-    if not hasattr(panel, "SupportBackup"):
-        panel.addProperty(
-            type="App::PropertyLinkHidden",
-            name="SupportBackup",
-            group="Composite",
-            doc="Panel support captured before the first stiffener claimed it",
-        )
-    if getattr(panel, "SupportBackup", None) is None:
-        panel.SupportBackup = panel.Support
 
 
 def chain_base_is_orphaned(fp) -> bool:
@@ -322,10 +269,12 @@ def recover_deleted_chain_predecessor(fp) -> bool:
 def teardown_composite_stiffener(host, fp) -> None:
     """Undo the composite wiring on a switch to geometry-only mode.
 
-    Restores the panel's original support, hides the flow's children
-    and brings the CompoundFilters back — in geometry-only mode they
-    are the render, per ADR-0002.  Re-linking a Laminate rebuilds
-    everything (the flow fingerprint is reset)."""
+    The panel was never re-pointed (common drape), so restoring its
+    support is a no-op identity write; the flow's children are hidden
+    and the CompoundFilters return — in geometry-only mode they are the
+    render, per ADR-0002.  Re-linking a Laminate rebuilds everything
+    (the flow fingerprint is reset).
+    """
     doc = fp.Document
     if doc is None:
         return
@@ -333,12 +282,6 @@ def teardown_composite_stiffener(host, fp) -> None:
     panel = fp.Support
     if panel is not None and base is not None:
         panel.Support = base
-    elif panel is not None and getattr(panel, "SupportBackup", None) is not None:
-        # The captured base died with a deleted chain predecessor;
-        # restore the panel's original support instead.
-        own_remainder = doc.getObject(f"{fp.Name}_RemainderSupport")
-        if own_remainder is not None and panel.Support is own_remainder:
-            panel.Support = panel.SupportBackup
     fp.SupportBase = None
     for suffix in ("_Web", "_Foot", "_PanelFootTransfer",
                    "_StiffenerFootTransfer", "_CombinedLaminate",

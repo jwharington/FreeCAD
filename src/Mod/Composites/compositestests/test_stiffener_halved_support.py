@@ -35,7 +35,7 @@ from .test_base import TestFreeCADFP
 from .test_stiffener import lofted_skin_face, standalone_station_plane
 
 # Fuselage-scale sections (station_x, height, width), mirroring frame_0's
-# neighbourhood — the same fixture test_drape_on_resupported_panel uses.
+# neighbourhood — the same fixture test_drape_common_with_rings uses.
 SECTIONS = (
     (-10.0, 565.0, 460.0),
     (200.0, 495.0, 400.0),

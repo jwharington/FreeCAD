@@ -1,17 +1,17 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
-"""Draping on a re-supported panel keeps the layup quality.
+"""The common drape survives the rings at fuselage scale.
 
-Regression for the fuselage's frame rings on their real skin: the ring's
-seat is consumed and the panel re-drapes on the remainder — a boolean-cut
-face whose boundary includes the seat's trim — and that re-drape fired
-hundreds of ``BOUNDARY-LINK-BORN-OFF-EDGE`` traps (boundary links stopping
-up to 1210 mm short of the part edge, mean 271 mm) while the coverage
-diagnostic reported a flat 1.0 and the shear blew the 25 deg gate (measured
-38.9 deg on the fwd skin's remainder, nextdrape diagnostics 2026-09-30).
-The re-drape must meet the same quality gates as the first drape: this
-test pins them.
+Lap joint (owner decision 2026-09-30): the panel drapes once, before any
+stiffener, and its weave runs continuously under the ring's foot.  This
+was ``test_drape_on_resupported_panel``, which pinned the old
+weave-exclusivity architecture — the panel re-draped on the seat
+remainder after the ring's seat cut, and that re-drape had to meet the
+same quality gates as the first drape.  That re-drape no longer happens
+(it was the source of the multi-island seeding defect); the pin becomes:
+wiring the ring leaves the panel's *common* drape in place, and that
+common drape still meets the gates on the full fuselage-scale skin.
 """
 
 import json
@@ -27,18 +27,8 @@ from .test_stiffener_composite_shell import (
 )
 
 
-def z_profile_points():
-    """A Z-section with a foot: base flange, web, top flange (open)."""
-    return [
-        FreeCAD.Vector(0.0, 0.0, 0.0),
-        FreeCAD.Vector(20.0, 0.0, 0.0),
-        FreeCAD.Vector(20.0, 10.0, 0.0),
-        FreeCAD.Vector(0.0, 10.0, 0.0),
-    ]
-
-
-class TestDrapeOnResupportedPanel(StiffenerCompositeFixture, unittest.TestCase):
-    """The panel's re-drape after a ring's seat cut meets the quality gates."""
+class TestDrapeCommonWithRings(StiffenerCompositeFixture, unittest.TestCase):
+    """Wiring the ring leaves the common drape in place, gates met."""
 
     # Fuselage-scale station: frame_0's ellipse, its section 34 mm aft.
     STATION_X = -10.0
@@ -63,8 +53,14 @@ class TestDrapeOnResupportedPanel(StiffenerCompositeFixture, unittest.TestCase):
         )
         return self.doc.addObject("Part::Feature", name), face
 
-    def test_redrape_on_remainder_keeps_layup_quality(self):
-        """After the ring's seat cut, the panel's re-drape meets the gates."""
+    def _coverage(self, panel):
+        raw = getattr(panel, "DrapeDiagnostics", None)
+        if not raw:
+            return None
+        return json.loads(raw).get("coverage_ratio")
+
+    def test_common_drape_survives_the_ring(self):
+        """Wiring the ring neither re-drapes the panel nor breaks the gates."""
         from Composites.features.Stiffener import StiffenerFP
 
         sections = (
@@ -78,6 +74,7 @@ class TestDrapeOnResupportedPanel(StiffenerCompositeFixture, unittest.TestCase):
             isotropic=False,
             rosette_angle=90.0,
             plate=lofted_skin_face(sections),
+            pitch=25.0,
         )
         ring_laminate = self._make_laminate(
             TestQuasiIsotropicStiffener.QI_ANGLES,
@@ -112,19 +109,20 @@ class TestDrapeOnResupportedPanel(StiffenerCompositeFixture, unittest.TestCase):
             f"ring wiring failed: {stiffener.Proxy.last_error}",
         )
 
-        # The panel re-draped on the remainder: its diagnostics must meet
-        # the layup quality gates the first drape meets.
+        # The common drape: the panel's support was never re-pointed and
+        # its solved coverage is exactly what the first drape measured.
+        coverage_before = self._coverage(panel)
+        self.assertIsNotNone(coverage_before, "the common drape is unmeasured")
+        self.assertGreaterEqual(
+            coverage_before,
+            self.COVERAGE_GATE,
+            "the common drape's coverage fell below the gate",
+        )
         raw = panel.DrapeDiagnostics
-        self.assertIsNotNone(raw, "the panel re-drape produced no diagnostics")
         diag = json.loads(raw)
         self.assertEqual(diag.get("status"), "valid")
-        self.assertGreaterEqual(
-            float(diag.get("coverage_ratio", 0.0)),
-            self.COVERAGE_GATE,
-            "the re-drape's coverage fell below the gate",
-        )
         self.assertLessEqual(
             float(diag.get("max_shear_deg", 0.0)),
             self.SHEAR_GATE_DEG,
-            "the re-drape's shear exceeded the gate",
+            "the common drape's shear exceeded the gate",
         )

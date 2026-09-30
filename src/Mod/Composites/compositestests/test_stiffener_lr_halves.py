@@ -18,7 +18,8 @@ Pinned here at fuselage scale:
 * each half-stiffener sweeps on its half support and full-composite wires
   (web + foot + combined laminate) without error, spanning its own side of
   the symmetry plane and meeting its twin at y = 0; and
-* each half's re-supported panel re-drapes within the quality gates.
+* each half's common drape (never re-draped by the wiring) meets the
+  quality gates.
 """
 
 import json
@@ -85,10 +86,12 @@ class TestStiffenerLRHalves(StiffenerCompositeFixture, TestFreeCADFP, unittest.T
             isotropic=False,
             rosette_angle=90.0,
             plate=half,
+            pitch=25.0,
         )
-        # A coarse pitch keeps the wiring's drape solves fast enough for the
-        # test; the gates here pin the build, not the production fineness.
-        panel.DrapePitch = 50.0
+        # Half the production pitch (owner ruling): the tests must be
+        # more demanding than the build, not less.  If the solver is not
+        # robust at finer pitches, those are nextdrape defects to fix —
+        # not something to dodge by coarsening.
         ring_laminate = self._make_laminate(
             TestQuasiIsotropicStiffener.QI_ANGLES,
             [0.5] * len(TestQuasiIsotropicStiffener.QI_ANGLES),
@@ -132,10 +135,15 @@ class TestStiffenerLRHalves(StiffenerCompositeFixture, TestFreeCADFP, unittest.T
                 self.doc.getObject(f"Ring{side}_Web"), f"ring {side} has no web shell"
             )
 
-    def test_half_panels_redrape_within_gates(self):
-        """Each half panel re-drapes (post seat cut) to the skin's gates."""
+    def test_half_panels_common_drape_gates(self):
+        """The half panel's common drape survives the ring within gates.
+
+        Lap joint: the half panel drapes once, before the ring, and the
+        wiring never re-drapes it — the diagnostics after wiring are the
+        common drape's own, and they must meet the quality gates.
+        """
         for side in ("L", "R"):
-            _, panel = self._make_half_stiffener(side)
+            stiffener, panel = self._make_half_stiffener(side)
             raw = panel.DrapeDiagnostics
             self.assertIsNotNone(raw, f"panel {side} produced no diagnostics")
             diag = json.loads(raw)
@@ -147,6 +155,14 @@ class TestStiffenerLRHalves(StiffenerCompositeFixture, TestFreeCADFP, unittest.T
             self.assertLessEqual(
                 float(diag.get("max_shear_deg", 0.0)), SHEAR_GATE_DEG,
                 f"{side} shear above gate: {diag}",
+            )
+            # The support was never re-pointed: the recorded remainder is
+            # bookkeeping, not the panel's support.
+            remainder = self.doc.getObject(f"Ring{side}_RemainderSupport")
+            self.assertIsNotNone(remainder, f"{side}: no seat remainder record")
+            self.assertFalse(
+                getattr(panel.Support, "Name", "").endswith("_RemainderSupport"),
+                f"{side}: the panel was re-supported on a remainder",
             )
 
 
