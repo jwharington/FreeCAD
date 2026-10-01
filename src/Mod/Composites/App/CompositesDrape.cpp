@@ -206,10 +206,17 @@ static py::dict pack_result(const nextdrape::DrapeResult& result) {
     }
     res["quads"] = quad_list;
 
-    // Export strains only for the seed-connected quads (texturePlan.quads)
-    // so they align with the mesh geometry.
-    const auto& connected = nextdrape::SeedConnectedQuadIndices(result.quads);
-    ssize_t n_mesh_quads = static_cast<ssize_t>(connected.size());
+    // Export strains for the packed quads, aligned with them: "quads" is
+    // texturePlan.quads — for a merged multi-group result that is MORE
+    // than the seed-connected subset (every group's quads), so the
+    // seed-connected packing used here previously left the other groups'
+    // quads without strain rows and the arrays misaligned with "quads"
+    // (measured: the lap-joint foot borrow indexed row 85 of a 30-row
+    // array).  texturePlan.sourceQuadIndices maps plan.quads[i] back onto
+    // the original quad list — that is the alignment of record.
+    const auto& planQuads = result.texturePlan.quads;
+    const auto& sourceIdx = result.texturePlan.sourceQuadIndices;
+    ssize_t n_mesh_quads = static_cast<ssize_t>(planQuads.size());
     py::array_t<double> warp_strain(n_mesh_quads);
     py::array_t<double> weft_strain(n_mesh_quads);
     py::array_t<double> shear_deg_arr(n_mesh_quads);
@@ -217,7 +224,8 @@ static py::dict pack_result(const nextdrape::DrapeResult& result) {
     auto wf = weft_strain.mutable_unchecked<1>();
     auto sd = shear_deg_arr.mutable_unchecked<1>();
     for (ssize_t i = 0; i < n_mesh_quads; ++i) {
-        const auto& q = result.quads[connected[static_cast<std::size_t>(i)]];
+        const auto src = sourceIdx[static_cast<std::size_t>(i)];
+        const auto& q = result.quads[src];
         ws(i) = q.warpStrain;
         wf(i) = q.weftStrain;
         sd(i) = q.shearDeg;
@@ -370,6 +378,55 @@ PYBIND11_MODULE(Composites_drape, m) {
              py::arg("point"),
              "Return (u, v) texture coordinate at a 3D point on the last "
              "compute() result, or None if no quad is reachable.")
+        .def("load",
+             [](nextdrape::DrapeEngine& self,
+                py::sequence nodes_seq,
+                py::sequence quads_seq,
+                py::sequence tex_seq) {
+                 // Restore path: rebuild the UV-query index from the
+                 // persisted weave arrays (node positions, quad
+                 // connectivity as 4 flat indices per quad, per-node UVs
+                 // as 2 flat floats per node).  Same KDTreeLocator that
+                 // compute() builds, so lookup_uv()/lookup_lcs() serve
+                 // restored sessions with the original semantics.
+                 std::vector<nextdrape::Vec3> positions;
+                 positions.reserve(py::len(nodes_seq));
+                 for (auto item : nodes_seq) {
+                     py::sequence p(item);
+                     if (py::len(p) < 3) {
+                         throw py::value_error("node_positions entries need 3 components");
+                     }
+                     positions.push_back({py::cast<double>(p[0]),
+                                          py::cast<double>(p[1]),
+                                          py::cast<double>(p[2])});
+                 }
+                 std::vector<std::array<std::uint32_t, 4>> quads;
+                 if (py::len(quads_seq) % 4 != 0) {
+                     throw py::value_error("quads must be 4 indices per quad");
+                 }
+                 quads.reserve(py::len(quads_seq) / 4);
+                 for (std::size_t i = 0; i < py::len(quads_seq); i += 4) {
+                     quads.push_back({py::cast<std::uint32_t>(quads_seq[i]),
+                                      py::cast<std::uint32_t>(quads_seq[i + 1]),
+                                      py::cast<std::uint32_t>(quads_seq[i + 2]),
+                                      py::cast<std::uint32_t>(quads_seq[i + 3])});
+                 }
+                 std::vector<nextdrape::Vec2> tex;
+                 if (py::len(tex_seq) != 2 * positions.size()) {
+                     throw py::value_error("tex_coords must be 2 floats per node");
+                 }
+                 tex.reserve(positions.size());
+                 for (std::size_t i = 0; i < positions.size(); ++i) {
+                     tex.push_back({py::cast<double>(tex_seq[2 * i]),
+                                    py::cast<double>(tex_seq[2 * i + 1])});
+                 }
+                 self.LoadUvQueryIndex(positions, quads, tex);
+             },
+             py::arg("node_positions"), py::arg("quads_flat"),
+             py::arg("tex_coords_flat"),
+             "Rebuild the UV-query index from persisted solve arrays "
+             "(document restore); lookup_uv()/lookup_lcs() then serve "
+             "with the original locator semantics.")
         .def("lookup_lcs",
              [](const nextdrape::DrapeEngine& self, py::object point_obj) -> py::object {
                  nextdrape::Vec3 p{0.0, 0.0, 0.0};

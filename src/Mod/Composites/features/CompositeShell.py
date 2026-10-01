@@ -168,6 +168,12 @@ class CompositeShellFP(CompositeBaseFP):
             ("DrapeCacheRosetteKey", "App::PropertyString", ""),
             ("DrapeCacheRosetteAngle", "App::PropertyFloat", 0.0),
             ("DrapeCachePitch", "App::PropertyFloat", 0.0),
+            # The solved weave lattice: what the weave presentation and
+            # the UV locator need, persisted so a restored session shows
+            # the weave and answers locator queries without re-solving.
+            ("WeaveNodes", "App::PropertyVectorList", []),
+            ("WeaveQuads", "App::PropertyIntegerList", []),
+            ("WeaveTexCoords", "App::PropertyFloatList", []),
         ):
             if not hasattr(obj, name):
                 prop = obj.addProperty(type=ptype, name=name, group="Draping",
@@ -255,7 +261,38 @@ class CompositeShellFP(CompositeBaseFP):
         except Exception:
             pass
 
+        # Rebuild the drape backend from the persisted weave lattice: the
+        # restored session keeps the solved drape's UV locator, so
+        # recomputes take the _can_use_persisted fast path and the GUI
+        # weave presentation rebuilds without re-solving.  Documents
+        # saved before WeaveNodes existed (and isotropic/failed shells,
+        # which never store arrays) stay solve-on-recompute.  The arrays'
+        # presence is the criterion — DrapeValid is not: a
+        # restore-touched recompute against a not-yet-restored support
+        # shape can mark a healthy shell failed before this runs, and the
+        # persisted arrays are exactly the evidence that the solve was
+        # real.
+        if getattr(fp, "WeaveNodes", None):
+            try:
+                from ..tools.drape_backend_nextdrape import (
+                    PersistedDrapeBackend,
+                )
+                self._backend = PersistedDrapeBackend(
+                    fp.WeaveNodes, fp.WeaveQuads, fp.WeaveTexCoords
+                )
+            except Exception as exc:
+                self._diag(fp, f"weave restore failed: {exc}")
+                self._backend = None
+
         super().onDocumentRestored(fp)
+
+        # GUI: rebuild the weave presentation from the persisted locator.
+        # Headless returns immediately inside the injector.
+        if self._backend is not None and FreeCAD.GuiUp:
+            try:
+                self._inject_drape_geometry(fp, None, None)
+            except Exception as exc:
+                self._diag(fp, f"weave presentation rebuild failed: {exc}")
 
     def execute(self, fp):
         # During document restore, the FeaturePython's properties may not be
@@ -273,6 +310,14 @@ class CompositeShellFP(CompositeBaseFP):
             fp.Proxy._needs_recompute = False
 
         if not fp.Support:
+            return
+        # A null support shape means restore is still in flight (the
+        # restore-touched recompute can run before the linked object's
+        # shape is read — the solve would fail with "Cannot handle null
+        # shape" and mark a healthy shell failed).  Bail out; the object
+        # stays touched and the post-restore recompute settles it once
+        # every shape is present.
+        if fp.Support.Shape is None or fp.Support.Shape.isNull():
             return
         if not fp.Laminate:
             # No laminate — fall back to the support shape.  The Placement
@@ -586,6 +631,7 @@ class CompositeShellFP(CompositeBaseFP):
 
         # Keep the live cache state on the proxy/backend only.
         self._store_cache_state(fp)
+        self._store_weave(fp, solve_result)
 
         # Inject support-surface geometry + reload shader synchronously.
         # The separate drape mesh is intentionally kept out of the GUI scene graph.
@@ -708,6 +754,29 @@ class CompositeShellFP(CompositeBaseFP):
         fp.DrapeCacheRosetteKey = repr(self._cached_rosette_key)
         fp.DrapeCacheRosetteAngle = self._cached_rosette_angle
         fp.DrapeCachePitch = self._cached_drape_pitch
+
+    def _store_weave(self, fp, solve_result) -> None:
+        """Persist the solved weave lattice (nodes, quads, UVs).
+
+        Everything the weave presentation and the UV locator need after a
+        document restore, without the solved result itself (which stays
+        RAM-only).  Skipped when the solve produced no lattice (isotropic
+        or failed shells keep their arrays empty).
+        """
+        nodes = solve_result.get("node_positions")
+        quads = solve_result.get("quads")
+        tex = solve_result.get("tex_coords")
+        if nodes is None or quads is None or tex is None:
+            return
+        if len(nodes) == 0 or len(quads) == 0:
+            return
+        try:
+            fp.WeaveNodes = [FreeCAD.Vector(float(p[0]), float(p[1]),
+                                            float(p[2])) for p in nodes]
+            fp.WeaveQuads = [int(i) for q in quads for i in q]
+            fp.WeaveTexCoords = [float(c) for pair in tex for c in pair]
+        except Exception as exc:
+            self._diag(fp, f"weave persistence failed: {exc}")
 
     def fibre_analysis(self, fp):
         histograms_length = make_fibre_length_analysis(fp)

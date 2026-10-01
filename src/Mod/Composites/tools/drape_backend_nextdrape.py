@@ -213,6 +213,114 @@ class BorrowedDrapeBackend(DrapeBackend):
         return self._source.get_tex_coord_at_point(point, offset_angle_deg)
 
 
+class PersistedDrapeBackend(DrapeBackend):
+    """The solved drape restored from the document's persisted weave
+    arrays.
+
+    Serves the same DrapeEngine UV locator (``engine.load``) that the
+    live solve built, so a restored session answers texture-coordinate
+    and fabric-frame queries without re-solving: the shell's execute()
+    takes the _can_use_persisted fast path and the GUI weave rebuilds
+    from the locator.  Only the locator protocol is live — strains and
+    boundary loops come back empty until a genuine re-solve replaces
+    this backend.
+    """
+
+    backend_name = "nextdrape-persisted"
+
+    def __init__(self, node_positions, quads_flat, tex_flat) -> None:
+        self._engine = _import_engine()()
+        self._node_positions = np.asarray(node_positions, dtype=float)
+        self._quads_flat = [int(i) for i in quads_flat]
+        self._tex_flat = [float(c) for c in tex_flat]
+        self._engine.load(
+            [(float(p[0]), float(p[1]), float(p[2]))
+             for p in self._node_positions],
+            self._quads_flat,
+            self._tex_flat,
+        )
+
+    def _run_solve(self) -> dict:
+        return self.raw_result()
+
+    def raw_result(self) -> dict:
+        n = len(self._quads_flat) // 4
+        return {
+            "success": True,
+            "node_positions": self._node_positions,
+            "quads": [self._quads_flat[4 * i:4 * i + 4] for i in range(n)],
+            "tex_coords": np.asarray(self._tex_flat, dtype=float).reshape(-1, 2),
+        }
+
+    def is_valid(self) -> bool:
+        return True
+
+    def quality_pass(self) -> bool:
+        # The persisted shell's own QualityPass property governs the
+        # reported verdict; the locator backend carries no quality state.
+        return True
+
+    def diagnostics(self) -> dict:
+        return {
+            "backend": self.backend_name,
+            "status": "valid",
+            "solver": "nextdrape",
+            "nodes": int(len(self._node_positions)),
+            "quads": int(len(self._quads_flat) // 4),
+        }
+
+    def get_tex_coords(self, offset_angle_deg: float = 0) -> list | None:
+        tex = np.asarray(self._tex_flat, dtype=float).reshape(-1, 2)
+        if offset_angle_deg:
+            import math
+            ang = math.radians(-offset_angle_deg)
+            cos_a, sin_a = math.cos(ang), math.sin(ang)
+            tex = np.column_stack([
+                tex[:, 0] * cos_a - tex[:, 1] * sin_a,
+                tex[:, 0] * sin_a + tex[:, 1] * cos_a,
+            ])
+        return [[float(u), float(v)] for u, v in tex]
+
+    def get_boundaries(self, offset_angle_deg: float = 0) -> list:
+        # Boundary loops are not persisted; a genuine re-solve restores
+        # them.
+        return []
+
+    def strains(self) -> np.ndarray | None:
+        return None
+
+    def get_tex_coord_at_point(self, point: Any,
+                               offset_angle_deg: float = 0) -> Any | None:
+        uv = self._engine.lookup_uv(
+            [float(point[0]), float(point[1]), float(point[2])]
+        )
+        return [uv[0], uv[1]] if uv is not None else None
+
+    def get_lcs_at_point(self, center: Any) -> Any | None:
+        frame = self._engine.lookup_lcs(
+            [float(center[0]), float(center[1]), float(center[2])]
+        )
+        if frame is None:
+            return None
+        warp, _weft, normal = frame
+        return NextDrapeBackend._placement(warp, normal, center)
+
+    def get_lcs(self, element: Any) -> Any | None:
+        centroid = NextDrapeBackend._element_centroid(self, element)
+        if centroid is None:
+            return None
+        frame = self._engine.lookup_lcs(
+            [float(centroid[0]), float(centroid[1]), float(centroid[2])]
+        )
+        if frame is None:
+            return None
+        warp, _weft, normal = frame
+        return NextDrapeBackend._placement(warp, normal, centroid)
+
+    def get_lcs_batch(self, elements) -> list:
+        return [self.get_lcs(element) for element in elements]
+
+
 class NextDrapeBackend(DrapeBackend):
     """Wraps the C++ nextdrape solver (Composites_drape module)."""
 
