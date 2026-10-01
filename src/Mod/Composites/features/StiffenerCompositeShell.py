@@ -381,18 +381,18 @@ def _build_foot_strip(doc, fp, panel, web_shell, sweep):
     foot_shell = _ensure_shell_child(doc, fp, "_Foot")
     foot_shape = Part.makeCompound(sweep.foot_faces)
     _set_pitch(foot_shell, _scaled_pitch(sweep.foot_width))
-    # Bootstrap: the foot is part of the stiffener surface, so the
-    # stiffener's own laminate is the physically correct stand-in until
-    # the combined laminate exists (the seam bootstraps from its
-    # attachment's laminate for the same reason) — but a QI stiffener
-    # laminate cannot seed a drape (no fibre frame, D8): the panel's
-    # laminate stands in.  No explicit drape here: the panel → foot
-    # transfer solve drives the foot shell's drape directly, and it
-    # wires its rosette first.
-    bootstrap = fp.Laminate
-    if is_isotropic_laminate(bootstrap):
-        bootstrap = panel.Laminate
-    foot_shell.Proxy.update(foot_shell, foot_shape, bootstrap, None, recenter_lcs=False)
+    # The foot's laminate is the stiffener's own.  Under the lap joint the
+    # skin weave runs continuously UNDER the foot — the support's common
+    # drape IS the weave there — and a QI stiffener laminate takes no drape
+    # at all (D8: no fibre frame, no rosette, isotropic-equivalent
+    # presentation), so a QI foot shell stays undraped instead of solving
+    # the panel's stack a second time over the band (the old bootstrap swap
+    # to the panel's directional laminate — measured: two ~0.9 s solves per
+    # ring straddling the quality gate's 1 s solve-time limit, plus the
+    # feet's own trim/quality defect class).  The combined laminate (SCL)
+    # remains the joint's stack record through its SeamRegion link.
+    foot_shell.Proxy.update(foot_shell, foot_shape, fp.Laminate, None,
+                            recenter_lcs=False)
     if not is_isotropic_shell(panel):
         _ensure_draped(panel)
 
@@ -413,7 +413,11 @@ def _build_foot_strip(doc, fp, panel, web_shell, sweep):
         doc, fp, panel, web_shell, foot_shell, panel_foot, stiffener_foot
     )
 
-    foot_shell.Proxy.update(foot_shell, foot_shape, scl, panel_foot)
+    # The foot shell's laminate stays the stiffener's own (see above): a QI
+    # foot keeps the QI declaration and never drapes; a directional
+    # stiffener's foot drapes its own stack, seeded by the transfer.
+    foot_laminate = fp.Laminate if is_isotropic_laminate(fp.Laminate) else scl
+    foot_shell.Proxy.update(foot_shell, foot_shape, foot_laminate, panel_foot)
     for obj in (foot_shell, panel_foot, stiffener_foot, scl):
         if obj is not None:
             _unhide(obj)
