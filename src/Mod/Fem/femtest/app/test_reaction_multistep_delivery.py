@@ -48,6 +48,10 @@ def _displacement(result):
     return dict(zip(result.NodeNumbers, result.DisplacementVectors))
 
 
+def _peak_displacement(result):
+    return max(float(v) for v in result.DisplacementLengths)
+
+
 def _snapshots(cases):
     return [{
         "ConstraintReaction": {
@@ -58,33 +62,65 @@ def _snapshots(cases):
     } for case in cases]
 
 
-def _write_deck(tmp_path, cases):
-    """Build the example and write a deck with one step per case.
+class _ReactionModel:
+    """The reaction example, built once, so every deck a test writes is
+    carried on the same mesh.
 
-    The caller owns the returned document and must close it.
+    gmsh's element count varies between meshes of the same geometry, so two
+    decks built from two separate meshes disagree at the 1e-5 level for a
+    reason that has nothing to do with how a step delivers its load.  Compar-
+    ing decks only says anything about the steps if they share a mesh.
     """
-    doc = reaction_example.setup()
-    analysis = doc.getObject("Analysis")
-    solver = next(o for o in analysis.Group
-                  if o.isDerivedFrom("Fem::FemSolverObject"))
-    solver.WorkingDir = str(tmp_path)
-    from femtools.ccxtools import FemToolsCcx
 
-    fem = FemToolsCcx(analysis=analysis, solver=solver)
-    fem.update_objects()
-    fem.step_count = len(cases)
-    fem.reaction_snapshots = _snapshots(cases)
-    fem.set_inp_file_name()
-    fem.write_inp_file()
-    return doc, fem
+    def __init__(self):
+        self.doc = reaction_example.setup()
+        self.analysis = self.doc.getObject("Analysis")
+        self.solver = next(o for o in self.analysis.Group
+                           if o.isDerivedFrom("Fem::FemSolverObject"))
+        from femtools.ccxtools import FemToolsCcx
+
+        self.ccx = FemToolsCcx(analysis=self.analysis, solver=self.solver)
+        self.ccx.update_objects()
+
+    def close(self):
+        FreeCAD.closeDocument(self.doc.Name)
+
+    def write(self, cases, working_dir):
+        """Write one deck carrying one *STEP per case onto this mesh."""
+        self.solver.WorkingDir = str(working_dir)
+        self.ccx.step_count = len(cases)
+        self.ccx.reaction_snapshots = _snapshots(cases)
+        self.ccx.set_inp_file_name()
+        self.ccx.write_inp_file()
+        return self.ccx
+
+    def solve(self, cases, working_dir):
+        """Solve a deck and return each step's peak displacement, in step
+        order."""
+        working_dir.mkdir(parents=True, exist_ok=True)
+        ccx = self.write(cases, working_dir)
+        assert ccx.ccx_run() == 0, "ccx failed on a %d-case deck" % len(cases)
+        ccx.purge_results()
+        ccx.load_results()
+        results = [o for o in self.analysis.Group
+                   if o.isDerivedFrom("Fem::FemResultObject")]
+        assert len(results) == len(cases), (
+            "%d cases but %d result increments came back — one increment "
+            "per step is what maps a result back onto its case" % (len(cases),
+                                                                   len(results)))
+        return [_peak_displacement(o) for o in results]
+
+    def deck(self, cases, working_dir):
+        """The written input of a deck, for checks that need no solve."""
+        return self.write(cases, working_dir).inp_file_name
 
 
 @pytest.mark.slow
 def test_multistep_deck_has_one_step_per_case(tmp_path):
-    doc, fem = _write_deck(tmp_path, CASES)
+    model = _ReactionModel()
     try:
-        _nodes, preamble, steps = support_utils.parse_calculix_deck(
-            fem.inp_file_name)
+        inp = model.deck(CASES, tmp_path)
+        _nodes, preamble, steps = support_utils.parse_calculix_deck(inp)
         assert len(steps) == len(CASES), (
             "wrote %d steps for %d cases" % (len(steps), len(CASES)))
         # a load written outside every step belongs to step 1, so case 2
@@ -104,15 +140,15 @@ def test_multistep_deck_has_one_step_per_case(tmp_path):
         # makes that safe is OP=NEW above, which is asserted per step, and
         # what makes it correct is the resultant in the test below.
     finally:
-        FreeCAD.closeDocument(doc.Name)
+        model.close()
 
 
 @pytest.mark.slow
 def test_multistep_deck_delivers_each_case(tmp_path):
-    doc, fem = _write_deck(tmp_path, CASES)
+    model = _ReactionModel()
     try:
         nodes, _preamble, steps = support_utils.parse_calculix_deck(
-            fem.inp_file_name)
+            model.deck(CASES, tmp_path))
         origin = ORIGIN.Base
         # the writer delivers -Force / -Torque of the constraint object
         expected = [(-case["Force"], -case["Torque"]) for case in CASES]
@@ -127,7 +163,7 @@ def test_multistep_deck_delivers_each_case(tmp_path):
                 "step %d delivered moment %s, expected %s"
                 % (index + 1, moment, want_moment))
     finally:
-        FreeCAD.closeDocument(doc.Name)
+        model.close()
 
 
 # One cube, bottom face fixed, -100 N in z on the top nodes.  Step 2 hands
@@ -230,3 +266,31 @@ def test_opnew_clears_an_entry_the_step_omits(tmp_path):
             % (omitted, zeroed))
     finally:
         FreeCAD.closeDocument(doc.Name)
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(shutil.which("ccx") is None, reason="needs ccx")
+def test_batch_matches_the_same_cases_run_one_at_a_time(tmp_path):
+    """The acceptance gate for batching: N cases in one deck must give the
+    same answers as N runs of one case each.
+
+    The model is linear elastic with no NLGEOM and every step is a single
+    increment, so there is nothing here that could legitimately make a step
+    depend on its neighbours — the two paths must agree to solver
+    round-off.  A gap of any real size means a step carried load over from
+    the case before it, and the per-step resultant checks above are what to
+    read first.
+    """
+    model = _ReactionModel()
+    try:
+        batched = model.solve(CASES, tmp_path / "deck")
+        one_at_a_time = [model.solve([case], tmp_path / ("single%d" % i))
+                         for i, case in enumerate(CASES)]
+    finally:
+        model.close()
+
+    assert len(batched) == len(CASES)
+    for index, (deck_peak, singles) in enumerate(zip(batched, one_at_a_time)):
+        assert (deck_peak / singles[0]) - 1.0 == pytest.approx(0.0, abs=1e-9), (
+            "case %d: %g in the deck vs %g run alone — ratio %.10g"
+            % (index + 1, deck_peak, singles[0], deck_peak / singles[0]))
