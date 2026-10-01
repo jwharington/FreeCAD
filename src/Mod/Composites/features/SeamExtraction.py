@@ -189,7 +189,15 @@ class SeamGeometryFP(CompositeShellFP):
         current_fp += f"|pitch:{float(fp.DrapePitch):.6f}"
         rosette = getattr(fp, "Rosette", None)
         if rosette is not None:
-            current_fp += f"|angle:{float(rosette.Angle):.6f}"
+            angle = getattr(rosette, "Angle", None)
+            if angle is None:
+                # Restore ordering: the Rosette link is read before the
+                # linked rosette's own properties are restored.  Bail —
+                # the object stays touched and the post-restore recompute
+                # settles it with full inputs (same pattern as the null
+                # support-shape guard in CompositeShell.execute).
+                return
+            current_fp += f"|angle:{float(angle):.6f}"
             lcs = getattr(rosette, "LocalCoordinateSystem", None)
             if lcs is not None:
                 q = lcs.Placement.Rotation.Q

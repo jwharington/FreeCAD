@@ -86,6 +86,17 @@ class StiffenerFP(CompositePartFP):
             "Rosette defining the stiffener fibre orientation",
         )
 
+        # Geometry-first trim (owner): the web/foot support faces are cut
+        # by this solid before their shells are built, so the finished
+        # rings stop at the opening. The drape itself is untouched — it
+        # rides the uncut sweep, and the trimmed shells borrow it.
+        obj.addProperty(
+            "App::PropertyLink",
+            "TrimTool",
+            "Layout",
+            "Solid cutting the web/foot supports before their shells are built",
+        )
+
         # Original panel support geometry, captured before the panel is
         # re-supported on the stiffener remainder (weave exclusivity).
         # Drives every recompute: extraction must never run on the

@@ -401,6 +401,13 @@ class ViewProviderCompositeShell:
         if not getattr(vobj, "ShowRosette", True):
             return False
         obj = getattr(vobj, "Object", None)
+        if getattr(obj, "Rosette", None) is None:
+            # No fibre frame of its own — a borrowed-weave shell (the
+            # finished skins) or an undraped one.  Without a rosette the
+            # symbol falls back to the shell's own LCS and lands a marker
+            # at the shape centroid — the spurious centreline rosettes.
+            # The fibre-frame info lives on the source shell's rosette.
+            return False
         return not is_isotropic_laminate(getattr(obj, "Laminate", None))
 
     def _apply_rosette_visibility(self, vobj):

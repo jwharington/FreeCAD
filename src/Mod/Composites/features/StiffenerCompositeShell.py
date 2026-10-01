@@ -324,6 +324,24 @@ def _flow_fingerprint(fp, sweep) -> str:
     return h.hexdigest()
 
 
+def _apply_trim_tool(fp, shape):
+    """Geometry-first trim (owner): cut the shell's support faces by the
+    stiffener's TrimTool (the engine-bay solid) before the CompositeShell
+    exists. The drape is untouched — it was solved (or borrowed) on the
+    uncut support, and the trimmed shell takes its weave from there over
+    the trimmed region via its DrapeSource link."""
+    tool = getattr(fp, "TrimTool", None)
+    if tool is None or tool.Shape is None or tool.Shape.isNull():
+        return shape
+    trimmed = shape.cut(tool.Shape)
+    if not trimmed.Faces:
+        raise ValueError(
+            f"{_feature_label(fp)}: the trim tool removes the whole "
+            f"support ({len(shape.Faces)} faces) — nothing left to lay up"
+        )
+    return Part.makeCompound(trimmed.Faces)
+
+
 def _build_web_shell(doc, fp, sweep):
     """Create/update the web shell child (the stiffener's own layup).
 
@@ -337,7 +355,7 @@ def _build_web_shell(doc, fp, sweep):
             f"stiffener to lay up"
         )
     web_shell = _ensure_shell_child(doc, fp, "_Web")
-    web_shape = Part.makeCompound(sweep.web_faces)
+    web_shape = _apply_trim_tool(fp, Part.makeCompound(sweep.web_faces))
     _set_pitch(web_shell, _scaled_pitch(sweep.web_height))
     # Recenter only the auto-created rosette: a user-linked rosette's LCS
     # position is the user's datum — moving it would be silent vandalism.
@@ -386,7 +404,7 @@ def _build_foot_strip(doc, fp, panel, web_shell, sweep):
         return None
 
     foot_shell = _ensure_shell_child(doc, fp, "_Foot")
-    foot_shape = Part.makeCompound(sweep.foot_faces)
+    foot_shape = _apply_trim_tool(fp, Part.makeCompound(sweep.foot_faces))
     _set_pitch(foot_shell, _scaled_pitch(sweep.foot_width))
     # The foot's laminate is the combined stack (SCL): the panel's
     # directional plies continue under it plus the ring plies — the foot is
