@@ -9,6 +9,10 @@ from pivy import coin
 
 
 class CompositeBaseFP:
+    # The ViewProvider class that restores this feature's serialised VP
+    # proxy; each concrete feature sets it (see onDocumentRestored).
+    view_provider_class = None
+
     def __init__(self, obj):
         obj.addExtension("App::SuppressibleExtensionPython")
         obj.Proxy = self
@@ -29,6 +33,22 @@ class CompositeBaseFP:
         if not obj.hasExtension("App::SuppressibleExtensionPython"):
             obj.addExtension("App::SuppressibleExtensionPython")
             obj.recompute()
+        # Repair the serialised ViewProvider proxy: FreeCAD serialises the
+        # VP proxy as an int (a memory address) on save, so after restore
+        # it is not a Python object — icons, claimChildren and task panels
+        # all break, and interacting with those objects in the tree grinds
+        # on the broken proxy.  Each concrete feature names its VP class;
+        # re-attach here for all of them (previously only CompositeShellFP
+        # repaired its own, leaving plies, laminates, rosettes and rings
+        # broken).
+        vobj = getattr(obj, "ViewObject", None)
+        vp_class = getattr(self, "view_provider_class", None)
+        if (
+            vobj is not None
+            and vp_class is not None
+            and isinstance(getattr(vobj, "Proxy", None), int)
+        ):
+            vobj.Proxy = vp_class(vobj)
 
 
 class VPCompositeBase:

@@ -7,6 +7,51 @@ import FreeCAD as App
 import FreeCADGui as Gui
 
 
+class _CompositeVpProxyRepair:
+    """Repair serialised (int) ViewProvider proxies after a restore.
+
+    FreeCAD serialises a ViewProvider's Python proxy as an int (a memory
+    address) on save, so after restore it is not a Python object - icons,
+    claimChildren and task panels break, and interacting with those
+    objects in the tree grinds.  Neither restore hook can repair them:
+    the App-side onDocumentRestored runs before the Gui document exists
+    (measured: obj.ViewObject is None for every composite feature at
+    callback time), and the Gui document observer does not fire for
+    restored objects.  The document's activation is the first moment the
+    whole restore (App + Gui) is done: repair every composite feature
+    then.  Each feature names its VP class on ``view_provider_class``
+    (see CompositeBaseFP); the pass is idempotent and near-free on
+    healthy documents.
+    """
+
+    def slotActivateDocument(self, doc):
+        self._repair(doc)
+
+    def slotCreatedDocument(self, doc):
+        # A document created in-session has correct proxies already; the
+        # pass no-ops.  Kept so a fresh open that activates late is
+        # covered too.
+        self._repair(doc)
+
+    def _repair(self, doc):
+        for obj in doc.Objects:
+            vp = getattr(obj, "ViewObject", None)
+            fp_proxy = getattr(obj, "Proxy", None)
+            vp_class = getattr(fp_proxy, "view_provider_class", None)
+            if (
+                vp is not None
+                and vp_class is not None
+                and isinstance(getattr(vp, "Proxy", None), int)
+            ):
+                try:
+                    vp.Proxy = vp_class(vp)
+                except Exception:
+                    pass
+
+
+App.addDocumentObserver(_CompositeVpProxyRepair())
+
+
 class CompositesWorkbench(Gui.Workbench):
     # Resolve from FreeCAD's install root because this workbench is installed
     # under <prefix>/Mod/Composites, not under the shared resource tree.

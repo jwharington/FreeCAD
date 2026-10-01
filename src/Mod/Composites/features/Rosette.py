@@ -366,3 +366,8 @@ class RosetteCommand(BaseCommand):
 
 
 # Command registration moved to InitGui.py to avoid FreeCADGui dependency
+
+
+# The ViewProvider class that repairs this feature's serialised VP
+# proxy on document restore (see CompositeBaseFP.onDocumentRestored).
+RosetteFP.view_provider_class = ViewProviderRosette

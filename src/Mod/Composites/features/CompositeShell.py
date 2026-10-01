@@ -226,16 +226,6 @@ class CompositeShellFP(CompositeBaseFP):
 
     def onDocumentRestored(self, fp):
         """Restore ViewProvider and initialise tracking fields."""
-        # Re-attach ViewProvider: FreeCAD serialises Proxy as an int
-        # (memory address) on save, so on restore it is not a Python
-        # object any more.  Detect the corruption and re-attach.
-        try:
-            vobj = fp.ViewObject
-            if vobj is not None and isinstance(getattr(vobj, "Proxy", None), int):
-                vobj.Proxy = ViewProviderCompositeShell(vobj)
-        except Exception:
-            pass
-
         for attr, value in (
             ("_cached_shape_fingerprint", ""),
             ("_cached_rosette_angle", None),
@@ -288,7 +278,7 @@ class CompositeShellFP(CompositeBaseFP):
 
         # GUI: rebuild the weave presentation from the persisted locator.
         # Headless returns immediately inside the injector.
-        if self._backend is not None and FreeCAD.GuiUp:
+        if getattr(self, "_backend", None) is not None and FreeCAD.GuiUp:
             try:
                 self._inject_drape_geometry(fp, None, None)
             except Exception as exc:
@@ -929,3 +919,8 @@ class CompositeShellCommand(BaseCommand):
 cls_vp = ViewProviderCompositeShell
 
 # Command registration moved to InitGui.py to avoid FreeCADGui dependency
+
+
+# The ViewProvider class that repairs this feature's serialised VP
+# proxy on document restore (see CompositeBaseFP.onDocumentRestored).
+CompositeShellFP.view_provider_class = ViewProviderCompositeShell

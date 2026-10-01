@@ -922,3 +922,8 @@ class TransferRosetteCommand(BaseCommand):
 
 
 # Command registration moved to InitGui.py to avoid FreeCADGui dependency
+
+
+# The ViewProvider class that repairs this feature's serialised VP
+# proxy on document restore (see CompositeBaseFP.onDocumentRestored).
+TransferRosetteFP.view_provider_class = ViewProviderTransferRosette
