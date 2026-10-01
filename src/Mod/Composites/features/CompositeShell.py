@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
+from ast import literal_eval
+
 import FreeCAD
 
 import hashlib
@@ -156,9 +158,26 @@ class CompositeShellFP(CompositeBaseFP):
         )
         obj.setPropertyStatus("DrapeQuality", "ReadOnly")
 
-        # The live drape cache stays on the proxy/backend only. It is rebuilt
-        # from the nextdrape solver on recompute and is not serialized on the
-        # FeaturePython object.
+        # The drape cache fingerprints, persisted so a restored document
+        # knows its own drape state (RAM-only caches made every restore
+        # re-solve all shells).  Written by _store_cache_state, read back
+        # by onDocumentRestored.
+        for name, ptype, value in (
+            ("DrapeCacheShape", "App::PropertyString", ""),
+            ("DrapeCacheCuts", "App::PropertyString", ""),
+            ("DrapeCacheRosetteKey", "App::PropertyString", ""),
+            ("DrapeCacheRosetteAngle", "App::PropertyFloat", 0.0),
+            ("DrapeCachePitch", "App::PropertyFloat", 0.0),
+        ):
+            if not hasattr(obj, name):
+                prop = obj.addProperty(type=ptype, name=name, group="Draping",
+                                       doc="Drape cache state")
+                prop.setPropertyStatus(name, "Hidden")
+                setattr(obj, name, value)
+
+        # The live backend (the solved drape result) stays on the
+        # proxy/backend only.  It is rebuilt from the nextdrape solver on
+        # recompute and is not serialized on the FeaturePython object.
         self._cached_shape_fingerprint = ""
         self._cached_rosette_angle = None
         self._cached_drape_pitch = None
@@ -220,6 +239,21 @@ class CompositeShellFP(CompositeBaseFP):
         ):
             if not hasattr(self, attr):
                 setattr(self, attr, value)
+
+        # Hydrate the cache fingerprints from the persisted copy: a
+        # restored document knows its drape state, so a recompute only
+        # re-solves shells whose inputs genuinely changed (documents
+        # saved before the DrapeCache* properties existed hydrate to
+        # empty and re-solve once, as before).
+        try:
+            if hasattr(fp, "DrapeCacheShape"):
+                self._cached_shape_fingerprint = fp.DrapeCacheShape
+                self._cached_drape_cuts_fingerprint = fp.DrapeCacheCuts
+                self._cached_rosette_key = literal_eval(fp.DrapeCacheRosetteKey)
+                self._cached_rosette_angle = fp.DrapeCacheRosetteAngle
+                self._cached_drape_pitch = fp.DrapeCachePitch
+        except Exception:
+            pass
 
         super().onDocumentRestored(fp)
 
@@ -287,6 +321,9 @@ class CompositeShellFP(CompositeBaseFP):
 
         # ── Full solve — run synchronously ─────────────────────────
         _profiler('drape_solve')
+        import time as _time
+        _t0 = _time.perf_counter()
+        print("[drape] %s: solve start (pitch %.1f)" % (fp.Name, float(fp.DrapePitch)), flush=True)
         self._diag(fp, "running drape solve")
         # Mirror the support (shape + placement — see the no-laminate
         # branch above for why the placement sync matters).
@@ -294,6 +331,7 @@ class CompositeShellFP(CompositeBaseFP):
         fp.Placement = fp.Support.Placement
         result = self._run_drape_sync(fp, get_lcs())
         _profiler('drape_solve')
+        print("[drape] %s: solve done in %.1fs" % (fp.Name, _time.perf_counter() - _t0), flush=True)
         if isinstance(result, Exception):
             self._diag(fp, f"drape failed: {result}")
             self._mark_failed(fp, str(result))
@@ -350,7 +388,17 @@ class CompositeShellFP(CompositeBaseFP):
         Runs synchronously inside execute(). Errors are swallowed so a
         GUI/scene-graph hiccup never aborts the drape solve or the
         document recompute that called it.
+
+        Headless runs return immediately: the scene graph does not exist,
+        and the support-surface Coin build (a full tessellation of large
+        BSpline compounds) measured 308 s per shell in the headless
+        fuselage build when a stubbed FreeCADGui made the ViewProvider
+        look reachable.
         """
+        import FreeCAD
+
+        if not FreeCAD.GuiUp:
+            return
         _profiler('inject_drape_geometry')
         # Get ViewObject — may be None during initial solve before GUI attach.
         vp = getattr(fp, "ViewObject", None)
@@ -464,9 +512,15 @@ class CompositeShellFP(CompositeBaseFP):
             BorrowedDrapeBackend,
             drape_result_over_region,
         )
+        import time as _time
+        _t0 = _time.perf_counter()
+        print("[drape] %s: borrowing from %s over the support region" % (fp.Name, source.Name), flush=True)
         filtered, _old_to_new = drape_result_over_region(
             raw, fp.Support.Shape
         )
+        print("[drape] %s: borrow done in %.2fs (%d nodes, %d quads)" % (
+            fp.Name, _time.perf_counter() - _t0,
+            len(filtered["node_positions"]), len(filtered["quads"])), flush=True)
         # An empty overlay is a valid borrow: at the support's pitch the
         # band can hold no full solved cell (the fuselage's 34 mm seat band
         # vs the 50 mm skin lattice) — the panel's own weave renders the
@@ -642,12 +696,18 @@ class CompositeShellFP(CompositeBaseFP):
         return (rosette.Name, round(base.x, 6), round(base.y, 6), round(base.z, 6))
 
     def _store_cache_state(self, fp) -> None:
-        """Store the live backend cache state on the proxy only."""
+        """Store the live backend cache state on the proxy and in the
+        document (the persisted copy is what a restored session reads)."""
         self._cached_shape_fingerprint = self._shape_fingerprint(fp.Support.Shape)
         self._cached_rosette_angle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
         self._cached_rosette_key = self._rosette_cache_key(fp)
         self._cached_drape_pitch = float(fp.DrapePitch)
         self._cached_drape_cuts_fingerprint = self._drape_cuts_fingerprint(fp)
+        fp.DrapeCacheShape = self._cached_shape_fingerprint
+        fp.DrapeCacheCuts = self._cached_drape_cuts_fingerprint
+        fp.DrapeCacheRosetteKey = repr(self._cached_rosette_key)
+        fp.DrapeCacheRosetteAngle = self._cached_rosette_angle
+        fp.DrapeCachePitch = self._cached_drape_pitch
 
     def fibre_analysis(self, fp):
         histograms_length = make_fibre_length_analysis(fp)

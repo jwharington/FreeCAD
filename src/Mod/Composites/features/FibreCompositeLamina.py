@@ -12,7 +12,6 @@ from ..objects import (
     SimpleFabric,
     WeaveType,
 )
-from ..taskpanels import task_fibre_composite_lamina
 from .Command import BaseCommand
 from .Composite import add_composite_props
 from .Lamina import BaseLaminaFP, BaseViewProviderLamina

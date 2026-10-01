@@ -20,9 +20,15 @@ class CompositeBaseFP:
         return None
 
     def onDocumentRestored(self, obj):
+        # Restore must not re-solve: an up-to-date document opens inert
+        # (the previous unconditional recompute re-draped every shell and
+        # re-swept every stiffener on each load, ~15 s on the fuselage
+        # model, and made the GUI grind).  FreeCAD settles any object
+        # restore genuinely touched; the extension add below is the only
+        # change we make ourselves.
         if not obj.hasExtension("App::SuppressibleExtensionPython"):
             obj.addExtension("App::SuppressibleExtensionPython")
-        obj.recompute()
+            obj.recompute()
 
 
 class VPCompositeBase:
