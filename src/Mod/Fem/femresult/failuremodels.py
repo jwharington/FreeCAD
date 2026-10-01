@@ -89,11 +89,31 @@ def list_failure_models():
 
 
 def _register_builtin_failure_models():
-    register_failure_model("maximum_strain", calc_failure_maximum_strain)
-    register_failure_model("maximum_stress", calc_failure_maximum_stress)
+    # maximum_strain/maximum_stress are positively homogeneous of degree
+    # one in (stress, strain) — scaling the load by R scales every
+    # component and the model value by R — so the exposure factor has a
+    # closed form (R = 1/model) and needs no per-node scipy search.
+    register_failure_model(
+        "maximum_strain", calc_failure_maximum_strain,
+        metadata={"homogeneous_load": True},
+    )
+    register_failure_model(
+        "maximum_stress", calc_failure_maximum_stress,
+        metadata={"homogeneous_load": True},
+    )
 
 
 _register_builtin_failure_models()
+
+
+def is_homogeneous_load(model_name):
+    """True when the failure model scales linearly with the load."""
+    return bool(_failure_models_metadata().get(model_name, {}).get(
+        "homogeneous_load"))
+
+
+def _failure_models_metadata():
+    return _failure_model_metadata
 
 
 def calc_stress_exposure_factor(
@@ -101,10 +121,29 @@ def calc_stress_exposure_factor(
     strain_tensor,
     model_options=default_options,
 ):
+    """Load scale factor R at which the failure model first triggers.
+
+    For a load-homogeneous model (``is_homogeneous_load``) the optimum
+    has a closed form: the model value at the given tensors is f0, and
+    the value at R× the load is R×f0, so R = 1/f0 exactly.  The scipy
+    bounded search is only needed for non-homogeneous models (Tsai-Wu's
+    linear terms) — and it caps at its upper bound, so the closed form
+    is capped the same way to keep the result comparable.
+    """
     model_name = model_options.get("model_name", default_options["model_name"])
     failure_model = get_failure_model(model_name)
     if failure_model is None:
         return 0.0
+
+    if is_homogeneous_load(model_name):
+        f0 = failure_model(
+            stress_tensor=stress_tensor,
+            strain_tensor=strain_tensor,
+            model_options=model_options,
+        )
+        if f0 <= 1.0e-12:
+            return 1.0e3  # no failure within the search's upper bound
+        return float(min(1.0 / f0, 1.0e3))
 
     def fun(sR):
         R = 1.0 / sR

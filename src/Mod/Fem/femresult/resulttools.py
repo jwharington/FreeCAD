@@ -1024,19 +1024,37 @@ def add_stress_exposure_factor(res_obj, objs):
         )
         sf[i] = max(sf[i], sf_new)
 
+    # Sections usually reference overlapping faces — the material object
+    # covers everything, each ply/section ref re-covers its faces — so a
+    # node was evaluated once per referencing object (20+ passes over the
+    # same nodes on a shell model).  Dedupe per distinct model_options:
+    # a node evaluated for one options set stays valid for any object
+    # sharing it, and sf takes the max over sets.
+    seen_by_options = {}
+
     for obj in objs:
         for ref in obj.References:
             subobj = ref[0].getSubObject(ref[1])
             print(f"--- get per obj/matl allowable for {ref[0]}, here using default_options")
             model_options = default_options
+            options_key = repr(sorted(model_options.items(), key=str))
+            seen = seen_by_options.setdefault(options_key, set())
 
+            nodes = None
             for f in subobj:
                 tol_orig = f.Tolerance
                 f.Tolerance = 0.01
-                nodes = get_femnodes_by_refshape(femmesh, ref)
-                for cn in nodes:
-                    update_stress_exposure_factor(cn - 1, model_options)
+                if nodes is None:
+                    nodes = get_femnodes_by_refshape(femmesh, ref)
                 f.Tolerance = tol_orig
+            if nodes is None:
+                nodes = get_femnodes_by_refshape(femmesh, ref)
+            for cn in nodes:
+                i = cn - 1
+                if i in seen:
+                    continue
+                seen.add(i)
+                update_stress_exposure_factor(i, model_options)
 
         FreeCAD.Console.PrintLog(f"Added stress exposure factor for {obj.Name}.\n")
 
