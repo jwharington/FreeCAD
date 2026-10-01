@@ -181,14 +181,14 @@ def write_shell_section_ccx_for(laminate):
 
     return write_shell_section_ccx(
         prefix=laminate.Name,
-        layers=laminate.Proxy.FEMLayers,
+        layers=laminate.Proxy.fem_layers(laminate),
     )
 
 
 def materials_text(laminate):
     return "".join(
         write_lamina_material_ccx(layer, prefix=laminate.Name)
-        for layer in laminate.Proxy.FEMLayers
+        for layer in laminate.Proxy.fem_layers(laminate)
     )
 
 

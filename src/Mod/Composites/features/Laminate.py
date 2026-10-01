@@ -190,16 +190,37 @@ class LaminateFP(CompositeBaseFP):
             case "Layers":
                 fp.recompute()
 
+    def fem_layers(self, obj):
+        """The stack as ccx should see it, merged by the stack model type.
+
+        FEMLayers is built in execute(), so a document reopened from disk
+        has none — nothing is touched, so nothing runs — and the solver
+        writer then died on the missing attribute.  Deriving it here means
+        the deck representation cannot be stale or absent without saying
+        so.
+        """
+        layers = getattr(self, "FEMLayers", None)
+        if not layers:
+            obj.recompute()
+            layers = getattr(self, "FEMLayers", None)
+        if not layers:
+            reason = ": %s" % self.last_error if self.last_error else ""
+            raise ValueError(
+                "%s: no FEM layer representation for the %s stack model%s"
+                % (obj.Name, obj.StackModelType, reason)
+            )
+        return layers
+
     def get_materials(self, obj):
         return write_lamina_materials_ccx(
             prefix=obj.Name,
-            layers=self.FEMLayers,
+            layers=self.fem_layers(obj),
         )
 
     def write_shell_section(self, obj):
         return write_shell_section_ccx(
             prefix=obj.Name,
-            layers=self.FEMLayers,
+            layers=self.fem_layers(obj),
         )
 
     def get_model(self, obj) -> Laminate:
