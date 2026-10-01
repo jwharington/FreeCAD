@@ -39,7 +39,16 @@ _FACE_FALLBACK_WARNED = {
     "solids": False,
     "edges": False,
     "vertices": False,
+    "tolerance": False,
 }
+
+# Junction-residual tolerance (mm): the gap a mesh node born on one
+# boolean trim curve can have to a coincident face's own trim curve.
+# Measured ~5e-5 on the LS8e fuselage (web/bay-wall/skin triple
+# points); 1e-3 is 20x headroom and still 50x below the coarsest
+# relevant mesh feature — raising a face tolerance beyond this could
+# claim nodes from genuinely neighbouring geometry.
+JUNCTION_TOL = 1.0e-3
 
 
 # ************************************************************************************************
@@ -2326,7 +2335,7 @@ def get_nodes_by_edge_with_fallback(femmesh, edge, tol=1e-7):
 def get_nodes_by_face_with_fallback(femmesh, face, tol=1e-7):
     face = face_for_femmesh_query(face)
     try:
-        return femmesh.getNodesByFace(face)
+        nodes = femmesh.getNodesByFace(face)
     except TypeError:
         if not _FACE_FALLBACK_WARNED["nodes"]:
             FreeCAD.Console.PrintWarning(
@@ -2334,6 +2343,38 @@ def get_nodes_by_face_with_fallback(femmesh, face, tol=1e-7):
             )
             _FACE_FALLBACK_WARNED["nodes"] = True
         return get_nodes_by_face_geometric(femmesh, face, tol)
+    # Boolean trim curves at multi-face junctions (e.g. web meets bay
+    # wall meets skin) are approximated independently per boolean, so a
+    # mesh node born on one curve can sit ~1e-5..1e-4 mm off the face
+    # the element belongs to.  The strict native query then rejects the
+    # node and the element reaches the solver with no material.  Retry
+    # once with a widened tolerance — the same remedy the stress
+    # exposure code applies (f.Tolerance = 0.01) — and only widen when
+    # it actually recovers nodes, so clean faces keep the strict set.
+    widened = _nodes_by_face_with_tolerance(femmesh, face, JUNCTION_TOL)
+    if widened and len(widened) > len(nodes):
+        if not _FACE_FALLBACK_WARNED["tolerance"]:
+            FreeCAD.Console.PrintWarning(
+                "    FemMesh.getNodesByFace missed junction nodes; "
+                "widened tolerance to %g mm.\n" % JUNCTION_TOL
+            )
+            _FACE_FALLBACK_WARNED["tolerance"] = True
+        return widened
+    return nodes
+
+
+def _nodes_by_face_with_tolerance(femmesh, face, tol):
+    """femmesh.getNodesByFace with the face's OCCT tolerance raised;
+    restores the original tolerance and never mutates shared state."""
+    tol_orig = face.Tolerance
+    try:
+        face.Tolerance = tol
+        return femmesh.getNodesByFace(face)
+    except (TypeError, Exception):
+        return None
+    finally:
+        face.Tolerance = tol_orig
+    return None
 
 
 def get_faces_by_face_with_fallback(femmesh, face, tol=1e-7):
