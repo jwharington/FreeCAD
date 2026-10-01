@@ -155,9 +155,16 @@ def wire_composite_stiffener(host, fp, sweep) -> None:
     doc = fp.Document
     panel = fp.Support
 
+    import time as _time
+    _t = _time.perf_counter()
     web_shell = _build_web_shell(doc, fp, sweep)
+    print("[wire] %s web_shell %.1fs" % (fp.Name, _time.perf_counter() - _t), flush=True)
+    _t = _time.perf_counter()
     _record_joint_remainder(doc, fp, panel, sweep)
+    print("[wire] %s remainder %.1fs" % (fp.Name, _time.perf_counter() - _t), flush=True)
+    _t = _time.perf_counter()
     _build_foot_strip(doc, fp, panel, web_shell, sweep)
+    print("[wire] %s foot_strip %.1fs" % (fp.Name, _time.perf_counter() - _t), flush=True)
     _hide_compound_filters(doc, fp)
 
 

@@ -33,18 +33,45 @@ class _CompositeVpProxyRepair:
         # covered too.
         self._repair(doc)
 
+    # Native Python features whose VP classes live outside this module,
+    # keyed by the FP proxy class name.
+    _EXTRA_VP_CLASSES = {
+        "_CompoundFilter": ("CompoundTools.CompoundFilter",
+                            "_ViewProviderCompoundFilter"),
+        "SolverCcxTools": ("femviewprovider.view_solver_ccxtools",
+                           "VPSolverCcxTools"),
+        "MeshGmsh": ("femviewprovider.view_mesh_gmsh",
+                     "VPMeshGmsh"),
+        "MaterialCommon": ("femviewprovider.view_material_common",
+                           "VPMaterialCommon"),
+        "ElementGeometry2D": ("femviewprovider.view_element_geometry2D",
+                              "VPElementGeometry2D"),
+    }
+
     def _repair(self, doc):
         for obj in doc.Objects:
             vp = getattr(obj, "ViewObject", None)
             fp_proxy = getattr(obj, "Proxy", None)
             vp_class = getattr(fp_proxy, "view_provider_class", None)
+            if vp_class is None and fp_proxy is not None:
+                import importlib
+                entry = self._EXTRA_VP_CLASSES.get(type(fp_proxy).__name__)
+                if entry is not None:
+                    try:
+                        module = importlib.import_module(entry[0])
+                        vp_class = getattr(module, entry[1])
+                    except Exception:
+                        vp_class = None
             if (
                 vp is not None
                 and vp_class is not None
                 and isinstance(getattr(vp, "Proxy", None), int)
             ):
                 try:
-                    vp.Proxy = vp_class(vp)
+                    proxy = vp_class(vp)
+                    vp.Proxy = proxy
+                    if getattr(proxy, "ViewObject", None) is not vp and hasattr(proxy, "attach"):
+                        proxy.attach(vp)
                 except Exception:
                     pass
 

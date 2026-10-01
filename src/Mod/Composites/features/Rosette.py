@@ -19,7 +19,15 @@ def is_rosette(obj):
     return is_comp_type(obj, "App::FeaturePython", "Composite::Rosette")
 
 
-def _frame_rotation(geom, angle_deg):
+_DATUM_PLANES = {
+    # datum plane -> (normal, u_axis); the 0 deg direction is the u_axis
+    "XY": (FreeCAD.Vector(0.0, 0.0, 1.0), FreeCAD.Vector(1.0, 0.0, 0.0)),
+    "XZ": (FreeCAD.Vector(0.0, 1.0, 0.0), FreeCAD.Vector(1.0, 0.0, 0.0)),
+    "YZ": (FreeCAD.Vector(1.0, 0.0, 0.0), FreeCAD.Vector(0.0, 1.0, 0.0)),
+}
+
+
+def _frame_rotation(geom, angle_deg, datum_plane="XY"):
     """Build the rosette LCS rotation for a support geometry.
 
     For a Face: X = the face's U-axis at the anchor, rotated by ``angle_deg``
@@ -27,15 +35,13 @@ def _frame_rotation(geom, angle_deg):
     LCS so that changing it re-seeds the drape solver (the warp direction is
     the LCS X-axis).
 
-    For a Vertex (no surface reference): X = world-X rotated by
-    ``angle_deg`` about the datum normal, Z = world-Y — the datum plane
-    is the xz plane.  A vertex carries no surface, so the plane is a
-    convention; xz is the one that matches a fuselage-side anchor (the
-    skin's tangent plane at the widest line is vertical, normal +/-Y)
-    while keeping the 0 deg direction on the fuse axis.
-
-    For an Edge: X = world-X rotated by ``angle_deg`` about world-Z,
-    Z = world-Z (unchanged).
+    For a Vertex (no surface reference) the datum plane is a convention
+    chosen per rosette with the ``DatumPlane`` property (XY/XZ/YZ; XY is
+    the historical default).  The right plane matches the surface at the
+    anchor: a fuselage-side anchor (the section's widest line, tangent
+    plane vertical) wants XZ, a crown/belly centreline anchor wants XY.
+    The 0 deg direction is world-X in every case (the fuse axis), so the
+    property moves only the datum plane, never the fibre orientation.
 
     During document restore the Support sub-object may transiently resolve to
     a bare ``Part.Shape`` (before the subname remaps to the Face/Edge/Vertex),
@@ -46,8 +52,7 @@ def _frame_rotation(geom, angle_deg):
     match type(geom):
         case Part.Vertex:
             position = geom.Point
-            normal = FreeCAD.Vector(0.0, 1.0, 0.0)
-            u_axis = FreeCAD.Vector(1.0, 0.0, 0.0)
+            normal, u_axis = _DATUM_PLANES[datum_plane]
         case Part.Edge:
             t = geom.getParameterByLength(0.5 * geom.Length)
             position = geom.valueAt(t)
@@ -93,7 +98,9 @@ def _origin_from_support(fp):
         return FreeCAD.Vector(0.0, 0.0, 0.0), FreeCAD.Rotation()
     geom = geom_list[0]
 
-    return _frame_rotation(geom, float(fp.Angle))
+    return _frame_rotation(
+        geom, float(fp.Angle), getattr(fp, "DatumPlane", "XY")
+    )
 
 
 class RosetteFP(CompositeBaseFP):
@@ -122,6 +129,16 @@ class RosetteFP(CompositeBaseFP):
             "Parameters",
             "Primary fibre orientation angle (degrees)",
         ).Angle = 0.0
+
+        obj.addProperty(
+            "App::PropertyEnumeration",
+            "DatumPlane",
+            "Parameters",
+            "Datum plane for a vertex/edge anchor (XY/XZ/YZ); the 0 deg "
+            "direction stays world-X",
+        )
+        obj.DatumPlane = ["XY", "XZ", "YZ"]
+        obj.DatumPlane = "XY"
 
         obj.addProperty(
             "App::PropertyLinkGlobal",
@@ -265,28 +282,34 @@ class ViewProviderRosette(VPCompositeBase):
         located by traversal and the node re-parented from there.
         """
         import FreeCADGui
+        from pivy import coin
 
         view = FreeCADGui.activeDocument().activeView()
         if not hasattr(view, "getSceneGraph"):
             return
         scene = view.getSceneGraph()
-        root = self.ViewObject.RootNode
+        # A proxy restored without attach() carries no ViewObject binding;
+        # bail instead of breaking the feature's execute chain (the foot
+        # shells went Invalid through here).
+        vobj = getattr(self, "ViewObject", None)
+        if vobj is None:
+            return
+        root = vobj.RootNode
 
-        def find_parent(node, target):
-            try:
-                n = node.getNumChildren()
-            except AttributeError:
-                return None  # group-less node (transforms, materials, ...)
-            for i in range(n):
-                child = node.getChild(i)
-                if child is target:
-                    return node
-                parent = find_parent(child, target)
-                if parent is not None:
-                    return parent
-            return None
-
-        parent = find_parent(scene, root)
+        # Locate root's actual parent with SoSearchAction. A Python DFS over
+        # the viewer's whole scene graph costs ~25 s per rosette (pivy
+        # getChild() builds a fresh wrapper per node) and ran on every drape
+        # injection — the GUI froze through entire recompute chains.
+        search = coin.SoSearchAction()
+        search.setNode(root)
+        search.setSearchingAll(True)
+        search.apply(scene)
+        parent = None
+        path = search.getPath()
+        if path is not None:
+            depth = path.getLength()
+            if depth >= 2:
+                parent = path.getNode(depth - 2)
         if parent is None or parent is scene:
             try:
                 scene.removeChild(root)

@@ -70,3 +70,4 @@ class ElementGeometry2D(base_femelement.BaseFemElement):
     def onDocumentRestored(self, obj):
         # update old project with new properties
         super().onDocumentRestored(obj)
+

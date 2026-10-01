@@ -318,3 +318,4 @@ class MeshGmsh(base_fempythonobject.BaseFemPythonObject):
                 obj.MeshRefinementList = obj.MeshRefinementList + value
             except Base.PropertyError:
                 pass
+

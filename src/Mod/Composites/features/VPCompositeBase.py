@@ -48,7 +48,17 @@ class CompositeBaseFP:
             and vp_class is not None
             and isinstance(getattr(vobj, "Proxy", None), int)
         ):
-            vobj.Proxy = vp_class(vobj)
+            proxy = vp_class(vobj)
+            vobj.Proxy = proxy
+            # The VP constructor only sets the proxy; attach() is what
+            # binds Object/ViewObject and builds the display mode, and
+            # FreeCAD does not call it for a proxy assigned after restore.
+            # Without it the VP methods that use self.ViewObject break the
+            # features that touch them (the foot shells went Invalid via
+            # raise_render_order).  Same repair the shell's weave
+            # injection has always done for itself.
+            if getattr(proxy, "ViewObject", None) is not vobj and hasattr(proxy, "attach"):
+                proxy.attach(vobj)
 
 
 class VPCompositeBase:

@@ -194,3 +194,4 @@ class MaterialCommon(base_fempythonobject.BaseFemPythonObject):
 
         ATM in calculix writer the Category is used. See comments in CalculiX Solver.
         """
+

@@ -64,3 +64,4 @@ class SolverCcxTools(SolverCalculiX):
         )
 
         return prop
+

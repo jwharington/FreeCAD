@@ -481,15 +481,23 @@ def _offset_pieces(row: Part.Wire, distance: float, normal: Vector):
 
 
 def _loci_over_plane(
-    support: Part.Shape, cut_surface: Part.Shape, path: Part.Wire, coords, normal: Vector
+    support: Part.Shape, cut_surface: Part.Shape, path: Part.Wire, coords,
+    normal: Vector, band_rows: dict | None = None
 ):
-    """One locus curve per distinct profile vertex, for one path and a planar cut surface."""
-    rows = {
-        abscissa: _row_for(
+    """One locus curve per distinct profile vertex, for one path and a planar cut surface.
+
+    ``band_rows`` supplies the foot band's boolean wall edges, keyed by
+    abscissa: for those abscissas the row IS the band's edge, so the web
+    loft preserves it as its bottom edge and the web/band pair shares that
+    curve by construction (known-issue #14: equal point sets produced by
+    different paths carry different defining data, and only a shared
+    construction matches the exact shared-edge check)."""
+    rows = {}
+    for abscissa in sorted({key[0] for key in coords}):
+        band_row = (band_rows or {}).get(abscissa)
+        rows[abscissa] = band_row if band_row is not None else _row_for(
             path, _row_groups(support, cut_surface, normal, abscissa), normal, abscissa
         )
-        for abscissa in sorted({key[0] for key in coords})
-    }
     return {key: _sideways(rows[key[0]], key[1], normal) for key in coords}
 
 
@@ -699,8 +707,13 @@ def make_stiffener(
     coords = _profile_coords(xsect, mirror)
     normal = plane_normal(cut_surface)
     intervals = _base_edge_intervals(xsect, mirror)
+    # The band's boolean wall edges, keyed by abscissa: the loci's base
+    # rows for those abscissas are built from them (see _band_wall_rows).
+    band_row_groups = _band_wall_rows(
+        support, cut_surface, normal, intervals) if (
+        normal is not None and intervals) else {}
     faces, foot_faces, web_faces = [], [], []
-    for path in paths:
+    for path_index, path in enumerate(paths):
         if normal is None:
             loci = _loci_over_surface(support, cut_surface, path, coords)
             path_faces, path_foot, path_web = _loft_profile(xsect, loci, mirror)
@@ -708,7 +721,17 @@ def make_stiffener(
             foot_faces.extend(path_foot)
             web_faces.extend(path_web)
         else:
-            loci = _loci_over_plane(support, cut_surface, path, coords, normal)
+            # The wall-edge groups come out of _section_groups in the same
+            # deterministic order as the paths (both sort the same section
+            # geometry), so the path's row is picked by INDEX - a
+            # distToShape between two long curved wires measured 155 s per
+            # stiffener.
+            band_rows = {
+                a: wires[path_index] if path_index < len(wires) else wires[0]
+                for a, wires in band_row_groups.items()
+            } if band_row_groups else {}
+            loci = _loci_over_plane(
+                support, cut_surface, path, coords, normal, band_rows)
             _, _, path_web = _loft_profile(xsect, loci, mirror, skip_base=True)
             faces.extend(path_web)
             web_faces.extend(path_web)
@@ -759,7 +782,89 @@ def _band_slab(cut_surface: Part.Shape, normal: Vector, low: float, high: float)
     return moved.extrude(normal * (high - low))
 
 
-def _foot_bands(support: Part.Shape, cut_surface: Part.Shape, normal: Vector, intervals):
+def _band_wall_rows(support: Part.Shape, cut_surface: Part.Shape,
+                    normal: Vector, intervals):
+    """The boolean wall-edge wires of the foot bands, keyed by abscissa.
+
+    For each interval the band's boundary in the low and high wall planes is
+    the boolean edge where the slab's wall meets the support — the curve the
+    seam's shared-edge check can match the remainder's seat against (the cut
+    and the common of the same slab produce identical curve data).  The
+    loci's base rows are built from THESE instead of from a fresh section,
+    so the web loft preserves the band's own edges and the web/foot pair
+    shares by construction (known-issue #14: equal point sets from different
+    production paths carry different defining data, and only a shared
+    construction matches).
+    """
+    com = cut_surface.CenterOfMass
+    rows = {}
+    for low, high in intervals:
+        faces = support.common(_band_slab(cut_surface, normal, low, high)).Faces
+        for a in (low, high):
+            # Per GROUP (a split support's band wall crosses several paths,
+            # one group each): a merged wire of disjoint groups is garbage,
+            # and each path must borrow its own group's edge.
+            groups = []
+            for face in faces:
+                for wire in face.Wires:
+                    edges = []
+                    for e in wire.OrderedEdges:
+                        mid = e.valueAt(0.5 * (e.FirstParameter + e.LastParameter))
+                        if abs(normal.dot(mid.sub(com)) - a) <= 1e-6:
+                            edges.append(e)
+                    if edges:
+                        groups.append(Part.Wire(edges) if len(edges) > 1 else edges[0])
+            kept = []
+            for wire in groups:
+                # Only OPEN rows substitute: a closed row's loft pairings
+                # depend on the boolean edge's seam position, which is not
+                # consistent between the wall planes, and the cross-lofts
+                # twist (measured on the cylinder ring: the flange's vertices
+                # wandered from radius 50 down to 30).  The fuselage's L/R
+                # halves - the case the shared-edge failure is about - are
+                # open arcs, where the pairing is seam-free.
+                if not wire.isClosed():
+                    kept.append(_oriented_by_travel(wire, normal))
+            if kept:
+                rows[a] = kept
+    # The boolean edges' orientations are independent per face, and the
+    # travel law cannot normalize degenerate (straight) rows into mutual
+    # agreement - measured on the plate: one wall row Forward, the other
+    # Reversed, and their sideways offsets pointed in opposite b directions
+    # (the web went down while the flange went up).  The rows of ONE band
+    # bound the same strip, so their tangents must agree: compare at the
+    # rows' midpoints and reverse the odd one out.
+    for low, high in intervals:
+        w0s, w1s = rows.get(low), rows.get(high)
+        if not w0s or not w1s:
+            continue
+        # Pair the rows by vertex bounding boxes (a split support keeps one
+        # row per path, and the rows of one band are near-neighbours): a
+        # distToShape between two long curved wires is an exact extrema
+        # solve and measured 155 s per stiffener.
+        for w0 in w0s:
+            box0 = w0.BoundBox
+            near = min(
+                w1s,
+                key=lambda w: max(0.0,
+                                  max(box0.XMin - w.BoundBox.XMax, w.BoundBox.XMin - box0.XMax)
+                                  + max(box0.YMin - w.BoundBox.YMax, w.BoundBox.YMin - box0.YMax)
+                                  + max(box0.ZMin - w.BoundBox.ZMax, w.BoundBox.ZMin - box0.ZMax)),
+            )
+            e0, e1 = w0.Edges[0], near.Edges[0]
+            t0 = e0.tangentAt(0.5 * (e0.FirstParameter + e0.LastParameter))
+            if e0.Orientation == "Reversed":
+                t0 = -t0
+            t1 = e1.tangentAt(0.5 * (e1.FirstParameter + e1.LastParameter))
+            if e1.Orientation == "Reversed":
+                t1 = -t1
+            if t0.dot(t1) < 0.0:
+                near.reverse()
+    return rows
+
+
+def _foot_bands(support: Part.Shape, cut_surface: Part.Shape, normal: Vector,
+                intervals):
     """The support's own surface between each base edge's abscissa planes.
 
     The foot is cut from the support, not lofted: a ruled loft between two
@@ -767,7 +872,7 @@ def _foot_bands(support: Part.Shape, cut_surface: Part.Shape, normal: Vector, in
     off the support, silently breaks the seat's weave exclusivity (a boolean
     cannot split a support by a tool that only rides it) and leaves the foot
     mesh disconnected from the panel's.  The band is the surface's own patch
-    — exact at edge and interior alike — and the remainder is what the same
+    - exact at edge and interior alike - and the remainder is what the same
     cut leaves behind.
     """
     faces = []
@@ -779,7 +884,7 @@ def _foot_bands(support: Part.Shape, cut_surface: Part.Shape, normal: Vector, in
 def _remainder_outside_bands(support: Part.Shape, cut_surface: Part.Shape, normal: Vector, intervals):
     """The support with every foot band cut away, one face per piece.
 
-    The complement of :func:`_foot_bands` on the same cut — so the weave
+    The complement of :func:`_foot_bands` on the same cut - so the weave
     exclusivity is exact by construction, not a boolean approximation of it.
     """
     rest = support
