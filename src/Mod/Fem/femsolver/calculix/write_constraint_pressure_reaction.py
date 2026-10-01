@@ -130,6 +130,40 @@ def _moment_at_reference(force, moment_at_origin, origin_base, reference_base):
     return moment_at_origin + (origin_base - reference_base).cross(force)
 
 
+def decompose_wrench(force, moment, shift_scale, free_m_limit):
+    """Split a force/moment system into a shifted line of action plus a
+    reduced moment.
+
+    Returns ``(shift, reduced_moment)``: applying *force* at
+    ``origin + shift`` together with ``reduced_moment`` about that
+    point is statically equivalent to applying *force* at *origin*
+    with *moment* about it, because ``shift x F + reduced_moment``
+    equals *moment*.
+
+    The moment component perpendicular to the force is absorbed by
+    shifting the line of action: ``shift x F = m_perp``, i.e.
+    ``shift = (F x m_perp) / |F|^2``.  (The opposite cross order —
+    ``(m_perp x F)/|F|^2`` — moves the line of action the WRONG way
+    and, at shift_scale 1, delivers the NEGATED moment; the shipped
+    example passed unnoticed because its torque is a 10 N·mm trace.)
+
+    *shift_scale* is clamped to [0, 1]; no shift is made (and the full
+    *moment* returned) when there is no force, no moment, no
+    perpendicular component, or the free parallel moment exceeds
+    *free_m_limit*.
+    """
+    force_sq = force.dot(force)
+    if force_sq <= 1e-18 or moment.Length <= 1e-14:
+        return Vector(0, 0, 0), moment
+    m_parallel = force * (moment.dot(force) / force_sq)
+    m_perp = moment - m_parallel
+    if m_perp.Length <= 1e-14 or m_parallel.Length > free_m_limit:
+        return Vector(0, 0, 0), moment
+    scale = min(1.0, max(0.0, shift_scale))
+    shift = (force.cross(m_perp) / force_sq) * scale
+    return shift, m_parallel + m_perp * (1.0 - scale)
+
+
 def write_reaction_distributing_coupling(
     f,
     prs_obj,
@@ -165,25 +199,21 @@ def write_reaction_distributing_coupling(
     # moment as a nodal couple. This reduces cancellation artefacts.
     force_sq = force_cpl.dot(force_cpl)
     if cached is None and force_sq > 1e-18 and moment_cpl.Length > 1e-14:
-        m_parallel = force_cpl * (moment_cpl.dot(force_cpl) / force_sq)
-        m_perp = moment_cpl - m_parallel
-        if m_perp.Length > 1e-14 and m_parallel.Length <= reaction_coupling_shift_free_m_limit:
-            shift_scale = reaction_coupling_shift_scale
-            if shift_scale < 0.0:
-                shift_scale = 0.0
-            if shift_scale > 1.0:
-                shift_scale = 1.0
-            shift = (m_perp.cross(force_cpl) / force_sq) * shift_scale
+        shift, moment_cpl = decompose_wrench(
+            force_cpl,
+            moment_cpl,
+            reaction_coupling_shift_scale,
+            reaction_coupling_shift_free_m_limit,
+        )
+        if shift.Length > 1e-9:
             ref_base = ref_base + shift
-            moment_cpl = m_parallel + m_perp * (1.0 - shift_scale)
-            if shift.Length > 1e-9:
-                Console.PrintMessage(
-                    "ConstraintReaction {}: shifted coupling ref point by "
-                    "{:.3g} mm to absorb perpendicular moment component.\n".format(
-                        prs_obj.Name,
-                        shift.Length,
-                    )
+            Console.PrintMessage(
+                "ConstraintReaction {}: shifted coupling ref point by "
+                "{:.3g} mm to absorb perpendicular moment component.\n".format(
+                    prs_obj.Name,
+                    shift.Length,
                 )
+            )
 
     node_weights = _build_contact_weighted_node_weights(prs_obj, elem_info)
     if not node_weights:
