@@ -194,6 +194,15 @@ class SeamGeometryFP(CompositeShellFP):
             if lcs is not None:
                 q = lcs.Placement.Rotation.Q
                 current_fp += "|lcs:" + ",".join(f"{v:.6f}" for v in q)
+        # A borrowed weave changes when the SOURCE's drape changes: cover
+        # the source's solved state or the shell would serve a stale
+        # borrowed region after a panel re-drape.
+        source = getattr(fp, "DrapeSource", None)
+        if source is not None:
+            current_fp += "|src:" + str(
+                getattr(source.Proxy, "_cached_shape_fingerprint", "")
+            )
+            current_fp += f"|srcpitch:{float(source.DrapePitch):.6f}"
         stored_fp = getattr(self, "_last_shape_fingerprint", None)
         if stored_fp and stored_fp == current_fp:
             return  # No change — skip drape solve.

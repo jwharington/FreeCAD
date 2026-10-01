@@ -67,6 +67,152 @@ def _dump_solver_input(shape: Any, seed: dict, params: dict) -> None:
 _dump_sequence = 0
 
 
+def _region_box(region: Any) -> tuple[float, float, float, float]:
+    """The tight x/y bounding box of ``region`` from its vertices."""
+    vs = [v.Point for v in region.Vertexes]
+    return (
+        min(v.x for v in vs), max(v.x for v in vs),
+        min(v.y for v in vs), max(v.y for v in vs),
+    )
+
+
+def drape_result_over_region(result: dict, region: Any) -> tuple[dict, Any]:
+    """Restrict a solved drape result to ``region``'s surface region.
+
+    The lap-joint foot band is a cut of the support's own surface, and the
+    support's common drape covers it continuously — so the band's weave is
+    the solved drape's nodes inside the band, and the band's quads are the
+    solved quads whose four nodes are all inside.  The region filter is the
+    band's own vertex bounding box (inflated by the placement slack): for a
+    station-plane band the extreme points are vertices of the band's trim
+    arcs, so the box is tight, and the master's lattice spacing (the pitch)
+    is far coarser than the slack, so the box selects exactly the band's
+    nodes.  Returns the filtered result dict and the old→new node index map
+    (new_index = -1 where dropped).
+    """
+    x_min, x_max, y_min, y_max = _region_box(region)
+    tol = 0.5  # the placement slack: boundary-row nodes stay in
+
+    pos = np.asarray(result["node_positions"], dtype=float)
+    mask = (
+        (pos[:, 0] >= x_min - tol) & (pos[:, 0] <= x_max + tol)
+        & (pos[:, 1] >= y_min - tol) & (pos[:, 1] <= y_max + tol)
+    )
+    n_old = pos.shape[0]
+    old_to_new = np.full(n_old, -1, dtype=int)
+    old_to_new[mask] = np.cumsum(mask)[mask] - 1
+
+    tex = np.asarray(result["tex_coords"], dtype=float)
+    filtered = dict(result)
+    filtered["node_positions"] = pos[mask]
+    filtered["tex_coords"] = tex[mask]
+
+    kept_quads = []
+    kept_rows = []
+    strain_keys = [
+        key for key in ("warp_strain", "weft_strain", "shear_angle")
+        if key in result
+    ]
+    strain_arrays = [
+        np.asarray(result[key], dtype=float) for key in strain_keys
+    ]
+    for row, quad in enumerate(result["quads"]):
+        ids = [int(i) for i in quad]
+        if all(mask[i] for i in ids):
+            kept_quads.append([int(old_to_new[i]) for i in ids])
+            kept_rows.append(row)
+    filtered["quads"] = kept_quads
+    for key, arr in zip(strain_keys, strain_arrays):
+        filtered[key] = arr[kept_rows] if kept_rows else arr[:0]
+
+    diag = dict(result.get("diagnostics") or {})
+    diag["total_nodes"] = int(mask.sum())
+    diag["quads"] = len(kept_quads)
+    filtered["diagnostics"] = diag
+    return filtered, old_to_new
+
+
+class BorrowedDrapeBackend(DrapeBackend):
+    """Serves a region of another shell's solved drape.
+
+    The lap-joint foot band: the support's common drape covers the band
+    continuously, so the foot's weave is that solved drape restricted to
+    the band — the same nodes, quads and texture coordinates, no second
+    solve.  Frame queries (get_lcs*) are point-based and delegate to the
+    source backend directly: the band lies on the source's surface, so the
+    source's locator resolves the foot's points exactly.
+    """
+
+    backend_name = "nextdrape-borrowed"
+
+    def __init__(self, source: "NextDrapeBackend", result: dict) -> None:
+        self._source = source
+        self._result = result
+    def is_valid(self) -> bool:
+        return bool(self._result.get("success")) and self._source.is_valid()
+
+    def diagnostics(self) -> dict[str, Any]:
+        d = dict(self._result.get("diagnostics") or {})
+        return {
+            "backend": self.backend_name,
+            "status": "valid",
+            "solver": "nextdrape",
+            "nodes": int(d.get("total_nodes", 0)),
+            "quads": len(self._result.get("quads", [])),
+            "coverage_ratio": d.get("coverage_ratio"),
+            "max_shear_deg": d.get("max_shear_deg", 0.0),
+            "max_strain": d.get("max_strain", 0.0),
+            "solve_time_ms": 0.0,
+            "failure_diagnostics": d.get("failure_diagnostics", []),
+            "borrowed_from": self._source.backend_name,
+        }
+
+    def quality_pass(self) -> bool:
+        return bool(
+            (self._result.get("quality") or {}).get("overall_pass", False)
+        )
+
+    def get_tex_coords(self, offset_angle_deg: float = 0) -> list[Any] | None:
+        import math
+
+        tex = np.asarray(self._result["tex_coords"], dtype=float)
+        if offset_angle_deg:
+            ang = math.radians(-offset_angle_deg)
+            cos_a, sin_a = math.cos(ang), math.sin(ang)
+            tex = np.column_stack([
+                tex[:, 0] * cos_a - tex[:, 1] * sin_a,
+                tex[:, 0] * sin_a + tex[:, 1] * cos_a,
+            ])
+        return [[float(u), float(v)] for u, v in tex]
+
+    def get_boundaries(self, offset_angle_deg: float = 0) -> list[list[Any]] | None:
+        # The master's outline: the band's rim segments are part of it.  A
+        # flat-space clip would need the band's flat region (v2); the panel's
+        # own shell draws the full weave anyway.
+        return self._source.get_boundaries(offset_angle_deg)
+
+    def strains(self) -> np.ndarray:
+        cols = [
+            np.asarray(self._result[key], dtype=float).reshape(-1, 1)
+            for key in ("warp_strain", "weft_strain", "shear_angle")
+            if key in self._result
+        ]
+        return np.hstack(cols) if cols else None
+
+    def get_lcs(self, element: Any) -> Any | None:
+        return self._source.get_lcs(element)
+
+    def get_lcs_batch(self, elements) -> list:
+        return self._source.get_lcs_batch(elements)
+
+    def get_lcs_at_point(self, center: Any) -> Any | None:
+        return self._source.get_lcs_at_point(center)
+
+    def get_tex_coord_at_point(self, point: Any,
+                               offset_angle_deg: float = 0) -> Any | None:
+        return self._source.get_tex_coord_at_point(point, offset_angle_deg)
+
+
 class NextDrapeBackend(DrapeBackend):
     """Wraps the C++ nextdrape solver (Composites_drape module)."""
 
@@ -119,6 +265,10 @@ class NextDrapeBackend(DrapeBackend):
         return self._result
 
     # ── DrapeBackend protocol ────────────────────────────────────
+
+    def raw_result(self) -> dict | None:
+        """The cached solve result dict (the borrowed-drape source)."""
+        return self._run_solve()
 
     def is_valid(self) -> bool:
         return self._valid

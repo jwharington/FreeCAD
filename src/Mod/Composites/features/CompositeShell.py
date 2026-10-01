@@ -166,6 +166,15 @@ class CompositeShellFP(CompositeBaseFP):
 
         obj.addProperty(
             type="App::PropertyLinkGlobal",
+            name="DrapeSource",
+            group="Composite",
+            doc="Borrow this shell's solved drape as our weave (no own "
+                "solve): the region of its result over our support is the "
+                "weave here",
+        )
+
+        obj.addProperty(
+            type="App::PropertyLinkGlobal",
             name="Mesh",
             group="Orthographic",
             doc="Mesh for orthotropic materials",
@@ -239,6 +248,14 @@ class CompositeShellFP(CompositeBaseFP):
             # support's placement move (known-issue #6).
             fp.Shape = fp.Support.Shape
             fp.Placement = fp.Support.Placement
+            return
+
+        # Borrowed weave: a shell whose drape coordinates come from another
+        # shell's solved drape over the same surface region (the lap-joint
+        # foot band — the support's common drape covers it continuously).
+        # No solve: the region of the source's result is this shell's weave.
+        if getattr(fp, "DrapeSource", None) is not None:
+            self._execute_from_support_drape(fp)
             return
 
         # Structural draping bypass (D4): a declared isotropic shell never
@@ -417,6 +434,71 @@ class CompositeShellFP(CompositeBaseFP):
         # branch so only the shader overlay renders.
         vp.Proxy.update_visibility(vp)
         _profiler('inject_drape_geometry')
+
+    def _execute_from_support_drape(self, fp):
+        """Borrowed weave: the drape coordinates come from DrapeSource's
+        solved drape restricted to this shell's support region.
+
+        The lap-joint foot band: the support's common drape covers the band
+        continuously (the weave runs under the foot), so the band's weave is
+        that solved drape's nodes and quads inside the band — no second
+        solve.  The borrowed backend serves the filtered arrays and
+        delegates the point-based frame queries to the source."""
+        source = fp.DrapeSource
+        src_proxy = getattr(source, "Proxy", None)
+        backend = getattr(src_proxy, "_backend", None)
+        if backend is None or not backend.is_valid():
+            src_proxy.execute(source)
+            backend = getattr(src_proxy, "_backend", None)
+        if backend is None or not backend.is_valid():
+            self._diag(fp, "borrow: source drape invalid")
+            self._mark_failed(fp, "drape source is not valid")
+            return
+        raw = backend.raw_result()
+        if not raw or not raw.get("success"):
+            self._diag(fp, "borrow: source result unavailable")
+            self._mark_failed(fp, "drape source result unavailable")
+            return
+
+        from ..tools.drape_backend_nextdrape import (
+            BorrowedDrapeBackend,
+            drape_result_over_region,
+        )
+        filtered, _old_to_new = drape_result_over_region(
+            raw, fp.Support.Shape
+        )
+        # An empty overlay is a valid borrow: at the support's pitch the
+        # band can hold no full solved cell (the fuselage's 34 mm seat band
+        # vs the 50 mm skin lattice) — the panel's own weave renders the
+        # band, and the band's fibre frames stay answerable pointwise by
+        # the source's locator (get_lcs delegates).  The foot's own lattice
+        # would only duplicate the panel's weave here.
+        if len(filtered["quads"]) == 0:
+            self._diag(
+                fp, "borrow: no source cell lies fully inside the region; "
+                    "the weave is the source's own"
+            )
+
+        # Mirror the no-laminate sync: the borrowed weave rides the
+        # support's geometry and placement.
+        fp.Shape = fp.Support.Shape
+        fp.Placement = fp.Support.Placement
+        borrowed = BorrowedDrapeBackend(backend, filtered)
+        drapecd_mesh = build_drapecd_coin(
+            filtered["node_positions"], filtered["quads"], wireframe=False
+        )
+        result = {
+            "backend": borrowed,
+            "drapecd_mesh": drapecd_mesh,
+            "solve_result": filtered,
+            "diag": borrowed.diagnostics(),
+            "valid": borrowed.is_valid(),
+            "quality_pass": borrowed.quality_pass(),
+        }
+        self._diag(fp, "borrowed drape completed")
+        _profiler('complete_drape')
+        self._complete_drape(fp, result)
+        _profiler('complete_drape')
 
     def _complete_drape(self, fp, result):
         """Update FreeCAD properties and load shader (main thread)."""
