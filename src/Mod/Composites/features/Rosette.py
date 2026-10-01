@@ -27,8 +27,15 @@ def _frame_rotation(geom, angle_deg):
     LCS so that changing it re-seeds the drape solver (the warp direction is
     the LCS X-axis).
 
-    For a Vertex/Edge (no face-U reference): X = world-X rotated by
-    ``angle_deg`` about world-Z, Z = world-Z.
+    For a Vertex (no surface reference): X = world-X rotated by
+    ``angle_deg`` about the datum normal, Z = world-Y — the datum plane
+    is the xz plane.  A vertex carries no surface, so the plane is a
+    convention; xz is the one that matches a fuselage-side anchor (the
+    skin's tangent plane at the widest line is vertical, normal +/-Y)
+    while keeping the 0 deg direction on the fuse axis.
+
+    For an Edge: X = world-X rotated by ``angle_deg`` about world-Z,
+    Z = world-Z (unchanged).
 
     During document restore the Support sub-object may transiently resolve to
     a bare ``Part.Shape`` (before the subname remaps to the Face/Edge/Vertex),
@@ -39,7 +46,7 @@ def _frame_rotation(geom, angle_deg):
     match type(geom):
         case Part.Vertex:
             position = geom.Point
-            normal = FreeCAD.Vector(0.0, 0.0, 1.0)
+            normal = FreeCAD.Vector(0.0, 1.0, 0.0)
             u_axis = FreeCAD.Vector(1.0, 0.0, 0.0)
         case Part.Edge:
             t = geom.getParameterByLength(0.5 * geom.Length)
