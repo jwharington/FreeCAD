@@ -412,8 +412,12 @@ SET(FemTestsApp_SRCS
     femtest/app/test_hydro_jig_commits.py
     femtest/app/test_material.py
     femtest/app/test_mesh.py
+    femtest/app/test_meshtools_junction_tolerance.py
     femtest/app/test_object.py
     femtest/app/test_open.py
+    femtest/app/test_reaction_example_delivery.py
+    femtest/app/test_reaction_multistep_delivery.py
+    femtest/app/test_reaction_wrench_shift.py
     femtest/app/test_result.py
     femtest/app/test_solver_elmer.py
     femtest/app/test_solver_mystran.py

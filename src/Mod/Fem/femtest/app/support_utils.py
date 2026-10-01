@@ -479,3 +479,68 @@ def spine_thermomech():
     unittest.TextTestRunner().run(unittest.TestLoader().loadTestsFromName(testname))
     doc = FreeCAD.open(join(get_fem_test_tmp_dir(), "FEM_ccx_thermomech", "spine_thermomech.FCStd"))
     return doc
+
+
+def parse_calculix_deck(inp_path):
+    """Split a CalculiX deck into node positions and per-step *CLOAD blocks.
+
+    Returns (nodes, preamble, steps).  "nodes" maps a node number to its
+    position.  "preamble" holds the entries of every *CLOAD card written
+    before the first *STEP -- CalculiX treats those as applying to step 1 --
+    and each entry of "steps" is one *STEP block in deck order, which is the
+    order CalculiX solves and reports them.
+
+    A block is a dict of "op_new" (True if any of its *CLOAD cards asked for
+    OP=NEW) and "entries", a list of (node number, dof, value) tuples.
+    """
+    nodes = {}
+    steps = []
+    preamble = {"op_new": False, "entries": []}
+    block = preamble
+    section = None
+    with open(inp_path) as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("**"):
+                continue
+            if line.startswith("*"):
+                keyword = line.split(",")[0].strip().upper()
+                if keyword == "*STEP":
+                    block = {"op_new": False, "entries": []}
+                    steps.append(block)
+                elif keyword == "*CLOAD":
+                    # a card may repeat within a block; OP=NEW on any of them
+                    # resets the load set, which is what a step must do
+                    if "OP=NEW" in line.upper().replace(" ", ""):
+                        block["op_new"] = True
+                section = keyword
+                continue
+            parts = [p.strip() for p in line.split(",")]
+            if section == "*NODE" and len(parts) >= 4:
+                nodes[int(parts[0])] = FreeCAD.Vector(
+                    float(parts[1]), float(parts[2]), float(parts[3]))
+            elif section == "*CLOAD" and len(parts) >= 3:
+                block["entries"].append(
+                    (int(parts[0]), int(parts[1]), float(parts[2])))
+    return nodes, preamble, steps
+
+
+def cload_resultant(entries, nodes, origin):
+    """Sum *CLOAD entries into a force and a moment about origin.
+
+    Raises KeyError if an entry names a node the deck has no position for --
+    a load on an unknown node is silently dropped by the solver, so a caller
+    must never be able to sum past it.
+    """
+    force = FreeCAD.Vector(0, 0, 0)
+    moment = FreeCAD.Vector(0, 0, 0)
+    for node, dof, value in entries:
+        try:
+            position = nodes[node]
+        except KeyError:
+            raise KeyError("CLOAD node %d has no position in the deck" % node)
+        load = FreeCAD.Vector(0, 0, 0)
+        load[dof - 1] = value
+        force = force + load
+        moment = moment + (position - origin).cross(load)
+    return force, moment
