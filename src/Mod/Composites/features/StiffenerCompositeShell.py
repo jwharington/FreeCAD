@@ -468,7 +468,7 @@ def _drop_foot_strip(doc, fp) -> None:
             _hide(obj)
 
 
-def _foot_contact_edge_support(foot_shell):
+def foot_contact_edge_support(foot_shell):
     """The foot shell's support, addressed at a boundary edge of the foot
     strip rather than its face.
 
@@ -493,20 +493,24 @@ def _foot_contact_edge_support(foot_shell):
     return (support, ["Face1"])
 
 
-def _ensure_panel_foot_transfer(doc, fp, panel, foot_shell):
+def _ensure_panel_foot_transfer(doc, fp, panel, foot_shell, suffix=""):
     """Create/update the solved TransferRosette panel → foot.
 
     The TransferRosette constructor runs the warp-continuity solve and
     wires itself as the foot shell's Rosette, seeding the foot shell's
     drape with the panel's fibre direction at the base-row edge.
+
+    ``suffix`` joints a *second* sub-foot of the same stiffener (a foot
+    split across two panel zones gets one joint per zone) without
+    re-implementing this wiring.
     """
-    name = f"{fp.Name}_PanelFootTransfer"
+    name = f"{fp.Name}{suffix}_PanelFootTransfer"
     transfer = doc.getObject(name)
     if transfer is None:
         transfer = doc.addObject("Part::FeaturePython", name)
         TransferRosetteFP(
             transfer,
-            support=_foot_contact_edge_support(foot_shell),
+            support=foot_contact_edge_support(foot_shell),
             master_shell=panel,
             attachment_shell=foot_shell,
             direct_contact=True,
@@ -516,6 +520,8 @@ def _ensure_panel_foot_transfer(doc, fp, panel, foot_shell):
             shared_surface=True,
         )
         attach_rosette_view_provider(transfer)
+        if suffix:
+            _hide(transfer)
     elif hasattr(transfer, "DirectContact"):
         # Existing (e.g. reloaded) transfer: a stiffener insertion is a
         # direct-contact joint, so adopt the cheaper measurement.
@@ -523,40 +529,46 @@ def _ensure_panel_foot_transfer(doc, fp, panel, foot_shell):
     return transfer
 
 
-def _ensure_stiffener_foot_transfer(doc, fp, web_shell, foot_shell):
+def _ensure_stiffener_foot_transfer(doc, fp, web_shell, foot_shell, suffix=""):
     """Create/update the solved stiffener → foot analysis rosette.
 
     Analysis-only (ADR-0001): it translates the web's lamina directions
     into the foot frame at the fold.  It never becomes the foot shell's
     Rosette, which belongs to the panel → foot transfer.
     """
-    name = f"{fp.Name}_StiffenerFootTransfer"
+    name = f"{fp.Name}{suffix}_StiffenerFootTransfer"
     rosette = doc.getObject(name)
     if rosette is None:
         rosette = doc.addObject("Part::FeaturePython", name)
         AnalysisTransferRosetteFP(
             rosette,
-            support=_foot_contact_edge_support(foot_shell),
+            support=foot_contact_edge_support(foot_shell),
             master_shell=web_shell,
             attachment_shell=foot_shell,
             direct_contact=True,
         )
         attach_rosette_view_provider(rosette)
+        if suffix:
+            _hide(rosette)
     elif hasattr(rosette, "DirectContact"):
         rosette.DirectContact = True
     return rosette
 
 
 def _ensure_combined_laminate(
-    doc, fp, panel, web_shell, foot_shell, panel_foot, stiffener_foot
+    doc, fp, panel, web_shell, foot_shell, panel_foot, stiffener_foot, suffix=""
 ):
     """Create/update the SeamCompositeLaminate carrying the joint stack.
 
     The seam machinery is reused unchanged: Master = panel (stays
     whole), Attachment = web shell (stiffener's own laminate),
     SeamRegion = foot shell.
+
+    ``suffix`` gives a second sub-foot of the same stiffener its own
+    joint, so both halves of a foot split across panel zones stack
+    against the zone they actually sit on.
     """
-    name = f"{fp.Name}_CombinedLaminate"
+    name = f"{fp.Name}{suffix}_CombinedLaminate"
     scl = doc.getObject(name)
     created = False
     if scl is None:

@@ -624,6 +624,13 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
         # object directly, but only once fully wired: a mid-setup
         # execution would run against half-set references and poison
         # the feature state.
+        #
+        # A document mid-restore is exactly that state: the references
+        # arrive before the joint's own properties, so recomputing here
+        # executes against an object that cannot answer for itself yet
+        # (and the saved result is already correct — nothing changed).
+        if fp.Document.Restoring:
+            return
         refs = (
             "Master",
             "Attachment",
