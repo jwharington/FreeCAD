@@ -69,8 +69,11 @@ class TestFailureModels(unittest.TestCase):
         sef_small = calc_stress_exposure_factor(stress_small, strain, o)
         sef_large = calc_stress_exposure_factor(stress_large, strain, o)
 
-        # Higher stress should require at least as much scaling to reach failure.
-        self.assertGreaterEqual(sef_large, sef_small)
+        # The factor is the load multiplier R at which the model first
+        # triggers, so more stress means less headroom, not more.  This test
+        # used to assert the reverse and passed only because the old bounded
+        # search capped both values at its 1e3 upper bound.
+        self.assertLessEqual(sef_large, sef_small)
 
     def test_unknown_model_name_fails_soft(self):
         from femresult.failuremodels import calc_stress_exposure_factor
