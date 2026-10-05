@@ -56,6 +56,24 @@
   setting the module's configuration directly. Never `monkeypatch.setenv`
   an option.
 
+## Imports: at the top of the module, never inline
+- **All imports go at the top of the file.** No `import` statements inside
+  functions, and never `__import__("SomeModule").Thing()`.
+- Why the rule matters here: FreeCAD scripts run headless in long jobs, and an
+  import buried in a function fails at the deepest point of a 20-minute run —
+  after the geometry is built and the deck is written — instead of at load.
+  It also hides a dependency: the header stops saying what the module needs,
+  so linters, `pyflakes`, and anyone reading the diff cannot see it.
+- Do not use `__import__()` to dodge that. It has the same failure point with
+  no static visibility at all, and it is how an import becomes invisible.
+- If an inline import is there to dodge a circular import, that is a layering
+  problem: fix the layering (move the shared piece into a third module), do
+  not paper over it with a deferred import.
+- Legitimate exceptions, both at module scope: an optional dependency guarded
+  by `try`/`except ImportError` at the top with a flag set there, and a
+  documented deferred import that genuinely breaks a cycle. Neither belongs
+  mid-function as a habit.
+
 ## Source vs build paths
 - **Master source**: `src/Mod/Composites/…` — edit here for all permanent changes.
 - **Build output**: `build/debug/Mod/Composites/…` — this is what FreeCAD actually loads at runtime.
