@@ -3,7 +3,7 @@
 
 """Row-by-row trace of a ring sweep on a halved (L/R split) support.
 
-Written for the LS8e skin L/R split job (handover
+Written for the skin L/R split job (handover
 ``HANDOVER-2026-09-30-skin-lr-split.md`` §4): with the fuselage skins cut
 at the symmetry plane, the frame rings fail at ring 1 — a raw OCCT
 ``Offset on C0 curve`` is logged and the build raises ``no swept

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
-"""The LS8e frame ring as two L/R half-stiffeners, one per skin half.
+"""A frame ring as two L/R half-stiffeners, one per skin half.
 
 The settled design for the skin L/R split (``REPORT-2026-09-30-skin-lr-split-blocker.md``):
 the skins drape as L/R halves, and each frame ring is physically two halves,

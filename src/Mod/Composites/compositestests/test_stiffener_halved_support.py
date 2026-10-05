@@ -3,7 +3,7 @@
 
 """Regression for the fuselage skin L/R split: a ring swept on a halved skin.
 
-The LS8e skins drape as L/R halves cut at the model symmetry plane y = 0
+The fuselage skins drape as L/R halves cut at the model symmetry plane y = 0
 (``HANDOVER-2026-09-30-skin-lr-split.md``).  When that halved skin is the
 ring's support, the station section is two arcs meeting smoothly at the
 crown — a *closed, two-edge* row.  ``tools/stiffener._sideways`` dispatches

@@ -1,7 +1,7 @@
 # FEM meshing of unsewn composite shells — continuity and section matching
 
 **Date:** 2026-09-29 · **Status:** verified against the implementation
-(code references below) during the LS8e fuselage FEM work.
+(code references below) during the fuselage FEM work.
 
 Multi-face composite assemblies (a draped skin lofted in pieces, a
 stiffener ring swept as three strips) are typically **unsewn**: adjacent

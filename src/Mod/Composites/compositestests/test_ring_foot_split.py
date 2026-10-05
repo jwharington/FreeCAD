@@ -3,7 +3,7 @@
 
 """The fuselage ring on a QI proxy, with its foot split L/R onto the skin halves.
 
-The LS8e build's target shape (``REPORT-2026-09-30-skin-lr-split-blocker.md``):
+The target shape for the skin L/R split (``REPORT-2026-09-30-skin-lr-split-blocker.md``):
 the skins drape as L/R halves, the QI frame ring spans the full closed section
 and so sweeps on a **full-region QI-declared proxy** (never draped), and the
 ring's **foot** — a draped, non-QI part — is split at the symmetry plane and
