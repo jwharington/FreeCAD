@@ -36,9 +36,11 @@ def calc_failure_maximum_strain(
             [o["sxy"], -o["sxy"]],
         ]
     )
+    # axis=-1 keeps the scalar result scalar and reduces a (N, 6) batch of
+    # node tensors to (N,) - one vectorized pass instead of a call per node
     f_t = np.divide(strain_tensor, strain_limits[:, 0]) * (strain_tensor > 0)
     f_c = np.divide(strain_tensor, strain_limits[:, 1]) * (strain_tensor < 0)
-    return np.max(np.hstack([f_t, f_c]))
+    return np.max(np.hstack([f_t, f_c]), axis=-1)
 
 
 def calc_failure_maximum_stress(
@@ -59,7 +61,7 @@ def calc_failure_maximum_stress(
     )
     f_t = np.divide(stress_tensor, stress_limits[:, 0]) * (stress_tensor > 0)
     f_c = np.divide(stress_tensor, stress_limits[:, 1]) * (stress_tensor < 0)
-    return np.max(np.hstack([f_t, f_c]))
+    return np.max(np.hstack([f_t, f_c]), axis=-1)
 
 
 _failure_models = {}

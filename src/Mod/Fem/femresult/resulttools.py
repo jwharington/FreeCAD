@@ -984,11 +984,15 @@ def add_stress_exposure_factor(res_obj, objs):
     from femresult.failuremodels import (
         calc_stress_exposure_factor,
         default_options,
+        get_failure_model,
+        is_homogeneous_load,
     )
 
-    print("TODO: handle expanded 3d shells")
-    # TODO: if type of obj is a shell, and we have 3d expanded shell elements,
-    # then look up element mappings from parse_12d in expanded_mesh_tools
+    # NOTE: the per-section allowables lookup is still a TODO upstream, so
+    # every section evaluates with the same options.  When they ever differ,
+    # the geometric per-section mapping below is what decides a node's
+    # material set - and for expanded 3d shells it can only ever reach the
+    # nodes sitting on a section face, leaving the ply nodes zero.
 
     node_stresses = np.vstack(
         [
@@ -1023,6 +1027,42 @@ def add_stress_exposure_factor(res_obj, objs):
             model_options=model_options,
         )
         sf[i] = max(sf[i], sf_new)
+
+    # When every section evaluates with the same options, the per-section
+    # geometric node mapping is pure cost: the same material set applies to
+    # every node the mesh has, so evaluate them all in one vectorized pass.
+    # (The writer refuses to write elements without a section, so the mesh
+    # is covered; the deckaudit asserts it for the LS8e fuselage.)
+    options_by_key = {}
+    for obj in objs:
+        for ref in obj.References:
+            model_options = default_options
+            key = repr(sorted(model_options.items(), key=str))
+            options_by_key[key] = model_options
+
+    if len(options_by_key) == 1:
+        model_options = next(iter(options_by_key.values()))
+        model_name = model_options.get(
+            "model_name", default_options["model_name"]
+        )
+        failure_model = get_failure_model(model_name)
+        if failure_model is not None and is_homogeneous_load(model_name):
+            f0 = np.asarray(
+                failure_model(
+                    stress_tensor=node_stresses,
+                    strain_tensor=node_strains,
+                    model_options=model_options,
+                )
+            )
+            # Same closed form, and the same cap, as the per-node path.
+            sf = np.where(f0 <= 1.0e-12, 1.0e3, np.minimum(1.0 / f0, 1.0e3))
+            FreeCAD.Console.PrintLog(
+                "Added stress exposure factor for all %d nodes with one "
+                "material set (%s).\n" % (nsr, model_name)
+            )
+            res_obj.StressExposureFactor = sf.tolist()
+            return res_obj
+        # One options set but not load-homogeneous: per node it stays.
 
     # Sections usually reference overlapping faces — the material object
     # covers everything, each ply/section ref re-covers its faces — so a
