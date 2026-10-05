@@ -44,8 +44,8 @@ _FACE_FALLBACK_WARNED = {
 
 # Junction-residual tolerance (mm): the gap a mesh node born on one
 # boolean trim curve can have to a coincident face's own trim curve.
-# Measured ~5e-5 on the LS8e fuselage (web/bay-wall/skin triple
-# points); 1e-3 is 20x headroom and still 50x below the coarsest
+# Measured ~5e-5 where a web, a wall and the skin meet on one boolean
+# trim curve; 1e-3 is 20x headroom and still 50x below the coarsest
 # relevant mesh feature — raising a face tolerance beyond this could
 # claim nodes from genuinely neighbouring geometry.
 JUNCTION_TOL = 1.0e-3

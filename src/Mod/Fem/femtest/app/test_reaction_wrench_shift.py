@@ -14,10 +14,10 @@ line of action.  The static-equivalence property it must satisfy:
 
 The shipped code solved shift = (m_perp x F)/|F|^2 — the wrong cross
 order — which moves the line of action the wrong way and, at
-shift_scale 1, delivers the NEGATED moment.  Found on the LS8e aft
-fuselage: ultimate nose-up moment My = +1602 N·mm... N·mm→N·m scaled
-case delivered −1602; the verification parse of the written *CLOAD
-caught it.
+shift_scale 1, delivers the NEGATED moment.  Found on a stitched shell
+model whose reaction wrench was scaled from N·mm to N·m: the +1602
+nose-up case delivered −1602, and only the verification parse of the
+written *CLOAD caught it.
 """
 
 import FreeCAD
@@ -41,7 +41,7 @@ def _assert_equivalent(force, moment, scale=1.0, limit=50.0):
     return shift, reduced
 
 
-def test_fuselage_bending_case_shifts_toward_plus_x():
+def test_nose_up_bending_case_shifts_toward_plus_x():
     """The failing production configuration: tail load DOWN
     (model -z) with nose-up moment +1602 N·mm about y.  The shift must
     point +x (the wrong-order code gave -0.47 mm and delivered

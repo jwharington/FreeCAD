@@ -15,7 +15,7 @@ recovers nodes.
 
 Tests use two overlapping plans (offset ~1e-5, well inside JUNCTION_TOL
 but far outside the default 1e-7 face tolerance) and a mesh whose nodes
-sit on the *other* plan, mirroring the LS8e web/bay-wall triple points.
+sit on the *other* plan.
 """
 
 import FreeCAD

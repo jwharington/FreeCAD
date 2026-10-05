@@ -1031,8 +1031,9 @@ def add_stress_exposure_factor(res_obj, objs):
     # When every section evaluates with the same options, the per-section
     # geometric node mapping is pure cost: the same material set applies to
     # every node the mesh has, so evaluate them all in one vectorized pass.
-    # (The writer refuses to write elements without a section, so the mesh
-    # is covered; the deckaudit asserts it for the LS8e fuselage.)
+    # (The writer refuses to write elements without a section, so every
+    # node the mesh has is covered, and a deck audit can re-check that
+    # from the written input file.)
     options_by_key = {}
     for obj in objs:
         for ref in obj.References:

@@ -7,11 +7,11 @@
 """Writer-level check of the ConstraintReaction example's delivered load.
 
 The femexamples.constraint_reaction model is the only committed consumer
-of the reaction delivery path besides the LS8e fuselage work.  This test
-builds the example document, writes the CalculiX input (no solve), and
-reconstructs the resultant force and moment of every written *CLOAD
-entry about the reaction Origin.  It must equal the writer's target
-(-Force, -Torque of the object) exactly — the wrench-shift cross-order
+of the reaction delivery path.  This test builds the example document,
+writes the CalculiX input (no solve), and reconstructs the resultant
+force and moment of every written *CLOAD entry about the reaction
+Origin.  It must equal the writer's target (-Force, -Torque of the
+object) exactly — the wrench-shift cross-order
 bug (delivered moment negated) shipped unnoticed because no test
 consumed this example.
 """
