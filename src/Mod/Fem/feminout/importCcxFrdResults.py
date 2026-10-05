@@ -113,6 +113,8 @@ def setupPipeline(doc, analysis, results_name, result_data):
 def importFrd(filename, analysis=None, result_name_prefix="", result_analysis_type=""):
     import ObjectsFem
     from . import importToolsFem
+    from femresult import resulttools
+    from femtools import femutils
 
     if analysis:
         doc = analysis.Document
@@ -125,8 +127,10 @@ def importFrd(filename, analysis=None, result_name_prefix="", result_analysis_ty
 
     if len(m["Nodes"]) > 0:
         mesh = importToolsFem.make_femmesh(m)
-        res_mesh_is_compacted = False
-        nodenumbers_for_compacted_mesh = []
+        # the compacted mesh and its node map, worked out once the first result
+        # set proves there is result data to compact
+        compact_femmesh = None
+        node_map = None
 
         number_of_increments = len(m["Results"])
         Console.PrintLog("Increments: " + str(number_of_increments) + "\n")
@@ -173,9 +177,6 @@ def importFrd(filename, analysis=None, result_name_prefix="", result_analysis_ty
                     analysis.addObject(res_obj)
 
                 # more result object calculations
-                from femresult import resulttools
-                from femtools import femutils
-
                 if not res_obj.MassFlowRate:
                     # information 1:
                     # only compact result if not Flow 1D results
@@ -183,19 +184,22 @@ def importFrd(filename, analysis=None, result_name_prefix="", result_analysis_ty
                     # https://www.freecad.org/tracker/view.php?id=2873
                     # information 2:
                     # if the result data has multiple result sets there will be multiple result objs
-                    # they all will use one mesh obj
-                    # on the first res obj fill: the mesh obj will be compacted, thus
-                    # it does not need to be compacted on further result sets
-                    # but NodeNumbers need to be compacted for every result set (res object fill)
+                    # they all share one compacted mesh, and every one of them has
+                    # to have its own node numbers taken through the map that
+                    # compaction produced. Reusing the first set's list instead
+                    # left later sets holding numbers from a numbering their own
+                    # mesh does not use, so anything indexing a result row by
+                    # node id — the GUI's nodal display included — read another
+                    # node's coordinates or none at all. An expanded mesh built
+                    # by a layered shell section, whose node numbers do not run
+                    # 1..N, exposes this on every set after the first.
                     # example frd file: https://forum.freecad.org/viewtopic.php?t=32649#p274291
-                    if res_mesh_is_compacted is False:
-                        # first result set, compact FemMesh and NodeNumbers
-                        res_obj = resulttools.compact_result(res_obj)
-                        res_mesh_is_compacted = True
-                        nodenumbers_for_compacted_mesh = res_obj.NodeNumbers
-                    else:
-                        # all other result sets, do not compact FemMesh, only set NodeNumbers
-                        res_obj.NodeNumbers = nodenumbers_for_compacted_mesh
+                    if compact_femmesh is None:
+                        compact_femmesh, node_map = (
+                            resulttools.compacted_mesh_and_node_map(res_obj.Mesh.FemMesh))
+                    res_obj.Mesh.FemMesh = compact_femmesh
+                    res_obj.NodeNumbers = [node_map[node_number]
+                                          for node_number in res_obj.NodeNumbers]
 
                 # fill DisplacementLengths
                 res_obj = resulttools.add_disp_apps(res_obj)

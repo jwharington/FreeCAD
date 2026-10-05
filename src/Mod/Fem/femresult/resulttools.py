@@ -678,29 +678,35 @@ def add_principal_stress_reinforced(res_obj):
     return res_obj
 
 
+def compacted_mesh_and_node_map(femmesh):
+    """The mesh with duplicate points merged, and the old-id -> new-id map.
+
+    `compact_result` below is this plus assigning both to a result object; the
+    map is returned separately because a caller importing several increments
+    from one file needs to remap every increment through the same map, not just
+    the first one.
+    """
+    from femmesh.meshtools import compact_mesh
+
+    data = compact_mesh(femmesh)
+    # data[2] is the element map; FreeCAD result objects hold no element data.
+    return data[0], data[1]
+
+
 def compact_result(res_obj):
     """
     compacts result.Mesh and appropriate result.NodeNumbers
     """
     # as workaround for https://www.freecad.org/tracker/view.php?id=2873
 
-    # get compact mesh data
-    from femmesh.meshtools import compact_mesh
-
-    compact_femmesh_data = compact_mesh(res_obj.Mesh.FemMesh)
-    compact_femmesh = compact_femmesh_data[0]
-    node_map = compact_femmesh_data[1]
-    # FreeCAD result obj does not support elem results ATM
-    # elem_map = compact_femmesh_data[2]
+    compact_femmesh, node_map = compacted_mesh_and_node_map(res_obj.Mesh.FemMesh)
 
     # set result mesh
     res_obj.Mesh.FemMesh = compact_femmesh
 
     # set result node numbers
-    new_node_numbers = []
-    for old_node_id in res_obj.NodeNumbers:
-        new_node_numbers.append(node_map[old_node_id])
-    res_obj.NodeNumbers = new_node_numbers
+    res_obj.NodeNumbers = [node_map[old_node_id]
+                           for old_node_id in res_obj.NodeNumbers]
 
     return res_obj
 
