@@ -114,6 +114,42 @@ rosette, weave rendering, FEM orientation lookup); undefined on a QI
 shell and blocked at command entry.
 _Avoid_: draped operation, solver operation.
 
+### Structural verification
+
+Two quantities are near 1, dimensionless, and exact reciprocals of each
+other. They are not the same number and they are not interchangeable, and
+they fail in opposite directions. Never call one by the other's name.
+
+**Stress exposure factor (SE)**:
+Demand over capacity at a point — the failure model's own value at the
+applied load. For maximum strain it is the largest ratio of a ply strain
+to its design strain. **SE > 1 fails**; the governing value is the
+**maximum** over plies, nodes and load cases.
+_Avoid_: load multiplier, R, λ, utilisation, "exposure" standing alone
+(which of the two is meant is the whole question), safety factor.
+
+**Load multiplier (R)**:
+The factor the applied load is scaled by until the first capacity is
+reached. **R < 1 fails**; the governing value is the **minimum** over
+plies, nodes and load cases. For a load-homogeneous model R = 1/SE
+exactly; for a model with linear terms (Tsai-Wu) R comes from a search
+and is the reciprocal of nothing.
+_Avoid_: exposure, stress exposure factor, exposure factor, margin
+(margin is R − 1), safety factor.
+
+**Buckling factor (λ)**:
+Already a load multiplier: the eigenvalue *is* the factor on the applied
+load at which the structure bifurcates. It sits on the R side of the
+line; its exposure form is 1/λ.
+_Avoid_: buckling exposure, critical load factor (reads as a capacity),
+buckling utilisation.
+
+**Design strain**:
+The capacity a failure model compares against — `sxxt`, `sxxc`, `sxy` in
+`femresult.failuremodels.default_options`. A strain divided by one is an
+SE.
+_Avoid_: allowable strain, limit strain.
+
 ## Relationships
 
 - A **Seam extraction** consumes a **Master** and an **Attachment**,
@@ -128,6 +164,17 @@ _Avoid_: draped operation, solver operation.
   only — it does not replace either side's laminate for export.
 - A **CompositeShell** is rendered with the weave shader; rosette
   symbols render above the weave.
+- For a load-homogeneous failure model (`maximum_strain`,
+  `maximum_stress`) SE and R are exact reciprocals, so the same
+  decision can be reported either way: governing multiplier
+  `min(R_strength, λ)`, governing exposure `max(SE, 1/λ)`.
+- **One report line, one side of the reciprocal.** A λ written next to an
+  SE is a multiplier beside a demand/capacity ratio, and the smaller
+  number stops meaning anything. Convert first — `1/λ` to join SE, `1/SE`
+  to join λ — and label which is which.
+- Strength yields an R only as 1/SE; buckling yields λ directly. Both
+  come from the same applied load vector for the two to be combined at
+  all, which is why load delivery is verified per step, not per deck.
 
 ## Flagged ambiguities
 
@@ -148,6 +195,22 @@ _Avoid_: draped operation, solver operation.
 - **"seam"** was used to mean both the seam *region* (a surface/shell)
   and the seam *operation*. Resolved: **seam region** is the geometry;
   **seam extraction** is the operation.
+- **"exposure" used for a load multiplier**: resolved — **exposure means
+  demand/capacity, nothing else**. Two FreeCAD names return or hold R, the
+  multiplier, and are misnomers to be read as such: `femresult.failuremodels
+  .calc_stress_exposure_factor`, whose own docstring says "load scale factor
+  R", and `femresult.resulttools.add_stress_exposure_factor` with the
+  `StressExposureFactor` field it writes — a field whose value of 0.723
+  reads as an exposure of 0.723 when the exposure is 1.383. Renaming them is
+  a separate change, API and GUI both, not a licence to reuse the word for
+  R. The LS8e runner once had the same fault in a dict key (`exposure_min`,
+  holding R); it now reports `strain_exposure_max` and `load_multiplier`,
+  and a summarizer column holds whichever its source line stated.
+
+- **"utilisation"** is informal for SE, not a third quantity — but the
+  same word also labels what `evaluate_failure_criteria` returns
+  (tsai_wu, hashin), and those models are *not* load-homogeneous, so they
+  have no SE↔R reciprocal. Name which model a number came from.
 - **"QICompositeShell"** was raised as a feature type for quasi-isotropic
   shells. Resolved: **no new feature class** — QI is a property of a
   **Laminate**; a QI shell is any shell (Composite::Shell, stiffener

@@ -33,6 +33,29 @@
 - Generally retain MCP tool calls to short commands for debugging, triggering loads, and quick inspections — not for building multi-step examples.
 - This keeps examples reproducible, version-controllable, and easier for the user to rerun independently.
 
+## Run-time configuration: no environment variables
+- **Never use environment variables to pass run-time options** to a script,
+  tool, or test. Run-time options are command-line arguments (argparse) or
+  function parameters, and nothing else.
+- The one permitted use is a **one-time installation variable**: where a
+  build tree, SDK, or licence lives — something set once per machine and
+  never varied per run (e.g. `FREECAD_ROOT`). If a value changes what a run
+  computes, it is not an installation variable.
+- Why the rule exists: an option read from the environment is invisible in
+  the log, so a run cannot be reproduced from the command line; it leaks
+  into every other script and test in the same shell, which makes results
+  order-dependent and makes one run silently inherit another's settings.
+- Do not name options with an env-var-style prefix in a docstring, help
+  text, or log line as a leftover of the old scheme — describe the flag
+  (`--case lc03`), not a variable that no longer exists.
+- A script that must be launched through a helper still takes a real argv;
+  if the helper cannot deliver one, fix the helper rather than routing the
+  options through the environment. See
+  `~/.pi/agent/skills/freecad-dev/scripts/run-script.sh`.
+- In tests, configure by calling the same parser the CLI uses, or by
+  setting the module's configuration directly. Never `monkeypatch.setenv`
+  an option.
+
 ## Source vs build paths
 - **Master source**: `src/Mod/Composites/…` — edit here for all permanent changes.
 - **Build output**: `build/debug/Mod/Composites/…` — this is what FreeCAD actually loads at runtime.
