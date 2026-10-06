@@ -178,16 +178,61 @@ def write_femelement_geometry(f, ccxwriter):
             write_matgeoset(matgeoset, orientation=orientation)
         else:
             elset_name = matgeoset["ccx_elset_name"]
-            for i in matgeoset["element_ids"]:
-                elset_i_name = f"{elset_name}_{i}"
-                elem_subs = {"ccx_elset_name": elset_i_name}
-                f.write(f"*ELSET,ELSET={elset_i_name}\n{i}\n")
+            orientations = (
+                matgeoset["orientation"] if orthotropic else None
+            )
+            for group_name, orientation, element_ids in _orientation_groups(
+                elset_name, matgeoset["element_ids"], orientations
+            ):
+                _write_element_set(f, group_name, element_ids)
+                elem_subs = {"ccx_elset_name": group_name}
                 elem_matgeoset = matgeoset | elem_subs
-                if orthotropic:
-                    orientation = matgeoset["orientation"][i]
-                else:
-                    orientation = None
                 write_matgeoset(elem_matgeoset, orientation=orientation)
+
+
+# ************************************************************************************************
+def _orientation_key(orientation):
+    """A hashable identity for a material frame (None kept distinct)."""
+    if orientation is None:
+        return None
+    return (
+        tuple(round(value, 9) for value in orientation.Base),
+        tuple(round(value, 9) for value in orientation.Rotation.Q),
+    )
+
+
+def _orientation_groups(elset_name, element_ids, orientations):
+    """Group elements by identical material frame, first id names the group.
+
+    A draped shell carries a per-element frame, and a distinct
+    ``*ORIENTATION`` definition used to be written for every element even
+    when all of them share one frame.  A one-layer composite section
+    tolerates only a few distinct applied orientations before the solver
+    corrupts its orientation store (measured, §7.6 plate, 2026-10-07), so
+    equal frames must share one definition.  That is exact — equal frames
+    are one frame — and every element still points at the frame it needs.
+    """
+    groups = {}
+    order = []
+    for element_id in element_ids:
+        orientation = orientations[element_id] if orientations else None
+        key = _orientation_key(orientation)
+        if key not in groups:
+            groups[key] = (orientation, [])
+            order.append(key)
+        groups[key][1].append(element_id)
+    return [
+        (f"{elset_name}_{groups[key][1][0]}", groups[key][0], groups[key][1])
+        for key in order
+    ]
+
+
+def _write_element_set(f, name, element_ids):
+    """Write an *ELSET, ten element numbers per line."""
+    f.write(f"*ELSET,ELSET={name}\n")
+    for start in range(0, len(element_ids), 10):
+        chunk = element_ids[start:start + 10]
+        f.write(",".join(str(i) for i in chunk) + "\n")
 
 
 # ************************************************************************************************
