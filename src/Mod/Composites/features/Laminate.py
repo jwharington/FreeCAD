@@ -232,10 +232,8 @@ class LaminateFP(CompositeBaseFP):
 
         Today that is the merged stack itself; the accessor exists so the
         section writer and the deck audit ask one place for the deck's
-        answer and cannot drift.  (A single merged orthotropic layer decked
-        as two stacked half-layers was tried and withdrawn: the form-identical
-        1-layer deck solves at article scale, and see the round-trip plan
-        doc for the scale-dependent expansion boundary the split ran into.)
+        answer and cannot drift.  The material is written once, from
+        fem_layers.
         """
         return self.fem_layers(obj)
 

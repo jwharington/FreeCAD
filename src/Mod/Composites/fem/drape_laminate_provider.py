@@ -96,25 +96,23 @@ def shell_section_provider(shellth_obj, matgeoset, orientation_name):
             f"{laminate.Name}: declared isotropic but has "
             f"{len(layers)} merged layers"
         )
-    if len(layers) == 1:
+    if len(layers) == 1 and _is_isotropic_laminate(laminate):
+        # D5: single-layer plain section; the referenced material is the
+        # laminate's equivalent isotropic layer (written by the indirect
+        # material provider), never a COMPOSITE orientation.
         layer = layers[0]
         material_name = _format_material_name(
             layer.description,
             prefix=laminate.Name,
         )
-        if _is_isotropic_laminate(laminate):
-            # D5: single-layer plain section; the referenced material is
-            # the laminate's equivalent isotropic layer (written by the
-            # indirect material provider), never a COMPOSITE orientation.
-            return {
-                # The override replaces the whole header MATERIAL chunk.
-                "material": f"MATERIAL={material_name}",
-                "section_geo": f"{layer.thickness:.13G}\n",
-            }
-    # A single merged orthotropic layer cannot be decked as a one-layer
-    # COMPOSITE (the solver cannot expand that presentation); the split
-    # into two stacked half-thickness layers is the laminate accessor's
-    # rule (deck_layers), shared with the deck audit.
+        return {
+            # The override replaces the whole header MATERIAL chunk.
+            "material": f"MATERIAL={material_name}",
+            "section_geo": f"{layer.thickness:.13G}\n",
+        }
+    # A stack that merges to a single layer is presented as an ordinary
+    # composite section (one layer, per-element orientation), the same
+    # path as any other merged stack.
     return {
         "material": f"COMPOSITE,ORIENTATION={orientation_name}",
         "section_geo": laminate.Proxy.write_shell_section(laminate),

@@ -39,32 +39,45 @@ from .test_quasi_iso_fem import (
     TestQuasiIsoFemCrossValidation,
 )
 
-# Layer lines carry <thickness>,,<material>[,<orientation>]; material
-# cards carry *MATERIAL,NAME=<name>.
+# Composite layer lines carry <thickness>,,<material>[,<orientation>];
+# material cards carry *MATERIAL,NAME=<name>.  A homogeneous section names
+# its single material in the section header instead.
 _LAYER_RE = re.compile(r"^([0-9.eE+-]+),,([^,\n]+)", re.M)
 _MATERIAL_RE = re.compile(r"^\*MATERIAL,NAME=([^,\n]+)", re.M)
+_MATERIAL_FIELD_RE = re.compile(r"MATERIAL=([^,\n]+)")
 
 # %.13G formatting makes deck thicknesses exact to 13 significant digits;
 # anything looser than 1e-6 relative is a lost or duplicated layer.
 _THICKNESS_TOLERANCE = 1e-6
 
 
-def _composite_section_blocks(deck):
-    """[[(thickness, material name), ...]] per COMPOSITE shell section."""
+def _shell_section_blocks(deck):
+    """[[(thickness, material name), ...]] per shell section.
+
+    A COMPOSITE section lists one entry per layer on the lines below it; a
+    homogeneous section names one material in the header and lists one
+    thickness line.
+    """
     blocks = []
     lines = deck.splitlines()
     for i, line in enumerate(lines):
         if not line.startswith("*SHELL SECTION"):
             continue
-        if "COMPOSITE" not in line:
-            continue
         layers = []
         j = i + 1
-        while j < len(lines) and lines[j].strip() and not lines[j].startswith("*"):
-            match = _LAYER_RE.match(lines[j])
-            if match:
-                layers.append((float(match.group(1)), match.group(2)))
-            j += 1
+        first = lines[j] if j < len(lines) else ""
+        if "COMPOSITE" in line:
+            while j < len(lines) and lines[j].strip() and not lines[j].startswith("*"):
+                match = _LAYER_RE.match(lines[j])
+                if match:
+                    layers.append((float(match.group(1)), match.group(2)))
+                j += 1
+        elif first.strip() and not first.startswith("*"):
+            material = _MATERIAL_FIELD_RE.search(line)
+            layers.append(
+                (float(first.split(",")[0]),
+                 material.group(1) if material else None)
+            )
         blocks.append(layers)
     return blocks
 
@@ -74,8 +87,9 @@ def _deck_faults(deck):
     defined = set(_MATERIAL_RE.findall(deck))
     referenced = {
         name
-        for layers in _composite_section_blocks(deck)
+        for layers in _shell_section_blocks(deck)
         for _, name in layers
+        if name is not None
     }
     return sorted(referenced - defined)
 
@@ -123,9 +137,9 @@ class TestStackModelCcxRoundTrip(TestQuasiIsoFemCrossValidation):
                 f"{member.name}: deck references undefined materials "
                 f"{faults}",
             )
-            blocks = _composite_section_blocks(deck)
+            blocks = _shell_section_blocks(deck)
             self.assertTrue(
-                blocks, f"{member.name}: no COMPOSITE section in deck"
+                blocks, f"{member.name}: no shell section in deck"
             )
             self.assertEqual(
                 len({len(block) for block in blocks}), 1,
