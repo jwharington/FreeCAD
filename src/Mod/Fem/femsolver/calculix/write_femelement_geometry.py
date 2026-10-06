@@ -25,6 +25,8 @@ __title__ = "FreeCAD FEM calculix write inpfile femelement geometry"
 __author__ = "Bernd Hahnebach"
 __url__ = "https://www.freecad.org"
 
+import hashlib
+
 from FreeCAD import Vector
 from femtools import fem_extension_registry
 
@@ -39,11 +41,12 @@ def write_femelement_geometry(f, ccxwriter):
     def write_matgeoset(matgeoset, orientation):
         elsetdef = "ELSET={}, ".format(matgeoset["ccx_elset_name"])
         material = "MATERIAL={}".format(matgeoset["mat_obj_name"])
-        orientation_name = f'_OR_{matgeoset["ccx_elset_name"]}'
+        orientation_name = matgeoset.get("orientation_name") or (
+            f'_OR_{matgeoset["ccx_elset_name"]}'
+        )
 
         if orientation:
-            orientation_def = f"*ORIENTATION,NAME={orientation_name}\n"
-            f.write(orientation_def)
+            f.write(f"*ORIENTATION,NAME={orientation_name}\n")
 
             def format_dim(v):
                 return "{:.13G},{:.13G},{:.13G}".format(v.x, v.y, v.z)
@@ -181,58 +184,50 @@ def write_femelement_geometry(f, ccxwriter):
             orientations = (
                 matgeoset["orientation"] if orthotropic else None
             )
-            for group_name, orientation, element_ids in _orientation_groups(
-                elset_name, matgeoset["element_ids"], orientations
-            ):
-                _write_element_set(f, group_name, element_ids)
-                elem_subs = {"ccx_elset_name": group_name}
-                elem_matgeoset = matgeoset | elem_subs
+            # One section and one *ORIENTATION card per element: CalculiX
+            # sizes its orientation store from the number of cards, so the
+            # cards are kept.  A card is named by its rotation, though, so
+            # elements sharing a frame share one definition — distinct
+            # names corrupt the solver's orientation store on a one-layer
+            # section (measured, plate round trip).
+            orientation_names = {}
+            for i in matgeoset["element_ids"]:
+                elset_i_name = f"{elset_name}_{i}"
+                f.write(f"*ELSET,ELSET={elset_i_name}\n{i}\n")
+                elem_matgeoset = matgeoset | {"ccx_elset_name": elset_i_name}
+                if not orthotropic:
+                    write_matgeoset(elem_matgeoset, orientation=None)
+                    continue
+                orientation = orientations[i]
+                key = _orientation_key(orientation)
+                if key not in orientation_names:
+                    orientation_names[key] = _orientation_name(key)
+                elem_matgeoset["orientation_name"] = orientation_names[key]
                 write_matgeoset(elem_matgeoset, orientation=orientation)
 
 
 # ************************************************************************************************
+def _orientation_name(key):
+    """A short, deterministic orientation name for a rotation key.
+
+    CalculiX's orientation store corrupts on a one-layer section when the
+    shared name is long: the same plate deck segfaults with a 69-character
+    name and solves with a 4-character one.  The name is therefore a short
+    digest of the rotation, not the (long) element-set name.
+    """
+    return "_OR_" + hashlib.md5(repr(key).encode()).hexdigest()[:8]
+
+
 def _orientation_key(orientation):
-    """A hashable identity for a material frame (None kept distinct)."""
+    """A hashable identity for the local axes a section writes (None too).
+
+    Keyed on the rotation alone: the section emits only the rotated axes
+    (the frame origin is subtracted out), so two frames that differ only in
+    position are one orientation to CalculiX and must share one card.
+    """
     if orientation is None:
         return None
-    return (
-        tuple(round(value, 9) for value in orientation.Base),
-        tuple(round(value, 9) for value in orientation.Rotation.Q),
-    )
-
-
-def _orientation_groups(elset_name, element_ids, orientations):
-    """Group elements by identical material frame, first id names the group.
-
-    A draped shell carries a per-element frame, and a distinct
-    ``*ORIENTATION`` definition used to be written for every element even
-    when all of them share one frame.  A one-layer composite section
-    tolerates only a few distinct applied orientations before the solver
-    corrupts its orientation store (measured, §7.6 plate, 2026-10-07), so
-    equal frames must share one definition.  That is exact — equal frames
-    are one frame — and every element still points at the frame it needs.
-    """
-    groups = {}
-    order = []
-    for element_id in element_ids:
-        orientation = orientations[element_id] if orientations else None
-        key = _orientation_key(orientation)
-        if key not in groups:
-            groups[key] = (orientation, [])
-            order.append(key)
-        groups[key][1].append(element_id)
-    return [
-        (f"{elset_name}_{groups[key][1][0]}", groups[key][0], groups[key][1])
-        for key in order
-    ]
-
-
-def _write_element_set(f, name, element_ids):
-    """Write an *ELSET, ten element numbers per line."""
-    f.write(f"*ELSET,ELSET={name}\n")
-    for start in range(0, len(element_ids), 10):
-        chunk = element_ids[start:start + 10]
-        f.write(",".join(str(i) for i in chunk) + "\n")
+    return tuple(round(value, 9) for value in orientation.Rotation.Q)
 
 
 # ************************************************************************************************
