@@ -2,6 +2,7 @@
 # Copyright 2025 John Wharington jwharington@gmail.com
 
 import FreeCAD
+from dataclasses import replace
 
 from .. import (
     LAMINATE_TOOL_ICON,
@@ -227,10 +228,29 @@ class LaminateFP(CompositeBaseFP):
             layers=self.fem_layers(obj),
         )
 
+    def deck_layers(self, obj):
+        """The layers the deck presents, as the writer emits them.
+
+        A single merged (CLT-collapsed) orthotropic layer cannot be decked
+        as a one-layer COMPOSITE section: the solver cannot expand that
+        presentation (measured heap corruption, §7.6 plate, 2026-10-07;
+        the same deck with the layer split in two solves).  The deck
+        therefore presents it as two stacked half-thickness layers of the
+        same material — identical ABD by construction.  This accessor is
+        the one definition of that rule: the section writer uses it, and
+        the deck audit checks the deck against it, so neither can drift
+        from the other.
+        """
+        layers = self.fem_layers(obj)
+        if len(layers) == 1 and not is_isotropic_laminate(obj):
+            return [replace(layers[0], thickness=layers[0].thickness / 2)
+                    for _ in range(2)]
+        return layers
+
     def write_shell_section(self, obj):
         return write_shell_section_ccx(
             prefix=obj.Name,
-            layers=self.fem_layers(obj),
+            layers=self.deck_layers(obj),
         )
 
     def get_model(self, obj) -> Laminate:

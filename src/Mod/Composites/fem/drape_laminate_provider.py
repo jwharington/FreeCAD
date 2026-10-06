@@ -111,21 +111,10 @@ def shell_section_provider(shellth_obj, matgeoset, orientation_name):
                 "material": f"MATERIAL={material_name}",
                 "section_geo": f"{layer.thickness:.13G}\n",
             }
-        # A single merged (CLT-collapsed) layer is a homogeneous
-        # orthotropic sheet — but a COMPOSITE section carrying exactly one
-        # layer is a degenerate presentation: the solver cannot expand it
-        # (measured heap corruption, §7.6 plate, 2026-10-07; the same deck
-        # with the layer split in two, or without the frame reference,
-        # solves).  So the merged layer is emitted as two stacked
-        # half-thickness layers of the same material — identical ABD by
-        # construction, and the drape frame stays on the section.
-        half = layer.thickness / 2
-        return {
-            "material": f"COMPOSITE,ORIENTATION={orientation_name}",
-            "section_geo": (
-                f"{half:.13G},,{material_name}\n" * 2
-            ),
-        }
+    # A single merged orthotropic layer cannot be decked as a one-layer
+    # COMPOSITE (the solver cannot expand that presentation); the split
+    # into two stacked half-thickness layers is the laminate accessor's
+    # rule (deck_layers), shared with the deck audit.
     return {
         "material": f"COMPOSITE,ORIENTATION={orientation_name}",
         "section_geo": laminate.Proxy.write_shell_section(laminate),
