@@ -139,6 +139,19 @@ def merge_clt(
     C = np.zeros((6, 6))
     density = 0
 
+    # The merged layer is presented as a single homogeneous ply, but the
+    # plies it stands in for are rotated off-axis: their normal–shear
+    # coupling (A16/A26-type terms) cannot survive the engineering-constant
+    # form the writer would otherwise fall back to — a [-45] pair would be
+    # emitted as an uncoupled orthotropic layer and the solved response
+    # shifts by ~12% (measured, §7.6 plate, 2026-10-07).  The accumulated
+    # thickness-averaged 6x6 is therefore attached as the equivalent
+    # single-layer stiffness, the same channel merge_single uses; the FEM
+    # writer emits TYPE=ANISO from it.  B is lost by the single-layer
+    # presentation — that is the merged models' accepted semantics (pinned
+    # by test_mechanics's asymmetric sandwich cases), not something to
+    # refuse here.
+
     def accumulate_ABD(t_k, zbar_k, Qbar_k, is_core: bool):
         # Barbero eq 3.9
         s = zbar_k**2 + t_k**2 / 12
@@ -237,6 +250,7 @@ def merge_clt(
         thickness=total_thickness,
         orientation=0,
         orientation_display=0,
+        stiffness=C,
     )
 
 
@@ -341,8 +355,14 @@ def merge_single(
     # Keep the full rotated 6x6 stiffness: for an off-axis ply the
     # engineering constants below lose the normal-shear coupling, so the
     # FEM writer emits TYPE=ANISO from this tensor instead.
-    stiffness = None
-    if is_orthotropic(layer.material):
+    # A layer that already carries a stiffness tensor keeps it: merged
+    # (CLT-collapsed) layers arrive here with the thickness-averaged
+    # equivalent from merge_clt, and recomputing from their material dict
+    # would rebuild it from engineering constants — which cannot carry the
+    # coupling — silently flattening the merged stack back to orthotropic
+    # (measured 12% response error, §7.6 plate, 2026-10-07).
+    stiffness = getattr(layer, "stiffness", None)
+    if stiffness is None and is_orthotropic(layer.material):
         stiffness, _ = material_shell_properties(layer.material, angle_rad)
     material = material_rotate(
         layer.material,

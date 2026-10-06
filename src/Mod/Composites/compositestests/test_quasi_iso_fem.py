@@ -147,9 +147,12 @@ class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
 
     def _build_and_solve(
         self, isotropic, name, mesh_max_size=None, mesh_template=None,
-        solve=True,
+        solve=True, stack_model=None,
     ):
         """Build one variant; ``solve=False`` stops after meshing (export-only).
+
+        ``stack_model`` (a StackModelType member name) sets the laminate's
+        stack model before recompute; ``None`` leaves the Discrete default.
 
         ``mesh_template`` (an existing FemMeshObject) forces both variants
         onto the *same* mesh, so the cross-validation is not confounded by
@@ -190,6 +193,8 @@ class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
         laminate.FibreVolumeFraction = 55
         laminate.Symmetry = SymmetryType.Even.name
         laminate.IsotropicEquivalent = isotropic
+        if stack_model is not None:
+            laminate.StackModelType = stack_model
         doc.recompute()
 
         shell = doc.addObject("Part::FeaturePython", f"{name}_Shell")

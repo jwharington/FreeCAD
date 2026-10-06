@@ -90,25 +90,41 @@ def shell_section_provider(shellth_obj, matgeoset, orientation_name):
     laminate = get_laminate(shellth_obj)
     if not laminate:
         return None
-    if _is_isotropic_laminate(laminate):
-        # D5: single-layer plain section; the referenced material is the
-        # laminate's equivalent isotropic layer (written by the indirect
-        # material provider), never a COMPOSITE orientation.
-        layers = getattr(laminate.Proxy, "FEMLayers", None) or []
-        if len(layers) != 1:
-            raise ValueError(
-                f"{laminate.Name}: declared isotropic but has "
-                f"{len(layers)} merged layers"
-            )
+    layers = getattr(laminate.Proxy, "FEMLayers", None) or []
+    if len(layers) != 1 and _is_isotropic_laminate(laminate):
+        raise ValueError(
+            f"{laminate.Name}: declared isotropic but has "
+            f"{len(layers)} merged layers"
+        )
+    if len(layers) == 1:
         layer = layers[0]
         material_name = _format_material_name(
             layer.description,
             prefix=laminate.Name,
         )
+        if _is_isotropic_laminate(laminate):
+            # D5: single-layer plain section; the referenced material is
+            # the laminate's equivalent isotropic layer (written by the
+            # indirect material provider), never a COMPOSITE orientation.
+            return {
+                # The override replaces the whole header MATERIAL chunk.
+                "material": f"MATERIAL={material_name}",
+                "section_geo": f"{layer.thickness:.13G}\n",
+            }
+        # A single merged (CLT-collapsed) layer is a homogeneous
+        # orthotropic sheet — but a COMPOSITE section carrying exactly one
+        # layer is a degenerate presentation: the solver cannot expand it
+        # (measured heap corruption, §7.6 plate, 2026-10-07; the same deck
+        # with the layer split in two, or without the frame reference,
+        # solves).  So the merged layer is emitted as two stacked
+        # half-thickness layers of the same material — identical ABD by
+        # construction, and the drape frame stays on the section.
+        half = layer.thickness / 2
         return {
-            # The override replaces the whole header MATERIAL chunk.
-            "material": f"MATERIAL={material_name}",
-            "section_geo": f"{layer.thickness:.13G}\n",
+            "material": f"COMPOSITE,ORIENTATION={orientation_name}",
+            "section_geo": (
+                f"{half:.13G},,{material_name}\n" * 2
+            ),
         }
     return {
         "material": f"COMPOSITE,ORIENTATION={orientation_name}",
