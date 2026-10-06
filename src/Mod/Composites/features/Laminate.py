@@ -2,6 +2,7 @@
 # Copyright 2025 John Wharington jwharington@gmail.com
 
 import FreeCAD
+from dataclasses import replace
 
 from .. import (
     LAMINATE_TOOL_ICON,
@@ -224,18 +225,23 @@ class LaminateFP(CompositeBaseFP):
     def get_materials(self, obj):
         return write_lamina_materials_ccx(
             prefix=obj.Name,
-            layers=self.fem_layers(obj),
+            layers=self.deck_layers(obj),
         )
 
     def deck_layers(self, obj):
         """The layers the deck presents, as the section writer emits them.
 
-        Today that is the merged stack itself; the accessor exists so the
-        section writer and the deck audit ask one place for the deck's
-        answer and cannot drift.  The material is written once, from
-        fem_layers.
+        A stack that merges to a single layer is one homogeneous orthotropic
+        sheet: its merged 6x6 tensor is dropped so the material is written
+        as engineering constants.  A one-layer section carrying the
+        anisotropic tensor is what the solver's orientation expansion
+        corrupts (measured, plate round trip).  This accessor is the one
+        definition of that rule, shared by the material and section writers.
         """
-        return self.fem_layers(obj)
+        layers = self.fem_layers(obj)
+        if len(layers) == 1 and not is_isotropic_laminate(obj):
+            return [replace(layers[0], stiffness=None)]
+        return layers
 
     def write_shell_section(self, obj):
         return write_shell_section_ccx(

@@ -96,23 +96,27 @@ def shell_section_provider(shellth_obj, matgeoset, orientation_name):
             f"{laminate.Name}: declared isotropic but has "
             f"{len(layers)} merged layers"
         )
-    if len(layers) == 1 and _is_isotropic_laminate(laminate):
-        # D5: single-layer plain section; the referenced material is the
-        # laminate's equivalent isotropic layer (written by the indirect
-        # material provider), never a COMPOSITE orientation.
+    if len(layers) == 1:
+        # A single layer is a homogeneous shell, not a layup: MATERIAL +
+        # ORIENTATION, never COMPOSITE (the manual's non-composite form).
+        # The material is the laminate's equivalent layer written by the
+        # indirect material provider.
         layer = layers[0]
         material_name = _format_material_name(
             layer.description,
             prefix=laminate.Name,
         )
+        if _is_isotropic_laminate(laminate):
+            # D5: isotropic needs no local axes.
+            return {
+                # The override replaces the whole header MATERIAL chunk.
+                "material": f"MATERIAL={material_name}",
+                "section_geo": f"{layer.thickness:.13G}\n",
+            }
         return {
-            # The override replaces the whole header MATERIAL chunk.
-            "material": f"MATERIAL={material_name}",
+            "material": f"MATERIAL={material_name},ORIENTATION={orientation_name}",
             "section_geo": f"{layer.thickness:.13G}\n",
         }
-    # A stack that merges to a single layer is presented as an ordinary
-    # composite section (one layer, per-element orientation), the same
-    # path as any other merged stack.
     return {
         "material": f"COMPOSITE,ORIENTATION={orientation_name}",
         "section_geo": laminate.Proxy.write_shell_section(laminate),
