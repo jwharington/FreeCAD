@@ -216,9 +216,14 @@ class TestQuasiIsoFemCrossValidation(TestFreeCADFP):
             # Reuse the partner variant's mesh verbatim.
             mesh_obj.FemMesh = mesh_template.FemMesh
         elif mesh_max_size is not None:
-            # gmsh characteristic length: None keeps the (very coarse)
-            # default, which is the historical §7.6 configuration.
+            # The size must reach whichever mesher actually runs: gmsh
+            # honours CharacteristicLengthMax, netgen (the fallback when
+            # no gmsh binary exists) honours MaxSize — without it netgen
+            # meshes at its 1000 mm default and the "refinement" is
+            # silently a no-op.
             mesh_obj.CharacteristicLengthMax = mesh_max_size
+            if hasattr(mesh_obj, "MaxSize"):
+                mesh_obj.MaxSize = mesh_max_size
         _add_shell_section_and_material(
             doc, analysis, support, name, shell_obj=shell
         )

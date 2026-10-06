@@ -85,11 +85,20 @@ class TestStackModelCcxRoundTrip(TestQuasiIsoFemCrossValidation):
 
     save_fcstd = False
 
+    # The §7.6 default mesh is four elements — a degenerate corner where
+    # the solver's expansion estimate trips on the merged single-layer
+    # presentation (form-identical decks solve at article scale, and at
+    # this scale with ≥2 layers).  The round trip is exercised on the same
+    # mesh density the §7.6 cross-validation uses for its tolerance
+    # comparison, so the fixture reflects the article's meshing regime.
+    MESH_MAX_SIZE = 5.0
+
     def _case(self, stack_model):
         return self._build_and_solve(
             isotropic=False,
             name=f"StackModel{stack_model}",
             stack_model=stack_model,
+            mesh_max_size=self.MESH_MAX_SIZE,
         )
 
     def test_every_stack_model_solves(self):

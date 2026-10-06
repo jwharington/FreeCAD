@@ -1,7 +1,9 @@
 # Plan — Stack models must survive the CalculiX deck round trip
 
 **Date:** 2026-10-07
-**Status:** Fixes implemented — both defects closed, 217 tests green
+**Status:** Coupling fix closed and verified at both scales; deck presentation
+ruled out as the crash cause — remaining failures are an open solver-scale
+boundary (resolution log §8)
 **Origin:** LS8e fuselage laminate-representation study (design-tools TODO 5)
 hit solver failures when the `--stack-model` flag was exercised for the first
 time; user direction: *"the error is not in CalculiX, it is you"* — the defect
@@ -166,25 +168,40 @@ preserves an existing stiffness and only computes one when there is none.
 Verified: the SmearedFabric deck's 45°-pair layers carry ±16 109 MPa coupling
 (matching Discrete) and the parity gate passes.
 
-### Defect 2 — fixed; the deck's single-layer COMPOSITE was ours to fix
+### Defect 2 — presentation ruled out; open solver-scale boundary
 
-Deck bisection on the preserved copy isolated the trigger precisely:
+Deck bisection isolated the plate crash trigger (1-layer COMPOSITE carrying a
+section `ORIENTATION=` reference), and splitting the layer in two made the
+plate tests pass — but the split was then rejected at article scale
+(`gen3dnor: increase nk_`), while the form-identical 1-layer deck solves there
+(Smeared/SmearedCore full sweeps, lc05 0.995 vs Discrete 0.970). The split was
+withdrawn. The empirical map, all on our decks:
 
-| deck variant | result |
-|---|---|
-| 1-layer COMPOSITE + `ORIENTATION=` reference | **heap corruption** |
-| 1-layer COMPOSITE, orientation reference removed | solves |
-| same deck, layer split in two (0.8 + 0.8) + orientation | solves |
-| shorter material name / known-good ANISO constants / no `OFFSET` | still crashes |
-| plain `MATERIAL=`+`ORIENTATION=` form (no COMPOSITE) | still crashes |
+| deck | plate (4–400 el.) | fuselage (5048 el.) |
+|---|---|---|
+| 1 layer + frame ref | heap corruption @4, segfault @74, @~400 | **solves** (both tensors) |
+| 2 layers + frame ref | solves | gen3dnor reject |
+| 1 layer, no frame ref | solves | — |
+| mixed 7–14-layer skins (SmearedFabric) | solves | gen3dnor reject (pre-fix decks too — never solved) |
+| uniform 16–44 layers (Discrete) | solves | solves |
 
-So a **single-layer presentation carrying a section frame reference** is the
-degenerate input, in both COMPOSITE and plain forms; the frame-preserving form
-that works is ≥2 layers. `shell_section_provider` now emits a single merged
-(orthotropic) layer as a COMPOSITE section of two stacked half-thickness
-layers of the same material — identical ABD by construction, drape frame kept.
-The declared-isotropic single layer keeps its plain `MATERIAL=` path (D5, no
-orientation), unchanged.
+Ruled out by experiment: material tensor content (zeros vs full coupled),
+element type (S6 both), identity vs perturbed orientation frames, and any
+per-section layer-count arithmetic (the failing deck's own node estimate,
+1.08 M, sits between the two solving decks', 683 k and 1.69 M). The deck
+audits clean at every scale; the crashing and solving cells are form-identical
+and differ only in scale.
+
+Per user direction the solver internals are off-limits, so the boundary cannot
+be characterised further from here. Open decision: how to exercise the merged
+single-layer presentation in tests (the article solves it; no plate scale
+does), and whether SmearedFabric's full-article deck can exist at all.
+
+Also fixed en route: the test fixture's `mesh_max_size` never reached the
+mesher — no gmsh binary exists in this environment, so every mesh (plate and
+article) came from the netgen fallback at its 1000 mm default, and
+deckaudit-era "refinement" was a silent no-op. `_build_and_solve` now sets
+netgen's `MaxSize` as well (74-element plate vs 4).
 
 ### Premise corrected — no B refusal
 
@@ -199,10 +216,11 @@ tensor) stands; B loss remains documented model behaviour.
 ### Verification
 
 `run-tests.sh test_stack_model_ccx test_mechanics test_quasi_iso_fem
-test_drape_laminate_provider`: **217 PASS, 0 FAIL, 0 ERROR** (read from the
-timings file — FreeCAD's console spam corrupts live stdout counts). Includes
-all four stack models solving, deck round-trip consistency, ≤5 % response
-parity, and the 200 pre-existing mechanics tests unchanged.
+test_drape_laminate_provider`: 200 mechanics + 12 provider + 1 cross-validation
+pass; the three merged-model round-trip tests remain blocked on the open
+solver-scale boundary above (Discrete and SmearedFabric round-trip on the
+plate pass). Coupling fix verified at both scales: plate parity ≤5 % and
+fuselage lc01 SE 0.805 (Discrete 0.786).
 
-Remaining from §7: re-run the LS8e fuselage stack study on the fixed module
-(merged-model rows withdrawn, §6) — design-tools side.
+Remaining: the open boundary decision (§8 Defect 2) and the fuselage study
+re-run scope.
