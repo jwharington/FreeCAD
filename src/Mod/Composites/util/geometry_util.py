@@ -139,12 +139,21 @@ def _same_edge(edge_a, edge_b, tolerance: float) -> bool:
     each curve type's defining data — poles, knots and weights, or a conic's
     basis and parameters) and the spans by overlap, counting a subset either
     way round.  Nothing is discretised and no distance is measured.
+
+    ``isSame`` is orientation- and location-sensitive, though, and neither
+    is part of the question: a Boolean cut returns the shared edge reversed
+    (opposite direction), and two parameterisations of one line need not
+    share a base point.  A shared boundary edge is missed for exactly those
+    cases (measured: the QI seam example, 2026-10-07), so line edges get a
+    direction-agnostic collinear comparison.
     """
     try:
         if edge_a.isSame(edge_b):
             return True
     except Exception:
         pass
+    if _same_line_edge(edge_a, edge_b, tolerance):
+        return True
     try:
         same_curve = edge_a.Curve.isSame(
             edge_b.Curve, tolerance, _ANGULAR_TOLERANCE
@@ -154,6 +163,43 @@ def _same_edge(edge_a, edge_b, tolerance: float) -> bool:
         # compared as a curve — an honest miss, not a silent pass.
         return False
     return bool(same_curve) and _spans_overlap(edge_a, edge_b, tolerance)
+
+
+def _same_line_edge(edge_a, edge_b, tolerance: float) -> bool:
+    """Whether two straight edges lie on one line over an overlapping span.
+
+    Direction-agnostic and base-point-agnostic: collinear is collinear
+    whichever way the edges run and wherever each basis line was anchored.
+    """
+    direction_a = getattr(edge_a.Curve, "Direction", None)
+    direction_b = getattr(edge_b.Curve, "Direction", None)
+    if direction_a is None or direction_b is None:
+        return False
+    if abs(direction_a.dot(direction_b)) < 1.0 - _ANGULAR_TOLERANCE:
+        return False
+    try:
+        point_a = edge_a.Vertexes[0].Point
+        point_b = edge_b.Vertexes[0].Point
+    except Exception:
+        return False
+    if (point_b - point_a).cross(direction_a).Length > tolerance:
+        return False
+    return _line_spans_overlap(edge_a, edge_b, direction_a, tolerance)
+
+
+def _line_spans_overlap(edge_a, edge_b, direction, tolerance: float) -> bool:
+    """Whether two collinear edges' projected vertex spans overlap."""
+
+    def span(edge):
+        values = sorted(v.Point.dot(direction) for v in edge.Vertexes)
+        return values[0], values[-1]
+
+    try:
+        first_a, last_a = span(edge_a)
+        first_b, last_b = span(edge_b)
+    except Exception:
+        return False
+    return max(first_a, first_b) <= min(last_a, last_b) + tolerance
 
 
 def _spans_overlap(edge_a, edge_b, tolerance: float) -> bool:

@@ -177,7 +177,7 @@ def _export_materials(laminate):
     from ...util.fem_util import write_lamina_materials_ccx
 
     return write_lamina_materials_ccx(
-        laminate.Proxy.FEMLayers, prefix=laminate.Name
+        laminate.Proxy.fem_layers(laminate), prefix=laminate.Name
     )
 
 
