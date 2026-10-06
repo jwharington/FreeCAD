@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 import Part
 
+from Composites.features.Laminate import is_isotropic_laminate
+
 from .test_base import TestFreeCADFP
 
 CARBON = {
@@ -91,6 +93,21 @@ class TestQuasiIsotropicLaminateFeature(TestFreeCADFP):
         self.assertIn("Density", merged.material)
         # 4 plies x 0.5, doubled by Even symmetry
         self.assertAlmostEqual(laminate.Thickness.Value, 4.0, places=6)
+
+    def test_deck_accessor_agrees_with_the_isotropic_predicate(self):
+        """Consumers of a written deck ask the laminate, so the accessor has
+        to answer what the writer's predicate answers, for every tier."""
+        for isotropic, approximate in ((False, False), (True, False),
+                                       (False, True)):
+            laminate = self._make_laminate(
+                (0, 45, -45, 90),
+                isotropic=isotropic,
+                approximate=approximate,
+            )
+            self.assertEqual(
+                laminate.Proxy.is_isotropic(laminate),
+                is_isotropic_laminate(laminate),
+            )
 
     def test_qi_declaration_overrides_stack_model_type(self):
         for model_type in ("Discrete", "Smeared", "SmearedFabric"):

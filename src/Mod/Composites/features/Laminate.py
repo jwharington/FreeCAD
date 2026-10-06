@@ -190,6 +190,16 @@ class LaminateFP(CompositeBaseFP):
             case "Layers":
                 fp.recompute()
 
+    def is_isotropic(self, obj):
+        """Whether the deck writes this laminate as one smeared isotropic layer.
+
+        Part of the laminate's deck contract next to fem_layers, so a
+        consumer of the written deck - an audit, a mass tally - can ask the
+        laminate instead of importing the writer, which drags in the whole
+        workbench and cannot be done outside a running FreeCAD.
+        """
+        return is_isotropic_laminate(obj)
+
     def fem_layers(self, obj):
         """The stack as ccx should see it, merged by the stack model type.
 
