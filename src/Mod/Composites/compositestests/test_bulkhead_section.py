@@ -5,8 +5,8 @@
 
 Three of the bulkhead tool's design questions turn on facts about one support
 shape — the lofted, doubly curved, open-ended skin that §6 of
-docs/bulkhead-design.md fixes as the fixture for every bulkhead test and every
-example — and none of them can be settled on a flat plate or settled on paper:
+docs/handoff-2026-10-07-bulkhead-tool.md §6 fixes as the fixture for every
+bulkhead test and every example — and none of them can be settled on a flat plate or settled on paper:
 
 * does a bulkhead's section bound **one** region, or several disjoint ones?
   A self-crossing boundary bounds several, and nextdrape's hole test reads a
