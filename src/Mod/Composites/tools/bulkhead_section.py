@@ -133,15 +133,35 @@ def plate_of(support: Part.Shape, cut_surface: Part.Shape):
 
     Every point of a plane/surface intersection lies in the cutting plane, so
     each closed chain bounds a planar region and ``Part.Face`` of the wire *is*
-    the filled section (R1) — no re-parametrisation, and the face's boundary
-    curves are the chain's own, so a flange band taken out of the support by
-    boolean shares them exactly rather than being matched to them by tolerance.
+    the filled section (R1) — no re-parametrisation.  The chain is read the
+    way the stiffener reads its web's base row: as the boolean wall edge
+    where the slab's cut face meets the support — the same curve the band's
+    cutter-side boundary carries, so the plate and band share their
+    boundary curve *exactly* (as stiffener foot and remainder do) instead
+    of two boolean rebuilds of one intersection being matched by tolerance.
+    A plane/surface read that produced no wall edge falls back to the
+    section-chains construction.
 
     An open chain — one that runs off the support's free edge — bounds nothing
     and is skipped rather than chorded shut: closing it in space would invent a
     plate edge where the support has none, and the caller decides whether a
     member that fails to close is an error or a bulkhead bridging an opening.
     """
+    slab = member_slab(support, cut_surface, 1.0)
+    if slab is not None:
+        common = support.common(slab)
+        normal = _plane_normal(cut_surface)
+        if normal is not None:
+            point = cut_surface.CenterOfMass
+            wall_edges = [
+                edge for edge in common.Edges
+                if all(abs(normal.dot(v.Point - point)) <= 1e-6
+                       for v in edge.Vertexes)]
+            groups = Part.sortEdges(wall_edges) if wall_edges else []
+            faces = [Part.Face(Part.Wire(group)) for group in groups
+                     if Part.Wire(group).isClosed()]
+            if faces:
+                return faces
     return [Part.Face(chain) for chain in section_chains(support, cut_surface)
             if chain.isClosed()]
 
