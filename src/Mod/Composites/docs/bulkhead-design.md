@@ -1,7 +1,14 @@
 # Bulkhead section generation — design record
 
 Status: **section and feature layers implemented and tested; the composite
-wiring (Laminate → drape → stack model) is the deferred part.**
+wiring (Laminate → drape → stack model) is now built — on the shared
+member flow, `wire_composite_member` with `BULKHEAD_ROLES` — and it is
+held shut by measurement, not by assumption: the two wired fixture cases
+skip until the draper handles this section, because a drape of it took
+14.7 s (plate) and over 100 s (panel). The exact geometry and setup are
+captured as a reproducer kit at
+`src/3rdParty/nextdrape/data/bulkhead-plate-drape/` (BREP + setup.json,
+regenerable by `compositestests/inspect_bulkhead_drape_case.py`).**
 This records what was *measured* about the fixture, and it was written after the
 measurement. `handoff-2026-10-07-bulkhead-tool.md` is the input specification;
 where the two disagree, this file is the one that was checked against geometry.
@@ -118,7 +125,11 @@ parameter.
 
 Seven functions, no placeholders (the last two compose the feature's Shape
 from the first five; `chain_regions` answers the §1 question of *where* a
-chain runs, not *what* to take, and is unused until the wiring task needs it):
+chain runs, not *what* to take — the wiring ultimately asked *which edges
+of the band lie on the chain* instead, answered geometrically by
+`bulkhead_band_seam_subs` through `section_chains`, because a positional
+`Edge1` on a multi-face band names neither boundary and is picked once
+for the file's life (cost #2)):
 
 | | | |
 |---|---|---|
@@ -162,9 +173,13 @@ where `width` scales a pitch floor of `max(0.5·pitch, 1.0)` against a `DrapePit
 clamped to 0.5–20 mm — one clamp away from disabling the foot drape rather than
 merely coarsening it — and `validate_composite_wiring`, which drapes the foot
 only while `0 < foot_width < 3·web_height`. A bulkhead has no second knob to
-carry: its band is `width` deep by construction, so a wired bulkhead would
-hand that machinery `FlangeWidth` itself, and the clamp question belongs to
-the wiring task, not to this layer.
+carry: its band is `width` deep by construction, and the wiring hands that
+machinery `FlangeWidth` itself for both pitch scalars (`_scaled_pitch(34) →
+8.5 mm`, inside the clamp; the gate `34 < 3·34` passes). What the clamp
+question *meant* turned out to matter more than the clamp: at 8.5 mm the
+fixture drapes still took 14.7 s (plate) and exceeded 100 s (panel) — the
+cost tracks the sampled boundary curve, not the patch count, so the
+reproducer kit rather than a knob change is where this now stands.
 
 **`_same_curve` compares curves geometrically, not by `isSame`.** A sewn seam is
 *one* edge whose `ancestorsOfType` lists both faces; an unsewn one is *two*
