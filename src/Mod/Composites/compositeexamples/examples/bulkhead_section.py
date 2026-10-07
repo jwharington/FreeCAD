@@ -81,9 +81,10 @@ def build(doc=None, sewn=False):
     one compound and colour and visibility would land on all of them at once.
     """
     doc = doc or FreeCAD.newDocument("Composites_BulkheadSection")
+    support = fixture.bulkhead_fixture(sewn=sewn)
+    _support_features(doc, support)
     cutter = fixture.station_plane(CUT_STATION)
-    plates, bands = section.make_bulkhead(
-        fixture.bulkhead_fixture(sewn=sewn), cutter, FLANGE_WIDTH)
+    plates, bands = section.make_bulkhead(support, cutter, FLANGE_WIDTH)
 
     # The plate lies in the cutting plane; the flange lies on the skin, so the
     # fold between them is a fold and not an outline.
