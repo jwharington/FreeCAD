@@ -149,6 +149,22 @@ class TestFlangeBand(SectionProbe):
         self.assertTrue(band, "no band to take out of the support")
         self.assertGreater(band[0].Area, 0.0)
 
+    def test_mirror_x_puts_the_band_on_the_far_side_of_the_cut(self):
+        """Mirrored and plain bands hug opposite sides of the section line.
+
+        Both must exist *and* fail to coincide: a `mirror_x` that was wired
+        but geometrically inert would keep every existence check green.
+        """
+        cutter = station_plane(210.0)
+        plain = section.band_of(self.support, cutter, 34.0)
+        mirrored = section.band_of(self.support, cutter, 34.0, mirror_x=True)
+        self.assertTrue(plain and mirrored, "one side found no band to take")
+        for a in plain:
+            for b in mirrored:
+                self.assertLess(
+                    a.common(b).Area, 1e-9,
+                    "the mirrored band covers the same skin as the plain one")
+
     def test_band_spans_both_bands_where_the_seam_crosses_it(self):
         """Where the cut crosses the band seam the band is a *compound*."""
         cutter = station_plane(300.0, Vector(1, 0.55, 0.35))

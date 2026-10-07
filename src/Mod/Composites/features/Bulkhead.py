@@ -51,6 +51,13 @@ class BulkheadFP(CompositePartFP):
             "Width of the flange band taken out of the support",
         ).FlangeWidth = DEFAULT_FLANGE_WIDTH
 
+        obj.addProperty(
+            "App::PropertyBool",
+            "MirrorX",
+            "Layout",
+            "Put the flange band on the far side of the section",
+        ).MirrorX = False
+
         super().__init__(obj)
 
     def execute(self, fp):
@@ -58,6 +65,7 @@ class BulkheadFP(CompositePartFP):
             support=fp.Support.Shape,
             cut_surface=fp.IntersectSurface.Shape,
             flange_width=float(fp.FlangeWidth),
+            mirror_x=bool(fp.MirrorX),
         )
         if not plates:
             # Loud, not silent: a cut that never closed on the support would
@@ -69,7 +77,7 @@ class BulkheadFP(CompositePartFP):
         fp.Shape = Part.makeCompound(
             [*plates, *bands,
              *drape_cuts_of(fp.Support.Shape, fp.IntersectSurface.Shape,
-                            float(fp.FlangeWidth))])
+                            float(fp.FlangeWidth), bool(fp.MirrorX))])
         fp.IntersectSurface.Visibility = False
         self.last_error = None
 
