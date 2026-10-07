@@ -96,6 +96,13 @@ def build(doc=None, sewn=False):
     flange.Shape = Part.makeCompound(list(bands))
     _paint(flange, (0.85, 0.35, 0.20))
 
+    # The same skin, with the band's footprint cut out of it: what the
+    # panel keeps where the flange lies is exactly what it gives up.
+    holed = doc.addObject("Part::Feature", "Remainder")
+    holed.Shape = Part.makeCompound(
+        list(section.drape_cuts_of(support, cutter, FLANGE_WIDTH)))
+    _paint(holed, (0.15, 0.60, 0.30))
+
     return doc
 
 

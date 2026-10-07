@@ -4,7 +4,7 @@
 import Part
 
 from .. import BULKHEAD_TOOL_ICON
-from ..tools.bulkhead_section import make_bulkhead
+from ..tools.bulkhead_section import drape_cuts_of, make_bulkhead
 from .Command import BaseCommand
 from .VPCompositePart import (
     CompositePartFP,
@@ -67,7 +67,10 @@ class BulkheadFP(CompositePartFP):
             raise ValueError(
                 "the cutting surface does not close on the support — "
                 "no bulkhead section to build")
-        fp.Shape = Part.makeCompound([*plates, *bands])
+        fp.Shape = Part.makeCompound(
+            [*plates, *bands,
+             *drape_cuts_of(fp.Support.Shape, fp.IntersectSurface.Shape,
+                            float(fp.FlangeWidth))])
         fp.IntersectSurface.Visibility = False
         self.last_error = None
 
