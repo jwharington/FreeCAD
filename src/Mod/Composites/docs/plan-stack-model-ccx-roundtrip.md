@@ -1,9 +1,8 @@
 # Plan — Stack models must survive the CalculiX deck round trip
 
 **Date:** 2026-10-07
-**Status:** Coupling fix closed and verified at both scales; deck presentation
-ruled out as the crash cause — remaining failures are an open solver-scale
-boundary (resolution log §8)
+**Status:** Resolved — both defects closed; the merged one-layer deck
+round-trips on the plate and solves the fuselage (resolution log §8)
 **Origin:** LS8e fuselage laminate-representation study (design-tools TODO 5)
 hit solver failures when the `--stack-model` flag was exercised for the first
 time; user direction: *"the error is not in CalculiX, it is you"* — the defect
@@ -168,14 +167,28 @@ preserves an existing stiffness and only computes one when there is none.
 Verified: the SmearedFabric deck's 45°-pair layers carry ±16 109 MPa coupling
 (matching Discrete) and the parity gate passes.
 
-### Defect 2 — presentation ruled out; open solver-scale boundary
+### Defect 2 — resolved; two deck-writing defects, not a solver boundary
 
-Deck bisection isolated the plate crash trigger (1-layer COMPOSITE carrying a
-section `ORIENTATION=` reference), and splitting the layer in two made the
-plate tests pass — but the split was then rejected at article scale
-(`gen3dnor: increase nk_`), while the form-identical 1-layer deck solves there
-(Smeared/SmearedCore full sweeps, lc05 0.995 vs Discrete 0.970). The split was
-withdrawn. The empirical map, all on our decks:
+The plate crash and the article failures were in our deck, and the earlier
+solver-scale reading was a symptom of the first defect below.
+
+- **One-layer section.** The crash tracked the number of distinct
+  `*ORIENTATION` definitions on a one-layer section and the length of the
+  shared name. A one-layer deck is now written as the manual's non-composite
+  form — `*SHELL SECTION, MATERIAL=…, ORIENTATION=…` + thickness — with one
+  card per element but **named by a short digest of the rotation**, so equal
+  frames share one short name. The "two stacked half-layers" split was
+  withdrawn: it re-appeared as `gen3dnor` on the fuselage.
+- **Combined laminate.** `SeamCompositeLaminateFP.execute` skips on an
+  unchanged input fingerprint, and the fingerprint did not include
+  `StackModelType`, so the seam-combined laminates never re-derived when the
+  stack model was set. A `SmearedFabric` run therefore left the combined
+  laminates fully layered (26–46-layer sections) and ccx aborted with
+  `gen3dnor: increase nk_`. The stack model is now part of the fingerprint.
+
+The empirical map recorded on the old deck-writing path (1-layer COMPOSITE
+with per-element distinct orientation names; combined laminates stuck at
+Discrete) is kept as the record of how each candidate was ruled out:
 
 | deck | plate (4–400 el.) | fuselage (5048 el.) |
 |---|---|---|
@@ -189,13 +202,8 @@ Ruled out by experiment: material tensor content (zeros vs full coupled),
 element type (S6 both), identity vs perturbed orientation frames, and any
 per-section layer-count arithmetic (the failing deck's own node estimate,
 1.08 M, sits between the two solving decks', 683 k and 1.69 M). The deck
-audits clean at every scale; the crashing and solving cells are form-identical
-and differ only in scale.
-
-Per user direction the solver internals are off-limits, so the boundary cannot
-be characterised further from here. Open decision: how to exercise the merged
-single-layer presentation in tests (the article solves it; no plate scale
-does), and whether SmearedFabric's full-article deck can exist at all.
+audited clean at every scale on that path; the trigger was the
+orientation-name set and the stale combined stack, not the deck's size.
 
 Also fixed en route: the test fixture's `mesh_max_size` never reached the
 mesher — no gmsh binary exists in this environment, so every mesh (plate and
@@ -215,12 +223,11 @@ tensor) stands; B loss remains documented model behaviour.
 
 ### Verification
 
-`run-tests.sh test_stack_model_ccx test_mechanics test_quasi_iso_fem
-test_drape_laminate_provider`: 200 mechanics + 12 provider + 1 cross-validation
-pass; the three merged-model round-trip tests remain blocked on the open
-solver-scale boundary above (Discrete and SmearedFabric round-trip on the
-plate pass). Coupling fix verified at both scales: plate parity ≤5 % and
-fuselage lc01 SE 0.805 (Discrete 0.786).
+`test_stack_model_ccx` passes in full — every member solves, the deck
+round-trips, and the merged responses sit within the §7.6 5 % gate of
+Discrete. `test_seam_composite_laminate`, `test_compositeexamples` and the
+transfer-rosette suites show no regression. On the fuselage every
+`--stack-model` member solves (`SmearedFabric` lc05 0.9698).
 
-Remaining: the open boundary decision (§8 Defect 2) and the fuselage study
-re-run scope.
+Remaining: the fuselage laminate-representation study re-run (design-tools
+TODO 5) — the pre-fix `fem-results/stack-study/` rows are stale.
