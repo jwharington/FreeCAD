@@ -153,5 +153,42 @@ class TestBulkheadRoundTrip(TestBulkheadFeature, TestFreeCADFP):
             os.remove(filepath)
 
 
+class TestBulkheadExampleRuns(TestFreeCADFP):
+    """The example must run headless, not merely exist beside the tests.
+
+    A script nobody runs rots silently: this one reaches the same
+    section-layer calls the suite asserts on, in both of its sections.
+    Running it here keeps "verified by example" from meaning "looked at
+    once, while it still worked".
+    """
+
+    def test_section_section_builds_every_named_object(self):
+        """Section I: skins, plate, flange, footprint — and the mirrored pair."""
+        from Composites.compositeexamples.examples import bulkhead_section
+
+        doc = bulkhead_section.build(doc=self.doc)
+        names = ["Skin1", "Skin2", "Plate", "Flange", "Remainder",
+                 "PlateM", "FlangeM", "SkinM"]
+        for name in names:
+            obj = doc.getObject(name)
+            self.assertIsNotNone(obj, f"the example built no {name}")
+            if obj is not None:
+                self.assertFalse(obj.Shape.isNull(), f"{name} is empty")
+                self.assertTrue(obj.Shape.isValid(), f"{name} is invalid")
+
+    def test_feature_section_recomputes_the_feature_path(self):
+        """Section II: the BulkheadFP must recompute, not sit Touched."""
+        from Composites.compositeexamples.examples import bulkhead_section
+
+        doc = bulkhead_section.build_with_feature(doc=self.doc)
+        member = doc.getObject("Bulkhead")
+        self.assertIsNotNone(member, "no Bulkhead feature in section II")
+        self.assertFalse(member.Shape.isNull(), "the feature computed nothing")
+        self.assertTrue(member.Shape.isValid())
+        self.assertGreater(
+            len(member.Shape.Faces), 2,
+            "plate and flange should both be in the feature's shape")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -1,27 +1,32 @@
 # Bulkhead section generation — design record
 
-Status: **section layer implemented and measured; feature layer not started.**
+Status: **section and feature layers implemented and tested; the composite
+wiring (Laminate → drape → stack model) is the deferred part.**
 This records what was *measured* about the fixture, and it was written after the
 measurement. `handoff-2026-10-07-bulkhead-tool.md` is the input specification;
 where the two disagree, this file is the one that was checked against geometry.
 
-Code: `tools/bulkhead_section.py`. Measurement: `compositestests/test_bulkhead_section.py`
-— run it with
+Code: `tools/bulkhead_section.py` and `features/Bulkhead.py`. Measurement:
+`compositestests/test_bulkhead_section.py` and `compositestests/test_bulkhead.py`
+— run them with
 `~/.pi/agent/skills/freecad-dev/scripts/run-tests.sh test_bulkhead_section`.
 
 ## 1. What a bulkhead's section has to be
 
-A bulkhead is a plate with flanges: a wall of constant `depth` standing off the
-panel, joined to the panel along a contact line, and gusseted into it. Its
-section is therefore *filled* — a region — and the region's boundary is a pair
-of curves:
-
-- `p`, the **section path**: where the cutting surface meets the support, and
-- `offset(p, depth)`: `p` displaced by `depth` along **b = t × N**.
+A bulkhead is a plate with flanges: a wall standing in the cutting plane,
+joined to the panel along the section line where the cutting surface meets
+the support, and gusseted into it by a foot lying on the skin on one side of
+that wall. Its section is therefore *filled* — a region — bounded by the
+section chain (one closed chain where the cutter crosses one face; a cut
+across the band seam returns one chain per face, a compound and not one
+stitched sheet), and its foot occupies exactly one `width` of skin behind the
+plate — or ahead of it when `MirrorX` is set.
 
 `tools/bulkhead_section.py` keeps the path layer and the band layer separate:
-`section_chains` finds where `cut_surface` cuts `support`, and `band_of` /
-`drape_cuts_of` / `member_slab` are the boolean that takes material out.
+`section_chains` finds where `cut_surface` cuts `support`, `plate_of` fills
+the region each chain bounds, and `member_slab` / `band_of` / `drape_cuts_of`
+are one prism and its two reads — the band taken out of the support, and
+what the support keeps around it.
 
 ## 2. The two premises that did not survive measuring
 
@@ -111,25 +116,30 @@ footprint can never overlap, and `flange_width` is the feature's only shape
 parameter.
 ## 4. What the module exposes, and why each query is shaped that way
 
-Five functions, no placeholders:
+Seven functions, no placeholders (the last two compose the feature's Shape
+from the first five; `chain_regions` answers the §1 question of *where* a
+chain runs, not *what* to take, and is unused until the wiring task needs it):
 
 | | | |
 |---|---|---|
 | `section_chains(support, cut)` | the chains where the cutter cuts the support | delegates to `stiffener._section_groups` |
 | `chain_regions(support, chain)` | which support faces that chain runs along | `(face, boundary, interior)` per face |
-| `member_slab(support, cut, w, d)` | the prism the band and plate are taken out of | one solid, or `None` |
-| `band_of(support, cut, w, d)` | the flange band, as faces | `support.common(slab)` |
-| `drape_cuts_of(support, cut, w, d)` | the plate's footprint | `face.cut(slab)` per face |
+| `plate_of(support, cut)` | the filled section, one face per closed chain | `Part.Face` per region |
+| `member_slab(support, cut, w, mirror_x=False)` | the prism the band and footprint are taken out of | one solid, or `None` |
+| `band_of(support, cut, w, mirror_x=False)` | the flange band, as faces | `support.common(slab)` |
+| `drape_cuts_of(support, cut, w, mirror_x=False)` | what the panel keeps: skin minus prism | `face.cut(slab)` per face |
+| `make_bulkhead(support, cut, w, mirror_x=False)` | `(plates, bands)` ready for a feature Shape | `plate_of` + `band_of`, loud on failure |
 
-**`depth` is measured along b = t × N, and that choice is load-bearing.** `t` is
-the path's direction of travel and `N` the cutting surface's normal, so b lies
-*in* the cutting plane and perpendicular to the path — not normal to the
-support, which is what "the plate's depth is measured *from* the support" reads
-as, and what the first draft did. Measured normally, a constant `depth` puts
-the plate *in* the cutting plane, where it has no thickness: it bounds nothing,
-sews to nothing, and the boolean answers "nothing to take out of" for a support
-that plainly has a band to give. `d = 120` on this skin is legitimate for the
-same reason — it is comparable to the local chamber, and it is a real shape.
+**The prism is one `width` deep and hugs one side of the plate.** A constant
+`depth` measured along b = t × N (in the cutting plane, perpendicular to the
+path) — or measured normal to the support — put the member's far edge on an
+arbitrary second dimension and made the band depend on a number no designer
+sets. Both readings are history, measured with the two-sided slab that has
+since been replaced; what survives them is the *fact* that a band as wide as
+the local chamber is a legitimate shape, and the one-sided prism keeps that
+fact without the knob: `band_of`/`drape_cuts_of` take one `width` and one
+`mirror_x`, `MirrorX` moves band and footprint together, and `flange_width`
+is the feature's only shape parameter.
 
 **`band_of` and `drape_cuts_of` are two views of one prism**, deliberately: the
 band occupies exactly the patch the panel gives up, so the two can never both
@@ -151,8 +161,10 @@ made here.
 where `width` scales a pitch floor of `max(0.5·pitch, 1.0)` against a `DrapePitch`
 clamped to 0.5–20 mm — one clamp away from disabling the foot drape rather than
 merely coarsening it — and `validate_composite_wiring`, which drapes the foot
-only while `0 < foot_width < 3·web_height`. `depth` therefore has to be carried
-somewhere that is not `foot_width`, or the two knobs couple.
+only while `0 < foot_width < 3·web_height`. A bulkhead has no second knob to
+carry: its band is `width` deep by construction, so a wired bulkhead would
+hand that machinery `FlangeWidth` itself, and the clamp question belongs to
+the wiring task, not to this layer.
 
 **`_same_curve` compares curves geometrically, not by `isSame`.** A sewn seam is
 *one* edge whose `ancestorsOfType` lists both faces; an unsewn one is *two*

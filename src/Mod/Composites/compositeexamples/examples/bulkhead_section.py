@@ -7,12 +7,15 @@ Section I lays the member's faces into the document as separate features:
 the full skins (hidden, so the cutout can be seen), the holed skin — the
 flange band cut *out of* the skin by `drape_cuts_of`, so panel and member
 cannot both claim one patch of material — the filled section (`Plate`), the
-band itself (`Flange`).  Skin area = Remainder + Flange, exactly.
+band itself (`Flange`, its foot lying *behind* the plate), and a mirrored
+copy of the whole member (`PlateM`/`FlangeM`, one-sided like every bulkhead
+but hugging the *far* side of the plate: what the `MirrorX` property is
+for).  Skin area = Remainder + Flange, exactly.
 
-Section II reaches the same shape through the `BulkheadFP` feature.  With
-no Laminate linked the feature is pure geometry; the composite wiring
-(laminate drape, rosettes, stack model) is not built yet and this file
-does not pretend it is.
+Section II reaches the same shape through the `BulkheadFP` feature, un-
+mirrored and mirrored.  With no Laminate linked the feature is pure
+geometry; the composite wiring (laminate drape, rosettes, stack model)
+is not built yet and this file does not pretend it is.
 """
 
 import FreeCAD
@@ -59,7 +62,7 @@ def _support_features(doc, shape):
     return features
 
 
-def build(doc=None, sewn=False):
+def build(doc=None, sewn=False, **_ignored):
     """The bulkhead section over the fixture skin, in one document.
 
     Returns the document; `doc` may be an open document (the example runner
@@ -96,10 +99,28 @@ def build(doc=None, sewn=False):
         list(section.drape_cuts_of(support, cutter, FLANGE_WIDTH)))
     _paint(holed, (0.15, 0.60, 0.30))
 
+    # A mirrored copy: one-sided like every bulkhead, but hugging the far
+    # side of the plate — the shape `MirrorX = True` produces.  Its own
+    # footprint is cut from its own copy of the skins, so the pair can be
+    # compared without either one's hole being hidden behind the other.
+    plates_m, bands_m = section.make_bulkhead(
+        support, cutter, FLANGE_WIDTH, mirror_x=True)
+    plate_m = doc.addObject("Part::Feature", "PlateM")
+    plate_m.Shape = Part.makeCompound(list(plates_m))
+    _paint(plate_m, (0.45, 0.20, 0.65))
+    flange_m = doc.addObject("Part::Feature", "FlangeM")
+    flange_m.Shape = Part.makeCompound(list(bands_m))
+    _paint(flange_m, (0.85, 0.35, 0.20))
+    holed_m = doc.addObject("Part::Feature", "SkinM")
+    holed_m.Shape = Part.makeCompound(
+        list(section.drape_cuts_of(support, cutter, FLANGE_WIDTH,
+                                   mirror_x=True)))
+    _paint(holed_m, (0.15, 0.60, 0.30))
+
     return doc
 
 
-def build_with_feature(doc=None, sewn=False):
+def build_with_feature(doc=None, sewn=False, **_ignored):
     """Section II — the same shape reached through the `BulkheadFP` feature.
 
     The feature computes its own Shape from Support + IntersectSurface, so the
