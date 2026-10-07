@@ -5,7 +5,16 @@ import Part
 
 from .. import BULKHEAD_TOOL_ICON
 from ..tools.bulkhead_section import drape_cuts_of, make_bulkhead
+from ..tools.stiffener import StiffenerSweep
 from .Command import BaseCommand
+from .StiffenerCompositeShell import (
+    BULKHEAD_ROLES,
+    is_member_composite,
+    member_claimed_children,
+    teardown_composite_member,
+    validate_composite_wiring,
+    wire_composite_member,
+)
 from .VPCompositePart import (
     CompositePartFP,
     VPCompositePart,
@@ -19,12 +28,13 @@ DEFAULT_FLANGE_WIDTH = 34.0
 class BulkheadFP(CompositePartFP):
     """A bulkhead: the filled section of its cut, plus a flange band on the support.
 
-    Geometry-first: the member's faces are the filled intersection (R1) and the
-    band taken out of the support around it, and linking a Laminate later will
-    switch it into composite mode the way StiffenerFP's does.  That wiring is
-    not built yet — the feature carries pure geometry until it is, and the
-    property names below are the standard Composite::Shell ones so the switch
-    does not have to migrate anything.
+    Geometry-first: the member's faces are the filled intersection (R1) and
+    the band taken out of the support around it.  Linking a Laminate
+    switches it into full composite mode the way StiffenerFP's does: the
+    plate and band become draped shells and the joint between the band and
+    the remaining skin gets the combined stack, through the shared member
+    flow with :data:`BULKHEAD_ROLES` (no stand-off knob — ``FlangeWidth``
+    is the band's drape width and the member's plate height at once).
     """
 
     def __init__(self, obj, support=None, cut_surface=None):
@@ -58,6 +68,22 @@ class BulkheadFP(CompositePartFP):
             "Put the flange band on the far side of the section",
         ).MirrorX = False
 
+        # Composite configuration (standard Composite::Shell property
+        # names).  Linking a Laminate switches the bulkhead into full
+        # composite mode — plate/band split, combined joint layup.
+        obj.addProperty(
+            "App::PropertyLinkGlobal",
+            "Laminate",
+            "Materials",
+            "Laminate material (links the bulkhead's own structure)",
+        )
+        obj.addProperty(
+            "App::PropertyLinkGlobal",
+            "Rosette",
+            "Materials",
+            "Rosette defining the bulkhead fibre orientation",
+        )
+
         super().__init__(obj)
 
     def execute(self, fp):
@@ -74,11 +100,35 @@ class BulkheadFP(CompositePartFP):
             raise ValueError(
                 "the cutting surface does not close on the support — "
                 "no bulkhead section to build")
-        fp.Shape = Part.makeCompound(
-            [*plates, *bands,
-             *drape_cuts_of(fp.Support.Shape, fp.IntersectSurface.Shape,
-                            float(fp.FlangeWidth), bool(fp.MirrorX))])
+        cuts = drape_cuts_of(fp.Support.Shape, fp.IntersectSurface.Shape,
+                              float(fp.FlangeWidth), bool(fp.MirrorX))
+        fp.Shape = Part.makeCompound([*plates, *bands, *cuts])
         fp.IntersectSurface.Visibility = False
+        if not is_member_composite(fp):
+            if getattr(self, "_wired", False):
+                teardown_composite_member(self, fp, BULKHEAD_ROLES)
+                self._wired = False
+            self.last_error = None
+            return
+        try:
+            validate_composite_wiring(fp, BULKHEAD_ROLES)
+            # One knob, both roles: the one-sided prism's width is the
+            # band's drape width and the plate's height at once.
+            width = float(fp.FlangeWidth)
+            member = StiffenerSweep(
+                shell=Part.makeCompound([*plates, *bands]),
+                remainders=list(cuts),
+                foot_faces=list(bands),
+                web_faces=list(plates),
+                foot_width=width,
+                web_height=width,
+            )
+            wire_composite_member(self, fp, member, BULKHEAD_ROLES)
+            self._wired = True
+        except Exception as exc:
+            # A silently wrong stack is the one unacceptable outcome.
+            self.last_error = str(exc)
+            raise
         self.last_error = None
 
 
@@ -87,7 +137,8 @@ class ViewProviderBulkhead(VPCompositePart):
         obj = getattr(self, "Object", None)
         if obj is None:
             return []
-        return [obj.Support, obj.IntersectSurface]
+        return [obj.Support, obj.IntersectSurface] + member_claimed_children(
+            obj, BULKHEAD_ROLES)
 
     def getIcon(self):
         return BULKHEAD_TOOL_ICON

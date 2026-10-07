@@ -23,8 +23,11 @@ with a recorded ``last_error`` — a silent wrong stack is the one
 unacceptable outcome.
 """
 
+from dataclasses import dataclass, field
+
 import Part
 
+from ..tools.bulkhead_section import section_chains
 from ..util.geometry_util import shape_fingerprint
 from .CompositeShell import is_composite_shell, is_isotropic_shell
 from .Laminate import is_isotropic_laminate
@@ -43,17 +46,97 @@ from .TransferRosette import (
 MIN_PITCH = 0.5
 MAX_PITCH = 20.0
 
-_FOOT_OBJECT_SUFFIXES = (
-    "_Foot",
-    "_PanelFootTransfer",
-    "_StiffenerFootTransfer",
-    "_CombinedLaminate",
-    "_Foot_Support",
+@dataclass(frozen=True)
+class MemberRoles:
+    """Per-member-type configuration of the shared composite flow.
+
+    One flow (``wire_composite_member``) serves every member that lays
+    up against a panel — stiffener web/foot, bulkhead plate/band —
+    parameterised by the child-object suffixes, the feature label for
+    loud errors, and the seam-addressing rule.  A member type is a
+    roles value, not a copy of the flow.
+    """
+
+    label: str
+    member_suffix: str = "_Web"
+    rosette_suffix: str = "_WebRosette"
+    foot_suffix: str = "_Foot"
+    panel_transfer_suffix: str = "_PanelFootTransfer"
+    member_transfer_suffix: str = "_StiffenerFootTransfer"
+    scl_suffix: str = "_CombinedLaminate"
+    foot_support_suffix: str = "_Foot_Support"
+    filter_names: tuple = ("Parts", "Remainder")
+    foot_object_suffixes: tuple = (
+        "_Foot",
+        "_PanelFootTransfer",
+        "_StiffenerFootTransfer",
+        "_CombinedLaminate",
+        "_Foot_Support",
+    )
+    # Seam-addressing rule for the transfer rosettes.  None keeps the
+    # stiffener's positional ``Edge1`` (its foot strip has one boundary);
+    # a callable ``(foot_shell, fp) -> (support, subs)`` replaces it where
+    # a positional guess cannot be trusted (bulkhead band).
+    seam_subs: object = None
+
+
+STIFFENER_ROLES = MemberRoles(
+    label="StiffenerCompositeShell",
+)
+
+
+def bulkhead_band_seam_subs(foot_shell, fp):
+    """Address the transfer onto the section chain, not ``Edge1``.
+
+    A bulkhead band has two boundaries: the section chain (shared with
+    the plate and the remaining skin) and its outward edge.  On a band
+    spanning a seam the face compound holds several faces and ``Edge1``
+    belongs to neither boundary — and because the seed is picked once at
+    build time, a positional guess stays wrong for the file's lifetime
+    (handover §2.1, cost #2).  Name the compound edges that lie on the
+    section chain instead.
+    """
+    support = getattr(foot_shell, "Support", None)
+    shape = getattr(support, "Shape", None)
+    if shape is None or not getattr(shape, "Edges", None):
+        return (support, ["Face1"])
+    chains = section_chains(fp.Support.Shape, fp.IntersectSurface.Shape)
+    subs = [
+        f"Edge{i + 1}" for i, edge in enumerate(shape.Edges)
+        if any(edge.distToShape(chain)[0] <= 1e-6 for chain in chains)
+    ]
+    if not subs:
+        subs = ["Edge1"]
+    return (support, subs)
+
+
+BULKHEAD_ROLES = MemberRoles(
+    label="BulkheadCompositeShell",
+    member_suffix="_Plate",
+    rosette_suffix="_PlateRosette",
+    foot_suffix="_Band",
+    panel_transfer_suffix="_PanelBandTransfer",
+    member_transfer_suffix="_BulkheadBandTransfer",
+    foot_support_suffix="_Band_Support",
+    filter_names=(),
+    foot_object_suffixes=(
+        "_Band",
+        "_PanelBandTransfer",
+        "_BulkheadBandTransfer",
+        "_CombinedLaminate",
+        "_Band_Support",
+    ),
+    seam_subs=bulkhead_band_seam_subs,
 )
 
 
 def is_stiffener_composite(fp) -> bool:
     """True when the stiffener is in full composite mode (Laminate linked)."""
+    return getattr(fp, "Laminate", None) is not None
+
+
+def is_member_composite(fp) -> bool:
+    """True when a member feature is in full composite mode (Laminate linked)."""
     return getattr(fp, "Laminate", None) is not None
 
 
@@ -69,47 +152,48 @@ def _is_rosette(obj) -> bool:
     return SeamCompositeLaminateFP._is_rosette(obj)
 
 
-def _feature_label(fp) -> str:
-    return f"StiffenerCompositeShell '{fp.Name}'"
+def _feature_label(fp, roles=None) -> str:
+    return f"{(roles or STIFFENER_ROLES).label} '{fp.Name}'"
 
 
-def validate_composite_wiring(fp) -> None:
+def validate_composite_wiring(fp, roles=None) -> None:
     """Raise on every violated structural invariant (PRD §3.2).
 
     Full composite mode computes a lap joint against the panel, so the
     wiring must be complete: a panel without a laminate is genuinely
     uncomputable (no middle mode — partial wiring fails loudly).  A
-    missing stiffener rosette is *not* a failure: the web face it lives
+    missing member rosette is *not* a failure: the web face it lives
     on only exists after the first build, so the flow auto-creates it
     (never overwriting a user-linked one); a linked non-rosette is.
     """
+    label = _feature_label(fp, roles)
     support = getattr(fp, "Support", None)
     if support is None or not is_composite_shell(support):
         raise ValueError(
-            f"{_feature_label(fp)}: full composite mode requires the "
+            f"{label}: full composite mode requires the "
             f"support to be a Composite::Shell, got {support}"
         )
     panel_layers = getattr(support.Laminate, "Layers", None)
     if not panel_layers:
         raise ValueError(
-            f"{_feature_label(fp)}: the support panel has no laminate "
-            f"layers to bond the stiffener to"
+            f"{label}: the support panel has no laminate "
+            f"layers to bond the member to"
         )
-    stiffener_layers = getattr(fp.Laminate, "Layers", None)
-    if not stiffener_layers:
+    member_layers = getattr(fp.Laminate, "Layers", None)
+    if not member_layers:
         raise ValueError(
-            f"{_feature_label(fp)}: the stiffener laminate has no layers"
+            f"{label}: the member laminate has no layers"
         )
     rosette = getattr(fp, "Rosette", None)
     if rosette is not None and not _is_rosette(rosette):
         raise ValueError(
-            f"{_feature_label(fp)}: Rosette must be a rosette feature, "
+            f"{label}: Rosette must be a rosette feature, "
             f"got {rosette}"
         )
 
 
-def stiffener_claimed_children(fp):
-    """Document objects created by a stiffener's composite flow, tree order.
+def member_claimed_children(fp, roles):
+    """Document objects created by a member's composite flow, tree order.
 
     App-level (works headless, where ViewProviders do not exist) so the
     ViewProvider's claimChildren and the tests share one source of
@@ -122,32 +206,37 @@ def stiffener_claimed_children(fp):
     get = doc.getObject
     name = fp.Name
     ordered = (
-        f"{name}_Web",                    # web shell (stiffener's own laminate)
-        f"{name}_Foot",                   # foot shell (combined laminate)
-        f"{name}_PanelFootTransfer",      # solved transfer panel → foot
-        f"{name}_StiffenerFootTransfer",  # solved transfer stiffener → foot
-        f"{name}_WebRosette",             # auto-created web rosette
-        f"{name}_CombinedLaminate",       # combined layup (SeamCompositeLaminate)
+        f"{name}{roles.member_suffix}",       # member shell (own laminate)
+        f"{name}{roles.foot_suffix}",         # foot/band shell (combined laminate)
+        f"{name}{roles.panel_transfer_suffix}",   # solved transfer panel → foot
+        f"{name}{roles.member_transfer_suffix}",  # solved transfer member → foot
+        f"{name}{roles.rosette_suffix}",      # auto-created member rosette
+        f"{name}{roles.scl_suffix}",          # combined layup (SeamCompositeLaminate)
         # internals last — hidden in 3D, tree-tidy at the bottom
-        f"{name}_Web_Support",
-        f"{name}_Foot_Support",
+        f"{name}{roles.member_suffix}_Support",
+        f"{name}{roles.foot_support_suffix}",
         f"{name}_RemainderSupport",
     )
     return [o for o in (get(n) for n in ordered) if o is not None]
 
 
+def stiffener_claimed_children(fp):
+    """Stiffener entry point of the shared member child enumeration."""
+    return member_claimed_children(fp, STIFFENER_ROLES)
+
+
 # ── the composite flow ────────────────────────────────────────────
 
 
-def wire_composite_stiffener(host, fp, sweep) -> None:
-    """Build/update the composite flow's children for a composite stiffener.
+def wire_composite_member(host, fp, member, roles) -> None:
+    """Build/update the composite flow's children for a composite member.
 
-    Called from ``StiffenerFP.execute`` after the sweep and the wiring
-    validation.  Skipped entirely when the sweep and the material links
-    haven't changed — the child shells' own fingerprints guard their
-    drape solves.
+    Called from the member feature's ``execute`` after its geometry and
+    the wiring validation.  Skipped entirely when the member shell and
+    the material links haven't changed — the child shells' own
+    fingerprints guard their drape solves.
     """
-    current = _flow_fingerprint(fp, sweep)
+    current = _flow_fingerprint(fp, member)
     if current == getattr(host, "_last_flow_fingerprint", None):
         return
     host._last_flow_fingerprint = current
@@ -157,18 +246,23 @@ def wire_composite_stiffener(host, fp, sweep) -> None:
 
     import time as _time
     _t = _time.perf_counter()
-    web_shell = _build_web_shell(doc, fp, sweep)
-    print("[wire] %s web_shell %.1fs" % (fp.Name, _time.perf_counter() - _t), flush=True)
+    member_shell = _build_web_shell(doc, fp, member, roles)
+    print("[wire] %s member_shell %.1fs" % (fp.Name, _time.perf_counter() - _t), flush=True)
     _t = _time.perf_counter()
-    _record_joint_remainder(doc, fp, panel, sweep)
+    _record_joint_remainder(doc, fp, panel, member)
     print("[wire] %s remainder %.1fs" % (fp.Name, _time.perf_counter() - _t), flush=True)
     _t = _time.perf_counter()
-    _build_foot_strip(doc, fp, panel, web_shell, sweep)
+    _build_foot_strip(doc, fp, panel, member_shell, member, roles)
     print("[wire] %s foot_strip %.1fs" % (fp.Name, _time.perf_counter() - _t), flush=True)
-    _hide_compound_filters(doc, fp)
+    _hide_compound_filters(doc, fp, roles)
 
 
-def _record_joint_remainder(doc, fp, panel, sweep) -> None:
+def wire_composite_stiffener(host, fp, sweep) -> None:
+    """Stiffener entry point of the shared member flow (default roles)."""
+    wire_composite_member(host, fp, sweep, STIFFENER_ROLES)
+
+
+def _record_joint_remainder(doc, fp, panel, member) -> None:
     """Record the stiffener's seat remainder — the joint's master side.
 
     Lap joint (owner decision 2026-09-30, replacing the weave-exclusivity
@@ -192,8 +286,10 @@ def _record_joint_remainder(doc, fp, panel, sweep) -> None:
     if rem_sup is None:
         rem_sup = doc.addObject("Part::Feature", rem_name)
         _hide(rem_sup)
-    rem_sup.Shape = Part.makeCompound(sweep.remainders)
-    if getattr(fp, "SupportBase", None) is None:
+    rem_sup.Shape = Part.makeCompound(member.remainders)
+    # Bulkheads carry no SupportBase property (common drape never
+    # re-points anything for them), so capture only when it exists.
+    if "SupportBase" in fp.PropertiesList and getattr(fp, "SupportBase", None) is None:
         fp.SupportBase = panel.Support
 
 
@@ -273,7 +369,7 @@ def recover_deleted_chain_predecessor(fp) -> bool:
     return True
 
 
-def teardown_composite_stiffener(host, fp) -> None:
+def teardown_composite_member(host, fp, roles) -> None:
     """Undo the composite wiring on a switch to geometry-only mode.
 
     The panel was never re-pointed (common drape), so restoring its
@@ -285,28 +381,34 @@ def teardown_composite_stiffener(host, fp) -> None:
     doc = fp.Document
     if doc is None:
         return
-    base = fp.SupportBase
-    panel = fp.Support
-    if panel is not None and base is not None:
-        panel.Support = base
-    fp.SupportBase = None
-    for suffix in ("_Web", "_Foot", "_PanelFootTransfer",
-                   "_StiffenerFootTransfer", "_CombinedLaminate",
-                   "_WebRosette"):
+    if "SupportBase" in fp.PropertiesList:
+        base = fp.SupportBase
+        panel = fp.Support
+        if panel is not None and base is not None:
+            panel.Support = base
+        fp.SupportBase = None
+    for suffix in (roles.member_suffix, roles.foot_suffix,
+                   roles.panel_transfer_suffix, roles.member_transfer_suffix,
+                   roles.scl_suffix, roles.rosette_suffix):
         obj = doc.getObject(f"{fp.Name}{suffix}")
         if obj is not None:
             _hide(obj)
     rem_sup = doc.getObject(f"{fp.Name}_RemainderSupport")
     if rem_sup is not None:
         _hide(rem_sup)
-    for name in (f"{fp.Name}Parts", f"{fp.Name}Remainder"):
+    for name in (f"{fp.Name}{n}" for n in roles.filter_names):
         obj = doc.getObject(name)
         if obj is not None:
             _unhide(obj)
     host._last_flow_fingerprint = None
 
 
-def _flow_fingerprint(fp, sweep) -> str:
+def teardown_composite_stiffener(host, fp) -> None:
+    """Stiffener entry point of the shared member teardown."""
+    teardown_composite_member(host, fp, STIFFENER_ROLES)
+
+
+def _flow_fingerprint(fp, member) -> str:
     """Hash everything the composite wiring depends on.
 
     The swept shell's content fingerprint covers the geometry (support,
@@ -315,7 +417,7 @@ def _flow_fingerprint(fp, sweep) -> str:
     """
     import hashlib
 
-    parts = [shape_fingerprint(sweep.shell)]
+    parts = [shape_fingerprint(member.shell)]
     for prop in ("Laminate", "Rosette"):
         parts.append(getattr(getattr(fp, prop, None), "Name", "None"))
     h = hashlib.sha256()
@@ -342,25 +444,25 @@ def _apply_trim_tool(fp, shape):
     return Part.makeCompound(trimmed.Faces)
 
 
-def _build_web_shell(doc, fp, sweep):
-    """Create/update the web shell child (the stiffener's own layup).
+def _build_web_shell(doc, fp, member, roles):
+    """Create/update the member shell child (the member's own layup).
 
-    The web faces carry the stiffener's own laminate and rosette — the
-    stiffener's plies above the base rows (ADR-0002 render ownership).
+    The member faces carry the member's own laminate and rosette — its
+    plies above the joint rows (ADR-0002 render ownership).
     """
-    if not sweep.web_faces:
+    if not member.web_faces:
         raise ValueError(
-            f"{_feature_label(fp)}: the profile produces no web faces — "
-            f"nothing rises above the base row, so there is no "
-            f"stiffener to lay up"
+            f"{_feature_label(fp, roles)}: the member produces no web "
+            f"faces — there is nothing to lay up"
         )
-    web_shell = _ensure_shell_child(doc, fp, "_Web")
-    web_shape = _apply_trim_tool(fp, Part.makeCompound(sweep.web_faces))
-    _set_pitch(web_shell, _scaled_pitch(sweep.web_height))
+    web_shell = _ensure_shell_child(doc, fp, roles.member_suffix)
+    web_shape = _apply_trim_tool(fp, Part.makeCompound(member.web_faces))
+    _set_pitch(web_shell, _scaled_pitch(member.web_height))
     # Recenter only the auto-created rosette: a user-linked rosette's LCS
     # position is the user's datum — moving it would be silent vandalism.
     rosette = getattr(fp, "Rosette", None)
-    recenter = rosette is not None and rosette.Name == f"{fp.Name}_WebRosette"
+    auto_name = f"{fp.Name}{roles.rosette_suffix}"
+    recenter = rosette is not None and rosette.Name == auto_name
     web_shell.Proxy.update(web_shell, web_shape, fp.Laminate, rosette, recenter_lcs=recenter)
     if is_isotropic_shell(web_shell):
         # D8: a QI web laminate takes no rosette (none can attach to an
@@ -368,7 +470,7 @@ def _build_web_shell(doc, fp, sweep):
         # bypasses draping; leave fp.Rosette as None.
         return web_shell
     if rosette is None:
-        rosette = _ensure_web_rosette(doc, fp, web_shell)
+        rosette = _ensure_web_rosette(doc, fp, web_shell, roles)
         fp.Rosette = rosette
         web_shell.Rosette = rosette
         SeamGeometryFP._recenter_lcs(web_shape, rosette)
@@ -376,9 +478,9 @@ def _build_web_shell(doc, fp, sweep):
     return web_shell
 
 
-def _ensure_web_rosette(doc, fp, web_shell):
-    """Create (once) the auto rosette on the web shell (PRD §3.2.2)."""
-    name = f"{fp.Name}_WebRosette"
+def _ensure_web_rosette(doc, fp, web_shell, roles):
+    """Create (once) the auto rosette on the member shell (PRD §3.2.2)."""
+    name = f"{fp.Name}{roles.rosette_suffix}"
     rosette = doc.getObject(name)
     if rosette is None:
         rosette = doc.addObject("Part::FeaturePython", name)
@@ -389,7 +491,7 @@ def _ensure_web_rosette(doc, fp, web_shell):
     return rosette
 
 
-def _build_foot_strip(doc, fp, panel, web_shell, sweep):
+def _build_foot_strip(doc, fp, panel, web_shell, member, roles):
     """Create/update the foot shell and the combined joint layup.
 
     The foot faces are the base-row lofts — the part of the stiffener
@@ -399,13 +501,13 @@ def _build_foot_strip(doc, fp, panel, web_shell, sweep):
     wires its two solved rosettes (ADR-0001).  A profile with no base
     edge degrades gracefully: no foot, no transfers, no joint (§3.2.3).
     """
-    if not sweep.foot_faces:
-        _drop_foot_strip(doc, fp)
+    if not member.foot_faces:
+        _drop_foot_strip(doc, fp, roles)
         return None
 
-    foot_shell = _ensure_shell_child(doc, fp, "_Foot")
-    foot_shape = _apply_trim_tool(fp, Part.makeCompound(sweep.foot_faces))
-    _set_pitch(foot_shell, _scaled_pitch(sweep.foot_width))
+    foot_shell = _ensure_shell_child(doc, fp, roles.foot_suffix)
+    foot_shape = _apply_trim_tool(fp, Part.makeCompound(member.foot_faces))
+    _set_pitch(foot_shell, _scaled_pitch(member.foot_width))
     # The foot's laminate is the combined stack (SCL): the panel's
     # directional plies continue under it plus the ring plies — the foot is
     # NOT quasi-isotropic.  It does not run its own drape solve: the
@@ -428,17 +530,17 @@ def _build_foot_strip(doc, fp, panel, web_shell, sweep):
     # panel → foot transfer is kept whenever the panel is draped, the
     # web → foot analysis transfer is meaningless for a QI web.
     panel_foot = (
-        _ensure_panel_foot_transfer(doc, fp, panel, foot_shell)
+        _ensure_panel_foot_transfer(doc, fp, panel, foot_shell, roles)
         if not is_isotropic_shell(panel)
         else None
     )
     stiffener_foot = (
-        _ensure_stiffener_foot_transfer(doc, fp, web_shell, foot_shell)
+        _ensure_stiffener_foot_transfer(doc, fp, web_shell, foot_shell, roles)
         if not is_isotropic_shell(web_shell)
         else None
     )
     scl = _ensure_combined_laminate(
-        doc, fp, panel, web_shell, foot_shell, panel_foot, stiffener_foot
+        doc, fp, panel, web_shell, foot_shell, panel_foot, stiffener_foot, roles
     )
 
     # The foot's laminate stays the combined stack (SCL — see above) and it
@@ -452,17 +554,17 @@ def _build_foot_strip(doc, fp, panel, web_shell, sweep):
     return foot_shell
 
 
-def _drop_foot_strip(doc, fp) -> None:
-    """Graceful degradation when the profile loses its base edge.
+def _drop_foot_strip(doc, fp, roles) -> None:
+    """Graceful degradation when the member produces no foot faces.
 
     The foot shell and its joint machinery are hidden and inert (the
     foot shell's laminate is released, so it renders nothing); the web
-    weave persists.  Restoring a base edge rebuilds and unhides them.
+    weave persists.  Restoring foot faces rebuilds and unhides them.
     """
-    foot_shell = doc.getObject(f"{fp.Name}_Foot")
+    foot_shell = doc.getObject(f"{fp.Name}{roles.foot_suffix}")
     if foot_shell is not None:
         foot_shell.Laminate = None
-    for suffix in _FOOT_OBJECT_SUFFIXES:
+    for suffix in roles.foot_object_suffixes:
         obj = doc.getObject(f"{fp.Name}{suffix}")
         if obj is not None:
             _hide(obj)
@@ -493,24 +595,24 @@ def foot_contact_edge_support(foot_shell):
     return (support, ["Face1"])
 
 
-def _ensure_panel_foot_transfer(doc, fp, panel, foot_shell, suffix=""):
+def _ensure_panel_foot_transfer(doc, fp, panel, foot_shell, roles, suffix=""):
     """Create/update the solved TransferRosette panel → foot.
 
     The TransferRosette constructor runs the warp-continuity solve and
     wires itself as the foot shell's Rosette, seeding the foot shell's
-    drape with the panel's fibre direction at the base-row edge.
+    drape with the panel's fibre direction at the seam edge.
 
-    ``suffix`` joints a *second* sub-foot of the same stiffener (a foot
+    ``suffix`` joints a *second* sub-foot of the same member (a foot
     split across two panel zones gets one joint per zone) without
     re-implementing this wiring.
     """
-    name = f"{fp.Name}{suffix}_PanelFootTransfer"
+    name = f"{fp.Name}{suffix}{roles.panel_transfer_suffix}"
     transfer = doc.getObject(name)
     if transfer is None:
         transfer = doc.addObject("Part::FeaturePython", name)
         TransferRosetteFP(
             transfer,
-            support=foot_contact_edge_support(foot_shell),
+            support=_member_seam_subs(foot_shell, roles, fp),
             master_shell=panel,
             attachment_shell=foot_shell,
             direct_contact=True,
@@ -529,20 +631,20 @@ def _ensure_panel_foot_transfer(doc, fp, panel, foot_shell, suffix=""):
     return transfer
 
 
-def _ensure_stiffener_foot_transfer(doc, fp, web_shell, foot_shell, suffix=""):
-    """Create/update the solved stiffener → foot analysis rosette.
+def _ensure_stiffener_foot_transfer(doc, fp, web_shell, foot_shell, roles, suffix=""):
+    """Create/update the solved member → foot analysis rosette.
 
-    Analysis-only (ADR-0001): it translates the web's lamina directions
+    Analysis-only (ADR-0001): it translates the member's lamina directions
     into the foot frame at the fold.  It never becomes the foot shell's
     Rosette, which belongs to the panel → foot transfer.
     """
-    name = f"{fp.Name}{suffix}_StiffenerFootTransfer"
+    name = f"{fp.Name}{suffix}{roles.member_transfer_suffix}"
     rosette = doc.getObject(name)
     if rosette is None:
         rosette = doc.addObject("Part::FeaturePython", name)
         AnalysisTransferRosetteFP(
             rosette,
-            support=foot_contact_edge_support(foot_shell),
+            support=_member_seam_subs(foot_shell, roles, fp),
             master_shell=web_shell,
             attachment_shell=foot_shell,
             direct_contact=True,
@@ -556,7 +658,7 @@ def _ensure_stiffener_foot_transfer(doc, fp, web_shell, foot_shell, suffix=""):
 
 
 def _ensure_combined_laminate(
-    doc, fp, panel, web_shell, foot_shell, panel_foot, stiffener_foot, suffix=""
+    doc, fp, panel, web_shell, foot_shell, panel_foot, stiffener_foot, roles, suffix=""
 ):
     """Create/update the SeamCompositeLaminate carrying the joint stack.
 
@@ -568,7 +670,7 @@ def _ensure_combined_laminate(
     joint, so both halves of a foot split across panel zones stack
     against the zone they actually sit on.
     """
-    name = f"{fp.Name}{suffix}_CombinedLaminate"
+    name = f"{fp.Name}{suffix}{roles.scl_suffix}"
     scl = doc.getObject(name)
     created = False
     if scl is None:
@@ -639,6 +741,13 @@ def _ensure_shell_child(doc, fp, suffix):
     return child
 
 
+def _member_seam_subs(foot_shell, roles, fp):
+    """Address the foot's seam by the member type's rule."""
+    if roles.seam_subs is not None:
+        return roles.seam_subs(foot_shell, fp)
+    return foot_contact_edge_support(foot_shell)
+
+
 def _scaled_pitch(width_mm) -> float:
     return max(MIN_PITCH, min(MAX_PITCH, width_mm / 4.0))
 
@@ -666,11 +775,11 @@ def _ensure_draped(shell) -> None:
     proxy.execute(shell)
 
 
-def _hide_compound_filters(doc, fp) -> None:
+def _hide_compound_filters(doc, fp, roles) -> None:
     """Composite-mode render split (ADR-0002): every visible surface is
     a weave.  The filters' native faces coincide with the weave shells
     and would z-fight; in geometry-only mode they render as before."""
-    for name in (f"{fp.Name}Parts", f"{fp.Name}Remainder"):
+    for name in (f"{fp.Name}{n}" for n in roles.filter_names):
         obj = doc.getObject(name)
         if obj is not None:
             _hide(obj)

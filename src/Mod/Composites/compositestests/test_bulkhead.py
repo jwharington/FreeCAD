@@ -190,5 +190,172 @@ class TestBulkheadExampleRuns(TestFreeCADFP):
             "plate and flange should both be in the feature's shape")
 
 
+class TestBulkheadWiring(TestBulkheadFeature, TestFreeCADFP):
+    """Composite mode: laminate → drape → stack chain, through the shared flow.
+
+    The wiring is what the bulkhead shares with the stiffener, so it is
+    tested where the feature lives: a plate/band pair of draped shells,
+    the band borrowing the panel's solved drape, and the joint stack
+    assembled through the seam machinery — or a loud refusal, never a
+    half-wired joint.
+    """
+
+    def _make_laminate(self, name):
+        from Composites.compositestests.example_materials import make_glass
+        from Composites.features.HomogeneousLamina import HomogeneousLaminaFP
+        from Composites.features.Laminate import LaminateFP
+
+        laminate = self.doc.addObject("Part::FeaturePython", name)
+        LaminateFP(laminate)
+        plies = []
+        for k, angle in enumerate((0.0, 90.0)):
+            ply = self.doc.addObject("Part::FeaturePython", f"{name}_Ply{k}")
+            HomogeneousLaminaFP(ply)
+            ply.Angle = angle
+            ply.Thickness = 0.5
+            ply.Material = make_glass()
+            plies.append(ply)
+        laminate.Layers = plies
+        self.doc.recompute()
+        return laminate
+
+    def _make_panel(self, name="Skin", pitch=5.0):
+        """The fixture skin as a Composite::Shell, pitch set before the solve."""
+        from Composites.features.CompositeShell import CompositeShellFP
+        from Composites.features.Rosette import RosetteFP
+
+        support = self._make_support(f"{name}_Support")
+        panel = self.doc.addObject("Part::FeaturePython", name)
+        CompositeShellFP(panel, support)
+        panel.Laminate = self._make_laminate(f"{name}_Laminate")
+        rosette = self.doc.addObject("Part::FeaturePython", f"{name}_Rosette")
+        RosetteFP(rosette, support=(support, ["Face1"]))
+        rosette.Angle = 0.0
+        panel.Rosette = rosette
+        panel.DrapePitch = pitch
+        self.doc.recompute()
+        return panel
+
+    def _make_wired_bulkhead(self, name, panel, cutter_x=210.0):
+        from Composites.features.Bulkhead import BulkheadFP
+
+        bulkhead = self.doc.addObject("Part::FeaturePython", name)
+        BulkheadFP(bulkhead, support=panel,
+                   cut_surface=self._make_cutter(f"{name}_Cutter", x=cutter_x))
+        bulkhead.Laminate = self._make_laminate(f"{name}_Laminate")
+        self.doc.recompute()
+        return bulkhead
+
+    def test_geometry_only_mode_builds_no_wiring_children(self):
+        """Without a Laminate the bulkhead stays pure geometry."""
+        bulkhead = self._make_bulkhead()
+        self.assertTrue(bulkhead.Shape.isValid())
+        for name in ("Bulkhead_Plate", "Bulkhead_Band",
+                     "Bulkhead_CombinedLaminate"):
+            self.assertIsNone(
+                self.doc.getObject(name),
+                f"{name} exists although no Laminate is linked")
+
+    def test_composite_mode_without_panel_laminate_fails_loudly(self):
+        """A member laminate wired onto a plain (unclothed) skin is refused.
+
+        The refusal has to be visible on the feature: a silent pass here
+        would be the handover's one unacceptable outcome — a stack that
+        reads as wired but computes against nothing.
+        """
+        from Composites.compositestests.example_materials import make_glass
+        from Composites.features.Bulkhead import BulkheadFP
+        from Composites.features.HomogeneousLamina import HomogeneousLaminaFP
+        from Composites.features.Laminate import LaminateFP
+
+        support = self._make_support()
+        cutter = self._make_cutter()
+        laminate = self.doc.addObject("Part::FeaturePython", "MemberLam")
+        LaminateFP(laminate)
+        ply = self.doc.addObject("Part::FeaturePython", "MemberPly")
+        HomogeneousLaminaFP(ply)
+        ply.Angle = 0.0
+        ply.Thickness = 0.5
+        ply.Material = make_glass()
+        laminate.Layers = [ply]
+        self.doc.recompute()
+
+        bulkhead = self.doc.addObject("Part::FeaturePython", "Wired")
+        BulkheadFP(bulkhead, support=support, cut_surface=cutter)
+        bulkhead.Laminate = laminate
+        self.doc.recompute()
+
+        self.assertIn("Invalid", bulkhead.State,
+                      "wiring onto a plain skin must fail, not half-wire")
+        self.assertIsNone(self.doc.getObject("Wired_Band"),
+                          "no half-wired joint may survive the refusal")
+
+    # The two cases below would drape the bulkhead through the FreeCAD
+    # stack, and a drape of this section took 14.7 s (plate) / timed out
+    # (panel) — minutes per test, which is a nextdrape defect, not a
+    # fixture preference.  The exact geometry and setup are captured for
+    # the draper at src/3rdParty/nextdrape/data/bulkhead-plate-drape
+    # (BREP + setup.json); these cases stay skipped until the draper
+    # fixes that, and re-run by deleting the skip.
+    @unittest.skip(
+        "nextdrape defect (bulkhead-plate-drape kit): plate drape took "
+        "14.7 s, panel drape exceeded 100 s — no bulkhead may be draped "
+        "until the draper handles this section in under a second")
+    def test_wired_bulkhead_lays_up_through_the_stack_chain(self):
+        """Plate and band shells exist, and the joint stack is wired.
+
+        R3's routing: the band borrows the panel's solved drape (its
+        DrapeSource), and the combined laminate is wired panel→band←plate
+        with the footprint recorded as the joint's master-side support.
+        """
+        panel = self._make_panel()
+        bulkhead = self._make_wired_bulkhead("Bulkhead", panel)
+        plate = self.doc.getObject("Bulkhead_Plate")
+        band = self.doc.getObject("Bulkhead_Band")
+        self.assertIsNotNone(plate, "no plate shell was built")
+        self.assertIsNotNone(band, "no band shell was built")
+        self.assertIs(band.DrapeSource, panel,
+                      "the band must borrow the panel's solved drape")
+        scl = self.doc.getObject("Bulkhead_CombinedLaminate")
+        self.assertIsNotNone(scl, "no combined laminate on the joint")
+        self.assertIs(scl.Master, panel)
+        self.assertIs(scl.Attachment, plate)
+        self.assertIs(scl.SeamRegion, band)
+        remainder = self.doc.getObject("Bulkhead_RemainderSupport")
+        self.assertIsNotNone(remainder, "the footprint was not recorded")
+        self.assertTrue(scl.Layers, "no stack reached the joint")
+
+    @unittest.skip(
+        "nextdrape defect (bulkhead-plate-drape kit): same drape cost as "
+        "the wired case above — the seam rule itself is unit-tested in "
+        "test_bulkhead_section against the same geometry")
+    def test_band_seam_subs_land_on_the_section_chain(self):
+        """The seam rule names only edges that lie on a section chain.
+
+        A positional ``Edge1`` would be the stiffener's rule copied to a
+        geometry it does not fit: on a band the first compound edge can
+        belong to neither boundary, and the seed is picked once (cost #2).
+        """
+        panel = self._make_panel()
+        bulkhead = self._make_wired_bulkhead("Bulkhead", panel)
+        band = self.doc.getObject("Bulkhead_Band")
+        self.assertIsNotNone(band, "no band shell to address")
+        from Composites.features.StiffenerCompositeShell import (
+            bulkhead_band_seam_subs,
+        )
+        from Composites.tools.bulkhead_section import section_chains
+
+        support, subs = bulkhead_band_seam_subs(band, bulkhead)
+        self.assertTrue(subs, "the seam rule named nothing")
+        chains = section_chains(bulkhead.Support.Shape,
+                                bulkhead.IntersectSurface.Shape)
+        self.assertTrue(chains, "the fixture cutter must produce a chain")
+        for name in subs:
+            edge = support.Shape.getElement(name)
+            self.assertLessEqual(
+                min(edge.distToShape(chain)[0] for chain in chains), 1e-6,
+                f"{name} names an edge that lies on no section chain")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
