@@ -114,6 +114,23 @@ class TestBulkheadFailure(TestBulkheadFeature, TestFreeCADFP):
 class TestBulkheadRoundTrip(TestBulkheadFeature, TestFreeCADFP):
     """R5 — save, close, reopen."""
 
+    def test_flipping_MirrorX_moves_the_foot_to_the_far_side(self):
+        """The feature honours MirrorX, not only the tool layer.
+
+        A property wired to nothing would still let every section test
+        pass: this one only goes green if flipping the flag re-derives
+        the feature's own shape.
+        """
+        plain = self._make_bulkhead("Plain")
+        flipped = self._make_bulkhead("Flipped")
+        flipped.MirrorX = True
+        self.doc.recompute()
+        self.assertFalse(flipped.Shape.isNull(), "flipping MirrorX killed it")
+        self.assertNotEqual(
+            [(face.Area, face.CenterOfMass) for face in plain.Shape.Faces],
+            [(face.Area, face.CenterOfMass) for face in flipped.Shape.Faces],
+            "MirrorX never reached the shape")
+
     def test_reopened_bulkhead_keeps_its_shape(self):
         """What reopenes must be what was saved, geometry for geometry."""
         bulkhead = self._make_bulkhead()
