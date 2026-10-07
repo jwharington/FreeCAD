@@ -99,6 +99,10 @@ gate) goes green only when the coupling is preserved.
 
 ## 5. Defect 2 — SmearedCore deck drives ccx into heap corruption
 
+> **Resolved — see §8.** The trigger was the one-layer section's orientation
+> store and the stale combined stack, not the deck's legality.  The hypothesis
+> and plan below are kept as the record.
+
 **Symptom.** The SmearedCore plate deck aborts ccx in <1 s with
 `realloc(): invalid next size` (SIGABRT), empty `.sta`, no steps started.
 
@@ -144,12 +148,17 @@ are withdrawn.
 ## 7. Acceptance criteria
 
 1. `test_stack_model_ccx` passes all four members: solve success, deck
-   round-trip consistency, ≤5 % response parity.
-2. No change to Discrete decks (byte-identical material/section blocks).
-3. Fuselage sweep re-run; handover TODO 5 updated with trustworthy numbers.
+   round-trip consistency, ≤5 % response parity. — **met** (§8).
+2. No change to Discrete decks (byte-identical material/section blocks). —
+   **met on the plate**; the article Discrete deck still wants a re-diff
+   against the pre-§8 deck before its numbers are reused.
+3. Fuselage sweep re-run; handover TODO 5 updated with trustworthy numbers. —
+   **open**: every `--stack-model` member solves now, but the study has not
+   been re-run and `fem-results/stack-study/` is stale.
 4. If defect 2 turns out to be a genuine ccx bug: minimal deck committed to
    the docs/evidence trail, module-side presentation adjusted only if it is
-   the correct fix — never a silent workaround.
+   the correct fix — never a silent workaround. — **n/a**: defect 2 was two
+   deck-writing defects (§8), not a ccx bug.
 
 ## 8. Resolution log (2026-10-07)
 
