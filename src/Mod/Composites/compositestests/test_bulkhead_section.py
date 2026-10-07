@@ -214,6 +214,51 @@ class TestFlangeBand(SectionProbe):
             "the band stops at the band seam, so a member built on it would "
             "carry one face across a fold between two surfaces")
 
+    def test_band_and_plate_together_account_for_every_patch_of_the_support(self):
+        """support area = (support − band) + band, exactly, on every probe cut.
+
+        This is the one assertion that would have caught the first draft's two
+        errors at once: `member_slab` handing the boolean a *compound* of slabs
+        (whose common with a shell is a curve, so nothing is taken out and the
+        sum falls short), and taking the plate and the band from *separate*
+        overlapping slabs (which double-counts the patch they share, so the sum
+        overshoots).  A member that double-counts a patch of fabric reads as
+        locally doubled in the stack model, and the panel's own faces give up
+        exactly what the band occupies, so equality here is what F4's
+        exclusivity means in numbers.
+        """
+        total = sum(face.Area for face in self.support.Faces)
+        for x, normal in ((210.0, Vector(1, 0, 0)), (420.0, Vector(1, 0, 0)),
+                          (300.0, Vector(1, 0.55, 0.35))):
+            cutter = station_plane(x, normal)
+            for width, depth in ((34.0, 12.0), (90.0, 12.0), (90.0, 120.0)):
+                band = section.band_of(self.support, cutter, width, depth)
+                footprint = section.drape_cuts_of(self.support, cutter, width, depth)
+                with self.subTest(x=x, normal=tuple(normal), width=width, depth=depth):
+                    self.assertGreater(len(band), 0, "nothing was taken out of the support")
+                    accounted = sum(f.Area for f in band) + sum(f.Area for f in footprint)
+                    self.assertAlmostEqual(
+                        accounted, total, delta=1e-6 * total,
+                        msg="band and footprint do not tile the support: overlap or gap")
+
+    def test_section_closes_on_a_region_rather_than_a_chord(self):
+        """The plate bounds real area, so the section is not its own chord.
+
+        A chorded section keeps its perimeter and loses its area, which is the
+        `make_stiffener` profile failure this module exists to avoid: rebuilding
+        the boundary as straight runs between endpoints would still give one
+        closed chain of positive length and *no* region inside it.
+        """
+        for x, normal in ((210.0, Vector(1, 0, 0)), (300.0, Vector(1, 0.55, 0.35))):
+            cutter = station_plane(x, normal)
+            plates = section.plate_of(self.support, cutter)
+            with self.subTest(x=x, normal=tuple(normal)):
+                self.assertTrue(plates, "the cut closed on nothing")
+                for plate in plates:
+                    self.assertGreater(
+                        plate.Area, 1.0,
+                        "zero-area section: the boundary is its own chord, not a region")
+
     def test_stand_off_as_far_as_the_local_chamber_still_meets_the_support(self):
         """`depth` measured from the support can exceed the local sagitta.
 
