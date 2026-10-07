@@ -294,9 +294,13 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
         """Hash everything the derived stack depends on.
 
         Covers the live support geometry of the two sides and the seam
-        region, their laminates, the solved transfer angles and the
-        combination model — everything ``execute`` reads.  A change in any
-        of them re-derives the stack; nothing else does.
+        region, their laminates, the solved transfer angles, the
+        combination model and this laminate's own stack model — everything
+        ``execute`` reads.  A change in any of them re-derives the stack;
+        nothing else does.  The stack model belongs here: setting it
+        changes the derived stack but nothing else (a shape-only
+        fingerprint skipped the re-derivation, leaving the combined
+        laminate fully layered under a smeared model).
 
         Content stamps (not ``Shape.hashCode()`` and not
         ``shape_fingerprint``, whose traversal-order dependence makes it
@@ -337,6 +341,7 @@ class SeamCompositeLaminateFP(CompositeLaminateFP):
         for name in ("MasterTransfer", "AttachmentTransfer"):
             parts.append(str(getattr(getattr(obj, name, None), "Angle", "None")))
         parts.append(str(getattr(obj, "CombinationModel", "None")))
+        parts.append(str(getattr(obj, "StackModelType", "None")))
 
         digest = hashlib.sha256()
         for part in parts:
