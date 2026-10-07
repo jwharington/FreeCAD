@@ -99,23 +99,16 @@ prose here:
   is a different answer from "there is no band to take out of", so the two are
   kept distinguishable in the API rather than collapsed into one empty list.
 
-## 3. Where `depth` is measured from
+## 3. Where the prism reaches — and why there is no `depth`
 
-Measured along **b = t × N**, which lies in the cutting plane and perpendicular
-to the path — not normally to the support, which is what "the plate's depth is
-measured *from* the support" reads as, and what the first draft did.
-
-- Measured *normally* to the support, a constant `depth` places the plate **in**
-  the cutting plane, where it has no thickness — it bounds nothing and sews to
-  nothing, and the boolean comes back empty for a support that plainly has a
-  band to give.
-- `depth` and `flange_width` stay independent that way, which is what F2 asks:
-  measured along one displacement they would compete, and a 34 mm flange would
-  eat into `d`.
-
-`d=120` on this skin is legitimate, not degenerate — it pokes through both
-bands, which is what the last row of the table is for.
-
+The prism (`member_slab`) runs one-sided: from `width` behind the cutting
+surface up to that surface itself, extruded along the surface normal.  There
+is no second `depth` knob — it was a boolean-tool dimension that leaked into
+the feature API, and while the slab straddled the surface the band's far
+edge depended on that arbitrary number.  Now the band's far edge *is* the
+section chain: `band_of` and `drape_cuts_of` share one prism, so band and
+footprint can never overlap, and `flange_width` is the feature's only shape
+parameter.
 ## 4. What the module exposes, and why each query is shaped that way
 
 Five functions, no placeholders:

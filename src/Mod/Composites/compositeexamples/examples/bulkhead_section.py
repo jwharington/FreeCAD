@@ -3,29 +3,16 @@
 
 """Bulkhead on the fixture skin — the section layer, shown rather than asserted.
 
-Builds the same support the bulkhead suites measure (`fixture_bulkhead`), cuts
-it with the same station plane, and lays the member's two kinds of face into
-the document as separate features:
+Section I lays the member's faces into the document as separate features:
+the full skins (hidden, so the cutout can be seen), the holed skin — the
+flange band cut *out of* the skin by `drape_cuts_of`, so panel and member
+cannot both claim one patch of material — the filled section (`Plate`), the
+band itself (`Flange`).  Skin area = Remainder + Flange, exactly.
 
-* **CutSurface** — the 900 mm station plane, shown only to be visible in
-  Section I: §5's `!IsInsideFace` fix means a closed loop inside an outer wire
-  does lose coverage *over* the hole, so whether the plate needs cutting out of
-  the skin is no longer answerable on paper.  The plane is where that would
-  begin to show, and a plane that merely misses the skin is already caught by
-  the x = 700 probe in the section suite.
-* **Plate** — the filled section, `Part.Face` of the closed chain.
-* **Flange** — the band taken *out of* the skin by `band_of`, and by
-  `drape_cuts_of` subtracted from it, so panel and member cannot both claim one
-  patch of material (F4's exclusivity).
-
-Section II adds the `BulkheadFP` feature over the same shape: with no Laminate
-linked the feature is pure geometry, and a linked Laminate is answered
-`"Nope, for now."` — the same "geometry first, composites later" route the
-stiffener examples take, kept here because the drape pitch and the stack model
-are decided by what the *member* occupies, not by the plate's stand-off (R3).
-
-Colours are set only when a ViewObject exists, so the module stays importable
-under FreeCADCmd as well as in the GUI.
+Section II reaches the same shape through the `BulkheadFP` feature.  With
+no Laminate linked the feature is pure geometry; the composite wiring
+(laminate drape, rosettes, stack model) is not built yet and this file
+does not pretend it is.
 """
 
 import FreeCAD
@@ -88,6 +75,12 @@ def build(doc=None, sewn=False):
 
     # The plate lies in the cutting plane; the flange lies on the skin, so the
     # fold between them is a fold and not an outline.
+    for skin in doc.Objects:
+        if skin.Name.startswith("Skin"):
+            skin_view = getattr(skin, "ViewObject", None)
+            if skin_view is not None:
+                skin_view.Visibility = False
+
     plate = doc.addObject("Part::Feature", "Plate")
     plate.Shape = Part.makeCompound(list(plates))
     _paint(plate, (0.20, 0.45, 0.85))

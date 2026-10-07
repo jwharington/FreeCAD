@@ -1,43 +1,22 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
-"""The filled section a bulkhead is built from, and how it sits on its support.
+"""Section geometry for the Bulkhead feature.
 
-A bulkhead is a *plate with flanges*: a wall of constant depth `d` standing off
-the support, joined to the support along a contact line and gusseted into it.
-This module settles that section's shape before any shell is sewn, and it
-answers the question in *faces*, because a chain's length does not reveal
-whether it crossed the band seam or merely ran along one face's own boundary —
-and only the first of those means the member's boundary fails to close on
-material, which is what §2 of docs/fem-shell-mesh-continuity.md is about.
+A bulkhead is a *plate with flanges*: the filled section of the cutting
+surface where it meets the support, flanged by a strip of the support's own
+surface measured back `width` from the section line.  `band_of` and
+`drape_cuts_of` are two boolean views of one prism: what the member
+occupies is exactly what the panel gives up (F4's exclusivity), and the
+prism is one-sided — it runs from `width` behind the cutting surface up to
+that surface — so the band's far edge *is* the section chain, shared with
+the plate by construction rather than matched to it by tolerance, and no
+part of the answer depends on how far the cutter reaches beyond the
+surface.
 
-**The flange and the plate come out of one boolean, not two.**  `band_of` asks
-`support` for the material inside a prism whose section is the whole bulkhead
-cross-section, `p x [0, d]`, and the same prism's wall faces are what the
-panel's faces are cut by.  That is deliberate: the band's boundary and the
-plate's boundary share the section path, and a member assembled from
-independently produced pieces carries *two* copies of that shared curve, which
-is known-issue #14 seen from the other side — equal point sets produced by
-different paths do not match the seam's exact shared-edge check, so the mesh
-cracks there.
-
-**Depth is measured along b = t x N, which lies *in* the cutting plane (F2).**
-`t` is the path's tangent and `N` the cutting surface's normal, so b is in the
-plane and perpendicular to the path — *not* normal to the support, which is
-what a first reading of "stand-off" suggests.  Measured along the support
-normal instead, a constant `depth` would put the plate *in* the cutting plane,
-where it has no thickness, and the boolean would answer "nothing to take out
-of" for a support that plainly has a band to give.
-
-**One member per chain (F1).**  Measured on the fixture, every cut yields one
-closed chain and none of them self-crosses, so the hole-test machinery an
-earlier draft carried has been deleted rather than kept as insurance against a
-case that does not arise.  What remains of that concern is the de-duplication,
-which *does* arise constantly: an open multi-face support is full of duplicated
-section edges, `section()` reports every copy, and a chain traversed twice
-breaks every loft built against it.
-
-Design record: docs/bulkhead-design.md.
+Chain finding is reused from `stiffener` (`_section_groups` et al.); this
+module adds the fill (`plate_of`) and the boolean pair (`band_of`,
+`drape_cuts_of`).
 """
 
 import Part

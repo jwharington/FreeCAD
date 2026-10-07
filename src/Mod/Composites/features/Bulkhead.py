@@ -11,9 +11,8 @@ from .VPCompositePart import (
     VPCompositePart,
 )
 
-# The flange dimensions the handover suggests (34 mm) and a band depth that
-# straddles a real skin.  Both are parameters of the feature, not constants of
-# the tool — the suggestion is a starting point, never a hidden default.
+# The flange width the handover suggests (34 mm) is a parameter of the
+# feature, not a constant of the tool — the suggestion is a starting point.
 DEFAULT_FLANGE_WIDTH = 34.0
 
 
