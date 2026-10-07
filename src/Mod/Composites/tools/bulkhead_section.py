@@ -3,39 +3,39 @@
 
 """The filled section a bulkhead is built from, and how it sits on its support.
 
-A bulkhead is a *plate with flanges*: the plate is a wall of constant depth
-standing off the support, and the flanges are bands of the support's own
-surface folded flat beside it.  This module settles the section's shape rather
-than leaving it to emerge mid-build, and it answers those questions in *faces*,
-not in chain lengths, because a chain's length does not reveal whether it
-crossed the band seam or merely ran along one face's own boundary edge.
+A bulkhead is a *plate with flanges*: a wall of constant depth `d` standing off
+the support, joined to the support along a contact line and gusseted into it.
+This module settles that section's shape before any shell is sewn, and it
+answers the question in *faces*, because a chain's length does not reveal
+whether it crossed the band seam or merely ran along one face's own boundary —
+and only the first of those means the member's boundary fails to close on
+material, which is what §2 of docs/fem-shell-mesh-continuity.md is about.
 
-Three decisions live here, each taken on evidence from
-``compositestests/inspect_bulkhead_section.py`` — which runs against the same
-fixture the tests use — rather than assumed:
+**The flange and the plate come out of one boolean, not two.**  `band_of` asks
+`support` for the material inside a prism whose section is the whole bulkhead
+cross-section, `p x [0, d]`, and the same prism's wall faces are what the
+panel's faces are cut by.  That is deliberate: the band's boundary and the
+plate's boundary share the section path, and a member assembled from
+independently produced pieces carries *two* copies of that shared curve, which
+is known-issue #14 seen from the other side — equal point sets produced by
+different paths do not match the seam's exact shared-edge check, so the mesh
+cracks there.
 
 **Depth is measured along b = t x N, which lies *in* the cutting plane (F2).**
 `t` is the path's tangent and `N` the cutting surface's normal, so b is in the
 plane and perpendicular to the path — *not* normal to the support, which is
-what a first reading of "stand-off" suggests.  A plate of constant `depth`
-therefore spans from the path, where it meets the support, out to a copy of the
-path displaced `depth` along b; `depth` and `flange_width` are orthogonal
-displacements of one polygon, which is what keeps the two knobs independent.
+what a first reading of "stand-off" suggests.  Measured along the support
+normal instead, a constant `depth` would put the plate *in* the cutting plane,
+where it has no thickness, and the boolean would answer "nothing to take out
+of" for a support that plainly has a band to give.
 
-**One member per chain, one face per connected region (F1, F3).**  Every cut
-probed on the doubly curved fixture produced *one* chain, not several — but
-self-crossing ones, whose boundary bounds more than one region.  A
-self-crossing outer wire is what defeats nextdrape's hole test, so each
-connected region becomes its own face and each region's holes are subtracted
-from its own face, which leaves the hole test with nothing to decide.
-
-**The flange is taken *out of* the support (F5), and the plate's boundary
-passes *through* the support (F3).**  Both go through one boolean over the
-section polygon, because a band whose boundary lies on the surface and a plate
-whose boundary closes in void are one problem, not two: a chain that runs off
-an open end of the support *closes in space without closing on the surface*,
-and a member bounded by it sews from geometry that is not in the mesh, which
-§2 of docs/fem-shell-mesh-continuity.md refuses to allow.
+**One member per chain (F1).**  Measured on the fixture, every cut yields one
+closed chain and none of them self-crosses, so the hole-test machinery an
+earlier draft carried has been deleted rather than kept as insurance against a
+case that does not arise.  What remains of that concern is the de-duplication,
+which *does* arise constantly: an open multi-face support is full of duplicated
+section edges, `section()` reports every copy, and a chain traversed twice
+breaks every loft built against it.
 
 Design record: docs/bulkhead-design.md.
 """
@@ -44,19 +44,21 @@ import Part
 
 from FreeCAD import Console, Vector
 
-from .stiffener import SURFACE_TOLERANCE, _section_groups
+from .stiffener import _section_groups
 
 debug = False
 
-# Sample points per chain edge, for the queries that have to ask whether a
-# curve lies on a surface: too few to miss a fold, too many to matter.
-_CHAIN_SAMPLES = 24
+# Sample points per curve, for the queries that have to ask where a curve lies
+# relative to a surface: too few to miss a fold, too many to matter.
+_SAMPLES = 24
 
-# Distance from the support within which a chain still counts as lying on it.
-# A section of a lofted surface is piecewise and its pieces join to within
-# microns of one another, so this separates a real gap from stitching noise by
-# seven orders of magnitude.
+# Distance from a surface within which a curve still counts as lying on it, and
+# the area below which a subtracted footprint has nothing left of it.  A
+# boolean-produced edge's exposed basis curve evaluates up to ~1e-9 mm off the
+# edge's own geometry, so the first of these separates stitching noise from a
+# real gap by three orders of magnitude.
 _PROXIMITY = 1e-6
+_MIN_AREA = 1e-9
 
 
 def _debug(message):
@@ -72,18 +74,16 @@ def section_chains(support: Part.Shape, cut_surface: Part.Shape):
     """Every continuous chain where `cut_surface` cuts `support`, deduplicated.
 
     :func:`Composites.tools.stiffener._section_groups` is reused rather than
-    reimplemented, because getting this list right is not a detail.  It
-    sections a solid or a single face in one go — sectioning a solid face by
-    face would duplicate the curve wherever the cut runs along a cap plane —
-    and it drops coincident duplicate edges, which an open multi-face support
-    is full of.
+    reimplemented, for two reasons that both bite on real geometry.  It sections
+    a solid or a single face in one shape-level `section()` call, so a cut
+    running along a cap plane yields one chain rather than two wires meeting
+    head-on; and it drops coincident duplicate edges, which an open multi-face
+    support is full of, and which otherwise sew into double rows of elements.
 
     A chain that duplicates a support edge *is* the place where the cut and the
     support agree, so a copy rebuilt by a different boolean carries different
     defining data and reads as a crack (known-issue #14), and a chain traversed
-    twice breaks every loft built against it.  A bulkhead's flange band is
-    bounded on one side by exactly such a curve, so the dedupe that
-    `make_stiffener` needs is the dedupe this feature needs.
+    twice breaks every loft built against it.
     """
     chains = [Part.Wire(group) for group in _section_groups(support, cut_surface)]
     _debug(f"section_chains: {len(chains)} chains {[c.isClosed() for c in chains]}")
@@ -91,111 +91,137 @@ def section_chains(support: Part.Shape, cut_surface: Part.Shape):
 
 
 def chain_regions(support: Part.Shape, chain: Part.Wire):
-    """The connected surface regions `chain` runs along, as (face, boundary).
+    """The support faces `chain` runs along, as (face, boundary, interior).
 
-    A chain that stays inside one face yields one region; one that crosses the
-    band seam yields one region per face it crossed, with the seam recorded as
-    a boundary of each.  Splitting them here — rather than letting one shell
-    carry both faces — is what keeps nextdrape's hole test meaningful, and it
-    is also what §2 of docs/fem-shell-mesh-continuity.md asks for: a section
-    referenced to faces that are not in the mesh matches nothing.
+    A chain that crosses the band seam yields one region per face it crossed,
+    with the seam recorded as a boundary of *both* — which is the only answer
+    that survives the two ways a support can be joined along a seam.  A sewn
+    shell holds the seam once and `ancestorsOfType` reports both faces for it;
+    an unsewn one — which is what a lofted skin is, because `Part.makeShell`
+    does not stitch — holds one coincident copy per face, under two different
+    TShapes, and each copy belongs to only one face.
 
-    Region membership is decided by the face's *own boundary*, not by a
-    proximity search.  A chain crossing the seam of a sewn shell contains that
-    seam edge once; the same cut on an unsewn shell contains it twice, once per
-    face, and a test built on "is this point near the surface" cannot tell
-    those apart and answers "nowhere" for both — which is how a chain that
-    plainly crosses the seam gets reported as crossing nothing.
+    A chain that runs *along* a face's own boundary without entering it is
+    reported as boundary only: it does not cut that face, and cutting a face
+    along its own edge is not a cut.
     """
-    return [
-        (face, [edge for edge in chain.Edges if _bounds(face, edge)])
-        for face in support.Faces
-        if _runs_on(face, chain)
-    ]
+    return [(face,
+             [edge for edge in chain.Edges
+              if not _runs_on(face, edge) and _bounds(face, edge)],
+             [edge for edge in chain.Edges if _runs_on(face, edge)])
+            for face in support.Faces
+            if any(_runs_on(face, edge) or _bounds(face, edge)
+                   for edge in chain.Edges)]
 
 
-def _runs_on(face: Part.Face, chain: Part.Wire) -> bool:
-    """Whether `chain` has a part of itself inside `face`, rather than beside it."""
-    return any(_in_face(face, edge) for edge in chain.Edges)
+def _runs_on(face: Part.Shape, curve) -> bool:
+    """Whether `curve` runs along the inside of `face`, rather than beside it.
 
-
-def _in_face(face: Part.Face, edge: Part.Edge) -> bool:
-    """Whether the middle of `edge` lies inside `face`, not merely on it.
-
-    Probed at a strictly interior parameter: a boolean-produced edge's trimmed
-    range endpoints evaluate up to microns off the edge's own geometry, which
-    a membership test at surface tolerance rightly rejects.
+    Sampled at a strictly interior parameter, and against the surface's own
+    parametric domain: a boolean-produced edge's exposed basis curve evaluates up
+    to ~1e-9 mm off the edge's own geometry, and its end vertices sit on the
+    *support's* boundary edge rather than inside any one face, so a test written
+    against trimmed endpoints or against `OuterWire` answers "off the surface"
+    to a question nothing ever asks.
     """
-    return face.isInside(_middle_of(edge), _PROXIMITY, False)
+    return all(face.distToShape(Part.Vertex(point))[0] <= _PROXIMITY
+               for point in curve.discretize(_SAMPLES))
 
 
-def _bounds(face: Part.Face, edge: Part.Edge) -> bool:
-    """Whether `edge` is part of `face`'s boundary — its band seam, if it has one."""
+def _bounds(face: Part.Shape, edge: Part.Edge) -> bool:
+    """Whether `edge` bounds `face` — the curve two of its faces would share."""
     return any(_same_curve(edge, own) for own in face.OuterWire.Edges)
 
 
-def _middle_of(edge: Part.Edge) -> Vector:
-    return edge.valueAt(0.5 * (edge.FirstParameter + edge.LastParameter))
-
-
 def _same_curve(a: Part.Edge, b: Part.Edge) -> bool:
-    """Whether two edges carry the same curve over the same extent."""
+    """Whether two edges carry the same curve over the same extent.
+
+    Compared geometrically rather than topologically: `isSame` is exactly true
+    only when one edge references the other's underlying curve, and that holds
+    between two coincident copies in a compound sewn in passing, so `isSame`
+    alone answers "distinct" for curves a mesh would treat as one.
+    """
     if a.isSame(b):
         return True
     if abs(a.Length - b.Length) > _PROXIMITY * max(1.0, a.Length):
         return False
-    return all(b.distToShape(Part.Vertex(p))[0] <= _PROXIMITY for p in a.discretize(5))
+    return all(b.distToShape(Part.Vertex(point))[0] <= _PROXIMITY
+               for point in a.discretize(5))
 
 
-# ── the section polygon ──────────────────────────────────────────────
+# ── the section region ───────────────────────────────────────────────
 
 
-def section_polygon(support: Part.Shape, cut_surface: Part.Shape, path: Part.Wire,
-                    depth: float, flange_width: float, normal: Vector):
-    """The bulkhead's section polygon, as the planar region it bounds.
+def _plane_normal(surface: Part.Shape):
+    """The cutting surface's normal, or None when it is not one plane.
 
-    `path` is the section path — the curve where the cutting surface meets the
-    support — and `depth` is measured from it along b = t x N, *within* the
-    cutting plane, toward whichever side of the plane the plate stands off.
-    A closed `path` therefore bounds an annular region whose inner edge is
-    `path` itself, and an open `path` bounds a strip closed across the gap
-    where it ran off the surface.
-
-    Returns one region per connected area, or None when the cutter produces
-    nothing at all — which is how "the cut surface misses the support" is
-    told apart from "the plate stands off nothing".
+    Asked of the surface at its own centre rather than assumed to be the cut's
+    own axis, and refused outright for a cutter that is not planar: `depth` is
+    measured along this direction, so a bent cutter has no *one* depth to
+    measure, and guessing one would tilt the section silently rather than fail.
     """
-    if normal is None:
+    try:
+        face = surface.Faces[0]
+        return Vector(face.normalAt(*face.Surface.parameter(face.CenterOfMass)))
+    except (AttributeError, IndexError, Part.OCCError, ValueError):
         return None
-    region = support.common(_member_slab(cut_surface, normal, flange_width, depth))
-    return region if region.Faces else None
 
 
-def _member_slab(cut_surface: Part.Shape, normal: Vector, width: float, depth: float):
+def member_slab(support: Part.Shape, cut_surface: Part.Shape,
+                width: float, depth: float):
     """The prism the flange band and the plate are together taken out of.
 
-    The cutting surface widened `width` back along its own normal — so the band
-    lies in the cut plane *and* on the support's surface — and that widened
-    face then stood off `depth` along the same normal.  One solid, not a
-    compound of two, because the common of a *shell* with a solid is a curve:
-    handing the boolean two overlapping slabs produces no faces at all and
-    reads as a support that has no band to give.
+    The cutting surface, widened `width` back along its own normal and then stood
+    off `depth` along the same normal.  One solid, not a compound of two,
+    because **the common of a shell with a solid is a curve**: handing the
+    boolean two overlapping slabs produces no faces at all, which reads as "this
+    support has no band to give" and silently drops the flanges.
+
+    Returns None when the cutter is bent, or when it produces nothing at all,
+    which is how "the cut surface misses the support" is told apart from "there
+    is no band to take out of" — the first is an error, the second is a plate
+    with no flanges.
     """
-    if width <= _PROXIMITY or depth <= _PROXIMITY:
-        return Part.makeCompound([])
+    normal = _plane_normal(cut_surface)
+    if normal is None or width <= _PROXIMITY or depth <= _PROXIMITY:
+        return None
     widened = cut_surface.copy()
     widened.translate(normal * -width)
-    return widened.extrude(normal * (width + depth))
+    slab = widened.extrude(normal * (width + depth))
+    return slab if slab.Faces and slab.Faces[0].Area > _MIN_AREA else None
 
 
-def drape_cuts_of(support: Part.Shape, region):
+def band_of(support: Part.Shape, cut_surface: Part.Shape, width: float, depth: float):
+    """The bulkhead's flange band, taken out of `support`, as faces.
+
+    These do double duty, which is the reason they are computed once: they are
+    the faces the member is sewn from, *and* the faces subtracted from the
+    support's own faces so that panel and member cannot both claim one patch of
+    material (F4).  Taken from the support rather than offset off it, so the
+    band's boundary curves *are* the support's section edges and the seam's
+    exact shared-edge check matches by construction.
+
+    An empty result means the plate never met the support, which is reported to
+    the caller rather than absorbed here: it is a failure for a member that must
+    sit on the panel, and the right answer for one that bridges an opening, and
+    only the feature knows which of the two was asked for.
+    """
+    slab = member_slab(support, cut_surface, width, depth)
+    if slab is None:
+        return ()
+    return tuple(face for face in support.common(slab).Faces if face.Area > _MIN_AREA)
+
+
+def drape_cuts_of(support: Part.Shape, cut_surface: Part.Shape,
+                  width: float, depth: float):
     """The plate's footprint on `support`, one face per connected region.
 
-    These are subtracted from the support's own faces before those become
-    shells, which is the only way the member's boundary keeps *material* on
-    both sides.  Subtracting whole faces instead would leave the member's edge
-    in void wherever the plate bridged an opening or ran off the surface's
-    free edge, and a member sewn to geometry that is not in the mesh matches
-    no section at all.
+    The same prism `band_of` is taken from, subtracted *from* the support's
+    faces instead of intersected with them, so the two answers stay exclusive by
+    construction: whatever the band occupies, the panel's own faces give up.
     """
-    return [cut for face in support.Faces for cut in face.cut(region).Faces]
+    slab = member_slab(support, cut_surface, width, depth)
+    if slab is None:
+        return ()
+    return tuple(cut for face in support.Faces
+                 for cut in face.cut(slab).Faces if cut.Area > _MIN_AREA)
