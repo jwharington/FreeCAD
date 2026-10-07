@@ -84,6 +84,19 @@ class BulkheadFP(CompositePartFP):
             "Rosette defining the bulkhead fibre orientation",
         )
 
+        # Geometry-first trim, the stiffener's polarity: the plate/band
+        # support faces are cut by this solid before their shells are
+        # built, so the finished member stops at the opening. The drape
+        # itself is untouched — it rides the uncut geometry, and the
+        # trimmed shells borrow it. Unset (the default), the plate spans
+        # the opening as before.
+        obj.addProperty(
+            "App::PropertyLink",
+            "TrimTool",
+            "Layout",
+            "Solid cutting the plate/band supports before their shells are built",
+        )
+
         super().__init__(obj)
 
     def execute(self, fp):

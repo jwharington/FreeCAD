@@ -372,7 +372,13 @@ edges`) fed consistently either way. Two unknowns to settle **on §6's
   the support yields no chain and the feature fails loudly.*
   (references must lie on geometry **in the mesh**), so the mesh
   consequence is part of the fork, not an afterthought.
-  *Resolution: no `TrimTool` was copied (wrong polarity). The band
+  *Resolution: the bulkhead takes an optional `TrimTool` with the
+  stiffener's polarity — the plate/band support faces are cut by the
+  tool before their shells are built, so a bulkhead that must stop at
+  an opening stops there; the drape itself is untouched (it rides the
+  uncut geometry, and the trimmed shells borrow it), and a tool that
+  removes the whole member fails loudly. Unset (the default), the
+  plate spans the opening as this fork originally described. The band
   replaces the patch it occupies (F4's exclusivity: band + remainder =
   the support, exactly), and the joint is treated exactly as the
   stiffener's — the plate reads its boundary from the band's own wall

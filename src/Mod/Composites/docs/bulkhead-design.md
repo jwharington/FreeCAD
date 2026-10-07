@@ -191,6 +191,14 @@ plate reads its boundary from the band's own wall edge — the stiffener's
 web-row construction — so the seam machinery sees one shared curve, not
 two boolean rebuilds of one intersection matched by tolerance.
 
+The bulkhead also takes the stiffener's optional `TrimTool` (same
+polarity): the plate/band support faces are cut by the tool before
+their shells are built — a bulkhead that must stop at an opening stops
+there — while the drape rides the uncut geometry and the trimmed
+shells borrow it. Unset, the plate spans the opening as before; a tool
+that removes the whole member fails loudly. Both are pinned in
+`test_bulkhead` (`TestBulkheadTrim`).
+
 **`_same_curve` compares curves geometrically, not by `isSame`.** A sewn seam is
 *one* edge whose `ancestorsOfType` lists both faces; an unsewn one is *two*
 coincident copies, one per face, under different TShapes. `isSame` is exactly

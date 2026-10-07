@@ -19,6 +19,8 @@ import os
 import tempfile
 import unittest
 
+import FreeCAD
+
 import numpy
 
 from Composites.compositestests.test_base import TestFreeCADFP
@@ -323,6 +325,62 @@ class TestBulkheadWiring(TestBulkheadFeature, TestFreeCADFP):
         self.assertEqual(
             len(model.layers), 4,
             "no combined stack reached the joint: panel plies + plate plies")
+
+    def test_trim_tool_trims_the_member_shells(self):
+        """A TrimTool makes the member stop at the opening — in composite mode.
+
+        The stiffener's trim polarity, applied to the bulkhead: the
+        plate/band shells are cut by the tool before their shells are
+        built, and the drape rides the uncut geometry (borrowed, never
+        re-solved). In geometry-only mode the feature's own shape is
+        untouched — the trim is a shell-build decision, not a geometry
+        one.
+        """
+        import Part
+
+        panel = self._make_panel()
+        plain = self._make_wired_bulkhead("Plain", panel)
+        plate = self.doc.getObject("Plain_Plate")
+        band = self.doc.getObject("Plain_Band")
+        plate_area, band_area = plate.Shape.Area, band.Shape.Area
+
+        tool = self.doc.addObject("Part::Feature", "Tool")
+        tool.Shape = Part.makeBox(200.0, 300.0, 200.0,
+                                  FreeCAD.Vector(120.0, -150.0, 40.0))
+        trimmed = self.doc.addObject("Part::FeaturePython", "Trimmed")
+        from Composites.features.Bulkhead import BulkheadFP
+        BulkheadFP(trimmed, support=panel,
+                   cut_surface=self._make_cutter("Trimmed_Cutter"))
+        trimmed.Laminate = self._make_laminate("Trimmed_Lam")
+        trimmed.TrimTool = tool
+        self.doc.recompute()
+
+        self.assertLess(
+            self.doc.getObject("Trimmed_Plate").Shape.Area, plate_area,
+            "the trim tool must remove plate shell before the shell is built")
+        self.assertLess(
+            self.doc.getObject("Trimmed_Band").Shape.Area, band_area,
+            "the trim tool must remove band shell before the shell is built")
+        self.assertNotIn("Invalid", trimmed.State)
+
+    def test_trim_that_removes_the_member_fails_loudly(self):
+        """A tool covering the whole member is an error, not an empty shell."""
+        import Part
+
+        panel = self._make_panel()
+        bulkhead = self._make_wired_bulkhead("Bulkhead", panel)
+        box = bulkhead.Shape.BoundBox
+        tool = self.doc.addObject("Part::Feature", "CoverTool")
+        tool.Shape = Part.makeBox(
+            box.XLength + 20.0, box.YLength + 20.0, box.ZLength + 20.0,
+            FreeCAD.Vector(box.XMin - 10.0, box.YMin - 10.0, box.ZMin - 10.0))
+        bulkhead.TrimTool = tool
+        self.doc.recompute()
+
+        self.assertIn("Invalid", bulkhead.State,
+                      "a whole-member trim must fail on the feature")
+        self.assertIn("trim", str(bulkhead.Proxy.last_error),
+                      "the refusal must name the trim that caused it")
 
     def test_band_seam_subs_land_on_the_section_chain(self):
         """The seam rule names only edges that lie on a section chain.
