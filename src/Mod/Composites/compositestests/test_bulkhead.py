@@ -291,34 +291,38 @@ class TestBulkheadWiring(TestBulkheadFeature, TestFreeCADFP):
         self.doc.recompute()
         return panel
 
-    def test_wired_bulkhead_refuses_the_butt_joint_loudly(self):
-        """The seam machinery's shared-edge contract rejects the band — loudly.
+    def test_wired_bulkhead_lays_up_through_the_stack_chain(self):
+        """Plate and band shells exist, and the joint stack is wired.
 
-        F4's exclusivity makes the bulkhead band a *replacing* patch: its
-        chain edge and the remainder's are the same curve rebuilt by
-        separate booleans, so their defining curve data differs and
-        ``shares_boundary_edge`` (exact poles/knots, by design) says no.
-        The seam flow therefore refuses to combine the stack rather than
-        silently bonding across a joint it cannot measure — the one
-        unacceptable outcome is a silent wrong stack.  Whether a butt
-        joint gets its own continuity contract is the owner's fork (F4);
-        until then this pins the refusal: loud, on the feature, and with
-        no half-built stack behind it.
+        R3's routing: the band borrows the panel's solved drape (its
+        DrapeSource), and the combined laminate is wired panel→band←plate
+        with the footprint recorded as the joint's master-side support.
+        The joint is accepted because the plate reads its boundary the
+        stiffener's way — from the band's own wall edge — so the shared
+        curve is identical, not tolerance-matched.
         """
         panel = self._make_panel()
         bulkhead = self._make_wired_bulkhead("Bulkhead", panel)
-        self.assertIn("Invalid", bulkhead.State,
-                      "the refused butt joint must fail loudly on the feature")
-        self.assertIn("refused the joint", str(bulkhead.Proxy.last_error),
-                      "the feature must carry the refusal, not sit silent")
-        # The member shells exist (built before the refusal); the joint
-        # stack does not: a refused seam must not carry combined layers.
+        plate = self.doc.getObject("Bulkhead_Plate")
+        band = self.doc.getObject("Bulkhead_Band")
+        self.assertIsNotNone(plate, "no plate shell was built")
+        self.assertIsNotNone(band, "no band shell was built")
+        self.assertIs(band.DrapeSource, panel,
+                      "the band must borrow the panel's solved drape")
         scl = self.doc.getObject("Bulkhead_CombinedLaminate")
-        self.assertIsNotNone(scl, "the refusal happened at the SCL")
-        self.assertIn("Invalid", scl.State,
-                      "the SCL must carry the seam-contract failure")
-        self.assertFalse(getattr(scl, "Layers", None),
-                         "a refused seam must not carry a combined stack")
+        self.assertIsNotNone(scl, "no combined laminate on the joint")
+        self.assertIs(scl.Master, panel)
+        self.assertIs(scl.Attachment, plate)
+        self.assertIs(scl.SeamRegion, band)
+        remainder = self.doc.getObject("Bulkhead_RemainderSupport")
+        self.assertIsNotNone(remainder, "the footprint was not recorded")
+        # The combined stack is composed, not a Layers link list — the seam
+        # laminate delivers it through get_model, which is the stiffener
+        # suite's own oracle for the same object.
+        model = scl.Proxy.get_model(scl)
+        self.assertEqual(
+            len(model.layers), 4,
+            "no combined stack reached the joint: panel plies + plate plies")
 
     def test_band_seam_subs_land_on_the_section_chain(self):
         """The seam rule names only edges that lie on a section chain.

@@ -740,6 +740,13 @@ def _ensure_combined_laminate(
         # difference (PRD Q4).  The seam flow's default stays untouched.
         scl.CombinationModel = CombinationModel.StackAttachmentOverMaster
     scl.recompute()
+    if not scl.Layers:
+        # The nested recompute of another object's execute is deferred by
+        # the document pass (the same trap _ensure_draped works around —
+        # "a nested doc.recompute() would not re-execute it"), so the SCL
+        # can sit Touched with an empty stack after wiring.  Drive it
+        # directly; a later document pass skips via its fingerprint.
+        scl.Proxy.execute(scl)
     if "Invalid" in getattr(scl, "State", ()):
         # FreeCAD swallows a child's execute exception and marks the child
         # Invalid; without this the bulkhead would read Up-to-date beside a
