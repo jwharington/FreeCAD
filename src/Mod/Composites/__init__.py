@@ -37,6 +37,7 @@ MOULD_TOOL_ICON = path.join(ICONPATH, "Mould.svg")
 PART_PLANE_TOOL_ICON = path.join(ICONPATH, "PartPlane.svg")
 SEAM_TOOL_ICON = path.join(ICONPATH, "Seam.svg")
 STIFFENER_TOOL_ICON = path.join(ICONPATH, "Stiffener.svg")
+BULKHEAD_TOOL_ICON = path.join(ICONPATH, "Bulkhead.svg")
 DART_TOOL_ICON = path.join(ICONPATH, "Dart.svg")
 
 LAMINATE_TOOL_ICON = path.join(ICONPATH, "Laminate.svg")

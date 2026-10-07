@@ -149,6 +149,24 @@ def _same_curve(a: Part.Edge, b: Part.Edge) -> bool:
                for point in a.discretize(5))
 
 
+def plate_of(support: Part.Shape, cut_surface: Part.Shape):
+    """The bulkhead's plate cores: one filled face per closed section chain.
+
+    Every point of a plane/surface intersection lies in the cutting plane, so
+    each closed chain bounds a planar region and ``Part.Face`` of the wire *is*
+    the filled section (R1) — no re-parametrisation, and the face's boundary
+    curves are the chain's own, so a flange band taken out of the support by
+    boolean shares them exactly rather than being matched to them by tolerance.
+
+    An open chain — one that runs off the support's free edge — bounds nothing
+    and is skipped rather than chorded shut: closing it in space would invent a
+    plate edge where the support has none, and the caller decides whether a
+    member that fails to close is an error or a bulkhead bridging an opening.
+    """
+    return [Part.Face(chain) for chain in section_chains(support, cut_surface)
+            if chain.isClosed()]
+
+
 # ── the section region ───────────────────────────────────────────────
 
 
@@ -225,3 +243,25 @@ def drape_cuts_of(support: Part.Shape, cut_surface: Part.Shape,
         return ()
     return tuple(cut for face in support.Faces
                  for cut in face.cut(slab).Faces if cut.Area > _MIN_AREA)
+
+
+def make_bulkhead(support: Part.Shape, cut_surface: Part.Shape,
+                  flange_width: float, flange_depth: float):
+    """The bulkhead's material, as faces: plate cores first, then the flange.
+
+    The plate is the filled section (R1) and the flange is the band taken out
+    of the support around it, so the member's two parts meet along the section
+    chain and nowhere else, and both come from the same cutter (see
+    :func:`band_of` for why the boolean is one prism rather than two).
+
+    Returns ``(plates, bands)`` — kept separate because the plate lies in the
+    cutting plane and the flange lies on the support, so the drape that covers
+    them runs across a fold and each needs its own stack model.  An empty
+    `plates` means the cut never closed on the support; the feature layer turns
+    that into an error, because a bulkhead that closes across nothing is not a
+    bulkhead.
+    """
+    plates = plate_of(support, cut_surface)
+    bands = band_of(support, cut_surface, flange_width, flange_depth)
+    _debug(f"make_bulkhead: {len(plates)} plates {len(bands)} bands")
+    return plates, list(bands)

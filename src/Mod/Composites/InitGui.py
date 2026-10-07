@@ -127,6 +127,7 @@ class CompositesWorkbench(Gui.Workbench):
         from Composites.features.TransferRosette import TransferRosetteCommand
         from Composites.features.MouldAnalysis import CompositeMouldAnalysisCommand
         from Composites.features.PartPlane import CompositePartPlaneCommand
+        from Composites.features.Bulkhead import CompositeBulkheadCommand
         from Composites.features.TexturePlan import TexturePlanCommand
         from Composites.features.FibreCompositeLamina import FibreCompositeLaminaCommand
         from Composites.features.HomogeneousLamina import HomogeneousLaminaCommand
@@ -136,6 +137,7 @@ class CompositesWorkbench(Gui.Workbench):
         # Register each command with its proper name
         commands = [
             ("Composites_Stiffener", CompositeStiffenerCommand()),
+            ("Composites_Bulkhead", CompositeBulkheadCommand()),
             ("Composites_Laminate", LaminateCommand()),
             ("Composites_CompositeShell", CompositeShellCommand()),
             ("Composites_PlaceDart", PlaceDartCommand()),

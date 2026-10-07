@@ -58,6 +58,7 @@ def get_command_groups():
                 "Composites_Seam",
                 "Composites_PlaceDart",
                 "Composites_Stiffener",
+                "Composites_Bulkhead",
             ],
             menu="Structure",
             tooltip="Shell structure construction tools",
