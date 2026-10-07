@@ -35,72 +35,16 @@ import Part
 import FreeCAD
 from FreeCAD import Vector
 
+from Composites.compositeexamples.fixture_bulkhead import (
+    AFT_SECTIONS,
+    FORWARD_SECTIONS,
+    PLANE_SIDE,
+    bulkhead_fixture,
+    lofted_bands,
+    station_plane,
+)
 from Composites.tools import bulkhead_section as section
 from Composites.tools import stiffener
-
-
-def ellipse_section(station_x, height, width):
-    """One elliptical section in the station plane, major axis vertical.
-
-    `Part.Ellipse` rejects MinorRadius > MajorRadius outright, so `height` has to
-    be the larger of the two — which is why the fixture's sections are written
-    (height, width) and not the other way round.
-    """
-    point = Vector(station_x, 0.0, 0.0)
-    ellipse = Part.Ellipse(point, height / 2.0, width / 2.0)
-    ellipse.rotate(FreeCAD.Placement(
-        point, FreeCAD.Rotation(Vector(1, 0, 0), Vector(0, 0, 1))))
-    return ellipse.toShape()
-
-
-def lofted_bands(chains, sewn=True):
-    """The fixture: a skin lofted through each chain of elliptical sections.
-
-    Taken as the loft's *lateral* faces, with the end caps dropped: a chain of
-    three sections lofts into a solid of two lateral faces plus two caps, and a
-    cap's support is perpendicular to the loft axis, so a cut plane normal to
-    that axis would section the caps too and count closed wires where the
-    surface has none.
-
-    `sewn=False` builds the same faces as a compound, which is what
-    `CompositeShellFP` keeps them as — `Part.makeShell` does not stitch, so the
-    join between two bands is then two coincident copies rather than one shared
-    edge, and a rule stated in terms of "faces sharing an edge" reads that
-    differently.
-    """
-    faces = []
-    for chain in chains:
-        solid = Part.makeLoft(
-            [ellipse_section(*section_) for section_ in chain], True, False)
-        faces.extend(face for face in solid.Faces
-                     if isinstance(face.Surface, Part.BSplineSurface))
-    return Part.makeShell(faces) if sewn else Part.makeCompound(faces)
-
-
-# The fixture's two chains of sections, as (station_x, height, width).  They
-# share the section at x = 300, so the two bands meet there: that join is the
-# band seam a flange band has to be able to cross.
-FORWARD_SECTIONS = [(100.0, 200.0, 100.0), (200.0, 220.0, 120.0), (300.0, 240.0, 140.0)]
-AFT_SECTIONS = [(300.0, 240.0, 140.0), (420.0, 210.0, 120.0), (540.0, 160.0, 90.0)]
-
-PLANE_SIDE = 900.0
-
-
-def station_plane(x, normal=Vector(1, 0, 0), side=PLANE_SIDE):
-    """A cutting plane through `x`, large enough to cut clear through the skin.
-
-    Placed by its centre, not by a corner: `makePlane` builds the face in the
-    local frame of the rotation that maps z onto `normal`, and for an
-    x-directed normal that frame's second axis runs along **minus** global y, so
-    a corner-placed plane lands shifted a full side along y and never meets the
-    part.  A plane that misses reads exactly like an intersection that failed,
-    which is how this misplacement was once misdiagnosed as an OCCT bug.
-    """
-    rotation = FreeCAD.Rotation(Vector(0, 0, 1), normal)
-    corner = rotation.multVec(Vector(side / 2.0, side / 2.0, 0.0))
-    plane = Part.makePlane(side, side)
-    plane.Placement = FreeCAD.Placement(Vector(x, 0.0, 0.0) - corner, rotation)
-    return plane
 
 
 def _shape(chains):
@@ -123,7 +67,7 @@ class SectionProbe(unittest.TestCase):
     """Shared fixture plumbing."""
 
     def setUp(self):
-        self.support = lofted_bands([FORWARD_SECTIONS, AFT_SECTIONS])
+        self.support = bulkhead_fixture(sewn=True)
 
     def chains_of(self, support, cutter):
         return stiffener.intersection_paths(support, cutter)
@@ -201,14 +145,14 @@ class TestFlangeBand(SectionProbe):
         shell with a compound of faces is a *curve*, which has no faces to give
         — the first draft of `section_slab` did exactly that.
         """
-        band = section.band_of(self.support, station_plane(210.0), 34.0, 12.0)
+        band = section.band_of(self.support, station_plane(210.0), 34.0)
         self.assertTrue(band, "no band to take out of the support")
         self.assertGreater(band[0].Area, 0.0)
 
     def test_band_spans_both_bands_where_the_seam_crosses_it(self):
         """Where the cut crosses the band seam the band is a *compound*."""
         cutter = station_plane(300.0, Vector(1, 0.55, 0.35))
-        band = section.band_of(self.support, cutter, 34.0, 12.0)
+        band = section.band_of(self.support, cutter, 34.0)
         self.assertGreaterEqual(
             len(band), 2,
             "the band stops at the band seam, so a member built on it would "
@@ -231,10 +175,10 @@ class TestFlangeBand(SectionProbe):
         for x, normal in ((210.0, Vector(1, 0, 0)), (420.0, Vector(1, 0, 0)),
                           (300.0, Vector(1, 0.55, 0.35))):
             cutter = station_plane(x, normal)
-            for width, depth in ((34.0, 12.0), (90.0, 12.0), (90.0, 120.0)):
-                band = section.band_of(self.support, cutter, width, depth)
-                footprint = section.drape_cuts_of(self.support, cutter, width, depth)
-                with self.subTest(x=x, normal=tuple(normal), width=width, depth=depth):
+            for width in (34.0, 90.0):
+                band = section.band_of(self.support, cutter, width)
+                footprint = section.drape_cuts_of(self.support, cutter, width)
+                with self.subTest(x=x, normal=tuple(normal), width=width):
                     self.assertGreater(len(band), 0, "nothing was taken out of the support")
                     accounted = sum(f.Area for f in band) + sum(f.Area for f in footprint)
                     self.assertAlmostEqual(
@@ -259,20 +203,17 @@ class TestFlangeBand(SectionProbe):
                         plate.Area, 1.0,
                         "zero-area section: the boundary is its own chord, not a region")
 
-    def test_stand_off_as_far_as_the_local_chamber_still_meets_the_support(self):
-        """`depth` measured from the support can exceed the local sagitta.
+    def test_a_band_as_wide_as_the_local_chamber_still_meets_the_support(self):
+        """A 90 mm band on a 120 mm chamber is real material, not a miss.
 
-        A stand-off of 120 mm on this skin passes clean through both bands.
-        That is a legitimate configuration rather than a degenerate one, and it
-        is what decides where `depth` is measured from: measured *normally* to
-        the support, a constant `depth` lies in the cutting plane, and a
-        polygon bounded by a curve and its normal-offset comes back with
-        nothing in it.
+        The slab is one-sided — it runs from `width` behind the cutting
+        surface up to the surface itself — so a wide band leans far into the
+        tube; an empty answer here would mean the prism missed the surface,
+        not that a wide flange is impossible.
         """
         cutter = station_plane(210.0)
-        self.assertTrue(section.band_of(self.support, cutter, 34.0, 12.0))
-        self.assertTrue(section.band_of(self.support, cutter, 90.0, 120.0),
-                        "a stand-off of the chamber's depth is a real shape")
+        band = section.band_of(self.support, cutter, 90.0)
+        self.assertTrue(band, "a chamber-wide band found nothing to take out of")
 
 
 if __name__ == "__main__":

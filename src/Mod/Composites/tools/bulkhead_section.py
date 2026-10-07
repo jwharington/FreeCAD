@@ -186,11 +186,15 @@ def _plane_normal(surface: Part.Shape):
 
 
 def member_slab(support: Part.Shape, cut_surface: Part.Shape,
-                width: float, depth: float):
+                width: float):
     """The prism the flange band and the plate are together taken out of.
 
-    The cutting surface, widened `width` back along its own normal and then stood
-    off `depth` along the same normal.  One solid, not a compound of two,
+    The cutting surface, widened `width` back along its own normal and extruded
+    exactly `width` along it, so the slab spans from `width` behind the cutting
+    surface up to the surface itself: the band's far edge *is* the section
+    chain, shared with the plate by construction rather than matched to it by
+    tolerance, and the band does not lap past the plate line.  One solid, not a
+    compound of two,
     because **the common of a shell with a solid is a curve**: handing the
     boolean two overlapping slabs produces no faces at all, which reads as "this
     support has no band to give" and silently drops the flanges.
@@ -201,15 +205,15 @@ def member_slab(support: Part.Shape, cut_surface: Part.Shape,
     with no flanges.
     """
     normal = _plane_normal(cut_surface)
-    if normal is None or width <= _PROXIMITY or depth <= _PROXIMITY:
+    if normal is None or width <= _PROXIMITY:
         return None
     widened = cut_surface.copy()
     widened.translate(normal * -width)
-    slab = widened.extrude(normal * (width + depth))
+    slab = widened.extrude(normal * width)
     return slab if slab.Faces and slab.Faces[0].Area > _MIN_AREA else None
 
 
-def band_of(support: Part.Shape, cut_surface: Part.Shape, width: float, depth: float):
+def band_of(support: Part.Shape, cut_surface: Part.Shape, width: float):
     """The bulkhead's flange band, taken out of `support`, as faces.
 
     These do double duty, which is the reason they are computed once: they are
@@ -224,21 +228,21 @@ def band_of(support: Part.Shape, cut_surface: Part.Shape, width: float, depth: f
     sit on the panel, and the right answer for one that bridges an opening, and
     only the feature knows which of the two was asked for.
     """
-    slab = member_slab(support, cut_surface, width, depth)
+    slab = member_slab(support, cut_surface, width)
     if slab is None:
         return ()
     return tuple(face for face in support.common(slab).Faces if face.Area > _MIN_AREA)
 
 
 def drape_cuts_of(support: Part.Shape, cut_surface: Part.Shape,
-                  width: float, depth: float):
+                  width: float):
     """The plate's footprint on `support`, one face per connected region.
 
     The same prism `band_of` is taken from, subtracted *from* the support's
     faces instead of intersected with them, so the two answers stay exclusive by
     construction: whatever the band occupies, the panel's own faces give up.
     """
-    slab = member_slab(support, cut_surface, width, depth)
+    slab = member_slab(support, cut_surface, width)
     if slab is None:
         return ()
     return tuple(cut for face in support.Faces
@@ -246,7 +250,7 @@ def drape_cuts_of(support: Part.Shape, cut_surface: Part.Shape,
 
 
 def make_bulkhead(support: Part.Shape, cut_surface: Part.Shape,
-                  flange_width: float, flange_depth: float):
+                  flange_width: float):
     """The bulkhead's material, as faces: plate cores first, then the flange.
 
     The plate is the filled section (R1) and the flange is the band taken out
@@ -262,6 +266,6 @@ def make_bulkhead(support: Part.Shape, cut_surface: Part.Shape,
     bulkhead.
     """
     plates = plate_of(support, cut_surface)
-    bands = band_of(support, cut_surface, flange_width, flange_depth)
+    bands = band_of(support, cut_surface, flange_width)
     _debug(f"make_bulkhead: {len(plates)} plates {len(bands)} bands")
     return plates, list(bands)

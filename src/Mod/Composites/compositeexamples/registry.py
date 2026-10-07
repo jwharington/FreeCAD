@@ -43,6 +43,10 @@ EXAMPLES = {
         "module": ".examples.seam_extraction",
         "name": "Seam extraction (two-panel overlap)",
     },
+    "bulkhead_section": {
+        "module": ".examples.bulkhead_section",
+        "name": "Bulkhead section on the fixture skin",
+    },
     "stiffener_rect_plate": {
         "module": ".examples.stiffener_rect_plate",
         "name": "Rect-section stiffener on a planar plate",

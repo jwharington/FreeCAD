@@ -15,7 +15,6 @@ from .VPCompositePart import (
 # straddles a real skin.  Both are parameters of the feature, not constants of
 # the tool — the suggestion is a starting point, never a hidden default.
 DEFAULT_FLANGE_WIDTH = 34.0
-DEFAULT_FLANGE_DEPTH = 12.0
 
 
 class BulkheadFP(CompositePartFP):
@@ -53,13 +52,6 @@ class BulkheadFP(CompositePartFP):
             "Width of the flange band taken out of the support",
         ).FlangeWidth = DEFAULT_FLANGE_WIDTH
 
-        obj.addProperty(
-            "App::PropertyLength",
-            "FlangeDepth",
-            "Dimensions",
-            "Depth of the prism that straddles the support to cut the band",
-        ).FlangeDepth = DEFAULT_FLANGE_DEPTH
-
         super().__init__(obj)
 
     def execute(self, fp):
@@ -67,7 +59,6 @@ class BulkheadFP(CompositePartFP):
             support=fp.Support.Shape,
             cut_surface=fp.IntersectSurface.Shape,
             flange_width=float(fp.FlangeWidth),
-            flange_depth=float(fp.FlangeDepth),
         )
         if not plates:
             # Loud, not silent: a cut that never closed on the support would
