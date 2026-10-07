@@ -19,6 +19,8 @@ import os
 import tempfile
 import unittest
 
+import numpy
+
 from Composites.compositestests.test_base import TestFreeCADFP
 from Composites.compositestests.test_bulkhead_section import (
     AFT_SECTIONS,
@@ -219,23 +221,6 @@ class TestBulkheadWiring(TestBulkheadFeature, TestFreeCADFP):
         self.doc.recompute()
         return laminate
 
-    def _make_panel(self, name="Skin", pitch=5.0):
-        """The fixture skin as a Composite::Shell, pitch set before the solve."""
-        from Composites.features.CompositeShell import CompositeShellFP
-        from Composites.features.Rosette import RosetteFP
-
-        support = self._make_support(f"{name}_Support")
-        panel = self.doc.addObject("Part::FeaturePython", name)
-        CompositeShellFP(panel, support)
-        panel.Laminate = self._make_laminate(f"{name}_Laminate")
-        rosette = self.doc.addObject("Part::FeaturePython", f"{name}_Rosette")
-        RosetteFP(rosette, support=(support, ["Face1"]))
-        rosette.Angle = 0.0
-        panel.Rosette = rosette
-        panel.DrapePitch = pitch
-        self.doc.recompute()
-        return panel
-
     def _make_wired_bulkhead(self, name, panel, cutter_x=210.0):
         from Composites.features.Bulkhead import BulkheadFP
 
@@ -290,45 +275,51 @@ class TestBulkheadWiring(TestBulkheadFeature, TestFreeCADFP):
         self.assertIsNone(self.doc.getObject("Wired_Band"),
                           "no half-wired joint may survive the refusal")
 
-    # The two cases below would drape the bulkhead through the FreeCAD
-    # stack, and a drape of this section took 14.7 s (plate) / timed out
-    # (panel) — minutes per test, which is a nextdrape defect, not a
-    # fixture preference.  The exact geometry and setup are captured for
-    # the draper at src/3rdParty/nextdrape/data/bulkhead-plate-drape
-    # (BREP + setup.json); these cases stay skipped until the draper
-    # fixes that, and re-run by deleting the skip.
-    @unittest.skip(
-        "nextdrape defect (bulkhead-plate-drape kit): plate drape took "
-        "14.7 s, panel drape exceeded 100 s — no bulkhead may be draped "
-        "until the draper handles this section in under a second")
-    def test_wired_bulkhead_lays_up_through_the_stack_chain(self):
-        """Plate and band shells exist, and the joint stack is wired.
+    def _make_panel(self, name="Skin"):
+        """The fixture skin as a Composite::Shell, at its own default pitch."""
+        from Composites.features.CompositeShell import CompositeShellFP
+        from Composites.features.Rosette import RosetteFP
 
-        R3's routing: the band borrows the panel's solved drape (its
-        DrapeSource), and the combined laminate is wired panel→band←plate
-        with the footprint recorded as the joint's master-side support.
+        support = self._make_support(f"{name}_Support")
+        panel = self.doc.addObject("Part::FeaturePython", name)
+        CompositeShellFP(panel, support)
+        panel.Laminate = self._make_laminate(f"{name}_Laminate")
+        rosette = self.doc.addObject("Part::FeaturePython", f"{name}_Rosette")
+        RosetteFP(rosette, support=(support, ["Face1"]))
+        rosette.Angle = 0.0
+        panel.Rosette = rosette
+        self.doc.recompute()
+        return panel
+
+    def test_wired_bulkhead_refuses_the_butt_joint_loudly(self):
+        """The seam machinery's shared-edge contract rejects the band — loudly.
+
+        F4's exclusivity makes the bulkhead band a *replacing* patch: its
+        chain edge and the remainder's are the same curve rebuilt by
+        separate booleans, so their defining curve data differs and
+        ``shares_boundary_edge`` (exact poles/knots, by design) says no.
+        The seam flow therefore refuses to combine the stack rather than
+        silently bonding across a joint it cannot measure — the one
+        unacceptable outcome is a silent wrong stack.  Whether a butt
+        joint gets its own continuity contract is the owner's fork (F4);
+        until then this pins the refusal: loud, on the feature, and with
+        no half-built stack behind it.
         """
         panel = self._make_panel()
         bulkhead = self._make_wired_bulkhead("Bulkhead", panel)
-        plate = self.doc.getObject("Bulkhead_Plate")
-        band = self.doc.getObject("Bulkhead_Band")
-        self.assertIsNotNone(plate, "no plate shell was built")
-        self.assertIsNotNone(band, "no band shell was built")
-        self.assertIs(band.DrapeSource, panel,
-                      "the band must borrow the panel's solved drape")
+        self.assertIn("Invalid", bulkhead.State,
+                      "the refused butt joint must fail loudly on the feature")
+        self.assertIn("refused the joint", str(bulkhead.Proxy.last_error),
+                      "the feature must carry the refusal, not sit silent")
+        # The member shells exist (built before the refusal); the joint
+        # stack does not: a refused seam must not carry combined layers.
         scl = self.doc.getObject("Bulkhead_CombinedLaminate")
-        self.assertIsNotNone(scl, "no combined laminate on the joint")
-        self.assertIs(scl.Master, panel)
-        self.assertIs(scl.Attachment, plate)
-        self.assertIs(scl.SeamRegion, band)
-        remainder = self.doc.getObject("Bulkhead_RemainderSupport")
-        self.assertIsNotNone(remainder, "the footprint was not recorded")
-        self.assertTrue(scl.Layers, "no stack reached the joint")
+        self.assertIsNotNone(scl, "the refusal happened at the SCL")
+        self.assertIn("Invalid", scl.State,
+                      "the SCL must carry the seam-contract failure")
+        self.assertFalse(getattr(scl, "Layers", None),
+                         "a refused seam must not carry a combined stack")
 
-    @unittest.skip(
-        "nextdrape defect (bulkhead-plate-drape kit): same drape cost as "
-        "the wired case above — the seam rule itself is unit-tested in "
-        "test_bulkhead_section against the same geometry")
     def test_band_seam_subs_land_on_the_section_chain(self):
         """The seam rule names only edges that lie on a section chain.
 
@@ -350,10 +341,22 @@ class TestBulkheadWiring(TestBulkheadFeature, TestFreeCADFP):
         chains = section_chains(bulkhead.Support.Shape,
                                 bulkhead.IntersectSurface.Shape)
         self.assertTrue(chains, "the fixture cutter must produce a chain")
+        # Same medicine as the rule itself: coincident-curve extrema never
+        # return, so the oracle measures point-to-point against a
+        # discretised chain cloud (finer than the rule's own: 0.5 mm).
+        cloud = numpy.array(
+            [[p.x, p.y, p.z]
+             for chain in chains
+             for p in chain.discretize(Number=max(2, int(chain.Length / 0.5)))])
         for name in subs:
             edge = support.Shape.getElement(name)
+            samples = numpy.array(
+                [[p.x, p.y, p.z]
+                 for p in edge.discretize(Number=max(2, int(edge.Length / 1.0)))])
+            deltas = samples[:, numpy.newaxis, :] - cloud[numpy.newaxis, :, :]
+            nearest = numpy.sqrt((deltas * deltas).sum(axis=-1)).min(axis=1)
             self.assertLessEqual(
-                min(edge.distToShape(chain)[0] for chain in chains), 1e-6,
+                float(nearest.max()), 1.0,
                 f"{name} names an edge that lies on no section chain")
 
 

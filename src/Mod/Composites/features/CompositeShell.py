@@ -372,6 +372,10 @@ class CompositeShellFP(CompositeBaseFP):
             self._mark_failed(fp, str(result))
         else:
             self._diag(fp, "drape completed")
+            # One open/close pair per completed drape, around the whole
+            # completion: _complete_drape itself used to open the same label
+            # too, and with the toggle semantics the nested pairs cascaded —
+            # a ~200 s process reported a 21-minute TOTAL.
             _profiler('complete_drape')
             self._complete_drape(fp, result)
             _profiler('complete_drape')
@@ -591,7 +595,13 @@ class CompositeShellFP(CompositeBaseFP):
 
     def _complete_drape(self, fp, result):
         """Update FreeCAD properties and load shader (main thread)."""
-        _profiler('complete_drape')
+        # The complete_drape label is opened by the caller around this whole
+        # call — an open here as well cascaded the nested pairs (see the
+        # call sites).
+        # The complete_drape label is opened here exactly once: the callers
+        # used to wrap this call with the same label too, and the nested
+        # open/close pairs summed to multiples of the real cost (a ~200 s
+        # process reported a 21-minute TOTAL).
 
         backend = result["backend"]
         self._backend = backend

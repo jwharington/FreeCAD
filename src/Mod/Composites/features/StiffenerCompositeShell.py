@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 
 import Part
 
+import numpy
+
 from ..tools.bulkhead_section import section_chains
 from ..util.geometry_util import shape_fingerprint
 from .CompositeShell import is_composite_shell, is_isotropic_shell
@@ -101,10 +103,28 @@ def bulkhead_band_seam_subs(foot_shell, fp):
     if shape is None or not getattr(shape, "Edges", None):
         return (support, ["Face1"])
     chains = section_chains(fp.Support.Shape, fp.IntersectSurface.Shape)
-    subs = [
-        f"Edge{i + 1}" for i, edge in enumerate(shape.Edges)
-        if any(edge.distToShape(chain)[0] <= 1e-6 for chain in chains)
-    ]
+    # Coincident-curve geometry (a chain edge IS one of the band's edges)
+    # sends OCCT's extrema into a pathological search that never returns,
+    # so identification runs on sampled points: each chain discretised at
+    # ~1 mm, each candidate edge sampled at ~2 mm, distances point-to-point.
+    # An edge lies on the chain when every sample is within _SEAM_TOL of the
+    # chain point cloud — the nearest non-chain boundary sits `width` away
+    # (34 mm), so a 1 mm tolerance separates the two by construction.
+    cloud = numpy.array(
+        [[p.x, p.y, p.z]
+         for chain in chains
+         for p in chain.discretize(Number=max(2, int(chain.Length / 1.0)))])
+    if not len(cloud):
+        return (support, ["Edge1"])
+    subs = []
+    for i, edge in enumerate(shape.Edges):
+        samples = numpy.array(
+            [[p.x, p.y, p.z]
+             for p in edge.discretize(Number=max(2, int(edge.Length / 2.0)))])
+        deltas = samples[:, numpy.newaxis, :] - cloud[numpy.newaxis, :, :]
+        nearest = numpy.sqrt((deltas * deltas).sum(axis=-1)).min(axis=1)
+        if bool(nearest.max() <= _SEAM_TOL_MM):
+            subs.append(f"Edge{i + 1}")
     if not subs:
         subs = ["Edge1"]
     return (support, subs)
@@ -128,6 +148,11 @@ BULKHEAD_ROLES = MemberRoles(
     ),
     seam_subs=bulkhead_band_seam_subs,
 )
+
+# Point-identification tolerance of the seam rule (mm): the chain cloud is
+# spaced at 1 mm (so an on-chain sample sits within ~0.5 mm of it) and the
+# nearest non-chain band boundary is one flange width away.
+_SEAM_TOL_MM = 1.0
 
 
 def is_stiffener_composite(fp) -> bool:
@@ -508,6 +533,8 @@ def _build_foot_strip(doc, fp, panel, web_shell, member, roles):
     foot_shell = _ensure_shell_child(doc, fp, roles.foot_suffix)
     foot_shape = _apply_trim_tool(fp, Part.makeCompound(member.foot_faces))
     _set_pitch(foot_shell, _scaled_pitch(member.foot_width))
+    import time as _time
+    _t = _time.perf_counter()
     # The foot's laminate is the combined stack (SCL): the panel's
     # directional plies continue under it plus the ring plies — the foot is
     # NOT quasi-isotropic.  It does not run its own drape solve: the
@@ -522,9 +549,13 @@ def _build_foot_strip(doc, fp, panel, web_shell, member, roles):
     # The final update below sets the combined stack (SCL).
     foot_shell.Proxy.update(foot_shell, foot_shape, panel.Laminate, None,
                             recenter_lcs=False)
+    print("[wire] %s band_seed_update %.1fs" % (fp.Name, _time.perf_counter() - _t), flush=True)
+    _t = _time.perf_counter()
     foot_shell.DrapeSource = panel
     if not is_isotropic_shell(panel):
         _ensure_draped(panel)
+    print("[wire] %s panel_drape_ready %.1fs" % (fp.Name, _time.perf_counter() - _t), flush=True)
+    _t = _time.perf_counter()
 
     # Transfers (D8): a QI side has no fibre frame to translate — the
     # panel → foot transfer is kept whenever the panel is draped, the
@@ -542,12 +573,15 @@ def _build_foot_strip(doc, fp, panel, web_shell, member, roles):
     scl = _ensure_combined_laminate(
         doc, fp, panel, web_shell, foot_shell, panel_foot, stiffener_foot, roles
     )
+    print("[wire] %s joint_transfers %.1fs" % (fp.Name, _time.perf_counter() - _t), flush=True)
+    _t = _time.perf_counter()
 
     # The foot's laminate stays the combined stack (SCL — see above) and it
     # never drapes its own solve: its drape coordinates come from the
     # support's solved drape over the band, via the DrapeSource link.
     foot_shell.Proxy.update(foot_shell, foot_shape, scl, panel_foot)
     foot_shell.DrapeSource = panel
+    print("[wire] %s band_final_update %.1fs" % (fp.Name, _time.perf_counter() - _t), flush=True)
     for obj in (foot_shell, panel_foot, stiffener_foot, scl):
         if obj is not None:
             _unhide(obj)
@@ -706,6 +740,16 @@ def _ensure_combined_laminate(
         # difference (PRD Q4).  The seam flow's default stays untouched.
         scl.CombinationModel = CombinationModel.StackAttachmentOverMaster
     scl.recompute()
+    if "Invalid" in getattr(scl, "State", ()):
+        # FreeCAD swallows a child's execute exception and marks the child
+        # Invalid; without this the bulkhead would read Up-to-date beside a
+        # refused joint — half-wired silence.  Propagate the refusal so the
+        # member fails loudly too (the SCL's own State carries the seam
+        # contract detail).
+        raise ValueError(
+            f"{_feature_label(fp, roles)}: the combined laminate refused "
+            f"the joint ({scl.Name} is Invalid — seam contract detail on "
+            f"that object)")
     return scl
 
 

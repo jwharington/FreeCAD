@@ -85,7 +85,28 @@ def _closest_approach(side_shape, seam_shape) -> float:
         for edge_b in seam_shape.Edges:
             if _bbox_gap(box_a, edge_b.BoundBox) > best:
                 continue
-            best = min(best, edge_a.distToShape(edge_b)[0])
+            best = min(best, _sampled_edge_gap(edge_a, edge_b))
+            if best == 0.0:
+                return best
+    return best
+
+
+def _sampled_edge_gap(edge_a, edge_b) -> float:
+    """Closest approach of two edges, measured on sampled points.
+
+    The edge-pair extrema this replaces never returns on coincident dense
+    curves — a butt joint's shared cut edge is exactly that (the band's
+    chain edge and the remainder's are the same curve rebuilt by separate
+    booleans), and the diagnostic needs zero versus nonzero, not an exact
+    figure.  Samples at ~1 mm bound the reported gap within about half a
+    millimetre of the true closest approach.
+    """
+    points_b = edge_b.discretize(Number=max(2, int(edge_b.Length / 1.0)))
+    best = float("inf")
+    for point_a in edge_a.discretize(Number=max(2, int(edge_a.Length / 1.0))):
+        nearest = min(point_a.distance(point_b) for point_b in points_b)
+        if nearest < best:
+            best = nearest
             if best == 0.0:
                 return best
     return best
