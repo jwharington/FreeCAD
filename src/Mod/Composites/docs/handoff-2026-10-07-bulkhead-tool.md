@@ -1,5 +1,14 @@
 # Handover — a generic Bulkhead feature (2026-10-07)
 
+> **Resolution (2026-10-08).** This feature is built and tested — the
+> section layer, the feature layer, and the composite wiring are all
+> green headless (`test_bulkhead_section`, `test_bulkhead`, plus the
+> example suite; the composite flow is shared with the stiffener's).
+> Every design fork in §4 is settled; the settlements are recorded
+> inline under each fork and in `bulkhead-design.md`, which remains the
+> measurement-checked record. Where this handover and that record
+> disagree, the design record wins.
+
 **Scope:** a new, purely generic capability for this workbench
 (`src/Mod/Composites/…`). No consumer-specific behaviour belongs here or
 in this document; whatever downstream scripts eventually call this tool
@@ -290,6 +299,8 @@ freecad.py` and `test_compositeexamples.py` already show the two
 
 ## 4. Design forks to settle before building
 
+> **All settled 2026-10-08 — see each fork's resolution.**
+
 - **F1 — multi-boundary fill.** Plane ∩ support may yield several
   closed wires (a plane crossing a saddle at two depths). Fill as one
   face with inner boundaries, or one plate per loop, or per-face shells
@@ -301,6 +312,9 @@ freecad.py` and `test_compositeexamples.py` already show the two
   unsewn, so this fork is not about the shell chain — it is about
   where the **rosette and LCS land** (§2.1 cost 3) and whether the
   hole test still fires on a face with inner wires.
+  *Resolution: one filled face per closed chain (`plate_of`); the
+  fixture never produced a multi-boundary section, and open chains are
+  skipped, not chorded shut.*
 - **F2 — depth and flange measurement.** Is the plate depth d measured
   from the support (total stand-off including the flange legs, so a
   flange as wide as the suggested 34 eats into d) or beyond it (flange
@@ -311,6 +325,10 @@ freecad.py` and `test_compositeexamples.py` already show the two
   forces: `flange_width` is a *band width*, and both pitch scalars are
   derived from it (`_set_pitch`/`_scaled_pitch`, §2.1), so the two
   knobs are not as orthogonal as they look — say which one `d` includes.
+  *Resolution: there is no `depth`. The one-sided prism made stand-off
+  meaningless; `FlangeWidth` is the feature's only shape parameter and
+  feeds both pitch scalars (34 mm → 8.5 mm drape pitch). `MirrorX`
+  selects the side.*
 - **F3 — one member or per-face segments.** Where the boundary crosses
   several support faces of different local thickness/normal, choose
   between one continuous plate (one `Composite::Shell`, per-face
@@ -321,6 +339,10 @@ edges`) fed consistently either way. Two unknowns to settle **on §6's
   flange band (not on either of its edges) still reads as one seat
   (§2.1 cost 2), and whether a member whose boundary closes in void
   can be solved at all by the mechanism that assumes a seat.
+  *Resolution: settled on the fixture — a seam-crossing chain reads as
+  one closed chain and the band spanning it comes out multi-face; a
+  cut clear of the support produces no chain and fails loudly. The
+  member is one plate face per closed chain, no segmentation.*
 - **F4 — re-drape interaction and trim polarity.** `TrimTool`'s purpose
   is to make members **stop at** openings; a plate that spans an
   opening needs the opposite (fill across it, keep the boundary
@@ -342,8 +364,24 @@ edges`) fed consistently either way. Two unknowns to settle **on §6's
   shell), and it decides F1/F3 rather than following them. A solid
   keeps the plate's boundary *inside* the member — which is the
   geometry that `fem-shell-mesh-continuity.md` §2 warns about
+  *Resolution: band, not solid — `band_of` is `support.common(slab)`,
+  exactly the stiffener's `_foot_bands` construction. The wide-band
+  edge cases are real and measured: a band wider than the local chamber
+  still meets the support, and a band spanning a seam comes out
+  multi-face (both pinned in `test_bulkhead_section`); a cut clear of
+  the support yields no chain and the feature fails loudly.*
   (references must lie on geometry **in the mesh**), so the mesh
   consequence is part of the fork, not an afterthought.
+  *Resolution: no `TrimTool` was copied (wrong polarity). The band
+  replaces the patch it occupies (F4's exclusivity: band + remainder =
+  the support, exactly), and the joint is treated exactly as the
+  stiffener's — the plate reads its boundary from the band's own wall
+  edge (the stiffener's web-row construction), so the shared curve is
+  identical rather than tolerance-matched, and the seam machinery
+  accepts the joint: transfers solved, combined stack composed through
+  `get_model` (4 plies on the fixture). The re-drape rule stands: the
+  panel drapes once, on its uncut support; the footprint is recorded as
+  the joint's master-side support.*
 
 ## 5. Constraints and lessons already paid for
 

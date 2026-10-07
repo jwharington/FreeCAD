@@ -1,14 +1,20 @@
 # Bulkhead section generation — design record
 
-Status: **section and feature layers implemented and tested; the composite
-wiring (Laminate → drape → stack model) is now built — on the shared
-member flow, `wire_composite_member` with `BULKHEAD_ROLES` — and it is
-held shut by measurement, not by assumption: the two wired fixture cases
-skip until the draper handles this section, because a drape of it took
-14.7 s (plate) and over 100 s (panel). The exact geometry and setup are
-captured as a reproducer kit at
-`src/3rdParty/nextdrape/data/bulkhead-plate-drape/` (BREP + setup.json,
-regenerable by `compositestests/inspect_bulkhead_drape_case.py`).**
+Status: **section, feature and composite layers all implemented and
+tested headless — the bulkhead wires through the shared member flow
+(`wire_composite_member` with `BULKHEAD_ROLES`): plate and band draped
+shells, the band borrowing the panel's solved drape, solved transfers,
+and the combined stack composed through `get_model` (4 plies on the
+fixture: panel plies + plate plies).** The draper cost that once held
+the wired cases shut was fixed at the source: nextdrape now reads a
+boundary as a polyline at 25% of the fabric step (plate drape 14.8 s →
+0.55 s; the reproducer kit and bounded test live at
+`src/3rdParty/nextdrape/data/bulkhead-plate-drape/`). Two wiring cases
+run un-skipped and pass; the one still-open item is the *panel* solve
+over the full sewn skin (17.7 s, the loft's boundary-link trap storm,
+pinned red against a 2 s budget in nextdrape's
+`test_bulkhead_skin_drape.cpp`). GUI visual confirmation has not been
+done (owner's standing rule: headless passes are claimed, GUI not).
 This records what was *measured* about the fixture, and it was written after the
 measurement. `handoff-2026-10-07-bulkhead-tool.md` is the input specification;
 where the two disagree, this file is the one that was checked against geometry.
@@ -177,9 +183,13 @@ carry: its band is `width` deep by construction, and the wiring hands that
 machinery `FlangeWidth` itself for both pitch scalars (`_scaled_pitch(34) →
 8.5 mm`, inside the clamp; the gate `34 < 3·34` passes). What the clamp
 question *meant* turned out to matter more than the clamp: at 8.5 mm the
-fixture drapes still took 14.7 s (plate) and exceeded 100 s (panel) — the
-cost tracks the sampled boundary curve, not the patch count, so the
-reproducer kit rather than a knob change is where this now stands.
+plate drape still took 14.7 s — the cost tracked the boundary curve as
+read by the draper, not the patch count, and the fix landed in nextdrape
+(the boundary is now read as a polyline at 25% of the fabric step; the
+plate solves in 0.55 s). The joint's acceptance has the same moral: the
+plate reads its boundary from the band's own wall edge — the stiffener's
+web-row construction — so the seam machinery sees one shared curve, not
+two boolean rebuilds of one intersection matched by tolerance.
 
 **`_same_curve` compares curves geometrically, not by `isSame`.** A sewn seam is
 *one* edge whose `ancestorsOfType` lists both faces; an unsewn one is *two*
