@@ -76,58 +76,139 @@ def _region_box(region: Any) -> tuple[float, float, float, float]:
     )
 
 
+def _bilinear(corners, s, t):
+    """Point (x, y, z, u, v) inside a cell, from its four cyclic corners."""
+    w = ((1.0 - s) * (1.0 - t), s * (1.0 - t), s * t, (1.0 - s) * t)
+    return tuple(sum(w[k] * corners[k][i] for k in range(4))
+                 for i in range(5))
+
+
+def _subdivide_into_region(pos, tex, quads, box, tol):
+    """Refine cells bilinearly until sub-cells land inside the region.
+
+    The fallback for a region narrower than the lattice — a 34 mm seat
+    band against a 50 mm skin lattice can fall between rows, leaving the
+    fast keep with nothing.  Cells meeting the region are subdivided in
+    place, positions and texture coordinates interpolated bilinearly (so
+    the weave is the source's field, sampled finer), and only sub-cells
+    whose centre is inside the region are kept: nothing is painted outside
+    the member's own faces.  Returns ``(factor, [(parent_row, corners)])``
+    or ``(None, [])`` when no factor up to 16 lands a sub-cell inside.
+    """
+    for factor in (2, 4, 8, 16):
+        cells = []
+        for row, ids in enumerate(quads):
+            ids = [int(i) for i in ids]
+            corners = [(float(pos[i][0]), float(pos[i][1]), float(pos[i][2]),
+                        float(tex[i][0]), float(tex[i][1])) for i in ids]
+            xs = [c[0] for c in corners]
+            ys = [c[1] for c in corners]
+            if (max(xs) < box[0] or min(xs) > box[1]
+                    or max(ys) < box[2] or min(ys) > box[3]):
+                continue
+            for i in range(factor):
+                s0, s1 = i / factor, (i + 1) / factor
+                for j in range(factor):
+                    t0, t1 = j / factor, (j + 1) / factor
+                    sub = [_bilinear(corners, s, t) for s, t in
+                           ((s0, t0), (s1, t0), (s1, t1), (s0, t1))]
+                    cx = sum(p[0] for p in sub) / 4.0
+                    cy = sum(p[1] for p in sub) / 4.0
+                    if (box[0] - tol <= cx <= box[1] + tol
+                            and box[2] - tol <= cy <= box[3] + tol):
+                        cells.append((row, sub))
+        if cells:
+            return factor, cells
+    return None, []
+
+
 def drape_result_over_region(result: dict, region: Any) -> tuple[dict, Any]:
     """Restrict a solved drape result to ``region``'s surface region.
 
-    The lap-joint foot band is a cut of the support's own surface, and the
-    support's common drape covers it continuously — so the band's weave is
-    the solved drape's nodes inside the band, and the band's quads are the
-    solved quads whose four nodes are all inside.  The region filter is the
-    band's own vertex bounding box (inflated by the placement slack): for a
-    station-plane band the extreme points are vertices of the band's trim
-    arcs, so the box is tight, and the master's lattice spacing (the pitch)
-    is far coarser than the slack, so the box selects exactly the band's
-    nodes.  Returns the filtered result dict and the old→new node index map
-    (new_index = -1 where dropped).
+    The lap-joint member is a cut of the support's own surface, and the
+    support's common drape covers it continuously — so the member's weave
+    is the solved drape over the member's region, borrowed from the source
+    and never re-solved here.
+
+    A cell is kept when its CENTRE lies in the region, so boundary cells
+    come whole instead of being dropped for a corner outside and the weave
+    reaches the region's edge.  When no cell centre falls in the region at
+    all — a member narrower than the lattice, landing between rows — the
+    cells that meet it are subdivided bilinearly until sub-cells do
+    (:func:`_subdivide_into_region`): the fast keep, then a slow local
+    refinement, both inside the member's own faces.
+
+    The region is its own vertex bounding box (inflated by the placement
+    slack).  Returns the filtered result dict and the old→new node index
+    map (new_index = -1 where dropped).
     """
     x_min, x_max, y_min, y_max = _region_box(region)
     tol = 0.5  # the placement slack: boundary-row nodes stay in
+    box = (x_min, x_max, y_min, y_max)
 
     pos = np.asarray(result["node_positions"], dtype=float)
-    mask = (
-        (pos[:, 0] >= x_min - tol) & (pos[:, 0] <= x_max + tol)
-        & (pos[:, 1] >= y_min - tol) & (pos[:, 1] <= y_max + tol)
-    )
-    n_old = pos.shape[0]
-    old_to_new = np.full(n_old, -1, dtype=int)
-    old_to_new[mask] = np.cumsum(mask)[mask] - 1
-
     tex = np.asarray(result["tex_coords"], dtype=float)
-    filtered = dict(result)
-    filtered["node_positions"] = pos[mask]
-    filtered["tex_coords"] = tex[mask]
+    nodes: list = []
+    coords: list = []
+    index: dict = {}
 
-    kept_quads = []
-    kept_rows = []
-    strain_keys = [
-        key for key in ("warp_strain", "weft_strain", "shear_angle")
-        if key in result
-    ]
-    strain_arrays = [
-        np.asarray(result[key], dtype=float) for key in strain_keys
-    ]
+    def node_of(position, uv):
+        """Index of a node in the filtered arrays, created once."""
+        key = (round(position[0], 6), round(position[1], 6),
+               round(position[2], 6))
+        i = index.get(key)
+        if i is None:
+            i = len(nodes)
+            nodes.append([float(position[0]), float(position[1]),
+                          float(position[2])])
+            coords.append([float(uv[0]), float(uv[1])])
+            index[key] = i
+        return i
+
+    kept_quads: list = []
+    kept_rows: list = []
     for row, quad in enumerate(result["quads"]):
         ids = [int(i) for i in quad]
-        if all(mask[i] for i in ids):
-            kept_quads.append([int(old_to_new[i]) for i in ids])
-            kept_rows.append(row)
+        cx = sum(float(pos[i][0]) for i in ids) / len(ids)
+        cy = sum(float(pos[i][1]) for i in ids) / len(ids)
+        if not (x_min - tol <= cx <= x_max + tol
+                and y_min - tol <= cy <= y_max + tol):
+            continue
+        kept_quads.append([node_of(pos[i], tex[i]) for i in ids])
+        kept_rows.append(row)
+
+    refined = None
+    if not kept_quads:
+        factor, cells = _subdivide_into_region(pos, tex, result["quads"],
+                                               box, tol)
+        if factor is not None:
+            refined = factor
+            for parent, sub in cells:
+                kept_quads.append(
+                    [node_of((c[0], c[1], c[2]), (c[3], c[4])) for c in sub])
+                kept_rows.append(parent)
+
+    old_to_new = np.full(pos.shape[0], -1, dtype=int)
+    for i in range(pos.shape[0]):
+        key = (round(float(pos[i][0]), 6), round(float(pos[i][1]), 6),
+               round(float(pos[i][2]), 6))
+        if key in index:
+            old_to_new[i] = index[key]
+
+    filtered = dict(result)
+    filtered["node_positions"] = nodes
+    filtered["tex_coords"] = coords
     filtered["quads"] = kept_quads
-    for key, arr in zip(strain_keys, strain_arrays):
-        filtered[key] = arr[kept_rows] if kept_rows else arr[:0]
+    for key in ("warp_strain", "weft_strain", "shear_angle"):
+        if key in result:
+            arr = np.asarray(result[key], dtype=float)
+            filtered[key] = arr[kept_rows] if kept_rows else arr[:0]
 
     diag = dict(result.get("diagnostics") or {})
-    diag["total_nodes"] = int(mask.sum())
+    diag["total_nodes"] = len(nodes)
     diag["quads"] = len(kept_quads)
+    if refined:
+        diag["refined"] = refined
     filtered["diagnostics"] = diag
     return filtered, old_to_new
 

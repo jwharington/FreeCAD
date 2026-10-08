@@ -560,17 +560,15 @@ class CompositeShellFP(CompositeBaseFP):
         print("[drape] %s: borrow done in %.2fs (%d nodes, %d quads)" % (
             fp.Name, _time.perf_counter() - _t0,
             len(filtered["node_positions"]), len(filtered["quads"])), flush=True)
-        # An empty overlay is a valid borrow: at the support's pitch the
-        # band can hold no full solved cell (the fuselage's 34 mm seat band
-        # vs the 50 mm skin lattice) — the panel's own weave renders the
-        # band, and the band's fibre frames stay answerable pointwise by
-        # the source's locator (get_lcs delegates).  The foot's own lattice
-        # would only duplicate the panel's weave here.
+        # The borrow's own filter keeps boundary cells whole (a cell whose
+        # centre is in the region) and refines locally when none lands in
+        # it, so a member narrower than the lattice — the fuselage's 34 mm
+        # seat band against the 50 mm skin lattice — still gets a weave of
+        # its own instead of rendering bare beside its panel.  An empty
+        # result therefore means the region meets no solved cell at all:
+        # the borrow has nothing to draw, and says so.
         if len(filtered["quads"]) == 0:
-            self._diag(
-                fp, "borrow: no source cell lies fully inside the region; "
-                    "the weave is the source's own"
-            )
+            self._diag(fp, "borrow: the region meets no solved cell")
 
         # Mirror the no-laminate sync: the borrowed weave rides the
         # support's geometry and placement.
