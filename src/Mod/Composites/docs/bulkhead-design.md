@@ -35,9 +35,19 @@ trim-agnostic to laminate wiring.
   the core level. Silent plate-dropping exists only on the design-tool side
   (`sections_from_plan()` in the RTOA tree skips `plate=None` with a warning).
 - `compositestests/test_bulkhead_section.py`, `test_bulkhead.py` — chain, band,
-  smear tests. **No test references TrimTool** (`grep -rn TrimTool
-  compositestests/` → only property-list hits): the trim path has never been
-  exercised, because it is not wired.
+  smear and feature tests. TrimTool is pinned by `TestBulkheadTrim` in
+  `test_bulkhead.py` (four cases: untrimmed control, trimmed member stops
+  at the opening, live property, loud whole-member refusal).
+- `compositeexamples/examples/bulkhead_section.py` — three sections:
+  the section-layer member (un-mirrored and mirrored, footprint cut out of
+  the skins), the same shape through the `BulkheadFP` feature, and
+  `build_trimmed` — a `BayBox` void with `TrimTool` set, visually
+  confirmed in the GUI (trimmed bulkhead red, opening through the plate
+  ring).  The example attaches `ViewProviderBulkhead` to its feature
+  objects the same way the command path does — a bare `addObject` example
+  that skips that attach leaves `ViewObject.Proxy = None`: default part
+  feature in the tree, no icon, cannot be enabled for display (that
+  defect was seen in the GUI and fixed 2026-10-08).
 
 ## The gap (three parts) — closed as of 2026-10-08 above
 
