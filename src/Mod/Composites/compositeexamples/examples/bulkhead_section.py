@@ -13,17 +13,32 @@ but hugging the *far* side of the plate: what the `MirrorX` property is
 for).  Skin area = Remainder + Flange, exactly.
 
 Section II reaches the same shape through the `BulkheadFP` feature, un-
-mirrored and mirrored.  With no Laminate linked the feature is pure
-geometry; the composite wiring (laminate drape, rosettes, stack model)
-is not built yet and this file does not pretend it is.
+mirrored and mirrored, with no Laminate linked — pure geometry.  Section
+III declares the feature over the bay: a void solid (`BayBox`) and the
+same feature with `TrimTool = BayBox`, so the plate and band stop at
+the opening's edges while the footprint stays cut from the uncut skin
+(the drape surface never moves).
 """
 
 import FreeCAD
 import Part
 
-from ...features.Bulkhead import BulkheadFP
+from ...features.Bulkhead import BulkheadFP, ViewProviderBulkhead
 from .. import fixture_bulkhead as fixture
 from ...tools import bulkhead_section as section
+
+
+def _attach_view_provider(member):
+    """Attach the bulkhead's own ViewProvider when a GUI is up.
+
+    The command path does this (`cls_vp(obj.ViewObject)`); a bare
+    `addObject` example must do the same, or the GUI object carries no
+    VP proxy — the tree shows a default part feature, the icon is
+    missing, and the object cannot be enabled for display.
+    """
+    view = getattr(member, "ViewObject", None)
+    if view is not None and getattr(view, "Proxy", None) is None:
+        ViewProviderBulkhead(view)
 
 CUT_STATION = 210.0
 FLANGE_WIDTH = 34.0
@@ -41,10 +56,12 @@ def _paint(obj, colour):
     if view is None:
         return
     try:
-        view.DisplayMode = "Flat Lines"
         view.ShapeColor = colour
         view.Transparency = 60
-    except (AttributeError, TypeError):
+        # Display mode is per-view-provider: some members' VPs do not
+        # carry "Flat Lines", and the enum raise must not eat the tint.
+        view.DisplayMode = "Flat Lines"
+    except (AttributeError, TypeError, ValueError):
         pass
 
 
@@ -137,6 +154,7 @@ def build_with_feature(doc=None, sewn=False, **_ignored):
 
     member = doc.addObject("Part::FeaturePython", "Bulkhead")
     BulkheadFP(member, support=support, cut_surface=cutter)
+    _attach_view_provider(member)
     doc.recompute()
     # The plate lies inside the skin and the band lies flat on it, so both are
     # invisible against an opaque grey tube: tint the member, fade the skin.
@@ -147,4 +165,44 @@ def build_with_feature(doc=None, sewn=False, **_ignored):
     cutter_view = getattr(cutter, "ViewObject", None)
     if cutter_view is not None:
         cutter_view.Visibility = False
+    return doc
+
+
+def build_trimmed(doc=None, sewn=False, **_ignored):
+    """Section III — the bulkhead declared over an opening, trimmed by it.
+
+    The bay box stands in for an engine-bay solid: with `TrimTool` set,
+    the plate and band stop at the opening's edges (the trim applies to
+    the member's faces before the feature's shape is built); the drape
+    cut surface stays on the uncut skin.  The untrimmed feature from
+    Section II is the before picture; this is the after.
+    """
+    doc = doc or FreeCAD.newDocument("Composites_BulkheadTrimmed")
+    support = doc.addObject("Part::Feature", "Skin")
+    support.Shape = fixture.bulkhead_fixture(sewn=sewn)
+    cutter = doc.addObject("Part::Feature", "StationPlane")
+    cutter.Shape = fixture.station_plane(CUT_STATION)
+
+    bay = doc.addObject("Part::Feature", "BayBox")
+    box = support.Shape.BoundBox
+    bay.Shape = Part.makeBox(120.0, 2.0 * FLANGE_WIDTH, box.ZLength,
+                             FreeCAD.Vector(CUT_STATION - 60.0,
+                                            -FLANGE_WIDTH, box.ZMin))
+    _paint(bay, (0.30, 0.30, 0.30))
+
+    member = doc.addObject("Part::FeaturePython", "Bulkhead")
+    BulkheadFP(member, support=support, cut_surface=cutter)
+    _attach_view_provider(member)
+    member.TrimTool = bay
+    doc.recompute()
+    _paint(member, (0.85, 0.10, 0.10))
+    skin_view = getattr(support, "ViewObject", None)
+    if skin_view is not None:
+        skin_view.Transparency = 70
+    cutter_view = getattr(cutter, "ViewObject", None)
+    if cutter_view is not None:
+        cutter_view.Visibility = False
+    bay_view = getattr(bay, "ViewObject", None)
+    if bay_view is not None:
+        bay_view.Transparency = 80
     return doc
