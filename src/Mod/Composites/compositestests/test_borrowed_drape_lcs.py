@@ -30,6 +30,7 @@ churn of ``TestFreeCADFP`` is deliberately not used.
 
 import os
 import sys
+import tempfile
 import unittest
 
 import FreeCAD  # noqa: E402
@@ -211,6 +212,106 @@ class TestBorrowedDrapeFrame(
                     a, b, delta=FRAME_TOL,
                     msg="borrowed texture coordinate differs from the source",
                 )
+
+
+class TestBorrowedDrapeRestore(
+    test_bulkhead.TestBulkheadFeature, test_base.TestFreeCADFP
+):
+    """The restored session keeps the source's locator for a borrowed shell.
+
+    The bug these tests hold: onDocumentRestored rebuilt the backend from
+    the member's own persisted arrays with a fresh engine, which developed
+    the strip as a pattern of its own - offset, mirrored v - so the
+    reopened document drew the cells in the source's UV system while the
+    per-vertex lookups (which the shader consumes) answered from a foreign
+    one.  Two UV systems on one shell.
+    """
+
+    save_fcstd = False  # the round trip saves its own copy below
+
+    _make_laminate = test_bulkhead.TestBulkheadWiring._make_laminate
+    _make_panel = test_bulkhead.TestBulkheadWiring._make_panel
+    _make_wired_bulkhead = test_bulkhead.TestBulkheadWiring._make_wired_bulkhead
+
+    def _roundtrip(self, path):
+        """Build panel + band, save, close, reopen; return the pair."""
+        panel = self._make_panel()
+        self._make_wired_bulkhead("Bulkhead", panel)
+        band = self.doc.getObject("Bulkhead_Band")
+        self.assertIsNotNone(band, "the fixture built no band shell")
+        # The wrappers die with the document - keep names, not objects.
+        names = (panel.Name, band.Name)
+        self.doc.saveAs(path)
+        doc_name = self.doc.Name
+        self.doc = None  # tearDown must not double-close
+        FreeCAD.closeDocument(doc_name)
+        reopened = FreeCAD.openDocument(path)
+        self.addCleanup(FreeCAD.closeDocument, reopened.Name)
+        return reopened.getObject(names[0]), reopened.getObject(names[1])
+
+    def test_reopened_borrower_serves_the_source_pattern(self):
+        """The restored band's lookups are the panel's, point for point."""
+        path = os.path.join(tempfile.gettempdir(), "borrowed_restore.FCStd")
+        panel, band = self._roundtrip(path)
+        self.assertEqual(
+            type(band.Proxy._backend).__name__,
+            "PersistedBorrowedDrapeBackend",
+            "a borrowed shell must not reload its strip as its own pattern",
+        )
+        self.assertEqual(
+            type(panel.Proxy._backend).__name__,
+            "PersistedDrapeBackend",
+            "the source reloads its own full solved lattice",
+        )
+        self.assertIs(
+            band.Proxy._backend._source_backend(), panel.Proxy._backend,
+            "the delegated locator must be the source's restored backend",
+        )
+        for fractions in (((0.5, 0.5),), ((0.05, 0.05), (0.95, 0.95))):
+            for u_frac, v_frac in fractions:
+                point, _, _ = test_drape_lcs_frame._FrameFixture._face_frame(
+                    panel, u_frac, v_frac
+                )
+                got = band.Proxy._backend.get_tex_coord_at_point(point, 0)
+                want = panel.Proxy._backend.get_tex_coord_at_point(point, 0)
+                self.assertIsNotNone(
+                    want, "the source did not locate its own pattern"
+                )
+                self.assertIsNotNone(
+                    got,
+                    "the restored borrower did not locate a point the "
+                    "source located",
+                )
+                for a, b in zip(got, want):
+                    self.assertAlmostEqual(
+                        a, b, delta=FRAME_TOL,
+                        msg="restored borrowed lookup differs from the "
+                            "source's pattern",
+                    )
+
+    def test_reopened_borrower_keeps_its_own_cells(self):
+        """Delegation is for the locator only; the cells stay filtered.
+
+        The drawn weave must remain the member's own footprint, not the
+        source's full lattice: delegation of the queries must not quietly
+        become delegation of the geometry.
+        """
+        path = os.path.join(tempfile.gettempdir(), "borrowed_restore_2.FCStd")
+        panel, band = self._roundtrip(path)
+        own_nodes = len(band.WeaveNodes)  # one Vector per node
+        self.assertGreater(
+            own_nodes, 0, "the fixture persisted no weave cells at all"
+        )
+        served = band.Proxy._backend.get_tex_coords()
+        self.assertEqual(
+            len(served), own_nodes,
+            "the restored borrower serves the wrong cell count",
+        )
+        source_nodes = len(panel.WeaveNodes)
+        self.assertLess(
+            own_nodes, source_nodes,
+            "fixture degenerate: the member's lattice is not a subset strip",
+        )
 
 
 if __name__ == "__main__":
