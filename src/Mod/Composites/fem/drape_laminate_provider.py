@@ -90,6 +90,12 @@ def shell_section_provider(shellth_obj, matgeoset, orientation_name):
     laminate = get_laminate(shellth_obj)
     if not laminate:
         return None
+    # The writer writes a *ORIENTATION card only when the orientation
+    # provider supplied a frame, so any ORIENTATION= on the section card
+    # must be conditional on the same thing — a card naming an orientation
+    # the deck never defines stops ccx at parse time (ERROR reading *SHELL
+    # SECTION: nonexistent orientation).
+    has_orientation = matgeoset.get("orientation") is not None
     layers = getattr(laminate.Proxy, "FEMLayers", None) or []
     if len(layers) != 1 and _is_isotropic_laminate(laminate):
         raise ValueError(
@@ -114,8 +120,17 @@ def shell_section_provider(shellth_obj, matgeoset, orientation_name):
                 "section_geo": f"{layer.thickness:.13G}\n",
             }
         return {
-            "material": f"MATERIAL={material_name},ORIENTATION={orientation_name}",
+            "material": (f"MATERIAL={material_name},ORIENTATION={orientation_name}"
+                         if has_orientation else f"MATERIAL={material_name}"),
             "section_geo": f"{layer.thickness:.13G}\n",
+        }
+    # A layered shell without a drape frame gets no *ORIENTATION card, so
+    # the card must not name one it never wrote.  The layers then run on
+    # the global axes, the manual's orientationless COMPOSITE form.
+    if not has_orientation:
+        return {
+            "material": "COMPOSITE",
+            "section_geo": laminate.Proxy.write_shell_section(laminate),
         }
     return {
         "material": f"COMPOSITE,ORIENTATION={orientation_name}",

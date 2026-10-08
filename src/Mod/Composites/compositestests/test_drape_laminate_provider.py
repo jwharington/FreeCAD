@@ -163,7 +163,13 @@ class TestDrapedPathNegativeControl(
         shell = self._make_shell(doc, "DrapedShell", laminate)
         shellth = _ShellThicknessStub(shell)
 
-        out = shell_section_provider(shellth, {}, "_OR_E1")
+        # The draped real case: the writer only reaches the override with
+        # ORIENTATION= when it also writes the matching *ORIENTATION card,
+        # which it does exactly when matgeoset carries a frame.  Any
+        # truthy stand-in models that; the provider reads presence, not
+        # the rotation.
+        out = shell_section_provider(shellth, {"orientation": True},
+                                     "_OR_E1")
         self.assertEqual(
             out,
             {
@@ -174,6 +180,33 @@ class TestDrapedPathNegativeControl(
         # The pinned composite format: ply lines, no plain-material name.
         self.assertIn("COMPOSITE,ORIENTATION=", out["material"])
         self.assertNotIn("TYPE=ISO", materials_text(laminate))
+
+    def test_layered_shell_without_orientation_omits_orientation(self):
+        """A layered shell with no drape frame must not name an orientation.
+
+        The writer writes a *ORIENTATION card only when the orientation
+        provider supplied a frame.  A card that names an orientation no
+        card defines stops ccx at parse time (ERROR reading *SHELL
+        SECTION: nonexistent orientation) — the failure that killed the
+        layered bulkhead plate deck.  The layers then run on the global
+        axes: the manual's orientationless COMPOSITE form.
+        """
+        doc = self._make_doc("LayeredNoFrame")
+        laminate = self._make_laminate(doc, "Laminate", (0.0, 45.0))
+        shell = self._make_shell(doc, "NoFrameShell", laminate)
+        shellth = _ShellThicknessStub(shell)
+
+        for matgeoset in ({}, {"orientation": None}):
+            out = shell_section_provider(shellth, matgeoset, "_OR_E1")
+            self.assertEqual(
+                out,
+                {
+                    "material": "COMPOSITE",
+                    "section_geo": write_shell_section_ccx_for(laminate),
+                },
+                matgeoset,
+            )
+            self.assertNotIn("ORIENTATION=", out["material"])
 
 
 def write_shell_section_ccx_for(laminate):
