@@ -90,3 +90,14 @@
 - To build: `cd /home/jmw/opt/FreeCAD && cmake --build build/debug -j2`
 - MCP port: 9875. Verify with `ss -tlnp | grep 9875`.
 - Log file: `/tmp/freecad.log` — check here when FreeCAD crashes or MCP doesn't respond.
+
+## Workbench modification policy
+- **No changes to workbenches other than Composites and Fem.** This includes
+  core modules: never touch `src/Mod/Part/**` (including `src/Mod/Part/Gui/**`),
+  `src/Mod/PartDesign`, `src/Mod/Sketcher`, `src/Gui`, `src/App`, or any other
+  workbench outside `src/Mod/Composites` and `src/Mod/Fem`.
+- Changes found there are illegal and must be undone immediately
+  (`git checkout -- <paths>`), regardless of how small or well-meant they are.
+- If a fix seems to require touching another workbench or core module, stop and
+  raise it with the user first: the answer is almost always a fix at the
+  Composites/Fem layer, or an upstream report — not a local hack to core.
