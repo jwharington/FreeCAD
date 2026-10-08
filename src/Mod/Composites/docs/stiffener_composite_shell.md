@@ -266,6 +266,21 @@ children.
 
 ### 6.2 The foot shell child
 
+> **The essential foot fact (owner, 2026-10-08), identical for the
+> stiffener and the bulkhead — one construction, one material rule.**
+> The foot is **cut from the support's own surface**
+> (`support.common(slab)`; the bulkhead's `band_of` is the same
+> construction), and the panel keeps the cut's complement — foot +
+> remainder = the support, exact by construction.  The foot shell
+> never runs its own drape solve: it **borrows the panel's solved
+> drape** (`DrapeSource`), and its stack is the combined laminate —
+> the panel's directional plies continue through the foot, with the
+> member's own plies on top.  The material on the foot is the
+> panel's weave continued plus the member's plies, never a fresh
+> weave spliced at the joint.  The bulkhead calls this same flow
+> (`wire_composite_member`) with its own roles; nothing here is
+> stiffener-specific.
+
 - A `Composite::Shell` (`Composite::Shell` type, `SeamGeometryFP`-style
   fingerprint skip extended with pitch + seed, per the seam
   implementation) whose **Support is the foot strip** — the stiffener's

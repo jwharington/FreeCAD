@@ -28,6 +28,21 @@ particular article.
 
 ## 1. The idea in one paragraph
 
+> **The essential fact about foot elements (owner, 2026-10-08), stated
+> up front because it is the same for a stiffener and a bulkhead —
+> there is no difference between them as far as this is concerned.**
+> A member's foot element (stiffener's foot, bulkhead's band) is **cut
+> from the support's own surface** (`support.common(slab)` for both),
+> and the panel keeps the cut's complement — foot + remainder = the
+> support, exact by construction.  Its material **absorbs the
+> support's**: the foot shell borrows the panel's solved drape (the
+> panel drapes once, on its uncut support, and its weave runs
+> continuously into the foot), and its stack is the combined laminate —
+> the panel's directional plies continue through the foot, with the
+> member's own plies on top.  One construction, one material rule, two
+> names; the code implements it once, in the shared member flow
+> (`wire_composite_member`), and both features call it.
+
 A **bulkhead** is a member that follows the *support* and a *cutting
 plane* the way a stiffener does, but its core is **filled**: where the
 plane intersects the support, the result becomes a **filled face** — a

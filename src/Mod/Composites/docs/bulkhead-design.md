@@ -62,6 +62,35 @@ trim-agnostic to laminate wiring.
   changing** — the section machinery was already piece-agnostic; only
   fixture geometry and assertions were added.
 
+## The foot element: cut from the support, absorbing its material
+
+**Essential fact (owner, 2026-10-08), identical for stiffener and
+bulkhead — there is no difference between them as far as this is
+concerned, and the code has one construction for both.**
+
+A member's foot element (the stiffener's foot, the bulkhead's band) is
+**cut from the support's own surface** — `support.common(slab)` for
+both (`_foot_bands` in the stiffener's sweep, `band_of` in the
+bulkhead's section — one slab construction, two callers).  What the
+panel keeps is the same cut's complement (`support.cut(slab)`), so
+**foot + remainder = the support, exact by construction, never a
+boolean approximation** — asserted at 6 dp in both suites, and the
+remainder and foot share their boundary curve data exactly (measured;
+that shared curve is what lets the seam machinery accept the joint).
+
+**Material absorption follows, through the same machinery for both:**
+the foot shell never runs its own drape solve — it **borrows the
+panel's solved drape** (`DrapeSource = panel`; the panel drapes once,
+on its uncut support, and its weave runs continuously into the foot).
+The foot's stack is the **combined laminate** (the SCL, one flow,
+`wire_composite_member`, `BULKHEAD_ROLES`/`STIFFENER_ROLES`): the
+panel's directional plies **continue through the foot** — the material
+the panel would have laid on that patch of its own surface is *inside*
+the member — with the member's own plies on top
+(`StackAttachmentOverMaster`; 4 plies on the bulkhead fixture: 2 panel
++ 2 plate).  The fabric on a foot is the panel's weave continued plus
+the member's plies — never a fresh weave spliced at the joint.
+
 ## The gap (three parts) — closed as of 2026-10-08 above
 
 ### 1. `TrimTool` is a dead property on BulkheadFP
