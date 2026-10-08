@@ -327,14 +327,12 @@ class TestBulkheadWiring(TestBulkheadFeature, TestFreeCADFP):
             "no combined stack reached the joint: panel plies + plate plies")
 
     def test_trim_tool_trims_the_member_shells(self):
-        """A TrimTool makes the member stop at the opening — in composite mode.
+        """A TrimTool makes the member stop at the opening.
 
         The stiffener's trim polarity, applied to the bulkhead: the
-        plate/band shells are cut by the tool before their shells are
-        built, and the drape rides the uncut geometry (borrowed, never
-        re-solved). In geometry-only mode the feature's own shape is
-        untouched — the trim is a shell-build decision, not a geometry
-        one.
+        plate/band faces are cut by the tool before the feature's shape
+        and shells are built, and the drape rides the uncut geometry
+        (borrowed, never re-solved).
         """
         import Part
 
@@ -362,6 +360,66 @@ class TestBulkheadWiring(TestBulkheadFeature, TestFreeCADFP):
             self.doc.getObject("Trimmed_Band").Shape.Area, band_area,
             "the trim tool must remove band shell before the shell is built")
         self.assertNotIn("Invalid", trimmed.State)
+
+    def test_untrimmed_plate_spans_a_bay_like_void(self):
+        """Control: without a TrimTool the plate crosses the void region.
+
+        Pins the boundary of the trim fix — the no-op the property used
+        to be is now a deliberate default: with no tool, material
+        occupies the region a bay box would remove.
+        """
+        import Part
+
+        panel = self._make_panel()
+        bulkhead = self._make_wired_bulkhead("Bulkhead", panel)
+        void = Part.makeBox(80.0, 200.0, 120.0,
+                            FreeCAD.Vector(170.0, -100.0, 60.0))
+        plate = self.doc.getObject("Bulkhead_Plate")
+        crossing = plate.Shape.common(void)
+        self.assertGreater(
+            crossing.Area, 1.0,
+            "the untrimmed plate must cross the would-be opening")
+
+    def test_trimmed_plate_stops_at_the_opening(self):
+        """With a TrimTool no material bridges the void it declares."""
+        import Part
+
+        panel = self._make_panel()
+        bulkhead = self._make_wired_bulkhead("Bulkhead", panel)
+        tool = self.doc.addObject("Part::Feature", "Tool")
+        tool.Shape = Part.makeBox(80.0, 200.0, 120.0,
+                                  FreeCAD.Vector(170.0, -100.0, 60.0))
+        bulkhead.TrimTool = tool
+        self.doc.recompute()
+
+        plate = self.doc.getObject("Bulkhead_Plate")
+        crossing = plate.Shape.common(tool.Shape)
+        self.assertLessEqual(
+            crossing.Area, 1e-6,
+            "the trimmed plate must not bridge the opening")
+
+    def test_changing_the_trim_tool_updates_the_shape(self):
+        """TrimTool is live: a change re-derives the member's shape."""
+        import Part
+
+        panel = self._make_panel()
+        bulkhead = self._make_wired_bulkhead("Bulkhead", panel)
+        untrimmed_area = bulkhead.Shape.Area
+
+        tool = self.doc.addObject("Part::Feature", "Tool")
+        tool.Shape = Part.makeBox(80.0, 200.0, 120.0,
+                                  FreeCAD.Vector(170.0, -100.0, 60.0))
+        bulkhead.TrimTool = tool
+        self.doc.recompute()
+        trimmed_area = bulkhead.Shape.Area
+        self.assertLess(trimmed_area, untrimmed_area,
+                        "setting a trim tool must remove material")
+
+        bulkhead.TrimTool = None
+        self.doc.recompute()
+        self.assertAlmostEqual(
+            bulkhead.Shape.Area, untrimmed_area, places=4,
+            msg="clearing the trim tool must restore the full member")
 
     def test_trim_that_removes_the_member_fails_loudly(self):
         """A tool covering the whole member is an error, not an empty shell."""

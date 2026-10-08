@@ -9,6 +9,7 @@ from ..tools.stiffener import StiffenerSweep
 from .Command import BaseCommand
 from .StiffenerCompositeShell import (
     BULKHEAD_ROLES,
+    _apply_trim_tool,
     is_member_composite,
     member_claimed_children,
     teardown_composite_member,
@@ -113,6 +114,22 @@ class BulkheadFP(CompositePartFP):
             raise ValueError(
                 "the cutting surface does not close on the support — "
                 "no bulkhead section to build")
+        # The trim applies to the member's own faces before the Shape and
+        # the member record are built (owner spec 2026-02-10): a declared
+        # trim tool stops the member at the opening's edges. The drape cut
+        # surface stays on the UNCUT support — it rides the uncut geometry
+        # and the trimmed shells borrow it. A tool that removes a member
+        # part entirely raises inside _apply_trim_tool (loud, never an
+        # empty shell).
+        if getattr(fp, "TrimTool", None) is not None:
+            try:
+                plates = list(
+                    _apply_trim_tool(fp, Part.makeCompound(plates)).Faces)
+                bands = list(
+                    _apply_trim_tool(fp, Part.makeCompound(bands)).Faces)
+            except Exception as exc:
+                self.last_error = str(exc)
+                raise
         cuts = drape_cuts_of(fp.Support.Shape, fp.IntersectSurface.Shape,
                               float(fp.FlangeWidth), bool(fp.MirrorX))
         fp.Shape = Part.makeCompound([*plates, *bands, *cuts])

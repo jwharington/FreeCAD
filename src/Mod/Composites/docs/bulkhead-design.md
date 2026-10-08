@@ -1,214 +1,106 @@
-# Bulkhead section generation — design record
+# Bulkhead design: the TrimTool gap (2026-02-10)
 
-Status: **section, feature and composite layers all implemented and
-tested headless — the bulkhead wires through the shared member flow
-(`wire_composite_member` with `BULKHEAD_ROLES`): plate and band draped
-shells, the band borrowing the panel's solved drape, solved transfers,
-and the combined stack composed through `get_model` (4 plies on the
-fixture: panel plies + plate plies).** The draper cost that once held
-the wired cases shut was fixed at the source: nextdrape now reads a
-boundary as a polyline at 25% of the fabric step (plate drape 14.8 s →
-0.55 s; the reproducer kit and bounded test live at
-`src/3rdParty/nextdrape/data/bulkhead-plate-drape/`). Two wiring cases
-run un-skipped and pass; the one still-open item is the *panel* solve
-over the full sewn skin (17.7 s, the loft's boundary-link trap storm,
-pinned red against a 2 s budget in nextdrape's
-`test_bulkhead_skin_drape.cpp`). GUI visual confirmation has not been
-done (owner's standing rule: headless passes are claimed, GUI not).
-This records what was *measured* about the fixture, and it was written after the
-measurement. `handoff-2026-10-07-bulkhead-tool.md` is the input specification;
-where the two disagree, this file is the one that was checked against geometry.
+## Status: implemented (2026-10-08) — parts 1 and 2's core; part 3 stays a non-goal
 
-Code: `tools/bulkhead_section.py` and `features/Bulkhead.py`. Measurement:
-`compositestests/test_bulkhead_section.py` and `compositestests/test_bulkhead.py`
-— run them with
-`~/.pi/agent/skills/freecad-dev/scripts/run-tests.sh test_bulkhead_section`.
+`BulkheadFP.execute` now honours `TrimTool`: the plate and band faces are
+cut by the tool before the feature's Shape and the member record are
+built (so the draped shells are built from trimmed faces), the drape cut
+surface stays on the uncut support, and a tool that removes a member
+part entirely raises with `last_error` recording the trim — pinned by
+`TestBulkheadTrim` in `test_bulkhead.py` (trim shrinks plate and band,
+untrimmed control crosses the void, trimmed plate never bridges it,
+`TrimTool` is live — clearing it restores the full member, whole-member
+tools fail loudly). The shell builders' own `_apply_trim_tool` call now
+doubles as a no-op re-cut. Part 2's evaluation order note stays
+true at the core: the section chain is evaluated against the uncut
+support, then the trim cuts the member — so the chain is a fact about
+the plate-able stack, never about the cut deck. Part 3 (declaration →
+material route) remains with the design tools; `execute()` stays
+trim-agnostic to laminate wiring.
 
-## 1. What a bulkhead's section has to be
+## What exists today
 
-A bulkhead is a plate with flanges: a wall standing in the cutting plane,
-joined to the panel along the section line where the cutting surface meets
-the support, and gusseted into it by a foot lying on the skin on one side of
-that wall. Its section is therefore *filled* — a region — bounded by the
-section chain (one closed chain where the cutter crosses one face; a cut
-across the band seam returns one chain per face, a compound and not one
-stitched sheet), and its foot occupies exactly one `width` of skin behind the
-plate — or ahead of it when `MirrorX` is set.
+- `features/Bulkhead.py` — the Bulkhead FP. Declares a `TrimTool` property
+  (line ~95) whose description promises the exact feature: *"Solid cutting the
+  plate/band supports before their shells are built... Unset (the default), the
+  plate spans the opening as before."*
+- `features/StiffenerCompositeShell.py` — `_apply_trim_tool(fp, shape)`
+  (line ~454): cuts a member's faces by `fp.TrimTool` before the CompositeShell
+  is built. Rings use it (`stiffener.TrimTool = engine_box`).
+- `tools/bulkhead_section.py` — `section_chains()`, `plate_of()`, `band_of()`,
+  `make_bulkhead()`. `plate_of` correctly refuses to chord an open chain shut
+  (closing in space would invent a plate edge the support does not have);
+  `make_bulkhead` returns empty plates when the cut never closed, and
+  `BulkheadFP.execute` **raises** — the loud-failure contract already holds at
+  the core level. Silent plate-dropping exists only on the design-tool side
+  (`sections_from_plan()` in the RTOA tree skips `plate=None` with a warning).
+- `compositestests/test_bulkhead_section.py`, `test_bulkhead.py` — chain, band,
+  smear tests. **No test references TrimTool** (`grep -rn TrimTool
+  compositestests/` → only property-list hits): the trim path has never been
+  exercised, because it is not wired.
 
-`tools/bulkhead_section.py` keeps the path layer and the band layer separate:
-`section_chains` finds where `cut_surface` cuts `support`, `plate_of` fills
-the region each chain bounds, and `member_slab` / `band_of` / `drape_cuts_of`
-are one prism and its two reads — the band taken out of the support, and
-what the support keeps around it.
+## The gap (three parts) — closed as of 2026-10-08 above
 
-## 2. The two premises that did not survive measuring
+### 1. `TrimTool` is a dead property on BulkheadFP
+`BulkheadFP.execute()` calls
+`make_bulkhead(support=fp.Support.Shape, cut_surface=..., ...)` and
+`drape_cuts_of(fp.Support.Shape, ...)` — always the **raw, uncut support**.
+`fp.TrimTool` is never read anywhere in `execute()`. Setting `fp.TrimTool =
+<engine bay solid>` is a silent no-op: the plate spans the opening *and* the
+drape rides uncut geometry — identical to `TrimTool` unset. A property that
+does nothing is worse than no property: it reads as if the feature existed.
+*Closed: execute applies the trim to the member faces before the Shape and
+the member record; the test `test_trim_tool_trims_the_member_shells` pins
+the shell shrink and `test_trim_that_removes_the_member_fails_loudly` pins
+the loud contract.*
 
-Both were written down as fact before anything had been run, and both were
-wrong. They are kept here because the code is easier to trust if the reasoning
-that replaced it is visible.
+### 2. Evaluation order has no home
+The correct order for a bay station is **evaluate the section chain against the
+full (pre-cut) stack, then cut the resulting plate/band/drape by the bay
+solid** — exactly the ring chain (`Rings → TrimTool → Cut`). At x +860 the
+chain *closes* on the pre-cut stack (full perimeter ≈1440 mm) but is *open* on
+the cut deck (its side segments lie inside the bay void). A prober that probes
+the cut deck (as `probe_bulkhead_stations.py --stations 830,860,890` did)
+structurally cannot answer "is a plate possible here": the chain there is a
+fact about the cut, not about the plate-able stack. Once (1) is wired, the
+feature itself answers the question at recompute; until then, probes must run
+against the pre-cut stack — that is the design-tool-side note, not a core
+change.
 
-### 2.1 "`make_stiffener` can sweep a bulkhead's section"
+### 3. No declaration → material route for bulkheads
+A new bulkhead has no station into the FEM assembly: no way to give it its own
+mesh group (or join a keyed group) with its laminate card, and its ties must be
+re-listed by hand even where `support_for()`-style derivation exists. The
+design-tool side (RTOA `ls8e-design-tools/propeller/cad/`) must call the core
+feature; the core side just needs to keep `execute()` trim-agnostic to laminate
+wiring so one trimmed member can be wired like a ring.
 
-It cannot, and that is why there is a section layer at all. `get_xsect`
-(`tools/stiffener.py:254`) rebuilds every profile edge as a `Part.LineSegment`
-between that edge's **endpoints**, and `_profile_coords` keys a profile's
-vertices to six decimals. A profile's edges are joined end to end, so a
-profile fed in as one closed chain of two edges comes back as two line segments
-between the same two points — a degenerate sliver, not a section. A bulkhead's
-section is bounded by curved chains, so it cannot travel through the profile
-route, and R2's "reuse the foot construction" resolves as *reuse
-`wire_composite_stiffener` and its helpers*, not as *call `make_stiffener`*.
+## Required functionality (core only — keep it simple)
 
-### 2.2 "The hole test is blind to inner wires"
+1. **Honour `TrimTool` in `BulkheadFP.execute()`** — mirror the stiffener:
+   apply the existing `_apply_trim_tool(fp, ...)` to the plate and band faces
+   after `make_bulkhead()` returns them and before `Part.makeCompound` /
+   `StiffenerSweep` wiring. The drape cut surface stays **uncut** (it rides the
+   uncut geometry and the trimmed shells borrow it — as the property
+   description already promises). No new geometry kernels; the plate-at-+860
+   case (chain closes pre-cut, trimmed by the bay box where the void opens it)
+   is then expressible as one member declaration with `TrimTool=engine_box`.
+2. **Keep the loud-failure contract** — "chain does not close on the support"
+   remains a `ValueError`, never a silent skip; `plate_of`'s refuse-to-chord
+   rule is correct and stays.
+3. **Tests** (add to `compositestests/test_bulkhead_section.py`, one assert
+   per test, boundary cases; do not touch existing thresholds):
+   - `TrimTool` unset → plate spans a bay-like void (control, pins the no-op
+     fix's boundary);
+   - `TrimTool` set to a void solid → plate/band stop at the opening's edges
+     (plate area reduced, no material bridges the void);
+   - `TrimTool` that severs every closing chain → `execute()` raises
+     (loud-failure contract);
+   - recompute with `TrimTool` changed after first build → shape updates
+     (property is live, not cached).
 
-**False** — and worth correcting carefully, because the specification did not
-actually say this, my own earlier summary of it did. §5.2 of the handover asks
-only that the fill rule *keep* `IsInsideFace` and the mesh-continuity rules
-intact; the "blind to inner wires" wording was mine.
+## Non-goals
 
-`SurfaceNavigator::IsInsideFace`
-(`src/3rdParty/nextdrape/src/drape/SurfaceNavigator.cpp:418`) **does** look at
-holes. `BuildTrimCache` splits a face's trim boundary into an outer wire — the
-one with the largest |signed area|, with a bisection fallback when that test
-degenerates — and holes, and points strictly inside a hole are rejected by
-`PointStrictlyInsidePolyline` with a *strict* inside test and no `tol`
-inflation. The comment there records that an earlier version did treat boundary
-rows as exterior and that this was fixed; `!IsInsideFace` at
-`LatticeNodePlacer.cpp:1831` is a *healed* defect, not an open one.
-
-What is true is narrower:
-
-- a self-crossing outer wire **is** what loses coverage, because
-  `PointStrictlyInsidePolyline` uses an even-odd crossing count and a
-  self-crossing polyline produces two crossings near the crossing point; and
-- `trimValid` stays false unless `anyPCurve` is set **and** the trims are
-  non-empty, so a procedural BSpline skin built with `makeLoft` and never
-  trimmed has no hole test to satisfy.
-
-### 2.3 What the fixture actually does
-
-Measured on the two-chain lofted skin (two BSpline faces, `makeShell` *and*
-`makeCompound`), five cuts, headless:
-
-| probe | chains | self-crossing | band faces w34/d12 | w90/d12 | w90/d120 |
-|---|---|---|---|---|---|
-| x=210 axial, mid forward band | 1, closed | no | 1 | 2 | 2 |
-| x=420 axial, mid aft band | 1, closed | no | 1 | 2 | 2 |
-| x=700 axial, clear of support | **0** | — | — | — | — |
-| x=300 oblique `n=(1,.55,.35)`, through seam and both open ends | 3 edges, closed | no | 3 | 2 | 2 |
-| x=210 steep `n=(1,.9,0)`, side 420 | 1, closed | no | 1 | 2 | 1 |
-
-Four consequences, all of which are assertions in the test file rather than
-prose here:
-
-- **Multi-boundary does not arise on this fixture.** Every cut gives exactly one
-  closed chain, and none of them self-crosses (checked by discretising each
-  chain to 240 points and keying them to five decimals, so a genuine reversal
-  survives rounding and one that merely doubles back on itself does not). If a
-  future fixture produces two chains, the suite says so.
-- **The seam-crossing case is real, and needs per-face faces.** x=300 crosses
-  the band seam and comes back with **3** band faces against **1** for an axial
-  mid-band cut. A compound of faces, not one stitched sheet — which is what
-  rules out a one-call `Section::Once` for the member as a whole.
-- **A band exists at a normal flange width.** An earlier draft recorded
-  `band(34,12)` as *empty* on the strength of a probe that had crashed before
-  printing; measured properly the band is there and has area.
-- **A cut can miss the support entirely** (x=700, `distToShape` = 160), and that
-  is a different answer from "there is no band to take out of", so the two are
-  kept distinguishable in the API rather than collapsed into one empty list.
-
-## 3. Where the prism reaches — and why there is no `depth`
-
-The prism (`member_slab`) runs one-sided: from `width` behind the cutting
-surface up to that surface itself, extruded along the surface normal.  There
-is no second `depth` knob — it was a boolean-tool dimension that leaked into
-the feature API, and while the slab straddled the surface the band's far
-edge depended on that arbitrary number.  Now the band's far edge *is* the
-section chain: `band_of` and `drape_cuts_of` share one prism, so band and
-footprint can never overlap, and `flange_width` is the feature's only shape
-parameter.
-## 4. What the module exposes, and why each query is shaped that way
-
-Seven functions, no placeholders (the last two compose the feature's Shape
-from the first five; `chain_regions` answers the §1 question of *where* a
-chain runs, not *what* to take — the wiring ultimately asked *which edges
-of the band lie on the chain* instead, answered geometrically by
-`bulkhead_band_seam_subs` through `section_chains`, because a positional
-`Edge1` on a multi-face band names neither boundary and is picked once
-for the file's life (cost #2)):
-
-| | | |
-|---|---|---|
-| `section_chains(support, cut)` | the chains where the cutter cuts the support | delegates to `stiffener._section_groups` |
-| `chain_regions(support, chain)` | which support faces that chain runs along | `(face, boundary, interior)` per face |
-| `plate_of(support, cut)` | the filled section, one face per closed chain | `Part.Face` per region |
-| `member_slab(support, cut, w, mirror_x=False)` | the prism the band and footprint are taken out of | one solid, or `None` |
-| `band_of(support, cut, w, mirror_x=False)` | the flange band, as faces | `support.common(slab)` |
-| `drape_cuts_of(support, cut, w, mirror_x=False)` | what the panel keeps: skin minus prism | `face.cut(slab)` per face |
-| `make_bulkhead(support, cut, w, mirror_x=False)` | `(plates, bands)` ready for a feature Shape | `plate_of` + `band_of`, loud on failure |
-
-**The prism is one `width` deep and hugs one side of the plate.** A constant
-`depth` measured along b = t × N (in the cutting plane, perpendicular to the
-path) — or measured normal to the support — put the member's far edge on an
-arbitrary second dimension and made the band depend on a number no designer
-sets. Both readings are history, measured with the two-sided slab that has
-since been replaced; what survives them is the *fact* that a band as wide as
-the local chamber is a legitimate shape, and the one-sided prism keeps that
-fact without the knob: `band_of`/`drape_cuts_of` take one `width` and one
-`mirror_x`, `MirrorX` moves band and footprint together, and `flange_width`
-is the feature's only shape parameter.
-
-**`band_of` and `drape_cuts_of` are two views of one prism**, deliberately: the
-band occupies exactly the patch the panel gives up, so the two can never both
-claim one patch of material (F4). `band_of`'s faces are simultaneously the
-member's own skin and the cutter subtracted from the panel — which is the only
-way they can match exactly, the reason the member sews to the panel with no gap
-and no overlap, and the reason the mesh stays continuous across the join.
-
-**Empty is an answer, not a failure.** A cut that misses the support entirely
-(x=700 above, `distToShape` = 160) and a support with no band to give are
-different facts, and `member_slab` returns `None` for the second while
-`section_chains` returns `[]` for the first. Only the feature layer knows
-whether a member that never touches the panel is an error or the point — it may
-be a bulkhead bridging an opening — so that judgement is left there rather than
-made here.
-
-**`chain_regions` answers in faces, not in chain lengths**, because
-`wire_composite_stiffener` reaches: `calc_stack_model(…, width=sweep.web_height)`,
-where `width` scales a pitch floor of `max(0.5·pitch, 1.0)` against a `DrapePitch`
-clamped to 0.5–20 mm — one clamp away from disabling the foot drape rather than
-merely coarsening it — and `validate_composite_wiring`, which drapes the foot
-only while `0 < foot_width < 3·web_height`. A bulkhead has no second knob to
-carry: its band is `width` deep by construction, and the wiring hands that
-machinery `FlangeWidth` itself for both pitch scalars (`_scaled_pitch(34) →
-8.5 mm`, inside the clamp; the gate `34 < 3·34` passes). What the clamp
-question *meant* turned out to matter more than the clamp: at 8.5 mm the
-plate drape still took 14.7 s — the cost tracked the boundary curve as
-read by the draper, not the patch count, and the fix landed in nextdrape
-(the boundary is now read as a polyline at 25% of the fabric step; the
-plate solves in 0.55 s). The joint's acceptance has the same moral: the
-plate reads its boundary from the band's own wall edge — the stiffener's
-web-row construction — so the seam machinery sees one shared curve, not
-two boolean rebuilds of one intersection matched by tolerance.
-
-The bulkhead also takes the stiffener's optional `TrimTool` (same
-polarity): the plate/band support faces are cut by the tool before
-their shells are built — a bulkhead that must stop at an opening stops
-there — while the drape rides the uncut geometry and the trimmed
-shells borrow it. Unset, the plate spans the opening as before; a tool
-that removes the whole member fails loudly. Both are pinned in
-`test_bulkhead` (`TestBulkheadTrim`).
-
-**`_same_curve` compares curves geometrically, not by `isSame`.** A sewn seam is
-*one* edge whose `ancestorsOfType` lists both faces; an unsewn one is *two*
-coincident copies, one per face, under different TShapes. `isSame` is exactly
-true only when two edges share one underlying `TopoDS_Curve`, so it answers
-"distinct" for a pair that is one curve for every purpose that matters here —
-`BRepAlgoAPI_Splitter` keys crack detection on exactly that, and known-issue #14
-is the same conflation one level down.
-
-## 6. Traceability
-
-Every claim in §2–§3 is either a fact about code in this repository, with a file
-and line, or a measurement reproducible by `test_bulkhead_section.py`. Nothing
-here is quoted from the input specification.
+No per-station hand-built trims, no bay-specific code in the core, no new
+laminate-key machinery in the workbench (material routing lives in the design
+tools; the core only needs `execute()` to not ignore `TrimTool`).
