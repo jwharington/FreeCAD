@@ -231,7 +231,8 @@ class ResultMechanical(base_fempythonobject.BaseFemPythonObject):
             "App::PropertyFloatList",
             "StressExposureFactor",
             "NodeData",
-            "Stress exposure factor",
+            "Stress exposure factor (demand over allowable, 1.0 = failure "
+            "at design load)",
             True,
         )
         obj.setPropertyStatus("StressExposureFactor", "LockDynamic")

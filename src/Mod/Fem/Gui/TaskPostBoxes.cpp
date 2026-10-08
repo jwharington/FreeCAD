@@ -569,11 +569,21 @@ TaskPostFrames::TaskPostFrames(ViewProviderFemPostObject* view, QWidget* parent)
 
     auto unit = pipeline->getFrameUnit();
     auto steps = pipeline->getFrameValues();
+    auto frame_type = pipeline->getFrameType();
     for (unsigned long i = 0; i < steps.size(); i++) {
         QTableWidgetItem* idx = new QTableWidgetItem(QString::number(i));
-        QTableWidgetItem* value = new QTableWidgetItem(
-            QString::fromStdString(Base::Quantity(steps[i], unit).getUserString())
-        );
+        // A load-case frame's step time (the solver's increment counter)
+        // means nothing to a reader — the case name does. Row order is the
+        // deck's case order, so frame k reads as LCk+1.
+        QString value_text;
+        if (frame_type == "Load case") {
+            value_text = QString("LC%1").arg(i + 1);
+        }
+        else {
+            value_text = QString::fromStdString(
+                Base::Quantity(steps[i], unit).getUserString());
+        }
+        QTableWidgetItem* value = new QTableWidgetItem(value_text);
 
         int rowIdx = ui->FrameTable->rowCount();
         ui->FrameTable->insertRow(rowIdx);

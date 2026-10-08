@@ -1061,8 +1061,10 @@ def add_stress_exposure_factor(res_obj, objs):
                     model_options=model_options,
                 )
             )
-            # Same closed form, and the same cap, as the per-node path.
-            sf = np.where(f0 <= 1.0e-12, 1.0e3, np.minimum(1.0 / f0, 1.0e3))
+            # The model value is the exposure itself — demand over
+            # allowable, 1.0 = failure at design load. Same convention as
+            # the per-node path (calc_stress_exposure_factor).
+            sf = f0
             FreeCAD.Console.PrintLog(
                 "Added stress exposure factor for all %d nodes with one "
                 "material set (%s).\n" % (nsr, model_name)

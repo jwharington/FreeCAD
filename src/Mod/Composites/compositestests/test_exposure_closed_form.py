@@ -3,9 +3,10 @@
 exposure factor.
 
 maximum_strain/maximum_stress scale linearly with the load, so the
-exposure factor is R = 1/model-value — no per-node scipy search needed
-(that search made a 31 MB frd import take ~9 minutes on a 5k-element
-shell model).  These tests pin the closed form against the old bounded
+exposure is the model value itself — demand over allowable, 1.0 =
+failure at design load — with no per-node scipy search needed (that
+search made a 31 MB frd import take ~9 minutes on a 5k-element shell
+model).  These tests pin the closed form against the old bounded
 search on random tensors, and pin the non-homogeneous models (Tsai-Wu)
 to the search path.
 """
@@ -37,40 +38,51 @@ def test_homogeneous_models_declared():
 
 
 def test_closed_form_matches_model_value():
+    """The exposure is the model value itself: demand over allowable."""
+    s, e = _random_tensors(64)
+    for i in range(len(s)):
+        f0 = calc_failure_maximum_strain(
+            stress_tensor=s[i], strain_tensor=e[i], model_options=default_options
+        )
+        r = calc_stress_exposure_factor(
+            stress_tensor=s[i], strain_tensor=e[i], model_options=default_options
+        )
+        assert r == pytest.approx(f0, rel=1e-9)
+
+
+def test_unstressed_point_has_zero_exposure():
     s, e = _random_tensors(64)
     for i in range(len(s)):
         f0 = calc_failure_maximum_strain(
             stress_tensor=s[i], strain_tensor=e[i], model_options=default_options
         )
         if f0 <= 1e-12:
-            expected = 1.0e3
-        else:
-            expected = min(1.0 / f0, 1.0e3)
-        r = calc_stress_exposure_factor(
-            stress_tensor=s[i], strain_tensor=e[i], model_options=default_options
-        )
-        assert r == pytest.approx(expected, rel=1e-9)
+            r = calc_stress_exposure_factor(
+                stress_tensor=s[i], strain_tensor=e[i], model_options=default_options
+            )
+            assert r == pytest.approx(0.0, abs=1e-15)
 
 
 def test_closed_form_matches_scipy_search():
-    """The exposure factor must agree with the old bounded search's root
-    wherever the search could find it."""
+    """The non-homogeneous search finds the failure load scale R; the
+    exposure is its reciprocal, and must agree with the homogeneous
+    closed form's f0 wherever the search could find the root."""
     s, e = _random_tensors(16)
     for i in range(len(s)):
         f0 = calc_failure_maximum_strain(
             stress_tensor=s[i], strain_tensor=e[i], model_options=default_options
         )
         if not (1.0e-3 < 1.0 / max(f0, 1e-12) < 1.0e3):
-            continue  # search would clip; closed form caps identically
+            continue  # root outside the search's bounds
         closed = calc_stress_exposure_factor(s[i], e[i], default_options)
-        assert 1.0 / f0 == pytest.approx(closed, rel=1e-6)
+        assert f0 == pytest.approx(closed, rel=1e-6)
 
 
-def test_already_failing_tensor_gives_reserve_below_one():
+def test_already_failing_tensor_gives_exposure_above_one():
     s = np.array([500.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     e = np.array([1.0e-2, 0.0, 0.0, 0.0, 0.0, 0.0])  # > sxxt 3.2e-3
     r = calc_stress_exposure_factor(s, e, default_options)
-    assert r < 1.0
+    assert r > 1.0
 
 
 def test_non_homogeneous_model_present():

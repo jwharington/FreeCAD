@@ -123,14 +123,15 @@ def calc_stress_exposure_factor(
     strain_tensor,
     model_options=default_options,
 ):
-    """Load scale factor R at which the failure model first triggers.
+    """Stress exposure: demand over allowable, 1.0 = failure at design load.
 
-    For a load-homogeneous model (``is_homogeneous_load``) the optimum
-    has a closed form: the model value at the given tensors is f0, and
-    the value at R× the load is R×f0, so R = 1/f0 exactly.  The scipy
-    bounded search is only needed for non-homogeneous models (Tsai-Wu's
-    linear terms) — and it caps at its upper bound, so the closed form
-    is capped the same way to keep the result comparable.
+    The same convention as the strain exposure factor: the model value
+    itself for a load-homogeneous model (``is_homogeneous_load``) — the
+    value at R× the load is R×f0, so the load scale that first triggers
+    is R = 1/f0 and the exposure is f0.  The scipy bounded search is only
+    needed for non-homogeneous models (Tsai-Wu's linear terms); it finds
+    that scale R directly, and the exposure is its reciprocal.  An
+    unstressed point has zero exposure, never an unbounded reserve.
     """
     model_name = model_options.get("model_name", default_options["model_name"])
     failure_model = get_failure_model(model_name)
@@ -138,14 +139,11 @@ def calc_stress_exposure_factor(
         return 0.0
 
     if is_homogeneous_load(model_name):
-        f0 = failure_model(
+        return float(failure_model(
             stress_tensor=stress_tensor,
             strain_tensor=strain_tensor,
             model_options=model_options,
-        )
-        if f0 <= 1.0e-12:
-            return 1.0e3  # no failure within the search's upper bound
-        return float(min(1.0 / f0, 1.0e3))
+        ))
 
     def fun(sR):
         R = 1.0 / sR
@@ -161,6 +159,6 @@ def calc_stress_exposure_factor(
 
     res = minimize_scalar(fun, bounds=(1.0e-3, 1.0e3), method="bounded")
     if res.success:
-        return res.x
+        return float(1.0 / res.x)
     else:
         return 0.0
