@@ -48,6 +48,19 @@ trim-agnostic to laminate wiring.
   that skips that attach leaves `ViewObject.Proxy = None`: default part
   feature in the tree, no icon, cannot be enabled for display (that
   defect was seen in the GUI and fixed 2026-10-08).
+- `compositeexamples/fixture_bulkhead.py` — the fixture family now also
+  serves a **split deck** (`split_fixture`): both loft bands cut against
+  half-space boxes either side of the vertical plane y = 0, so the
+  support is four unconnected pieces — the situation a real bay has once
+  the deck has been cut before the bulkhead is declared.  Pinned in
+  `TestSplitSupport` and `TestBulkheadOnSplitSupport`: the section chain
+  still closes across the separate pieces; band + footprint = the split
+  support exactly (6 dp); the plate's region is unchanged (relative
+  1e-6 — two independent boolean constructions of one region differ by
+  reconstruction noise, measured 0.0023 mm2 of 21271); the feature
+  computes a valid three-dimensional member.  **No product code needed
+  changing** — the section machinery was already piece-agnostic; only
+  fixture geometry and assertions were added.
 
 ## The gap (three parts) — closed as of 2026-10-08 above
 

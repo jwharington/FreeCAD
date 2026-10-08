@@ -466,6 +466,12 @@ edges`) fed consistently either way. Two unknowns to settle **on §6's
 
 ## 6. Verification plan — one support shape, lofted from two ellipse chains
 
+> **Added 2026-10-08: a second support variant.** `split_fixture` cuts
+> the same loft L/R by the vertical plane y = 0, so the deck is four
+> unconnected pieces — the state a real bay has after the deck has been
+> cut.  The bulkhead's section chain, band and feature all pass on it
+> unchanged (no product code was modified); see `bulkhead-design.md`.
+
 **One support shape for every test and every example:** a **loft
 through two chains of elliptical sections** — three or four distinct
 semi-axes per chain, the two chains meeting at a shared seam edge, the
