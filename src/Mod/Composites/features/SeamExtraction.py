@@ -219,8 +219,18 @@ class SeamGeometryFP(CompositeShellFP):
         super().execute(fp)
 
     def onDocumentRestored(self, fp):
-        """Nothing to restore — shape lives on fp itself."""
-        pass
+        """Restore the weave presentation, as any composite shell does.
+
+        A seam shell's shape does live on fp itself, but its WEAVE does
+        not: the lattice is persisted (WeaveNodes/Quads/TexCoords) and the
+        restored backend plus the shader injection are what make a reopened
+        document show the drape.  Swallowing the parent's restore left
+        every seam-built shell — the finished skins, the FEM pieces, the
+        member feet and bands — with no backend, so the view provider had
+        no texture coordinates to hand the grid shader and the shell
+        rendered bare beside an identical natively draped shell.
+        """
+        super().onDocumentRestored(fp)
 
     def update(self, fp, shape, laminate, rosette, recenter_lcs=True):
         """Update the seam shell with new geometry and material data.
