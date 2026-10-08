@@ -402,6 +402,62 @@ class PersistedDrapeBackend(DrapeBackend):
         return [self.get_lcs(element) for element in elements]
 
 
+class PersistedBorrowedDrapeBackend(PersistedDrapeBackend):
+    """A borrowed shell's persisted weave, restored from the document.
+
+    The persisted arrays are the member's own filtered copy of the
+    source's solve — its cells, already in the *source's* UV system.  The
+    locator queries must not be answered by re-developing that subset
+    lattice as a pattern of its own: an engine built from a strip of the
+    skin produces a different flat pattern (offset, mirrored), so the
+    restored shell would render a foreign weave beside its skin and the
+    element frames would disagree with the deck's.  They delegate to the
+    source shell's restored backend instead, which reloaded the *full*
+    solved lattice; the source is resolved lazily because document
+    restore order is not guaranteed.
+    """
+
+    backend_name = "nextdrape-persisted-borrowed"
+
+    def __init__(self, fp, node_positions, quads_flat, tex_flat) -> None:
+        self._fp = fp
+        super().__init__(node_positions, quads_flat, tex_flat)
+
+    def _source_backend(self):
+        """The source's restored backend, or None while unavailable."""
+        source = getattr(self._fp, "DrapeSource", None)
+        if source is None:
+            return None
+        return getattr(getattr(source, "Proxy", None), "_backend", None)
+
+    def _delegate(self, name, *args):
+        source = self._source_backend()
+        if source is not None:
+            return getattr(source, name)(*args)
+        return getattr(super(type(self), self), name)(*args)
+
+    def get_lcs(self, element: Any) -> Any | None:
+        return self._delegate("get_lcs", element)
+
+    def get_lcs_batch(self, elements) -> list:
+        return self._delegate("get_lcs_batch", elements)
+
+    def get_lcs_at_point(self, center: Any) -> Any | None:
+        return self._delegate("get_lcs_at_point", center)
+
+    def get_tex_coord_at_point(self, point: Any,
+                               offset_angle_deg: float = 0) -> Any | None:
+        return self._delegate(
+            "get_tex_coord_at_point", point, offset_angle_deg
+        )
+
+    def diagnostics(self) -> dict:
+        info = super().diagnostics()
+        source = self._source_backend()
+        info["borrowed_from"] = getattr(source, "backend_name", None)
+        return info
+
+
 class NextDrapeBackend(DrapeBackend):
     """Wraps the C++ nextdrape solver (Composites_drape module)."""
 

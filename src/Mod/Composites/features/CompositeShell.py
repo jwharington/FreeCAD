@@ -265,11 +265,23 @@ class CompositeShellFP(CompositeBaseFP):
         if getattr(fp, "WeaveNodes", None):
             try:
                 from ..tools.drape_backend_nextdrape import (
+                    PersistedBorrowedDrapeBackend,
                     PersistedDrapeBackend,
                 )
-                self._backend = PersistedDrapeBackend(
-                    fp.WeaveNodes, fp.WeaveQuads, fp.WeaveTexCoords
-                )
+                # A borrowing shell keeps the source's locator: its own
+                # arrays are a filtered strip of the skin's solve, and an
+                # engine rebuilt from them develops a foreign flat pattern
+                # (offset, mirrored) — the "two UV systems" defect.  Live
+                # builds delegate every locator query to the source, so
+                # the restored session must too.
+                if getattr(fp, "DrapeSource", None) is not None:
+                    self._backend = PersistedBorrowedDrapeBackend(
+                        fp, fp.WeaveNodes, fp.WeaveQuads, fp.WeaveTexCoords
+                    )
+                else:
+                    self._backend = PersistedDrapeBackend(
+                        fp.WeaveNodes, fp.WeaveQuads, fp.WeaveTexCoords
+                    )
             except Exception as exc:
                 self._diag(fp, f"weave restore failed: {exc}")
                 self._backend = None
