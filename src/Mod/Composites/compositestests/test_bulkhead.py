@@ -28,6 +28,7 @@ from Composites.compositestests.test_bulkhead_section import (
     AFT_SECTIONS,
     FORWARD_SECTIONS,
     lofted_bands,
+    split_fixture,
     station_plane,
 )
 
@@ -155,6 +156,66 @@ class TestBulkheadRoundTrip(TestBulkheadFeature, TestFreeCADFP):
                  for area, v in after])
         finally:
             os.remove(filepath)
+
+
+class TestBulkheadOnSplitSupport(TestBulkheadFeature, TestFreeCADFP):
+    """The deck has been cut L/R before the bulkhead is declared.
+
+    The support is four unconnected pieces (both loft bands, left and
+    right of the y = 0 plane); the section chain, the band and the
+    footprint must all survive — the same situation a real bay has once
+    the deck has been cut.
+    """
+
+    def _make_split_support(self, name="SplitSkin"):
+        support = self.doc.addObject("Part::Feature", name)
+        support.Shape = split_fixture(sewn=True)
+        return support
+
+    def _make_split_bulkhead(self, name="SplitBulkhead"):
+        from Composites.features.Bulkhead import BulkheadFP
+
+        bulkhead = self.doc.addObject("Part::FeaturePython", name)
+        BulkheadFP(
+            bulkhead,
+            support=self._make_split_support(),
+            cut_surface=self._make_cutter(),
+        )
+        self.doc.recompute()
+        return bulkhead
+
+    def test_bulkhead_spans_the_split_support(self):
+        """Plate and band both exist across the separate pieces."""
+        bulkhead = self._make_split_bulkhead()
+        self.assertGreaterEqual(
+            len(bulkhead.Shape.Faces), 2,
+            "plate and flange must both survive the split deck")
+        self.assertTrue(bulkhead.Shape.isValid(),
+                        "the member must be a valid shape")
+        # The member is still three-dimensional: the plate lies in the
+        # cutting plane, the band on the skin.
+        normals = {
+            tuple(round(v, 6) for v in face.normalAt(
+                *face.Surface.parameter(face.CenterOfMass)))
+            for face in bulkhead.Shape.Faces
+        }
+        self.assertGreater(len(normals), 1,
+                           "every face shares one normal after the split")
+
+    def test_split_member_conserves_the_support(self):
+        """Band + footprint = the split support, area-exact."""
+        from Composites.tools import bulkhead_section as section
+
+        support_shape = self._make_split_support().Shape
+        cutter = station_plane(210.0)
+        support_area = sum(f.Area for f in support_shape.Faces)
+        band_area = sum(
+            f.Area for f in section.band_of(support_shape, cutter, 34.0))
+        remainder_area = sum(
+            f.Area for f in section.drape_cuts_of(support_shape, cutter, 34.0))
+        self.assertAlmostEqual(
+            band_area + remainder_area, support_area, places=6,
+            msg="band + footprint must equal the split support exactly")
 
 
 class TestBulkheadExampleRuns(TestFreeCADFP):

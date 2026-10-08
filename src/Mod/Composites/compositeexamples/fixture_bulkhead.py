@@ -83,3 +83,24 @@ def station_plane(x, normal=Vector(1, 0, 0), side=PLANE_SIDE):
 def bulkhead_fixture(sewn=False):
     """The fixture skin: forward band + aft band, joined at x = 300."""
     return lofted_bands([FORWARD_SECTIONS, AFT_SECTIONS], sewn=sewn)
+
+
+def split_fixture(sewn=False):
+    """The fixture skin split L/R by the vertical plane y = 0.
+
+    Each loft band is cut against a half-space box on each side of
+    y = 0, so the support is a compound of four pieces — both bands in
+    a left and a right half, nothing stitched to anything.  What a
+    bulkhead must survive here: a section chain that runs across
+    *separate* support pieces, a band taken partly from each, and a
+    member whose parts are not topologically connected — the same
+    situation a real bay has once the deck has been cut.
+    """
+    pieces = []
+    for face in bulkhead_fixture(sewn=sewn).Faces:
+        for y_min, y_max in ((-1000.0, 0.0), (0.0, 1000.0)):
+            half = face.common(Part.makeBox(
+                2000.0, y_max - y_min, 2000.0,
+                FreeCAD.Vector(-1000.0, y_min, -1000.0)))
+            pieces.extend(half.Faces)
+    return Part.makeCompound(pieces)

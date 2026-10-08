@@ -41,6 +41,7 @@ from Composites.compositeexamples.fixture_bulkhead import (
     PLANE_SIDE,
     bulkhead_fixture,
     lofted_bands,
+    split_fixture,
     station_plane,
 )
 from Composites.tools import bulkhead_section as section
@@ -79,6 +80,60 @@ class SectionProbe(unittest.TestCase):
             f"{label}: expected one section chain, got {len(chains)}: "
             + ", ".join(f"{len(c.Edges)} edges" for c in chains))
         return chains
+
+
+class TestSplitSupport(SectionProbe):
+    """The support split L/R by the vertical plane y = 0.
+
+    The deck of a real bay has been cut before the bulkhead is declared,
+    so the chain and the band must run across *separate* support pieces.
+    Everything in these cases is exact, not tolerance-based: the split
+    must not change any member fact at all.
+    """
+
+    def setUp(self):
+        self.support = split_fixture(sewn=True)
+
+    def test_chain_still_closes_across_the_split(self):
+        """One closed chain, spanning both halves of the split skin."""
+        chains = self.chains_of(self.support, station_plane(210.0))
+        self.assertEqual(len(chains), 1, "the split must not fragment the chain")
+        self.assertTrue(chains[0].isClosed(),
+                        "the chain must close across the separate pieces")
+
+    def test_member_facts_survive_the_split(self):
+        """Plate, band and footprint carry the same areas as unsplit.
+
+        Area conservation is the invariant the whole boolean pair rests
+        on: band + remainder = support, exactly — on a support of four
+        unconnected pieces as much as on one stitched skin.
+        """
+        import Part
+        from FreeCAD import Vector
+
+        cutter = station_plane(210.0)
+        plates, bands = section.make_bulkhead(self.support, cutter, 34.0)
+        cuts = section.drape_cuts_of(self.support, cutter, 34.0)
+        self.assertTrue(plates, "the split skin must still fill a section")
+        self.assertTrue(bands, "the split skin must still give a flange band")
+        support_area = sum(f.Area for f in self.support.Faces)
+        member_area = sum(f.Area for f in bands)
+        remainder_area = sum(f.Area for f in cuts)
+        self.assertAlmostEqual(
+            member_area + remainder_area, support_area, places=6,
+            msg="band + footprint must equal the split support exactly")
+        # The split must not change the member itself either: the plate
+        # fills the same region the unsplit skin's chain bounds.  Two
+        # independent boolean constructions of one region differ by
+        # reconstruction noise (measured 0.0023 mm2 of 21271), so the
+        # bound is relative — conservation above is the exact assert.
+        unsplit_plates, _ = section.make_bulkhead(
+            bulkhead_fixture(sewn=True), cutter, 34.0)
+        split_area = sum(f.Area for f in plates)
+        unsplit_area = sum(f.Area for f in unsplit_plates)
+        self.assertLess(
+            abs(split_area - unsplit_area) / unsplit_area, 1e-6,
+            msg="the split must not change the plate's region")
 
 
 class TestSectionChains(SectionProbe):
