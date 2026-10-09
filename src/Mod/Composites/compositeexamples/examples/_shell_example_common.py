@@ -66,6 +66,40 @@ def make_demo_laminate():
     )
 
 
+def make_qi_laminate(doc, name, angles=(0.0, 45.0, -45.0, 90.0), ply_thickness=0.2):
+    """A symmetric quasi-isotropic laminate as document objects.
+
+    ``IsotropicEquivalent`` is set, so the solver sees one isotropic layer and
+    no orthotropic orientation machinery; that keeps an example's FEM path
+    independent of the drape backend.
+    """
+    import FreeCAD
+
+    _prepare_feature_import_environment()
+    from ...features.CompositeLaminate import CompositeLaminateFP
+    from ...features.FibreCompositeLamina import FibreCompositeLaminaFP
+
+    plies = []
+    for index, angle in enumerate(angles, start=1):
+        ply = doc.addObject("App::FeaturePython", f"{name}_Ply{index:02d}")
+        FibreCompositeLaminaFP(ply)
+        ply.FibreMaterial = _carbon_material()
+        ply.FibreVolumeFraction = 55
+        ply.Thickness = FreeCAD.Units.Quantity(f"{ply_thickness} mm")
+        ply.Angle = angle
+        ply.WeaveType = WeaveType.UD.name
+        plies.append(ply)
+
+    laminate = doc.addObject("App::FeaturePython", name)
+    CompositeLaminateFP(laminate, laminae=plies)
+    laminate.ResinMaterial = _resin_material()
+    laminate.FibreVolumeFraction = 55
+    laminate.Symmetry = SymmetryType.Even.name
+    laminate.IsotropicEquivalent = True
+    doc.recompute()
+    return laminate
+
+
 def ensure_document(doc, name):
     if doc is not None:
         return doc

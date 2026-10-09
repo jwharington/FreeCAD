@@ -18,6 +18,7 @@ import Part
 from ...features.CompositeShell import CompositeShellFP
 from ...objects import SymmetryType, WeaveType
 from ._shell_example_common import (
+    make_qi_laminate,
     _add_analysis_member,
     _add_fixed_constraint,
     _add_shell_section_and_material,
@@ -48,30 +49,7 @@ def _ensure_document(doc):
 
 
 def _make_qi_laminate(doc, name="QILaminate"):
-    _prepare_feature_import_environment()
-    from ...features.CompositeLaminate import CompositeLaminateFP
-    from ...features.FibreCompositeLamina import FibreCompositeLaminaFP
-
-    plies = []
-    for idx, angle in enumerate(QI_ANGLES, start=1):
-        ply = doc.addObject("App::FeaturePython", f"{name}_Ply{idx:02d}")
-        FibreCompositeLaminaFP(ply)
-        ply.FibreMaterial = _carbon_material()
-        ply.FibreVolumeFraction = 55
-        ply.Thickness = FreeCAD.Units.Quantity("0.2 mm")
-        ply.Angle = angle
-        ply.WeaveType = WeaveType.UD.name
-        plies.append(ply)
-
-    laminate = doc.addObject("App::FeaturePython", name)
-    CompositeLaminateFP(laminate, laminae=plies)
-    laminate.ResinMaterial = _resin_material()
-    laminate.FibreVolumeFraction = 55
-    # A QI stack must be symmetric (B = 0) for isotropic presentation.
-    laminate.Symmetry = SymmetryType.Even.name
-    laminate.IsotropicEquivalent = True
-    doc.recompute()
-    return laminate
+    return make_qi_laminate(doc, name, angles=QI_ANGLES)
 
 
 def _make_plate(doc):

@@ -119,6 +119,10 @@ EXAMPLES = {
         "module": ".examples.quasi_iso_fem_plate",
         "name": "Quasi-isotropic FEM plate (isotropic presentation through CalculiX)",
     },
+    "mixed_shell_solid_plate": {
+        "module": ".examples.mixed_shell_solid_plate",
+        "name": "Mixed shell and solid plate (laminate skin over a solid spar)",
+    },
     "quasi_iso_cylindrical_panel": {
         "module": ".examples.quasi_iso_cylindrical_panel",
         "name": "Quasi-isotropic cylindrical panel (curvature needs no drape)",

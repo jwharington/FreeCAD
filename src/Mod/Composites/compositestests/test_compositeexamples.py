@@ -417,6 +417,46 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
         snippet = result["solver_input_snippet"]
         self.assertIn("TYPE=ISO", snippet)
 
+    def test_mixed_shell_solid_plate_solves(self):
+        """The motivating case: a composite shell skin tied to a solid spar.
+
+        This is the only example that puts a Composites feature in a mixed
+        analysis, so it is the only one that exercises the laminate section and
+        the material objects together with the shell-and-solid path.
+        """
+        try:
+            result = runner.run("mixed_shell_solid_plate", run_solver=True, doc=None)
+        except RuntimeError as exc:
+            msg = str(exc)
+            missing_stack_markers = (
+                "ObjectsFem is required",
+                "Unable to create FEM analysis/solver/mesh objects",
+                "Mesh generation failed",
+                "femtools.ccxtools is required",
+            )
+            if any(marker in msg for marker in missing_stack_markers):
+                self.skipTest(f"FEM stack unavailable in this FreeCAD build: {msg}")
+            raise
+
+        self._saved_doc = result.get("doc")
+        self._assert_composites_features_valid(result["doc"])
+        shell = result["shell"]
+        self.assertNotIn("Invalid", shell.State)
+        self.assertFalse(shell.DrapeValid)  # orientation-free: no drape
+
+        mesh = result["mesh"].FemMesh
+        self.assertGreater(len(mesh.Volumes), 0, "the spar must be volume elements")
+        self.assertGreater(
+            len(mesh.FacesOnly), 0, "the skin must keep shell elements of its own"
+        )
+
+        solver_input = result["solver_input"]
+        self.assertIn("*SOLID SECTION", solver_input, "the spar must be sectioned")
+        self.assertIn("*SHELL SECTION", solver_input, "the skin must be sectioned")
+        self.assertIn("*TIE", solver_input, "the skin must be coupled to the spar")
+        self.assertIsNotNone(result["max_displacement"])
+        self.assertGreater(result["max_displacement"], 0.0)
+
 
 class TestFailurePostprocess(TestCompositeExamplesBase):
     def test_evaluate_failure_criteria_returns_hotspots(self):
