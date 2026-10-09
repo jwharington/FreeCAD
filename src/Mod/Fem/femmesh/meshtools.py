@@ -1582,7 +1582,7 @@ def pair_obj_reference(obj_ref):
 def get_elements(sets_getter, ref_pair, face_masks, edge_masks):
     ref_obj, sub_ref = ref_pair
     geom_type = ref_obj.getSubObject(sub_ref).ShapeType
-    if settings.get_allow_mixed_elements() and is_mixed_femmesh(sets_getter.femmesh):
+    if settings.get_allow_mixed_elements() and sets_getter.is_mixed:
         return get_elements_by_reference_dimension(
             sets_getter, ref_pair, geom_type, face_masks, edge_masks
         )

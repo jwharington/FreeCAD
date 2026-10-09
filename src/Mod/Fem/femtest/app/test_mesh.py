@@ -842,6 +842,7 @@ class TestMeshMixed(unittest.TestCase):
         femelement_table = meshtools.get_femelement_table(femmesh)
         getter = SimpleNamespace(
             femmesh=femmesh,
+            is_mixed=True,
             femnodes_mesh=femmesh.Nodes,
             femelement_table=femelement_table,
             femnodes_ele_table=meshtools.get_femnodes_ele_table(femmesh.Nodes, femelement_table),

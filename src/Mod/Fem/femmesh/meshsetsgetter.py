@@ -89,6 +89,15 @@ class MeshSetsGetter:
         self.ccx_efaces = "Efaces"
         self.ccx_eedges = "Eedges"
         self.mat_geo_sets = []
+        # Worked out on first use, then kept. is_mixed_femmesh asks FemMesh for
+        # its faces-only set, which is a full scan of the mesh, and this getter
+        # consults the answer per geometry reference and per material - so
+        # recomputing it made writing one deck dominated by a single query
+        # repeated dozens of times. The mesh cannot change for the life of this
+        # getter, which is what makes caching it here safe; a cache keyed on the
+        # mesh itself would go stale on a renumbering and silently change which
+        # faces count as shells.
+        self._is_mixed = None
         self.theshape = None
         if self.mesh_object:
             if hasattr(self.mesh_object, "Shape"):
@@ -559,6 +568,17 @@ class MeshSetsGetter:
 
     # ********************************************************************************************
     # ********************************************************************************************
+    @property
+    def is_mixed(self):
+        """Whether the mesh holds shells of its own alongside volumes.
+
+        Memoised, because the underlying query scans the whole mesh and every
+        caller here is asking about the same unchanged mesh.
+        """
+        if self._is_mixed is None:
+            self._is_mixed = meshtools.is_mixed_femmesh(self.femmesh)
+        return self._is_mixed
+
     def _get_elements(self, obj):
         print_obj_info(obj)
         result = []
@@ -1046,7 +1066,7 @@ class MeshSetsGetter:
         references stays the catch-all and goes to every pass, taking that
         pass's leftovers.
         """
-        if not meshtools.is_mixed_femmesh(self.femmesh):
+        if not self.is_mixed:
             return list(self.member.mats_linear)
         return [
             mat_data
@@ -1062,7 +1082,7 @@ class MeshSetsGetter:
         recording that here would give it a section of a dimension it has no
         elements for.
         """
-        if not meshtools.is_mixed_femmesh(self.femmesh):
+        if not self.is_mixed:
             return
         for mat_data in materials:
             if "FEMElements" in mat_data:
