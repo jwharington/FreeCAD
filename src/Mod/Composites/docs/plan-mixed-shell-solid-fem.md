@@ -315,6 +315,48 @@ matches the headless golden". Decide this before Stage 4, not after.
 build/debug/bin/FreeCAD --run-test TestFemGui
 ```
 
+**The golden set is not currently a usable reference, and that is a problem
+for this plan specifically.** Six of the 33 cases in
+`femtest.app.test_ccxtools` fail, all pre-existing: confirmed by stashing every
+change this branch has made and reproducing the identical six.
+
+| Failing case |
+|---|
+| `test_box_static` |
+| `test_ccx_cantilever_ele_hexa20` |
+| `test_ccx_cantilever_faceload` |
+| `test_ccx_cantilever_nodeload` |
+| `test_constraint_transform_torque` |
+| `test_material_multiple_bendingbeam_fiveboxes` |
+
+The cause is staleness, not a regression: the checked-in decks expect
+`** ConstraintFixed` and a `ConstraintFixed` nset where the current examples
+emit `Fixed`, and the meshes differ too (228 nodes against 235 in the faceload
+case). Commits such as `dac401961b` and `059d01a519` updated `femexamples`
+without refreshing the corresponding decks. **Do not regenerate them from this
+plan** — that would bless whatever those commits did, including any real fault
+in the constraint rename, and it is someone else's in-flight work. Note it and
+leave it.
+
+**Consequence: change this plan's flag-inert proof.** The invariant was
+"flag off ⇒ every generated `.inp` is byte-identical, proven by comparing the
+whole golden set". That comparison conflates two different claims — *my change
+altered nothing* and *the output has not changed since the goldens were
+written* — and the second is currently false for reasons unrelated to this
+work. It therefore cannot be used as written.
+
+Replace it with a **before/after deck snapshot**, which isolates exactly the
+claim the plan needs and does not depend on golden currency: generate every
+example deck with the tree as it stands, hash them into a committed snapshot
+file, then after each stage regenerate and require the hashes to be unchanged
+with the flag off. A stage that leaks changes a hash and names the deck; a stale
+golden cannot mask it and a fresh golden is not required. This wants to be one
+committed tool beside the §9.9 probes, not an ad-hoc loop — and it becomes the
+mechanism every stage from 2 onward is verified against.
+
+Until that tool exists, treat the 27 passing `test_ccxtools` cases as the
+available regression signal and record, per stage, that it is partial.
+
 **Known pre-existing canary failure.** `run-tests.sh test_laminate` exits 1 on
 `TestQuasiIsotropicEntryGuards.test_texture_plan_activation_creates_nothing`
 (`AttributeError: module 'FreeCADGui' has no attribute 'Selection'`, raised
