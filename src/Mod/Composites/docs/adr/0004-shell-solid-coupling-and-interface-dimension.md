@@ -14,14 +14,20 @@ nodes. The choice of which interface a coupling applies to is made by the
 Both are the same mechanism. There is no second mechanism, and no fallback to
 an `*EQUATION` writer unless a later case cannot be expressed as a surface.
 
-## Why shared nodes are excluded (measured, not preferred)
+## Why shared nodes are excluded (Trap A, and a hinge only for an edge)
 
-A shell in CalculiX is expanded into bricks, and a shell node shared with a
-solid becomes a **knot** — a rigid body with seven degrees of freedom (three
-translations, three rotations, uniform expansion) at the reference node. A
-solid element can see only that node's three translations, so the shell's
-rotations have no counterpart on the solid side and nothing resists them. The
-CalculiX manual states the result directly, in the S8/S8R section:
+The reason is not that a shared node makes a weak joint. It is that a shell
+sharing a solid's nodes is **dropped from the deck before CalculiX sees it**.
+
+`FemMesh::getFacesOnly` classifies a face as a shell only when its node ids are
+**not** a subset of any volume's. A face-interface shell lies *on* the solid's
+face, so its nodes are by construction a subset of the solid's, and the shell
+vanishes from the written mesh. Silently: no error, no warning, no shell. That
+is Trap A, measured (plan §9.9), and it holds whatever CalculiX would have done
+with the coupling.
+
+The hinge question is a separate one, and the common reading of the manual
+overstates it. The S8/S8R section says:
 
 > *"Beam and shell elements are always connected in a stiff way if they share
 > common nodes. This, however, does not apply to plane stress, plane strain and
@@ -31,20 +37,31 @@ CalculiX manual states the result directly, in the S8/S8R section:
 > connected with MPC's. The connection between 3D elements and all other elements
 > (1D or 2D) is always hinged."*
 
-The stiff-by-shared-nodes rule is for 1D↔2D only. For 3D↔2D the connection is a
-hinge by design.
+Read literally, the second sentence would make every shared-node 3D-to-2D
+connection a hinge. **CalculiX's own test suite says otherwise, and what decides
+it is the measure of the interface, not the element types:**
 
-Shared nodes are therefore not a *weak* coupling. They are a hinge that reports
-nothing: measured at a magnification of ~2.5e12 in tip deflection against a
-fully clamped root, with no error and no warning from CalculiX. A model coupled
-this way converges, produces a `.dat`, and is wrong. That silence is the reason
-this decision is written down rather than left to preference.
+| Reference case | Interface | Connection cards | Its own objective |
+|---|---|---|---|
+| `solidshell1` | shared **line** | none — shared nodes | *"hinged connection shell-solid"* |
+| `solidshell2` | shared **face patch** | none — shared nodes | *"fixed connection shell-solid"* |
 
-The merge route is consequently node-disjoint **by construction**, and that
-node-disjointness is doubly required: `FemMesh::getFacesOnly` classifies a face
-as a shell only when its node ids are not a subset of any volume's, so a
-node-shared shell is also invisible to the mesh writer and vanishes from the
-deck — again silently, and independently of the coupling question.
+Both are CalculiX reference cases. A shared face patch is therefore **not** a
+hinge, and for the face (F) family the case against shared nodes rests on Trap A
+alone.
+
+For the edge (E) family the hinge is real: a shell meeting a solid along an edge
+shares only that line's nodes — `solidshell1`'s configuration, which CalculiX
+itself calls hinged. Trap A does not apply there (the shell's remaining nodes
+are off the solid), so the hinge is the reason, and `*TIE` — which carried full
+moment at a root edge, within 1.7 % of clamped — is what the coupling is for.
+
+The measured hinge reports nothing: ~2.5e12 magnification in tip deflection
+against a fully clamped root, with no error and no warning from CalculiX. A
+model coupled that way converges, produces a `.dat`, and is wrong. That silence
+is why this decision is written down rather than left to preference.
+
+The merge route is consequently node-disjoint **by construction**.
 
 ## Why an edge interface is in scope
 
@@ -68,8 +85,10 @@ Until it lands, an E-shaped connection must fail **loudly** — see below.
 
 ## Considered alternatives
 
-- **Conformal shared-node coupling.** Rejected. Hinged by design (above), and
-  it simultaneously hides the shell from `getFacesOnly`.
+- **Conformal shared-node coupling.** Rejected. It hides the shell from
+  `getFacesOnly` (Trap A), and for an edge interface the connection is hinged by
+  design. That a shared *face patch* is not a hinge (`solidshell2`) does not
+  save it: the shell is gone from the deck before the coupling matters.
 - **Add a `*EQUATION` writer** to couple the shell edge nodes' rotations to the
   relative displacement of the adjacent solid nodes. Correct and general, and
   the classic CalculiX remedy, but now a *fallback*: measurement shows `*TIE`
@@ -78,8 +97,8 @@ Until it lands, an E-shaped connection must fail **loudly** — see below.
 - **Declare the E family out of scope permanently.** Rejected. It was a
   reasonable position while the coupling was believed impossible; it is not
   reasonable now that a deck proving otherwise exists.
-- **Merge only the interface nodes.** Not an option at any cost — this is the
-  shared-node hinge above, and it would also re-expose Trap A per face.
+- **Merge only the interface nodes.** Not an option at any cost — it re-exposes
+  Trap A per face, and for an edge interface it is the hinge above.
 
 ## What this obliges the implementation to do
 
