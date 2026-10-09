@@ -783,6 +783,18 @@ def makeMeshResult(doc, name="MeshResult"):
         from femviewprovider import view_mesh_result
 
         view_mesh_result.VPFemMeshResult(obj.ViewObject)
+        # Not selectable: the result mesh is display data, and on a mixed model
+        # it is built from the frd, which stores the expanded nodes - 289,239
+        # of them against a 35,383 node model in the measured case.  Selecting
+        # geometry is what a ray pick does, so every pick over it cost 0.45s,
+        # which is felt as a stalled scroll: a wheel notch over the body picks
+        # and one over empty space does not.  Measured: 0.448s selectable,
+        # 0.025s not.  SelectionStyle = "BoundBox", which this module uses for
+        # the result pipeline, did not help here (0.471s), so the result mesh
+        # is taken out of selection altogether rather than given a cheaper
+        # pick.  The result pipeline stays selectable, which is what carries
+        # the useful selection.
+        obj.ViewObject.Selectable = False
     return obj
 
 
