@@ -27,11 +27,14 @@ __url__ = "https://www.freecad.org"
 
 import unittest
 from os.path import join
+from types import SimpleNamespace
 
 import FreeCAD
+import Part
 
 import Fem
 from femmesh import meshtools
+from femsolver import settings
 from . import support_utils as testtools
 from .support_utils import fcc_print
 
@@ -723,6 +726,22 @@ class TestMeshMixed(unittest.TestCase):
         femmesh.addFace(node_ids)
         return node_ids
 
+    class _ShapeReference:
+        """A geometry reference standing in for a document feature.
+
+        Only the pieces :func:`meshtools.get_elements` reads are provided: the
+        name for log lines and ``getSubObject``/``Shape.getElement`` so that the
+        reference resolves to the same sub-shape a real feature would expose.
+        """
+
+        def __init__(self, shape):
+            self.Shape = shape
+            self.Name = "ShapeReference"
+            self.Label = "ShapeReference"
+
+        def getSubObject(self, sub_ref):
+            return self.Shape.getElement(sub_ref)
+
     def make_mixed_femmesh(self, shared_nodes=False):
         """A brick plus a quad at the brick's bottom four coordinates.
 
@@ -812,6 +831,62 @@ class TestMeshMixed(unittest.TestCase):
             tables[3],
             msg="The shell element id leaked into the volume table",
         )
+
+    # ********************************************************************************************
+    # get_elements resolves by the reference's own dimension
+    # ********************************************************************************************
+
+    def test_get_elements_resolves_reference_by_its_own_dimension(self):
+        self._enable_mixed_elements()
+        femmesh = self.make_mixed_femmesh()
+        femelement_table = meshtools.get_femelement_table(femmesh)
+        getter = SimpleNamespace(
+            femmesh=femmesh,
+            femnodes_mesh=femmesh.Nodes,
+            femelement_table=femelement_table,
+            femnodes_ele_table=meshtools.get_femnodes_ele_table(femmesh.Nodes, femelement_table),
+            femelement_tables_by_dim={},
+            femnodes_ele_tables_by_dim={},
+            face_masks={},
+            edge_masks={},
+        )
+        solid_ref = self._ShapeReference(Part.makeBox(10.0, 10.0, 10.0))
+        face_ref = self._ShapeReference(Part.Face(Part.makePlane(10.0, 10.0)))
+
+        solid_result = meshtools.get_elements(getter, (solid_ref, "Solid1"), {}, {})
+        face_result = meshtools.get_elements(getter, (face_ref, "Face1"), {}, {})
+
+        solid_ids = solid_result[1]
+        face_ids = face_result[1]
+        self.assertEqual(len(solid_ids), 1, msg="The solid reference resolves to one volume")
+        self.assertEqual(len(face_ids), 1, msg="The face reference resolves to one shell")
+        self.assertNotEqual(
+            solid_ids,
+            face_ids,
+            msg="Solid and face references resolve to different elements in one mesh",
+        )
+        self.assertEqual(
+            femmesh.getElementType(solid_ids[0]),
+            "Volume",
+            msg="The solid reference resolved to an element of the wrong dimension",
+        )
+        self.assertEqual(
+            femmesh.getElementType(face_ids[0]),
+            "Face",
+            msg="The face reference resolved to an element of the wrong dimension",
+        )
+        self.assertFalse(solid_result[2], msg="Volume elements are not sub-elements")
+        self.assertFalse(face_result[2], msg="Shell elements are not sub-elements")
+
+    # ********************************************************************************************
+    # helpers
+    # ********************************************************************************************
+
+    def _enable_mixed_elements(self):
+        param = FreeCAD.ParamGet(settings._GENERAL_PARAM)
+        previous = param.GetBool("AllowMixedShellSolid", False)
+        param.SetBool("AllowMixedShellSolid", True)
+        self.addCleanup(param.SetBool, "AllowMixedShellSolid", previous)
 
     # ********************************************************************************************
     # merge_femmeshes

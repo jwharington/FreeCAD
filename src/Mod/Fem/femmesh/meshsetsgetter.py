@@ -94,6 +94,9 @@ class MeshSetsGetter:
         self.femelement_volumes_table = {}
         self.femelement_faces_table = {}
         self.femelement_edges_table = {}
+        # dimension-tagged element tables, built on demand for a mixed mesh
+        self.femelement_tables_by_dim = {}
+        self.femnodes_ele_tables_by_dim = {}
         self.femelement_count_test = True
         self.mat_geo_sets = []
 

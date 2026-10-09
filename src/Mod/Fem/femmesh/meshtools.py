@@ -32,6 +32,7 @@ import Fem
 import numpy as np
 import Part
 from femtools import geomtools
+from femsolver import settings
 
 _FACE_FALLBACK_WARNED = {
     "nodes": False,
@@ -1566,6 +1567,10 @@ def pair_obj_reference(obj_ref):
 def get_elements(sets_getter, ref_pair, face_masks, edge_masks):
     ref_obj, sub_ref = ref_pair
     geom_type = ref_obj.getSubObject(sub_ref).ShapeType
+    if settings.get_allow_mixed_elements() and is_mixed_femmesh(sets_getter.femmesh):
+        return get_elements_by_reference_dimension(
+            sets_getter, ref_pair, geom_type, face_masks, edge_masks
+        )
     elem = []
     is_sub_element = False
     model_dim = 0
@@ -1627,7 +1632,89 @@ def get_elements(sets_getter, ref_pair, face_masks, edge_masks):
     return (*elem, is_sub_element)
 
 
-def get_elements_by_references(sets_getter, femobj_ref):
+def get_elements_by_reference_dimension(sets_getter, ref_pair, geom_type, face_masks, edge_masks):
+    """Resolve one geometry reference against the elements of its own dimension.
+
+    Used for a mixed mesh when the development flag is on (see
+    :func:`get_elements`). A solid reference resolves against the volume table, a
+    face against the shell table and an edge against the beam table, so a mesh
+    holding more than one dimension no longer forces every reference through the
+    highest one.
+
+    A reference that matches no element of its own dimension falls back to the
+    sub-element search: a face bounding a solid rather than a shell, or an edge
+    bounding a solid rather than a beam, is found as a face or edge of a volume
+    element that way.
+    """
+    ref_obj, sub_ref = ref_pair
+    sub = (ref_obj, (sub_ref,))
+    is_sub_element = False
+    match geom_type:
+        case "Solid":
+            sub, elem = get_elements_by_references_of_dimension(sets_getter, ref_pair, 3)
+        case "Face":
+            sub, elem = get_elements_by_references_of_dimension(sets_getter, ref_pair, 2)
+            if not elem:
+                sub, elem = get_subelements_by_references(
+                    sets_getter, ref_pair, face_masks, edge_masks
+                )
+                is_sub_element = True
+        case "Edge":
+            sub, elem = get_elements_by_references_of_dimension(sets_getter, ref_pair, 1)
+            if not elem:
+                sub, elem = get_subelements_by_references(
+                    sets_getter, ref_pair, face_masks, edge_masks
+                )
+                is_sub_element = True
+        case _:
+            sub, elem = get_subelements_by_references(sets_getter, ref_pair, face_masks, edge_masks)
+            is_sub_element = True
+
+    if not elem:
+        if sub_ref not in ("", None):
+            FreeCAD.Console.PrintWarning(
+                "    No FEM elements found for reference {}.{} "
+                "(geom_type='{}', by-dimension dispatch).\n".format(
+                    ref_obj.Name, sub_ref, geom_type
+                )
+            )
+        return (sub, [], is_sub_element)
+
+    return (sub, elem, is_sub_element)
+
+
+def get_elements_by_references_of_dimension(sets_getter, femobj_ref, dimension):
+    """Resolve a reference against the element table of one dimension.
+
+    The dimension-tagged tables come from the mesh's own ``Volumes``,
+    ``FacesOnly`` and ``EdgesOnly`` sets and never from a node count. They are
+    built once and cached on the sets getter because the walk covers the whole
+    mesh.
+    """
+    if not sets_getter.femelement_tables_by_dim:
+        sets_getter.femelement_tables_by_dim.update(
+            get_femelement_tables_by_dim(sets_getter.femmesh)
+        )
+    elements = sets_getter.femelement_tables_by_dim[dimension]
+    if dimension not in sets_getter.femnodes_ele_tables_by_dim:
+        sets_getter.femnodes_ele_tables_by_dim[dimension] = get_femnodes_ele_table(
+            sets_getter.femnodes_mesh, elements
+        )
+    return get_elements_by_references(
+        sets_getter,
+        femobj_ref,
+        elements,
+        sets_getter.femnodes_ele_tables_by_dim[dimension],
+    )
+
+
+def get_elements_by_references(
+    sets_getter, femobj_ref, femelement_table=None, femnodes_ele_table=None
+):
+    if femelement_table is None:
+        femelement_table = sets_getter.femelement_table
+    if femnodes_ele_table is None:
+        femnodes_ele_table = sets_getter.femnodes_ele_table
     node_set = []
     result = []
     # TODO get elements from mesh groups
@@ -1651,7 +1738,7 @@ def get_elements_by_references(sets_getter, femobj_ref):
         charged_volume_node_set = sorted(set(node_set))
 
         bit_pattern_dict = get_bit_pattern_dict(
-            sets_getter.femelement_table, sets_getter.femnodes_ele_table, charged_volume_node_set
+            femelement_table, femnodes_ele_table, charged_volume_node_set
         )
         sh = feat.getSubObject(sub_ref)
         if sh.ShapeType == "Solid":
