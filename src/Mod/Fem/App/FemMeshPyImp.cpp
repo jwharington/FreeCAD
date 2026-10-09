@@ -32,6 +32,7 @@
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 #include <algorithm>
+#include <set>
 #include <stdexcept>
 
 
@@ -1266,6 +1267,31 @@ std::map<std::string, ABAQUS_EdgeVariant> edgeVariantPyMap = {
 
 }  // namespace
 
+namespace
+{
+// Collect an iterable of element ids into a set, for the optional facesOnly and
+// edgesOnly arguments. Returns false with a Python error set on failure.
+bool asIntSet(PyObject* obj, std::set<int>& out)
+{
+    PyObject* iter = PyObject_GetIter(obj);
+    if (!iter) {
+        return false;
+    }
+    PyObject* item = nullptr;
+    while ((item = PyIter_Next(iter)) != nullptr) {
+        long value = PyLong_AsLong(item);
+        Py_DECREF(item);
+        if (value == -1 && PyErr_Occurred()) {
+            Py_DECREF(iter);
+            return false;
+        }
+        out.insert(static_cast<int>(value));
+    }
+    Py_DECREF(iter);
+    return !PyErr_Occurred();
+}
+}  // namespace
+
 PyObject* FemMeshPy::writeABAQUS(PyObject* args, PyObject* kwd) const
 {
     char* Name;
@@ -1274,21 +1300,25 @@ PyObject* FemMeshPy::writeABAQUS(PyObject* args, PyObject* kwd) const
     const char* volVariant = "standard";
     const char* faceVariant = "shell";
     const char* edgeVariant = "beam";
+    PyObject* facesOnlyArg = Py_None;
+    PyObject* edgesOnlyArg = Py_None;
 
-    const std::array<const char*, 7> kwlist {
+    const std::array<const char*, 9> kwlist {
         "fileName",
         "elemParam",
         "groupParam",
         "volVariant",
         "faceVariant",
         "edgeVariant",
+        "facesOnly",
+        "edgesOnly",
         nullptr
     };
 
     if (!Base::Wrapped_ParseTupleAndKeywords(
             args,
             kwd,
-            "etiO!|sss",
+            "etiO!|sssOO",
             kwlist,
             "utf-8",
             &Name,
@@ -1297,8 +1327,21 @@ PyObject* FemMeshPy::writeABAQUS(PyObject* args, PyObject* kwd) const
             &groupParam,
             &volVariant,
             &faceVariant,
-            &edgeVariant
+            &edgeVariant,
+            &facesOnlyArg,
+            &edgesOnlyArg
         )) {
+        return nullptr;
+    }
+
+    std::set<int> facesOnly;
+    std::set<int> edgesOnly;
+    if (facesOnlyArg != Py_None && !asIntSet(facesOnlyArg, facesOnly)) {
+        PyMem_Free(Name);
+        return nullptr;
+    }
+    if (edgesOnlyArg != Py_None && !asIntSet(edgesOnlyArg, edgesOnly)) {
+        PyMem_Free(Name);
         return nullptr;
     }
 
@@ -1322,7 +1365,9 @@ PyObject* FemMeshPy::writeABAQUS(PyObject* args, PyObject* kwd) const
             grpParam,
             itVol->second,
             itFace->second,
-            itEdge->second
+            itEdge->second,
+            facesOnlyArg == Py_None ? nullptr : &facesOnly,
+            edgesOnlyArg == Py_None ? nullptr : &edgesOnly
         );
     }
     catch (const std::exception& e) {

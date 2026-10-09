@@ -220,7 +220,14 @@ public:
         bool groupParam,
         ABAQUS_VolumeVariant volVariant = ABAQUS_VolumeVariant::Standard,
         ABAQUS_FaceVariant faceVariant = ABAQUS_FaceVariant::Shell,
-        ABAQUS_EdgeVariant edgeVariant = ABAQUS_EdgeVariant::Beam
+        ABAQUS_EdgeVariant edgeVariant = ABAQUS_EdgeVariant::Beam,
+        // elemParam 2 writes the faces and edges that belong to no volume, and
+        // normally works them out with getFacesOnly/getEdgesOnly. Those scan
+        // the whole mesh against every volume, which is tens of seconds on a
+        // large one, so a caller that has already scanned can hand the answers
+        // in here and skip the second scan. nullptr means "work it out".
+        const std::set<int>* facesOnly = nullptr,
+        const std::set<int>* edgesOnly = nullptr
     ) const;
     void writeVTK(const std::string& FileName, bool highest = true) const;
     // write vtk file, and writes the groups into the provided cell array.

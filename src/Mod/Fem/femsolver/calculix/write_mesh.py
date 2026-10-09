@@ -103,13 +103,25 @@ def write_mesh(ccxwriter):
 
     else:
         ccxwriter.femmesh_file = ccxwriter.file_name
+        variants = {
+            "volVariant": vol_variant,
+            "faceVariant": face_variant,
+            "edgeVariant": edge_variant,
+        }
+        if element_param == 2:
+            # Mode 2 writes the faces and edges belonging to no volume, and
+            # FemMesh would work them out with a scan of the whole mesh against
+            # every volume - about 46s on the mixed wing. The mesh sets getter
+            # has scanned for them already, so hand them over. Only in mode 2:
+            # reading them in any other mode would force a scan that the
+            # non-mixed path has never paid for.
+            variants["facesOnly"] = ccxwriter.meshdatagetter.faces_only
+            variants["edgesOnly"] = ccxwriter.meshdatagetter.edges_only
         ccxwriter.femmesh.writeABAQUS(
             ccxwriter.femmesh_file,
             element_param,
             group_param,
-            volVariant=vol_variant,
-            faceVariant=face_variant,
-            edgeVariant=edge_variant,
+            **variants,
         )
 
         # reopen file with "append" to add all the rest

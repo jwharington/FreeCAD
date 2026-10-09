@@ -1706,7 +1706,9 @@ void FemMesh::writeABAQUS(
     bool groupParam,
     ABAQUS_VolumeVariant volVariant,
     ABAQUS_FaceVariant faceVariant,
-    ABAQUS_EdgeVariant edgeVariant
+    ABAQUS_EdgeVariant edgeVariant,
+    const std::set<int>* facesOnly,
+    const std::set<int>* edgesOnly
 ) const
 {
     /*
@@ -1988,9 +1990,15 @@ void FemMesh::writeABAQUS(
         }
     }
     if (elemParam == 2) {
-        // we're going to fill the elementsMapFac with the facesOnly
-        std::set<int> facesOnly = getFacesOnly();
-        for (int itfa : facesOnly) {
+        // we're going to fill the elementsMapFac with the facesOnly. The caller
+        // may have scanned for these already; scanning walks the whole mesh
+        // against every volume, so use theirs when it is offered.
+        std::set<int> scannedFacesOnly;
+        if (facesOnly == nullptr) {
+            scannedFacesOnly = getFacesOnly();
+            facesOnly = &scannedFacesOnly;
+        }
+        for (int itfa : *facesOnly) {
             std::pair<int, std::vector<int>> apair;
             apair.first = itfa;
             const SMDS_MeshElement* aFace = myMesh->GetMeshDS()->FindElement(itfa);
@@ -2029,9 +2037,14 @@ void FemMesh::writeABAQUS(
         }
     }
     if (elemParam == 2) {
-        // we're going to fill the elementsMapEdg with the edgesOnly
-        std::set<int> edgesOnly = getEdgesOnly();
-        for (int ited : edgesOnly) {
+        // we're going to fill the elementsMapEdg with the edgesOnly, offered by
+        // the caller when it has already scanned for them.
+        std::set<int> scannedEdgesOnly;
+        if (edgesOnly == nullptr) {
+            scannedEdgesOnly = getEdgesOnly();
+            edgesOnly = &scannedEdgesOnly;
+        }
+        for (int ited : *edgesOnly) {
             std::pair<int, std::vector<int>> apair;
             apair.first = ited;
             const SMDS_MeshElement* aEdge = myMesh->GetMeshDS()->FindElement(ited);
