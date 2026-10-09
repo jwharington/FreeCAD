@@ -6,8 +6,10 @@ merge routine is published. Stage 7's coupling check passes at **0.09 %** agains
 all-solid rebuild; Stage 8 makes a mixed result displayable (`OUTPUT=2d` on both file
 cards); Stage 9 promotes the path, hardens the checks the promotion would have
 weakened, and publishes the merge routine.
-**Remaining:** a shell/solid visibility toggle in the results viewer, `Stiffener` and
-`Bulkhead` mixed coverage, and deleting the flag after a release. See §3.
+**Remaining:** the full list is **§11**. The sharpest entry there is that the loud
+failure ADR 0004 requires was never implemented, so an edge-shaped connection
+fails **silently** on a path that is now on by default. Read §11 before treating
+any stage above as "finished" in the sense of complete.
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
 shells wants to coexist with locally solid features in the *same*
 analysis. Today it cannot: FreeCAD's FEM pipeline is built around
@@ -81,7 +83,7 @@ path must carry **explicit dimension tags**, sourced from
 |---|---|---|
 | Where the fix lives | **FreeCAD FEM core** (`src/Mod/Fem`), flag-gated and upstreamable, and **general**: a mixed model's shell need not be a composite shell — a plain steel shell over a solid feature wants exactly the same path — so nothing here, the mesh-merge routine included, is Composites-specific. Composites is one consumer, not the owner. | Stage 9 |
 | Shell↔solid coupling | **`*TIE` with position tolerance**, non-conformal meshes, on **node-disjoint** meshes. Chosen primarily because **Trap A** makes a node-merged shell on a solid boundary undetectable — it is dropped from the written mesh, silently, before any coupling question arises. For an **edge** interface a shared node is additionally a hinge (`solidshell1`, §8.3); for a **face patch** it is not (`solidshell2`), so Trap A is what decides there. `*TIE` covers **face interfaces only** — edge-connected shapes (§8.4, family E) have no mechanism in the tree and are a scope decision for ADR 0004. | Stage 0 |
-| Safety gate while incomplete | **Hidden dev parameter** `AllowMixedShellSolid` in `User parameter:BaseApp/Preferences/Mod/Fem/General`, default `False`, read through one getter in `femsolver/settings.py` (next to `get_write_comments`). Deleted in the final stage. | Stage 9 |
+| Safety gate | **Hidden dev parameter** `AllowMixedShellSolid` in `User parameter:BaseApp/Preferences/Mod/Fem/General`, read through one getter in `femsolver/settings.py` (next to `get_write_comments`). **Stage 9 flipped the default to `True`** — setting it to `False` is the rollback, not the other way round. Getter and branches deleted after a release ships with the default on. | Stage 9 (done) |
 
 **Invariant for the whole plan:** with the flag off, every generated
 `.inp` is **byte-identical** to today's. Every existing golden file in
@@ -642,6 +644,14 @@ only when (i) it declares the stage that first makes it pass, and (ii) the
 same `femexamples` module produces the *same deck* headless and in the
 GUI. A case that passes only in one of the two modes is not finished.
 
+**This rule is not met as built.** The GUI half was never written —
+`femtest/gui/test_mixed_shell_solid.py` does not exist and nothing mixed is
+registered in `TestFemGui.py` — so the matrix is **headless-only** at present.
+That is an open decision, not an oversight to be glossed: either write the GUI
+half, or amend this rule deliberately. Recorded in §11.6. The rule is left
+standing here because it is the right rule, and the tree is what falls short of
+it.
+
 ### 8.1 What already exists to build on
 
 | Piece | Where | Why it matters here |
@@ -887,16 +897,24 @@ for a physics result.
 
 ### 8.6 Files the matrix adds
 
-| File | Purpose |
-|---|---|
-| `femtest/app/test_mixed_shell_solid.py` | headless half of G0-G13 |
-| `femtest/gui/test_mixed_shell_solid.py` | GUI half of G0-G12 |
-| `femexamples/constraint_mixed_face_coupling.py` | F-family geometry + analysis; `setup(doc, variant="f1"|"f2"|"f3"|"f4")`, default `f1` |
-| `femexamples/constraint_mixed_edge_coupling.py` | E-family geometry + analysis; `setup(doc, variant="e1"|"e2"|"e3")`, default `e2` |
-| `femexamples/meshes/mesh_mixed_face_coupling_f*.py` | frozen merged meshes for G4-G7, G12, G13 |
-| `femexamples/meshes/mesh_mixed_edge_coupling_e*.py` | frozen meshes for G10, G11 |
-| `femtest/data/calculix/constraint_mixed_*.inp` | the mixed goldens |
-| `femtest/data/mesh/mixed_*.npy`-or-text snapshots | structural baselines for the R1 half of G4-G7 |
+| File | Purpose | Built? |
+|---|---|---|
+| `femtest/app/test_mixed_shell_solid.py` | headless matrix, 27 tests, registered as `FemTest17` | **yes** |
+| `femtest/gui/test_mixed_shell_solid.py` | GUI half of G0-G12 | **no — not built** (§11.6) |
+| `femexamples/constraint_mixed_face_coupling.py` | F-family geometry + analysis; `setup(doc, variant="f1"|"f2"|"f3"|"f4")`, default `f1` | yes |
+| `femexamples/constraint_mixed_edge_coupling.py` | E-family geometry + analysis; `setup(doc, variant="e1"|"e2"|"e3")`, default `e2` | yes |
+| `femexamples/meshes/mesh_mixed_face_coupling_f*.py` | frozen merged meshes for G4-G7, G12, G13 | **no.** R1's frozen half was met differently: `femexamples/meshes/merged_mesh.py` holds the merge routine, and one fixture golden covers the byte-compare. Structural assertions read the live mesh the examples build |
+| `femexamples/meshes/mesh_mixed_edge_coupling_e*.py` | frozen meshes for G10, G11 | **no** — not needed while the E family does not solve (§11.1) |
+| `femtest/data/calculix/constraint_mixed_*.inp` | the mixed goldens | **renamed** — one fixture deck, `mixed_shell_solid_fixture.inp` |
+| `femtest/data/mesh/mixed_*.npy`-or-text snapshots | structural baselines for the R1 half of G4-G7 | **no** — structural assertions read the `FemMesh` by dimension tag instead |
+
+**Case labels are not lookup keys.** The cases are delivered under descriptive
+test names rather than the `G0`-`G13` / `V1`-`V3` labels used above —
+`test_flag_never_changes_a_solid_deck` (G3),
+`test_mixed_deck_carries_a_solid_and_a_shell_section` (G4/G5),
+`test_displacement_prescribes_rotation_only_on_shell_nodes` (G12),
+`test_mixed_deck_agrees_on_output_dimension` (V3). The labels stay useful for
+discussing the matrix; they are not names you can grep for.
 
 A `variant` keyword with a default is compatible with the browser: it
 launches examples as `setup()` or `setup(solvertype="…")`
@@ -941,7 +959,7 @@ which is what actually verifies `merge_femmeshes`.
 to real coupling **only if** the ADR chose option 1 or 2.
 - **Stage 5** adds G4's section assertion and G7.
 - **Stage 6** adds G12; **Stage 7** adds G13; **Stage 8** adds the V cases of
-  §8.9.
+  §8.10.
 
 A case whose stage has not landed is registered in the test module but
 kept out of `TestFemApp.py` / `TestFemGui.py` until it can pass, so the
@@ -967,7 +985,7 @@ Do not guess further flags: read `src/Mod/Fem/TestFemApp.py` and
 `src/Mod/Fem/TestFemGui.py` for the registered module names before the
 first invocation of any new case.
 
-### 8.10 Invoke Composites modules fully qualified, and check the count
+### 8.9 Invoke Composites modules fully qualified, and check the count
 
 `run-tests.sh <bare-name>` resolves to `compositestests.<name>`, which is the
 wrong package root for Composites. These modules do relative imports that need
@@ -999,7 +1017,7 @@ grep -E '^[0-9]' "$tf" | grep -v PASS   # anything not passing
 Cross-check against `grep -c 'def test_' <module>.py`. A count that does not
 match the module is the signal, and it costs one grep.
 
-### 8.9 Visualisation cases (V1-V3)
+### 8.10 Visualisation cases (V1-V3)
 
 §8.5's matrix asserts deck text only, which leaves the two silent failure modes
 of this work — a hinge, and a shell dropped by Trap A — with no end-to-end
@@ -1330,4 +1348,91 @@ equivalent solid model within a tolerance stated before the run, with the
 offsetted model measurably stiffer than the un-offsetted one. If the offsetted
 model comes out softer, the sign is wrong — and that is the check, not a
 review of the code.
+
+---
+
+## 11. What is still missing
+
+Written after Stages 0-9 landed, by inspecting the tree rather than reading the
+stages back. Ordered by severity; each entry says what would close it. A stage
+being "done" above means *its exit criterion was met*, not that the capability
+is complete.
+
+### 11.1 The loud failure the ADR obliges does not exist
+
+ADR 0004, obligation 3: *"A connection that cannot be expressed as a surface
+must raise."* **Not implemented.**
+`femsolver/calculix/write_constraint_tie.py` contains no `raise`, no `assert`
+and no `Exception` — it writes `*SURFACE` entries and nothing else. And
+`meshsetsgetter.get_constraints_tie_faces` (`:794-800`) does no validation
+either: it slices `_get_elements` output straight into `TieSlaveFaces` /
+`TieMasterFaces`.
+
+So an **E-shaped** connection — an Edge selected on a shell, the F family's
+sibling in §8.4 — does not fail. Nothing turns a selected Edge on a shell into
+an edge face (S3-S6), so the reference resolves to no faces and the slave
+surface comes out empty or improperly bounded. That is a **silent wrong deck on
+a path that is now on by default** — the failure class §7 calls load-bearing,
+and the one this whole plan exists to eliminate.
+
+§8.5's `G10`/`G11` were the enforcement mechanism and were never written. To
+close: raise in the tie writer (or in reference resolution) when a Tie reference
+resolves to an edge or interior dimension on a mixed mesh. That is strictly less
+work than either coupling fix, and the ADR already requires it.
+
+### 11.2 A composite section on a linear mixed shell is not guarded
+
+D3 (§9.8) measured that a composite `*SHELL SECTION` is accepted only for **S8R
+and S6**, and §8.5 requires the assertion via `getElementType`, calling it *"not
+optional for the plan's motivating case"*. Nothing in `src/Mod/Fem` asserts it:
+`write_femelement_geometry.py` writes whatever element the mesh produced.
+
+The Composites path happens to be safe — `_shell_example_common.py:688` sets
+`ElementOrder = "2nd"` for composite examples — but that is a Composites
+convenience protecting a FEM invariant, and it does not cover a user who builds
+a mixed model by hand with a linear shell mesh. That case yields a deck ccx
+rejects (`Element 2 is not a S8R nor a S6 shell element`): loud, so less severe
+than §11.1, but planned and absent.
+
+### 11.3 Only the F1 family is solved end to end
+
+`constraint_mixed_face_coupling.py` (f1-f4) and
+`constraint_mixed_edge_coupling.py` (e1-e3) build real geometry, but their tests
+assert **structure and deck text**, not a solve. Solved end to end: the Stage 7
+probe's skin-over-spar (F1-shaped) and the Composites example. F3 (offset shell)
+and F4 (closed bag) have no numerical result, and the E family cannot have one
+until §11.1 or a real edge coupling lands.
+
+### 11.4 A mixed result displays, but the two parts are not distinguishable
+
+V1-V3 pass, so the panel does show a result. What is absent is any way to tell
+the skin from the solid: a skin coincident with a solid face z-fights, and
+`ViewProviderFemMesh.VisibleElementFaces` is a **read-only computed getter**
+(`src/Mod/Fem/Gui/ViewProviderFemMeshPyImp.cpp`) with no dimension filter. The
+existing knobs — `ColorMode`, `ShowInner`, `MaxFacesShowInner` — none of them
+separates shells from solids. A toggle needs a C++ view-provider change and a
+rebuild, which is why it is the one outstanding item with a build cost.
+
+### 11.5 The motivating case is not demonstrated with a real laminate
+
+`mixed_shell_solid_plate.py` uses `IsotropicEquivalent` — deliberately, to stay
+off the drape backend — so *"a laminated composite skin over a solid core"*,
+the LS8e case this plan exists for, has no end-to-end example. §10's per-skin
+`Offset` is built and routed into `ShellThickness.Offset`.
+
+### 11.6 Smaller, and open
+
+- **`Stiffener` / `Bulkhead` mixed coverage** — none. `quasi_iso_stiffener_panel`
+  is all shells; Bulkhead has no FEM example at all.
+- **The GUI half of §8** — `femtest/gui/test_mixed_shell_solid.py` does not
+  exist, so §8's admission rule (*a case passes in both modes*) is unmet and the
+  matrix is headless-only. Amend the rule or write the test; do not leave the
+  rule standing against a tree that does not satisfy it.
+- **`test_rosette_scenarios` SIGSEGV** on a compound of boxes — the guard covers
+  top-level solids only.
+- **Flag deletion** — the getter and branches remain, by design, until a release
+  has shipped with the default on.
+- **Nothing here is merged.** It is all commits on `fem-mixmesh` off
+  `fem-unified`, unreviewed and unupstreamed.
+
 
