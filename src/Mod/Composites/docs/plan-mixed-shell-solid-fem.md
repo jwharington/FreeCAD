@@ -354,8 +354,28 @@ golden cannot mask it and a fresh golden is not required. This wants to be one
 committed tool beside the §9.9 probes, not an ad-hoc loop — and it becomes the
 mechanism every stage from 2 onward is verified against.
 
-Until that tool exists, treat the 27 passing `test_ccxtools` cases as the
-available regression signal and record, per stage, that it is partial.
+**The snapshot is now a proof, and the invariant survives as a byte hash.** The
+tool is `compositestests/inspect_deck_snapshot.py` (runner
+`run_inspect_deck_snapshot.py`), with its snapshot committed at
+`compositestests/deck_snapshot.json`. Two runs of the same tree with the mesher
+at its default thread count differed in **11 of 42 decks** and dropped one
+intermittently, which is why byte-identical first read as unachievable. The
+cause is not the writer: `MeshGmsh.ParallelProcessing` defaults on
+(`femobjects/mesh_gmsh.py`) and `gmshtools` writes `General.NumThreads =
+idealThreadCount()` into every `.geo`, and multithreaded Gmsh is not
+order-stable — element node lists permute and coordinates move. Pin it to one
+thread, which `--threads` defaults to and restores afterwards, and two runs
+produce 42 decks with **none changed**. So the §2 invariant stands as stated,
+proven by `--check`; a structural restatement becomes a fallback for a Gmsh
+version bump rather than a necessity.
+
+**The same cause makes part of the existing golden set flaky.** `test_ccxtools`
+meshes live for every example it does not pass `test_mode=True`, so a golden for
+a threading-affected shape can fail for no reason. Two of the six currently
+failing goldens (`ccx_cantilever_faceload`, `ccx_cantilever_nodeload`) are in
+that set, which is consistent with the earlier finding that at least part of the
+six is nondeterminism rather than staleness. Do not regenerate them; if anyone
+takes the fix, it is to mesh deterministically in that harness too.
 
 **Known pre-existing canary failure.** `run-tests.sh test_laminate` exits 1 on
 `TestQuasiIsotropicEntryGuards.test_texture_plan_activation_creates_nothing`

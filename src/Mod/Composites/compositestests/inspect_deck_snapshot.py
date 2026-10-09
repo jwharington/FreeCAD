@@ -41,21 +41,22 @@ there discards whatever Python has buffered, so a comparison prints into a lost
 buffer and the run looks silent. Assign the status, `sys.stdout.flush()`, and
 do not raise.
 
-NOT YET USABLE AS A PROOF. Run twice on an unchanged tree, it reported 11 decks
-CHANGED and one MISSING (`boxanalysis_static` failed to generate the second
-time at all). Generation is therefore not reproducible run to run, so the
-snapshot cannot yet distinguish a real leak from noise, and no snapshot file is
-committed. Diagnose that before relying on this: the likely causes are state
-leaking between examples built in one process, a document name that FreeCAD
-silently uniquifies, or unordered iteration feeding the writer - which the repo
-has been bitten by before. Note this cuts both ways: if generated decks really
-do differ run to run, then "byte-identical deck" is not an achievable invariant
-as the plan states it, and that needs settling before Stage 2 depends on it.
+REPRODUCIBILITY, MEASURED. Run twice on an unchanged tree with the mesher at
+its default thread count, 11 of 42 decks differed - permuted element node lists,
+reordered nodes, moved coordinates - and one example intermittently produced no
+mesh at all. The cause is Gmsh's multicore meshing: MeshGmsh.ParallelProcessing
+defaults on (femobjects/mesh_gmsh.py) and gmshtools writes
+``General.NumThreads = idealThreadCount()`` into every .geo, and multithreaded
+Gmsh is not order-stable. Pinning it to one thread - what --threads defaults to,
+restoring the user's value afterwards - makes two runs of the same tree produce
+42 decks with none changed, so a byte comparison is meaningful after all. While
+running with --threads above 1, do not read a moved deck as a real change.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import importlib
 import json
@@ -78,6 +79,27 @@ SNAPSHOT_PATH = Path(__file__).with_name("deck_snapshot.json")
 # browser uses. get_information() already excludes most of these; this is the
 # belt to that braces.
 SKIP_MODULES = {"__init__", "examplesgui", "manager"}
+
+# The mesher writes `General.NumThreads = <this preference>` into every .geo, and
+# multithreaded Gmsh is not run-to-run reproducible: element node lists permute
+# and node coordinates move between runs of the same tree. Pinning it is the only
+# way to make a generated deck reproducible without touching the example modules.
+GMSH_PREFERENCE_PATH = "User parameter:BaseApp/Preferences/Mod/Fem/Gmsh"
+
+
+@contextlib.contextmanager
+def pinned_gmsh_threads(count: int):
+    """Run with Gmsh pinned to ``count`` threads, restoring the user's value."""
+    group = FreeCAD.ParamGet(GMSH_PREFERENCE_PATH)
+    previous = group.GetInt("NumOfThreads", 0)
+    group.SetInt("NumOfThreads", count)
+    try:
+        yield
+    finally:
+        if previous:
+            group.SetInt("NumOfThreads", previous)
+        else:
+            group.RemInt("NumOfThreads")
 
 
 def _normalised_digest(path: Path) -> str:
@@ -141,8 +163,13 @@ def generate_deck(module_name: str, workdir: Path) -> Path | None:
         FreeCAD.closeDocument(document.Name)
 
 
-def build_snapshot() -> tuple[dict, dict]:
+def build_snapshot(threads: int = 1) -> tuple[dict, dict]:
     """Return ({example: digest}, {example: reason_it_was_skipped})."""
+    with pinned_gmsh_threads(threads):
+        return _build_snapshot()
+
+
+def _build_snapshot() -> tuple[dict, dict]:
     digests: dict[str, str] = {}
     skipped: dict[str, str] = {}
     # A FIXED work directory, not a fresh temporary one. The path reaches the
@@ -168,13 +195,13 @@ def build_snapshot() -> tuple[dict, dict]:
     return digests, skipped
 
 
-def load_snapshot() -> dict:
-    if not SNAPSHOT_PATH.exists():
+def load_snapshot(path: Path = SNAPSHOT_PATH) -> dict:
+    if not path.exists():
         return {}
-    return json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
-def save_snapshot(digests: dict, skipped: dict) -> None:
+def save_snapshot(digests: dict, skipped: dict, path: Path = SNAPSHOT_PATH) -> None:
     payload = {
         "_comment": (
             "Hashes of generated CalculiX decks with volatile header lines removed. "
@@ -184,7 +211,7 @@ def save_snapshot(digests: dict, skipped: dict) -> None:
         "decks": dict(sorted(digests.items())),
         "not_written": dict(sorted(skipped.items())),
     }
-    SNAPSHOT_PATH.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def compare(current: dict, recorded: dict, skipped: dict) -> int:
@@ -221,10 +248,21 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--check", action="store_true", help="report moved decks (default)")
     group.add_argument("--list", action="store_true", help="print the snapshot and stop")
     group.add_argument("--names", action="store_true", help="list examples and stop")
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=1,
+        help="Gmsh thread count to pin for the run (default 1: reproducible)",
+    )
+    parser.add_argument(
+        "--snapshot",
+        default="",
+        help="snapshot file to read or write (default: beside this module)",
+    )
     args = parser.parse_args(argv)
 
     if args.list:
-        recorded = load_snapshot()
+        recorded = load_snapshot(_snapshot_path(args))
         for name, digest in recorded.get("decks", {}).items():
             print(f"{digest[:16]}  {name}")
         return 0
@@ -234,12 +272,17 @@ def main(argv: list[str] | None = None) -> int:
             print(name)
         return 0
 
-    current, skipped = build_snapshot()
+    current, skipped = build_snapshot(args.threads)
+    snapshot_path = _snapshot_path(args)
     if args.write:
-        save_snapshot(current, skipped)
-        print(f"wrote {SNAPSHOT_PATH} with {len(current)} decks")
+        save_snapshot(current, skipped, snapshot_path)
+        print(f"wrote {snapshot_path} with {len(current)} decks")
         return 0
-    return compare(current, load_snapshot(), skipped)
+    return compare(current, load_snapshot(snapshot_path), skipped)
+
+
+def _snapshot_path(args) -> Path:
+    return Path(args.snapshot) if args.snapshot else SNAPSHOT_PATH
 
 
 if __name__ == "__main__":
