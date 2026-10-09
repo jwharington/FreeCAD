@@ -76,6 +76,18 @@ def node_disjoint_brick_and_shell():
     return mesh
 
 
+def brick_only_mesh():
+    """A C3D8 brick with no shell elements of its own."""
+    mesh = Fem.FemMesh()
+    corners = [
+        (x, y, z) for z in (0.0, 1.0) for x, y in ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    ]
+    for index, (x, y, z) in enumerate(corners, start=1):
+        mesh.addNode(x, y, z, index)
+    mesh.addVolume([1, 2, 3, 4, 5, 6, 7, 8])
+    return mesh
+
+
 class TestMixedShellSolid(unittest.TestCase):
     fcc_print("import TestMixedShellSolid")
 
@@ -228,6 +240,41 @@ class TestMixedShellSolid(unittest.TestCase):
                 all(entry.endswith("," + expected) for entry in entries),
                 (offset, entries[:3]),
             )
+
+    # ********************************************************************************************
+    def test_mixed_flag_defaults_on(self):
+        # Stage 9's promotion. With the parameter unset the mixed path is on, so
+        # a mixed analysis passes the gate that used to refuse it.
+        group = FreeCAD.ParamGet(MIXED_FLAG_PATH)
+        previous = group.GetBool(MIXED_FLAG_NAME, True)
+        group.RemBool(MIXED_FLAG_NAME)
+        self.addCleanup(group.SetBool, MIXED_FLAG_NAME, previous)
+
+        doc, analysis, solver, mesh_obj = self._mixed_analysis_document()
+        fea = ccxtools.FemToolsCcx(analysis, solver, test_mode=True)
+        fea.update_objects()
+        fea.setup_working_dir(str(self._temp_dir("default_on")))
+        message = fea.check_prerequisites()
+        self.assertNotIn(
+            "Shell thicknesses defined but FEM mesh has volume elements.", message
+        )
+
+    # ********************************************************************************************
+    def test_flag_on_still_refuses_a_shell_thickness_on_a_solid_mesh(self):
+        # The hardening that makes the promotion safe: the flag says the mixed
+        # path may be used, not that this mesh is mixed. A shell thickness on a
+        # mesh with volumes but no shells stays an error however the flag is
+        # set, or turning the flag on by default would quietly accept it.
+        doc, analysis, solver, mesh_obj = self._mixed_analysis_document()
+        mesh_obj.FemMesh = brick_only_mesh()
+        doc.recompute()
+
+        fea = ccxtools.FemToolsCcx(analysis, solver, test_mode=True)
+        fea.update_objects()
+        fea.setup_working_dir(str(self._temp_dir("solid_only")))
+        with mixed_shell_solid_flag(True):
+            message = fea.check_prerequisites()
+        self.assertIn("Shell thicknesses defined but FEM mesh has volume elements.", message)
 
     # ********************************************************************************************
     def test_mixed_deck_agrees_on_output_dimension(self):

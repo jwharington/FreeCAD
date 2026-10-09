@@ -272,7 +272,17 @@ def main(argv: list[str] | None = None) -> int:
             print(name)
         return 0
 
-    current, skipped = build_snapshot(args.threads)
+    # The invariant this tool records is "with the flag off, every deck is
+    # unchanged". The flag now defaults to on, so set it off explicitly here,
+    # or the mixed examples would start appearing as new decks and the
+    # snapshot would stop meaning what it says.
+    flag_group = FreeCAD.ParamGet(MIXED_FLAG_PATH)
+    previous_flag = flag_group.GetBool(MIXED_FLAG_NAME, True)
+    flag_group.SetBool(MIXED_FLAG_NAME, False)
+    try:
+        current, skipped = build_snapshot(args.threads)
+    finally:
+        flag_group.SetBool(MIXED_FLAG_NAME, previous_flag)
     snapshot_path = _snapshot_path(args)
     if args.write:
         save_snapshot(current, skipped, snapshot_path)
@@ -283,6 +293,10 @@ def main(argv: list[str] | None = None) -> int:
 
 def _snapshot_path(args) -> Path:
     return Path(args.snapshot) if args.snapshot else SNAPSHOT_PATH
+
+
+MIXED_FLAG_PATH = "User parameter:BaseApp/Preferences/Mod/Fem/General"
+MIXED_FLAG_NAME = "AllowMixedShellSolid"
 
 
 if __name__ == "__main__":

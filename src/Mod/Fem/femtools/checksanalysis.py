@@ -34,6 +34,7 @@ import FreeCAD
 from FreeCAD import Units
 
 from femsolver import settings
+from femmesh import meshtools
 
 from . import femutils
 from .checksmaterials import check_linear_material
@@ -47,6 +48,11 @@ def check_member_for_solver_calculix(analysis, solver, mesh, member):
     # With it off every rule below behaves exactly as it did before the flag
     # existed, including the error a mixed analysis is refused with.
     allow_mixed = settings.get_allow_mixed_elements()
+    # The flag says the mixed path may be used; it does not say this mesh is
+    # mixed. Gate the relaxations below on both, so that a shell thickness on a
+    # mesh that has volumes but no shells is still refused however the flag is
+    # set - which is what makes turning the flag on by default safe.
+    mixed_allowed = allow_mixed and bool(mesh) and meshtools.is_mixed_femmesh(mesh.FemMesh)
 
     # mesh
     if not mesh:
@@ -106,7 +112,7 @@ def check_member_for_solver_calculix(analysis, solver, mesh, member):
             ref_shty = "Solid"
         if not mat_ref_shty:
             mat_ref_shty = ref_shty
-        if not allow_mixed and mat_ref_shty and ref_shty and ref_shty != mat_ref_shty:
+        if not mixed_allowed and mat_ref_shty and ref_shty and ref_shty != mat_ref_shty:
             # mat_ref_shty could be empty in one material
             # only the not empty ones should have the same shape type
             message += (
@@ -324,7 +330,7 @@ def check_member_for_solver_calculix(analysis, solver, mesh, member):
                     )
                 has_no_references = True
         if mesh:
-            if mesh.FemMesh.VolumeCount > 0 and not allow_mixed:
+            if mesh.FemMesh.VolumeCount > 0 and not mixed_allowed:
                 message += "Shell thicknesses defined but FEM mesh has volume elements.\n"
             if mesh.FemMesh.FaceCount == 0:
                 message += "Shell thicknesses defined but FEM mesh has no shell elements.\n"

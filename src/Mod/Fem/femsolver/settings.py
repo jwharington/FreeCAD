@@ -184,17 +184,19 @@ def get_default_solver():
 def get_allow_mixed_elements():
     """Whether shell and solid elements may coexist in one analysis.
 
-    Returns ``True`` only when the hidden ``General/AllowMixedShellSolid``
-    parameter is set. Defaults to ``False``, which keeps the previous
+    Returns the hidden ``General/AllowMixedShellSolid`` parameter, which now
+    defaults to ``True``: the mixed path is complete enough to be what
+    everyone gets. Set the parameter to ``False`` to restore the earlier
     behaviour of refusing a shell thickness on a mesh that has volume
     elements.
 
-    The gate exists so that the mixed path can be built up in stages without
-    any stage changing behaviour for an unset parameter, and is removed once
-    that path is complete.
+    The gate was introduced so the mixed path could be built up in stages
+    without any stage changing behaviour for an unset parameter. Turning it on
+    by default is the promotion; setting it to ``False`` is the rollback, and
+    the getter and the branches it guards are removed after a release.
     """
     param_group = FreeCAD.ParamGet(_GENERAL_PARAM)
-    return param_group.GetBool("AllowMixedShellSolid", False)
+    return param_group.GetBool("AllowMixedShellSolid", True)
 
 
 class _SolverDlg:
