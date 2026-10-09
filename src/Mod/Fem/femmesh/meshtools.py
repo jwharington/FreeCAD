@@ -444,10 +444,16 @@ def get_femelements_by_femnodes_std(femelement_table, node_list):
     nodes: nodelist"""
     FreeCAD.Console.PrintMessage("std search: get_femelements_by_femnodes_std\n")
     e = []  # elementlist
+    # A set, because the membership test below runs once per (element, node)
+    # pair and the callers pass a list: with a list the test scans the whole
+    # node list, which is quadratic. It showed up as 4,006 of 31,579 samples in
+    # a profile of the mixed wing's deck write - the same shape of bug as the
+    # repeated mesh scans next door.
+    node_lookup = set(node_list)
     for elementID in sorted(femelement_table):
         nodecount = 0
         for nodeID in femelement_table[elementID]:
-            if nodeID in node_list:
+            if nodeID in node_lookup:
                 nodecount = nodecount + 1
         # all nodes of the element are in the node_list!
         if nodecount == len(femelement_table[elementID]):

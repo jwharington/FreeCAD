@@ -30,6 +30,30 @@ import hashlib
 from FreeCAD import Vector
 from femtools import fem_extension_registry
 
+# CalculiX allows 80 characters for a user-defined name (manual, *NSET/ELSET)
+# and refuses the whole deck otherwise. The names here are concatenations of
+# material, shell and thickness identifiers, so they grow with the model rather
+# than with the meaning: a mixed wing reached 82 characters by appending an
+# element id to one, and CalculiX answered "*ERROR reading *NSET/ELSET: set
+# name too long".
+MAX_NAME_LENGTH = 80
+HASHED_PREFIX_LENGTH = 20
+
+
+def _hashed_prefix(text):
+    """A 20-character stand-in for ``text`` that is stable across runs.
+
+    md5 rather than ``hash()``: the built-in is salted per process, so a deck
+    built in one run would not match the same deck built in another, and the
+    deck snapshots that prove nothing else moved would be meaningless.
+    """
+    return hashlib.md5(text.encode()).hexdigest()[:HASHED_PREFIX_LENGTH]
+
+
+def _bounded_name(text):
+    """``text`` when CalculiX will accept it, otherwise a hashed one."""
+    return text if len(text) <= MAX_NAME_LENGTH else _hashed_prefix(text)
+
 
 def write_femelement_geometry(f, ccxwriter):
 
@@ -41,7 +65,7 @@ def write_femelement_geometry(f, ccxwriter):
     def write_matgeoset(matgeoset, orientation):
         elsetdef = "ELSET={}, ".format(matgeoset["ccx_elset_name"])
         material = "MATERIAL={}".format(matgeoset["mat_obj_name"])
-        orientation_name = matgeoset.get("orientation_name") or (
+        orientation_name = matgeoset.get("orientation_name") or _bounded_name(
             f'_OR_{matgeoset["ccx_elset_name"]}'
         )
 
@@ -192,7 +216,11 @@ def write_femelement_geometry(f, ccxwriter):
             # section (measured, plate round trip).
             orientation_names = {}
             for i in matgeoset["element_ids"]:
-                elset_i_name = f"{elset_name}_{i}"
+                # Hash then id: a section per element makes this name carry the
+                # whole material/shell/thickness concatenation once per element,
+                # which is how an 82-character name reached CalculiX. The id is
+                # kept because it is the part a person reads.
+                elset_i_name = f"{_hashed_prefix(elset_name)}_{i}"
                 f.write(f"*ELSET,ELSET={elset_i_name}\n{i}\n")
                 elem_matgeoset = matgeoset | {"ccx_elset_name": elset_i_name}
                 if not orthotropic:
