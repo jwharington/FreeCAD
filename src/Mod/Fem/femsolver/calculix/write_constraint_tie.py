@@ -57,7 +57,28 @@ def get_after_write_constraint():
     return ""
 
 
+def _shell_slave_face(ccxwriter):
+    """The expanded shell side that faces the master surface.
+
+    CalculiX numbers a shell's faces 1 and 2 as the negative and positive
+    normal sides of the shell's 3D expansion (*SURFACE, manual). The section
+    offset decides which of those two coincides with the reference surface the
+    master is tied to: with a negative offset the reference surface is the
+    shell's bottom, so the section lies on the positive side and a master on
+    the reference surface meets face 1; a positive offset is the mirror case.
+    Writing the wrong one leaves the joint one thickness away, inside no
+    tolerance, and CalculiX then generates no tied MPC at all - silently.
+    """
+    for femobj in ccxwriter.member.geos_shellthickness:
+        thickness = femobj["Object"]
+        if getattr(thickness, "Suppressed", False):
+            continue
+        return 1 if thickness.Offset < 0.0 else 2
+    return 2
+
+
 def write_meshdata_constraint(f, femobj, tie_obj, ccxwriter):
+    shell_side = _shell_slave_face(ccxwriter)
     # slave DEP
     f.write(f"*SURFACE, NAME=TIE_DEP{tie_obj.Name}\n")
     for refs, surf, is_sub_el in femobj["TieSlaveFaces"]:
@@ -66,7 +87,7 @@ def write_meshdata_constraint(f, femobj, tie_obj, ccxwriter):
                 f.write(f"{elem},S{fno}\n")
         else:
             for elem in surf:
-                f.write(f"{elem},S2\n")
+                f.write(f"{elem},S{shell_side}\n")
 
     # master IND
     f.write(f"*SURFACE, NAME=TIE_IND{tie_obj.Name}\n")

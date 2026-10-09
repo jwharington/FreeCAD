@@ -200,6 +200,36 @@ class TestMixedShellSolid(unittest.TestCase):
         self.assertFalse(slave & master, "the two tie surfaces must not be the same")
 
     # ********************************************************************************************
+    def test_tie_slave_side_follows_the_shell_offset(self):
+        # CalculiX numbers a shell's faces 1 and 2 as the two sides of its 3D
+        # expansion, and the section offset decides which side meets the master.
+        # Writing the wrong one puts the joint a thickness away, inside no
+        # tolerance, and no tied MPC is generated at all - with no error, and a
+        # result that silently looks like the shell was never there.
+        for offset, expected in ((-0.5, "S1"), (0.5, "S2"), (0.0, "S2")):
+            doc = FreeCAD.newDocument(f"mixed_tie_side_{offset}")
+            self.addCleanup(FreeCAD.closeDocument, doc.Name)
+            face_coupling.setup(doc=doc, variant="f2")
+            doc.getObject("ShellThickness").Offset = offset
+            doc.recompute()
+
+            fea = ccxtools.FemToolsCcx(doc.Analysis, doc.CalculiXCcxTools, test_mode=True)
+            fea.update_objects()
+            workdir = self._temp_dir(f"tie_side_{offset}")
+            fea.setup_working_dir(str(workdir))
+            with mixed_shell_solid_flag(True):
+                self.assertFalse(fea.check_prerequisites(), "the gate must be open")
+                self.assertFalse(fea.write_inp_file(), "the deck must be written")
+            deck = (workdir / "Mesh.inp").read_text(encoding="utf-8")
+
+            entries = self._surface_entries(deck, "TIE_DEPTie1")
+            self.assertTrue(entries, offset)
+            self.assertTrue(
+                all(entry.endswith("," + expected) for entry in entries),
+                (offset, entries[:3]),
+            )
+
+    # ********************************************************************************************
     def test_compound_links_the_solid_and_the_shell(self):
         for module, variant in (
             (face_coupling, "f1"),
