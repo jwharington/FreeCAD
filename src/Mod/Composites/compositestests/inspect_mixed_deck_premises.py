@@ -16,7 +16,7 @@ Each case writes a deck, runs ccx, and reports a mechanical verdict.  The
 geometry is deliberately minimal: one C3D8 block and one or two S4 shells.
 
 Usage:
-    python3 inspect_mixed_deck_premises.py [--ccx PATH] [--keep] [d1 d2 d3]
+    python3 inspect_mixed_deck_premises.py [--ccx PATH] [--keep] [d1 d2 d3 s1 s2]
 
 Without case arguments all three run.  --keep leaves the work directory in
 place and prints its path for inspection.
@@ -33,6 +33,7 @@ import sys
 import tempfile
 
 DEFAULT_CCX = os.path.expanduser("~/.local/bin/ccx")
+DEFAULT_CALCULIX_TEST = os.path.expanduser("~/opt/CalculiX/test")
 
 # --------------------------------------------------------------------------
 # Shared deck fragments
@@ -359,10 +360,62 @@ def case_d2(ccx: str, keep: bool) -> bool | None:
     return None
 
 
+def compare_displacements(
+    actual: dict, reference: dict, tolerance: float = 1e-6
+) -> tuple[list[int], float, int | None]:
+    """Return the compared node ids and the worst relative error against a reference."""
+    shared = sorted(set(actual) & set(reference))
+    worst = 0.0
+    worst_node = None
+    for node in shared:
+        for got, want in zip(actual[node], reference[node]):
+            error = abs(got - want) / max(abs(want), 1e-12)
+            if error > worst:
+                worst, worst_node = error, node
+    return shared, worst, worst_node
+
+
+def case_solidshell(ccx: str, keep: bool, test_dir: str, name: str) -> bool | None:
+    """Run one of CalculiX's own shell-to-solid cases against its .dat.ref.
+
+    The two cases are the independent reference this work otherwise lacks: 1 is
+    a hinged connection (shell shares a line of nodes with the solid) and 2 is a
+    fixed one (shell shares a face patch).
+    """
+    inp_path = os.path.join(test_dir, f"{name}.inp")
+    ref_path = os.path.join(test_dir, f"{name}.dat.ref")
+    if not os.path.exists(inp_path) or not os.path.exists(ref_path):
+        print(f"[SKIP] {name}: no {name}.inp/.dat.ref in {test_dir}")
+        return None
+    with open(inp_path) as handle:
+        deck = handle.read()
+
+    result = run_ccx(deck, name, ccx, keep)
+    report(result, f"{name}  CalculiX reference case, against {name}.dat.ref")
+    with open(ref_path) as handle:
+        reference = parse_displacements(handle.read())
+    shared, worst, worst_node = compare_displacements(result["displacements"], reference)
+    if not shared:
+        print("        VERDICT: inconclusive - no displacement block to compare")
+        return None
+    print(
+        f"        nodes compared: {len(shared)}; worst relative error "
+        f"{worst:.3e} at node {worst_node}"
+    )
+    holds = result["ok"] and worst < 1e-6
+    print("        VERDICT:", "reproduces the reference" if holds else "DIFFERS")
+    return holds
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ccx", default=DEFAULT_CCX, help="path to the ccx binary")
     parser.add_argument("--keep", action="store_true", help="keep the work directories")
+    parser.add_argument(
+        "--calculix-test",
+        default=DEFAULT_CALCULIX_TEST,
+        help="directory holding CalculiX's solidshell1/2 cases",
+    )
     parser.add_argument(
         "cases",
         nargs="*",
@@ -372,11 +425,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     # Not argparse `choices`: a nargs="*" positional validates its empty default
     # against choices and rejects it, so an argument-less call fails.
+    known = ("d1", "d3", "d2", "s1", "s2")
     if not args.cases:
-        args.cases = ["d1", "d3", "d2"]
-    unknown = [case for case in args.cases if case not in ("d1", "d3", "d2")]
+        args.cases = list(known)
+    unknown = [case for case in args.cases if case not in known]
     if unknown:
-        parser.error(f"unknown case(s): {', '.join(unknown)}; choose from d1, d3, d2")
+        parser.error(f"unknown case(s): {', '.join(unknown)}; choose from {', '.join(known)}")
 
     if not os.path.exists(args.ccx):
         print(f"ccx not found at {args.ccx}; use --ccx to point at one", file=sys.stderr)
@@ -389,9 +443,13 @@ def main(argv: list[str] | None = None) -> int:
         results["d3"] = case_d3(args.ccx, args.keep)
     if "d2" in args.cases:
         results["d2"] = case_d2(args.ccx, args.keep)
+    if "s1" in args.cases:
+        results["s1"] = case_solidshell(args.ccx, args.keep, args.calculix_test, "solidshell1")
+    if "s2" in args.cases:
+        results["s2"] = case_solidshell(args.ccx, args.keep, args.calculix_test, "solidshell2")
 
     print("\nsummary")
-    for case in ("d1", "d3", "d2"):
+    for case in known:
         if case not in results:
             continue
         value = results[case]
