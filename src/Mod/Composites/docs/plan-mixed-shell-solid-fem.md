@@ -1,11 +1,13 @@
 # Plan: Mixed shell + solid elements in one FEM analysis
 
-**Date:** 2026-10-02 (revision 2026-10-09) · **Status:** in progress — Stages 1–8 done and
-verified and the mixed path is **on by default** (Stage 9's promotion). Remaining:
-publishing the mesh-merge routine from Fem (general, not Composites') and a consumer
-example. Stage 7's coupling check passes at
-**0.09 %** against an all-solid rebuild, after fixing two defects it found; Stage 8
-makes a mixed result displayable (`OUTPUT=2d` on both file cards). See §3.
+**Date:** 2026-10-02 (revision 2026-10-09) · **Status:** Stages 1–9 done and verified. The
+mixed path is **on by default**, a Composites example drives it end to end, and the
+merge routine is published. Stage 7's coupling check passes at **0.09 %** against an
+all-solid rebuild; Stage 8 makes a mixed result displayable (`OUTPUT=2d` on both file
+cards); Stage 9 promotes the path, hardens the checks the promotion would have
+weakened, and publishes the merge routine.
+**Remaining:** a shell/solid visibility toggle in the results viewer, `Stiffener` and
+`Bulkhead` mixed coverage, and deleting the flag after a release. See §3.
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
 shells wants to coexist with locally solid features in the *same*
 analysis. Today it cannot: FreeCAD's FEM pipeline is built around
@@ -365,25 +367,49 @@ matches the headless golden". Decide this before Stage 4, not after.
   off explicitly, because its invariant is about flag-off decks, and it still
   reports *no deck changed*. Tests: `test_mixed_flag_defaults_on`,
   `test_flag_on_still_refuses_a_shell_thickness_on_a_solid_mesh`.
-- Publish the mesh-merge routine from **Fem**, publicly and generically:
-  "mesh each part alone, then merge them node-disjoint" (§8.3), for **any** 2D
-  shell and 3D solid, composite or not. It is not Composites' to own — a
-  non-composite shell wants it just as much — and it is not a Composites
-  convenience. It exists as
-  `femexamples/_mixed_coupling_common.mesh_parts_separately`, which is private
-  and lives under the *examples*. Layering note: the routine calls
-  `femexamples.meshes.generate_mesh`, which imports `gmshtools`, and
-  `gmshtools` already imports `meshtools`, so the routine cannot move down into
-  `meshtools` without a cycle. "Publishing" it therefore means either promoting
-  `generate_mesh` to a public Fem module too, and putting the routine above
-  `gmshtools`, or exposing the routine from the examples package without the
-  underscore. Decide that when the first non-example caller appears; do not add
-  a Composites copy. **Not started.**
-- Add a Composites example under `compositeexamples/examples/` per the
-  `_shell_example_common.py` pattern — a laminate shell skin and a solid
-  feature in one analysis, which is the motivating case for the whole plan.
-  **Not started.**
+- ~~Publish the mesh-merge routine from Fem~~ — **done.**
+  `femexamples/meshes/merged_mesh.py` holds `mesh_parts_separately`, and the
+  mixed coupling examples import it from there. The layering note above still
+  holds: it could not move down into `meshtools` without a cycle through
+  `gmshtools`, so it sits in the examples package, public, above
+  `generate_mesh`. A Composites example was the first non-example caller, which
+  is what triggered the move.
+- ~~Add a Composites example~~ — **done.**
+  `compositeexamples/examples/mixed_shell_solid_plate.py`: a `Composite::Shell`
+  laminate skin over a solid spar, meshed apart, merged node-disjoint, `*TIE`'d
+  and solved. Test `test_mixed_shell_solid_plate_solves` asserts the mesh holds
+  volumes *and* its own shell elements, and that the deck carries a
+  `*SOLID SECTION`, a `*SHELL SECTION` and a `*TIE`. The skin is
+  `IsotropicEquivalent`, deliberately, so the example stays off the drape
+  backend. **`Stiffener` and `Bulkhead` still have no mixed coverage.**
 - Delete the getter and the flag branches after one release.
+
+**Fixes that came after the stages, from *using* the path rather than building
+it.** Each was silent in the same way — a deck that looks well-formed and an
+answer that is wrong — and each has a regression test:
+
+- **A solid's face resolved to a coincident shell**, so a `*TIE`'s master
+  surface came out identical to its slave and ccx cascaded without solving
+  (`meshtools.get_elements_by_reference_dimension`; §7).
+- **The tie wrote the wrong shell side** — `elem,S2` on every shell, when the
+  section offset decides which expanded face meets the master. One thickness
+  out is inside no tolerance, so **no tied MPC was generated at all** and the
+  model returned the uncoupled answer (`write_constraint_tie._shell_slave_face`;
+  §3, Stage 7).
+- **Material→element assignment was not dimension-aware**, so a material on a
+  solid claimed shell faces lying on it, and two solids with a material each had
+  no working form (`get_material_elements`; §7).
+- **A reference resolving to a `Compound` matched no dispatch branch**, so a
+  `*TIE` slave that was a compound of faces — a multi-patch skin — resolved to
+  an empty surface (`meshtools.get_shape_dimension`; §7). Taking a compound
+  apart also uncovered a latent bug in the bit pattern, which counts one bit per
+  node *occurrence*, so a node listed twice never matches its mask.
+- **Reaction forces were requested on a set that no longer exists** —
+  `*NODE PRINT, NSET=Fixed`, after Stage 6 split the fixed nodes into
+  `FixedSolid` and `FixedFaceEdge`. No reaction forces, silently.
+- **The bulkhead example returned a Document** where every other example returns
+  a mapping, so `test_all_examples_build` failed on it before reaching any other
+  example.
 
 ---
 
@@ -393,15 +419,31 @@ matches the headless golden". Decide this before Stage 4, not after.
 # Composites side (unchanged harness)
 ~/.pi/agent/skills/freecad-dev/scripts/run-tests.sh test_laminate
 
+# The Composites example that drives the mixed path end to end
+~/.pi/agent/skills/freecad-dev/scripts/run-tests.sh test_compositeexamples
+~/.pi/agent/skills/freecad-dev/scripts/run-tests.sh test_bulkhead
+
 # FEM app tests, including the golden-deck comparison
 ~/.pixi/envs/default/bin/FreeCADCmd -t femtest.app.test_ccxtools
 
-# The mixed-mesh geometry matrix of §8
+# The mixed-mesh matrix of §8 plus the post-stage fixes
 ~/.pixi/envs/default/bin/FreeCADCmd -t femtest.app.test_mixed_shell_solid
+
+# The flag-off deck invariant (this tool sets the flag off itself)
+~/.pi/agent/skills/freecad-dev/scripts/run-script.sh \
+    src/Mod/Composites/compositestests/run_inspect_deck_snapshot.py \
+    --check --snapshot src/Mod/Composites/compositestests/deck_snapshot.json
 
 # The GUI half of §8 (needs a display; see §8.8)
 build/debug/bin/FreeCAD --run-test TestFemGui
 ```
+
+A trap worth keeping: the Composites harness **truncates stdout on success**
+(it prints a `tail` of the log) and only prints everything on failure. `exit 0`
+next to a handful of `PASS` lines is therefore a full pass, not a near-empty
+run — count from the timings file the harness names, not from stdout. `27`
+recorded for `test_mixed_shell_solid`, `26` for `test_compositeexamples`, `20`
+for `test_bulkhead` at the time of writing.
 
 **The golden set is not currently a usable reference, and that is a problem
 for this plan specifically.** Six of the 33 cases in
