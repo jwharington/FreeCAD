@@ -28,6 +28,7 @@ __url__ = "https://www.freecad.org"
 #  @{
 
 import FreeCAD
+import Fem
 import numpy as np
 import Part
 from femtools import geomtools
@@ -154,6 +155,28 @@ def get_femelement_table(femmesh):
     else:
         FreeCAD.Console.PrintError("Neither solid nor face nor edge femmesh!\n")
     return femelement_table
+
+
+# ************************************************************************************************
+def get_femelement_tables_by_dim(femmesh):
+    """Element tables split by the element's own dimension.
+
+    Returns ``{3: {id: [nodes]}, 2: {...}, 1: {...}}``: dimension 3 is volumes,
+    2 is faces and 1 is edges.
+
+    Unlike :func:`get_femelement_table`, which returns only the highest
+    dimension present, this keeps every dimension at once. The dimension comes
+    from the mesh's own ``Volumes``, ``FacesOnly`` and ``EdgesOnly`` sets and is
+    never inferred from a node count, which is ambiguous: a tetrahedron and a
+    quad both have four nodes. An id therefore appears in exactly one table — a
+    face bounding a volume belongs to that volume, is not a shell element, and
+    is absent from the dimension-2 table.
+    """
+    return {
+        3: {i: femmesh.getElementNodes(i) for i in femmesh.Volumes},
+        2: {i: femmesh.getElementNodes(i) for i in femmesh.FacesOnly},
+        1: {i: femmesh.getElementNodes(i) for i in femmesh.EdgesOnly},
+    }
 
 
 # ************************************************************************************************
@@ -1976,6 +1999,23 @@ def is_edge_femmesh(femmesh):
 
 
 # ************************************************************************************************
+def is_mixed_femmesh(femmesh):
+    """Whether a mesh holds volumes together with faces or edges of their own.
+
+    Mixed means volume elements *and* faces (or edges) that do not belong to any
+    volume. Faces that merely bound a volume are that volume's skin rather than
+    separate shell elements, and do not make a mesh mixed.
+
+    This is deliberately not a redefinition of :func:`is_solid_femmesh`,
+    :func:`is_face_femmesh` or :func:`is_edge_femmesh`, which stay as they are
+    for their existing callers.
+    """
+    if femmesh.VolumeCount == 0:
+        return False
+    return len(femmesh.FacesOnly) > 0 or len(femmesh.EdgesOnly) > 0
+
+
+# ************************************************************************************************
 def is_zplane_2D_mesh(femmesh):
     # used in oofem writer to distinguish between 3D and 2D plane stress
     if is_face_femmesh(femmesh) is True:
@@ -2232,6 +2272,84 @@ def compact_mesh(old_femmesh):
 
     # may be return another value if the mesh was compacted, just check last map entries
     return (new_mesh, node_map, elem_map)
+
+
+# The element id namespace is shared between edges, faces and volumes, so an
+# element's dimension is read from which collection holds its id — never from
+# its node count, which cannot distinguish a tetrahedron from a quad.
+_ELEMENT_COLLECTIONS = {3: "Volumes", 2: "Faces", 1: "Edges"}
+
+
+def _element_ids_by_dimension(femmesh):
+    """{dimension: set of element ids} from the mesh's own collections."""
+    return {
+        dimension: set(getattr(femmesh, name))
+        for dimension, name in _ELEMENT_COLLECTIONS.items()
+    }
+
+
+def _iter_elements(femmesh):
+    """Yield ``(dimension, element_id, nodes)`` for every element.
+
+    ``nodes`` is a list: the femmesh add* methods take a Python list, and
+    ``getElementNodes`` hands back a tuple.
+    """
+    for dimension, name in _ELEMENT_COLLECTIONS.items():
+        for elem_id in getattr(femmesh, name):
+            yield dimension, elem_id, list(femmesh.getElementNodes(elem_id))
+
+
+def _add_element(femmesh, elem_id, dimension, nodes):
+    if dimension == 3:
+        femmesh.addVolume(nodes, elem_id)
+    elif dimension == 2:
+        femmesh.addFace(nodes, elem_id)
+    else:
+        femmesh.addEdge(nodes, elem_id)
+
+
+# ************************************************************************************************
+def merge_femmeshes(base, extra):
+    """Merge two meshes into one, renumbering the second so that no id collides.
+
+    Returns ``(femmesh, node_map, elem_map)``. ``base`` keeps its node and
+    element ids unchanged; the maps describe how ``extra``'s ids were
+    renumbered, which is the only renumbering that happens.
+
+    Nodes are appended, never matched by position and never merged. That is the
+    point: a shell whose nodes are shared with a solid is a hinge in CalculiX,
+    and ``FemMesh.getFacesOnly`` stops reporting it as a shell at all. Merging
+    by position would produce both faults silently, so this function only ever
+    makes the two parts disjoint.
+    """
+    new_mesh = Fem.FemMesh()
+
+    base_nodes = list(base.Nodes)
+    base_dimensions = _element_ids_by_dimension(base)
+    for node_id in base_nodes:
+        node = base.Nodes[node_id]
+        new_mesh.addNode(node.x, node.y, node.z, node_id)
+    for dimension, elem_id, nodes in _iter_elements(base):
+        _add_element(new_mesh, elem_id, dimension, nodes)
+
+    node_offset = max(base_nodes, default=0)
+    node_map = {}
+    for node_id in extra.Nodes:
+        node = extra.Nodes[node_id]
+        new_id = node_id + node_offset
+        new_mesh.addNode(node.x, node.y, node.z, new_id)
+        node_map[node_id] = new_id
+
+    base_max_elem = max(
+        (i for ids in base_dimensions.values() for i in ids), default=0
+    )
+    elem_map = {}
+    for dimension, elem_id, nodes in _iter_elements(extra):
+        new_id = elem_id + base_max_elem
+        _add_element(new_mesh, new_id, dimension, [node_map[n] for n in nodes])
+        elem_map[elem_id] = new_id
+
+    return new_mesh, node_map, elem_map
 
 
 # ************************************************************************************************

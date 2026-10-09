@@ -31,6 +31,7 @@ from os.path import join
 import FreeCAD
 
 import Fem
+from femmesh import meshtools
 from . import support_utils as testtools
 from .support_utils import fcc_print
 
@@ -664,4 +665,204 @@ class TestMeshGroups(unittest.TestCase):
             mesh.getGroupElements(mesh.Groups[0]),
             new_fm.getGroupElements(new_fm.Groups[0]),
             msg="Group elements not retained",
+        )
+
+
+class TestMeshMixed(unittest.TestCase):
+    fcc_print("import TestMeshMixed")
+
+    # ********************************************************************************************
+    def setUp(self):
+        # setUp is executed before every test
+        self.document = FreeCAD.newDocument(self.__class__.__name__)
+
+    # ********************************************************************************************
+    def tearDown(self):
+        # tearDown is executed after every test
+        FreeCAD.closeDocument(self.document.Name)
+
+    # ********************************************************************************************
+    def test_00print(self):
+        fcc_print(
+            "\n{0}\n{1} run FEM TestMeshMixed tests {2}\n{0}".format(100 * "*", 10 * "*", 60 * "*")
+        )
+
+    # ********************************************************************************************
+    # helpers
+    # ********************************************************************************************
+
+    BRICK_CORNERS = [
+        (0.0, 0.0, 0.0),
+        (10.0, 0.0, 0.0),
+        (10.0, 10.0, 0.0),
+        (0.0, 10.0, 0.0),
+        (0.0, 0.0, 10.0),
+        (10.0, 0.0, 10.0),
+        (10.0, 10.0, 10.0),
+        (0.0, 10.0, 10.0),
+    ]
+    BOTTOM_QUAD = BRICK_CORNERS[:4]
+    TOP_QUAD = BRICK_CORNERS[4:]
+
+    def make_brick(self, femmesh):
+        """Add a hexahedron and return its node ids."""
+        node_ids = []
+        for index, (x, y, z) in enumerate(self.BRICK_CORNERS, start=1):
+            femmesh.addNode(x, y, z, index)
+            node_ids.append(index)
+        femmesh.addVolume(node_ids)
+        return node_ids
+
+    def make_quad(self, femmesh, corners, first_node_id=1):
+        """Add a quad at the given corners and return its node ids."""
+        node_ids = []
+        for offset, (x, y, z) in enumerate(corners):
+            node_id = first_node_id + offset
+            femmesh.addNode(x, y, z, node_id)
+            node_ids.append(node_id)
+        femmesh.addFace(node_ids)
+        return node_ids
+
+    def make_mixed_femmesh(self, shared_nodes=False):
+        """A brick plus a quad at the brick's bottom four coordinates.
+
+        With shared_nodes the quad reuses the brick's own nodes, so its node set
+        is a subset of the volume's and getFacesOnly drops it. Otherwise it gets
+        its own nodes at identical coordinates, which is what merging two
+        separately meshed bodies produces.
+        """
+        femmesh = Fem.FemMesh()
+        brick_nodes = self.make_brick(femmesh)
+        if shared_nodes:
+            femmesh.addFace(list(brick_nodes[:4]))
+        else:
+            self.make_quad(femmesh, self.BOTTOM_QUAD, first_node_id=len(brick_nodes) + 1)
+        return femmesh
+
+    # ********************************************************************************************
+    # is_mixed_femmesh
+    # ********************************************************************************************
+
+    def test_is_mixed_femmesh(self):
+        solid = Fem.FemMesh()
+        self.make_brick(solid)
+        self.assertFalse(
+            meshtools.is_mixed_femmesh(solid),
+            msg="A volume mesh alone is not mixed",
+        )
+
+        face = Fem.FemMesh()
+        self.make_quad(face, self.BOTTOM_QUAD)
+        self.assertFalse(
+            meshtools.is_mixed_femmesh(face),
+            msg="A face mesh alone is not mixed",
+        )
+
+        self.assertTrue(
+            meshtools.is_mixed_femmesh(self.make_mixed_femmesh()),
+            msg="Volumes plus a node-disjoint face are mixed",
+        )
+
+        # a face that only bounds a volume is that volume's skin, not a shell,
+        # so it must not make the mesh mixed
+        self.assertFalse(
+            meshtools.is_mixed_femmesh(self.make_mixed_femmesh(shared_nodes=True)),
+            msg="A face belonging to a volume is not a separate shell",
+        )
+
+    # ********************************************************************************************
+    # get_femelement_tables_by_dim
+    # ********************************************************************************************
+
+    def test_femelement_tables_by_dim(self):
+        femmesh = self.make_mixed_femmesh()
+        tables = meshtools.get_femelement_tables_by_dim(femmesh)
+
+        self.assertEqual(sorted(tables), [1, 2, 3], msg="All three dimensions are present")
+        self.assertEqual(len(tables[3]), 1, msg="One volume element")
+        self.assertEqual(len(tables[2]), 1, msg="One face element")
+        self.assertEqual(len(tables[1]), 0, msg="No edge element")
+
+        # no element id may appear in two tables: the id namespace is shared
+        # between dimensions, so a duplicate would be written twice
+        all_ids = [i for dim in (3, 2, 1) for i in tables[dim]]
+        self.assertEqual(
+            len(set(all_ids)),
+            len(all_ids),
+            msg="An element id appears in more than one dimension table",
+        )
+
+        # the dimension comes from the mesh's own collections, never from a
+        # node count: both the hexahedron and the quad have nodes here, and a
+        # tetrahedron would have four nodes just like the quad
+        self.assertEqual(
+            len(tables[3][list(tables[3])[0]]),
+            8,
+            msg="The volume keeps its own eight nodes",
+        )
+        self.assertEqual(
+            len(tables[2][list(tables[2])[0]]),
+            4,
+            msg="The face keeps its own four nodes",
+        )
+
+        # the shell must not be reachable through the volume table
+        self.assertNotIn(
+            list(tables[2])[0],
+            tables[3],
+            msg="The shell element id leaked into the volume table",
+        )
+
+    # ********************************************************************************************
+    # merge_femmeshes
+    # ********************************************************************************************
+
+    def test_merge_femmeshes(self):
+        base = Fem.FemMesh()
+        self.make_brick(base)
+        extra = Fem.FemMesh()
+        self.make_quad(extra, self.TOP_QUAD)
+
+        merged, node_map, elem_map = meshtools.merge_femmeshes(base, extra)
+
+        self.assertEqual(len(merged.Volumes), 1, msg="The base volume survives the merge")
+        self.assertEqual(len(merged.Faces), 1, msg="The extra face survives the merge")
+
+        # the whole point of merging node-disjointly: the shell stays a shell
+        # and is still reported by getFacesOnly, so it stays a shell in the deck
+        self.assertEqual(
+            len(merged.FacesOnly),
+            1,
+            msg="The merged shell is still reported by getFacesOnly",
+        )
+        self.assertTrue(
+            meshtools.is_mixed_femmesh(merged),
+            msg="The merged mesh classifies as mixed",
+        )
+
+        # renumbering must not collide: base keeps its ids, extra is offset
+        self.assertEqual(len(set(merged.Nodes)), len(merged.Nodes), msg="Node ids collide")
+        self.assertEqual(
+            len(set(node_map.values())),
+            len(node_map),
+            msg="The node map renumbers two nodes onto one id",
+        )
+        self.assertEqual(
+            len(set(elem_map.values())),
+            len(elem_map),
+            msg="The element map renumbers two elements onto one id",
+        )
+        all_elem_ids = list(merged.Edges) + list(merged.Faces) + list(merged.Volumes)
+        self.assertEqual(
+            len(set(all_elem_ids)),
+            len(all_elem_ids),
+            msg="Element ids collide across dimensions after the merge",
+        )
+
+        # nodes are appended, never matched by position, so overlapping
+        # coordinates stay separate nodes
+        self.assertEqual(
+            len(merged.Nodes),
+            len(base.Nodes) + len(extra.Nodes),
+            msg="The merge dropped a node by matching it on position",
         )
