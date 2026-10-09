@@ -686,6 +686,10 @@ production file**. Two rules.
 | **P5** | `getFacesOnly()` reports a **node-disjoint** shell inside a mixed `FemMesh` — the §8.3 claim | the node-disjoint merge route is wrong and §8.3 must be rewritten | code-read only, never executed | M1 |
 | **P6** | merge-by-renumbering produces a mesh that still satisfies P4 and P5 | Stage 1's `merge_femmeshes` is the wrong abstraction | `compact_mesh` is tested on pure meshes only | M2 |
 
+All six now have measured answers — §9.8. None failed, so none of the failure
+branches in §9.6 was triggered; §3 can start at Stage 0 rather than being
+re-shaped.
+
 ### 9.3 A finding that changes P4's status: `elemParam=2` is not dead code
 
 Stage 2 was recorded as "wiring up an unused mode". It is not unused — it is
@@ -854,4 +858,63 @@ the same mistakes:
   `"Job finished" in stdout` **and** no `*ERROR` on either stream.
 - **`S4` is invalid for a composite section** (above), which was a defect in
   my deck, not in P3.
+
+### 9.9 Mesh-level results (measured)
+
+Run with `src/Mod/Composites/compositestests/inspect_mixed_mesh_premises.py`
+under `FreeCADCmd` — there is a `run_inspect_mixed_mesh_premises.py` wrapper,
+but the verified command is the direct import, since a wrapper under
+`FreeCADCmd -c` needs an explicit stdout flush before its `SystemExit` or it
+exits silently. See the probe's docstring. The mesh is one C3D8 brick plus one
+quad at the same four coordinates, so the only variable is whether the quad
+shares the brick's nodes.
+
+| Case | Premise | Result |
+|---|---|---|
+| M1 | P4 + P5 | **holds** |
+| MT | Trap A, executed rather than argued | **confirmed** |
+| M2 | P6 | **holds**, with a confirmed id-gap |
+
+M1 / P4+P5, node-disjoint quad — `nodes=12 volumes=1 faces=1 faces_only=1`,
+and `writeABAQUS(path, 2, False)` emits:
+
+```
+*Element, TYPE=C3D8, ELSET=Evolumes
+*Element, TYPE=S4, ELSET=Efaces
+*ELSET, ELSET=Eall
+```
+
+So **Stage 2's one-line `element_param = 2` change is confirmed sufficient for
+the deck text**: the C++ path emits volumes and faces together, with the
+`Efaces` elset the plan expected, on a mixed mesh. This was the path no caller
+and no test had exercised.
+
+MT / Trap A, shared quad — `nodes=8 faces_only=0`, and the deck loses the
+shell entirely: no `*Element, TYPE=S4`, no `ELSET=Efaces`, **no error, no
+warning**. This is the second silent failure mode found (the first was the
+hinge in D2), and it is the executed form of the §8.3 prediction. It also
+confirms the corrected §9.3 reading: a user exporting a conformal shell+volume
+mesh with the GUI's default export setting loses the shell faces silently.
+
+M2 / P6, `compact_mesh` — `faces_only` survives (1 before, 1 after) and
+`ELSET=Efaces` is still written, so renumbering does not destroy detection.
+Element ids are **unique but not contiguous**, confirming §8.3's recorded
+hazard: `compact_mesh` advances the element id twice per face despite its
+docstring promising to remove all gaps. M2 therefore asserts uniqueness and
+deliberately does *not* assert contiguity, which would fail on correct output.
+
+**A cross-finding worth carrying into Stage 2.** The face element emitted here
+is `S4`, and D3 showed a composite `*SHELL SECTION` accepts only S8R or S6. So
+a *composite* mixed model needs a quadratic face mesh; a linear one is
+structurally valid (M1) but cannot carry a laminated section (D3). Stage 2 must
+not treat "faces written" and "sections assignable" as the same condition.
+
+#### A third probe bug, latent in both
+
+`argparse` with a `nargs="*"` positional validates its **empty default**
+against `choices` and rejects it, so an argument-less call failed with
+`invalid choice: []`. Neither probe uses `choices` any more; both validate the
+case names by hand. It surfaced on the mesh probe only because that one is
+called programmatically as `main([])`, but the deck probe carried the same
+latent fault.
 
