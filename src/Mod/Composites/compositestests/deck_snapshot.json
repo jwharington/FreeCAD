@@ -56,7 +56,7 @@
     "ccx_rigid_body": "AttributeError: 'NoneType' object has no attribute 'Visibility'",
     "constraint_hydrostaticpressure": "AttributeError: 'FeaturePython' object has no attribute 'Origin'",
     "constraint_hydrostaticpressure_datafile": "AttributeError: 'FeaturePython' object has no attribute 'Origin'",
-    "constraint_mixed_edge_coupling": "RuntimeError: FEM mesh has neither volume nor shell or edge elements. Provide a FEM mesh with elements.\nShell thicknesses defined but FEM mesh has no shell elements.",
-    "constraint_mixed_face_coupling": "RuntimeError: FEM mesh has neither volume nor shell or edge elements. Provide a FEM mesh with elements.\nShell thicknesses defined but FEM mesh has no shell elements."
+    "constraint_mixed_edge_coupling": "RuntimeError: Tie1 references Edge1, which is not a face; a tie couples two surfaces.\nShell thicknesses defined but FEM mesh has volume elements.",
+    "constraint_mixed_face_coupling": "RuntimeError: Shell thicknesses defined but FEM mesh has volume elements."
   }
 }

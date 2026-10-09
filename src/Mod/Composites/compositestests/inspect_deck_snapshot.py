@@ -17,6 +17,13 @@ reference. This tool isolates the first claim instead: hash every example deck
 with the tree as it stands, then re-hash after a change and require the hashes
 to be equal. A stale golden cannot mask a leak and no golden has to be current.
 
+It compares **outcomes**, not just hashes. An example that stops producing a deck
+leaves the hash map and enters ``not_written``, and an example whose *failure*
+changes moves no hash at all - a digest-only comparison is blind to both, which
+is the drift it most needs to catch. So the reason an example could not be
+written is snapshotted and diffed too, and a changed reason is printed with its
+old and new text.
+
 Usage, from the repo root:
 
     FreeCADCmd -c "
@@ -214,30 +221,60 @@ def save_snapshot(digests: dict, skipped: dict, path: Path = SNAPSHOT_PATH) -> N
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _outcomes(decks: dict, skipped: dict) -> dict:
+    """Every example mapped to what happened to it: a digest, or why it has none."""
+    outcomes = {name: ("written", digest) for name, digest in decks.items()}
+    outcomes.update({name: ("not written", reason) for name, reason in skipped.items()})
+    return outcomes
+
+
 def compare(current: dict, recorded: dict, skipped: dict) -> int:
-    """Report decks that moved, appeared or vanished. Returns a shell status."""
-    recorded_decks = recorded.get("decks", {})
-    if not recorded_decks:
+    """Report anything that moved, including why an example could not be written.
+
+    Comparing digests alone is not enough, and the gap is not theoretical: an
+    example that stops producing a deck leaves the digest map and enters
+    ``not_written``, and an example whose *failure* changes alters no digest at
+    all. Both are exactly the drift this tool exists to catch, and both walked
+    straight through a digest-only comparison. So outcomes are compared as a
+    whole, and a changed reason is reported with its old and new text.
+    """
+    recorded_outcomes = _outcomes(recorded.get("decks", {}), recorded.get("not_written", {}))
+    if not recorded_outcomes:
         print("No snapshot to compare against. Run --write first.")
         return 2
+    current_outcomes = _outcomes(current, skipped)
 
-    changed = [n for n in current if n in recorded_decks and current[n] != recorded_decks[n]]
-    added = [n for n in current if n not in recorded_decks]
-    missing = [n for n in recorded_decks if n not in current]
-    ok = not changed and not added and not missing
+    moved: list[str] = []
+    for name in sorted(set(recorded_outcomes) & set(current_outcomes)):
+        was_kind, was_value = recorded_outcomes[name]
+        now_kind, now_value = current_outcomes[name]
+        if was_kind != now_kind:
+            moved.append(f"  {was_kind} -> {now_kind}: {name}")
+        elif was_value != now_value:
+            moved.append(f"  {was_kind} changed: {name}")
+            if was_kind == "not written":
+                moved.append(f"      was: {was_value}")
+                moved.append(f"      now: {now_value}")
 
-    print(f"decks snapshotted : {len(recorded_decks)}")
-    print(f"decks generated   : {len(current)}")
-    for label, names in (("CHANGED", changed), ("ADDED", added), ("MISSING", missing)):
-        for name in names:
-            print(f"  {label}: {name}")
-    if skipped:
-        print(f"not written ({len(skipped)}) - check_prerequisites refused, which is")
-        print("expected for a mixed model while the flag is off:")
-        for name, reason in sorted(skipped.items()):
-            print(f"  {name}: {reason}")
+    added = sorted(set(current_outcomes) - set(recorded_outcomes))
+    missing = sorted(set(recorded_outcomes) - set(current_outcomes))
 
-    print("\nverdict:", "no deck changed" if ok else "DECKS MOVED")
+    print(f"examples snapshotted : {len(recorded_outcomes)}")
+    print(f"examples seen        : {len(current_outcomes)}")
+    print(f"  written            : {len(current)}")
+    print(f"  not written        : {len(skipped)}")
+    for name in added:
+        print(f"  ADDED: {name} ({current_outcomes[name][0]})")
+    for name in missing:
+        print(f"  MISSING: {name} ({recorded_outcomes[name][0]})")
+    for line in moved:
+        print(line)
+
+    ok = not moved and not added and not missing
+    print(
+        "\nverdict:",
+        "no deck changed and no example moved" if ok else "SNAPSHOT MOVED",
+    )
     return 0 if ok else 1
 
 
