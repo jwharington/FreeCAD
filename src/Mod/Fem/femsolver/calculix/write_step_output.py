@@ -34,6 +34,26 @@ def _is_mixed_shell_solid(ccxwriter):
     return settings.get_allow_mixed_elements() and meshtools.is_mixed_femmesh(ccxwriter.femmesh)
 
 
+def _fixed_set_names(ccxwriter, femobj):
+    """The node sets a fixed constraint was written under.
+
+    A mixed model splits the fixed nodes into a solid set and a face-or-edge
+    set, because only the latter carries rotational degrees of freedom
+    (see write_constraint_fixed). The reaction-force request has to name those
+    sets; naming the unsplit name asks ccx for a set that does not exist, and
+    it reports no reaction forces at all rather than failing.
+    """
+    name = femobj["Object"].Name
+    if not ccxwriter.nodal_rotations_are_split():
+        return [name]
+    names = []
+    if femobj.get("NodesSolid"):
+        names.append(f"{name}Solid")
+    if femobj.get("NodesFaceEdge"):
+        names.append(f"{name}FaceEdge")
+    return names
+
+
 def write_step_output(f, ccxwriter):
 
     f.write("\n{}\n".format(59 * "*"))
@@ -98,8 +118,9 @@ def write_step_output(f, ccxwriter):
             f.write("** reaction forces for Constraint fixed\n")
             for femobj in ccxwriter.member.cons_fixed:
                 # femobj --> dict, FreeCAD document object is femobj["Object"]
-                f.write("*NODE PRINT, NSET={}, TOTALS=ONLY\n".format(femobj["Object"].Name))
-                f.write("RF\n")
+                for name in _fixed_set_names(ccxwriter, femobj):
+                    f.write(f"*NODE PRINT, NSET={name}, TOTALS=ONLY\n")
+                    f.write("RF\n")
         if ccxwriter.member.cons_displacement:
             # reaction forces for Constraint displacement constraining translation
             f.write("** reaction forces for Constraint displacement constraining translation\n")

@@ -463,6 +463,30 @@ class TestMixedShellSolid(unittest.TestCase):
         self.assertTrue(master[2], "the solid master resolves to its volume faces")
 
     # ********************************************************************************************
+    def test_mixed_fixed_reaction_force_names_the_split_sets(self):
+        # A mixed model splits a fixed constraint's nodes into a solid set and a
+        # face-or-edge set, because only the latter carries rotational degrees
+        # of freedom. The reaction-force request must name those sets: naming
+        # the unsplit name asks ccx for a set that does not exist, and ccx
+        # reports no reaction forces at all rather than failing.
+        doc, analysis, solver, mesh_obj = self._mixed_analysis_document()
+        fea = ccxtools.FemToolsCcx(analysis, solver, test_mode=True)
+        fea.update_objects()
+        workdir = self._temp_dir("reaction_forces")
+        fea.setup_working_dir(str(workdir))
+        with mixed_shell_solid_flag(True):
+            self.assertFalse(fea.check_prerequisites(), "the gate must be open")
+            self.assertFalse(fea.write_inp_file(), "the deck must be written")
+        deck = (workdir / "Mesh.inp").read_text(encoding="utf-8")
+
+        self.assertNotIn("*NODE PRINT, NSET=Fixed, TOTALS=ONLY", deck)
+        split_requests = sum(
+            deck.count(f"*NODE PRINT, NSET=Fixed{suffix}, TOTALS=ONLY")
+            for suffix in ("Solid", "FaceEdge")
+        )
+        self.assertGreater(split_requests, 0, "no reaction forces are requested at all")
+
+    # ********************************************************************************************
     def test_mixed_flag_defaults_on(self):
         # Stage 9's promotion. With the parameter unset the mixed path is on, so
         # a mixed analysis passes the gate that used to refuse it.
