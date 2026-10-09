@@ -7,10 +7,10 @@ all-solid rebuild; Stage 8 makes a mixed result displayable (`OUTPUT=2d` on both
 cards); Stage 9 promotes the path, hardens the checks the promotion would have
 weakened, and publishes the merge routine.
 **Remaining:** the full list is **§11**. §11.1 — the silent wrong deck on an
-edge-shaped connection — is **fixed**; the open entries are the S8R/S6 guard a
-composite section needs (§11.2), the fact that only the F1 family has ever been
-solved and only by a manual probe (§11.3), the results-viewer toggle (§11.4),
-and the rest of §11.6.
+edge-shaped connection — and §11.3's F1 solve are **fixed**; the open entries are
+the S8R/S6 guard a composite section needs (§11.2), the fact that only the F1
+family has ever been solved (§11.3), the results-viewer toggle (§11.4), and the
+rest of §11.6.
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
 shells wants to coexist with locally solid features in the *same*
 analysis. Today it cannot: FreeCAD's FEM pipeline is built around
@@ -1393,29 +1393,34 @@ a mixed model by hand with a linear shell mesh. That case yields a deck ccx
 rejects (`Element 2 is not a S8R nor a S6 shell element`): loud, so less severe
 than §11.1, but planned and absent.
 
-### 11.3 Only the F1 family is solved end to end — and by a manual probe
+### 11.3 F1 is solved in CI now; the other families are not
 
-This is weaker than "solved end to end" sounds, and it is worth being exact
-about, because the label overstates what guards the capability:
+**The mixed path is solved for real in CI.**
+`compositestests/test_mixed_coupling_numerical.py` runs ccx on the probe's own
+models and asserts the physics a deck-text test cannot see — that the tied skin
+matches an all-solid rebuild, and that it is stiffer than the bare spar, which
+is the detector for a silent uncoupling. Measured: mixed **6.422333e-02 mm**
+against all-solid **6.416312e-02 mm** (**0.09 %**), bare **1.219529e-01 mm**
+(**1.90x**). The models are reached through the probe rather than copied,
+because this section quotes that probe's numbers and a second copy would be
+free to drift from them. The tolerances (5 %, 1.2x) are stated in the test and
+are not tuning knobs.
 
-- **The 27-test mixed suite never runs CalculiX.** Every call goes through
+What remains open, stated exactly:
+
+- **The 27-test FEM mixed suite still never runs CalculiX.** Every call is
   `FemToolsCcx(..., test_mode=True)`, and `femtools/ccxtools.py:551` refuses
-  outright: *"CalculiX can not be run if test_mode is True."* So the entire
-  matrix asserts deck text and mesh structure, not physics.
-- **The only automated solve** is the Composites test
-  `test_mixed_shell_solid_plate_solves`, which calls `runner.run(run_solver=True)`
-  and asserts a non-zero displacement — but `skipTest`s if the FEM stack is
-  unavailable, so it can silently not run at all.
-- **The Stage 7 F1 check is a manual probe** (`inspect_mixed_cantilever.py
-  --phase run`), not CI. Its model is a spar with a skin whose footprint equals
-  the top face — i.e. **F1 covered**, not F2 patch.
-
-So f2, f3, f4 and e1-e3 have never produced a displacement number anywhere.
-`constraint_mixed_face_coupling.py` (f1-f4) and
-`constraint_mixed_edge_coupling.py` (e1-e3) build real geometry, but their tests
-assert geometry and deck text only. §8.5's `G13` was specified as *"interactive
-only; not asserted in CI"*, so this is a decision rather than an oversight — but
-it should be read as what it is, and not as "solved end to end".
+  outright: *"CalculiX can not be run if test_mode is True."* That suite asserts
+  deck text and mesh structure; solving lives in the Composites suite above.
+- **f2, f3, f4 and e1-e3 are still never solved.** Only the F1-shaped model —
+  a skin whose footprint equals the solid's top face — has a displacement
+  number. `constraint_mixed_face_coupling.py` (f1-f4) and
+  `constraint_mixed_edge_coupling.py` (e1-e3) build real geometry, but their
+  tests assert geometry and deck text only.
+- **The Composites example test can still skip.**
+  `test_mixed_shell_solid_plate_solves` `skipTest`s when the FEM stack is
+  unavailable, so it is weaker than the new numerical test, which skips only
+  when no `ccx` binary exists.
 
 ### 11.4 A mixed result displays, but the two parts are not distinguishable
 
