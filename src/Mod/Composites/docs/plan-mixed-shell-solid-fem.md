@@ -6,10 +6,11 @@ merge routine is published. Stage 7's coupling check passes at **0.09 %** agains
 all-solid rebuild; Stage 8 makes a mixed result displayable (`OUTPUT=2d` on both file
 cards); Stage 9 promotes the path, hardens the checks the promotion would have
 weakened, and publishes the merge routine.
-**Remaining:** the full list is **§11**. The sharpest entry there is that the loud
-failure ADR 0004 requires was never implemented, so an edge-shaped connection
-fails **silently** on a path that is now on by default. Read §11 before treating
-any stage above as "finished" in the sense of complete.
+**Remaining:** the full list is **§11**. §11.1 — the silent wrong deck on an
+edge-shaped connection — is **fixed**; the open entries are the S8R/S6 guard a
+composite section needs (§11.2), the fact that only the F1 family has ever been
+solved and only by a manual probe (§11.3), the results-viewer toggle (§11.4),
+and the rest of §11.6.
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
 shells wants to coexist with locally solid features in the *same*
 analysis. Today it cannot: FreeCAD's FEM pipeline is built around
@@ -1358,27 +1359,25 @@ stages back. Ordered by severity; each entry says what would close it. A stage
 being "done" above means *its exit criterion was met*, not that the capability
 is complete.
 
-### 11.1 The loud failure the ADR obliges does not exist
+### 11.1 ~~The loud failure the ADR obliges does not exist~~ — **fixed**
 
 ADR 0004, obligation 3: *"A connection that cannot be expressed as a surface
-must raise."* **Not implemented.**
-`femsolver/calculix/write_constraint_tie.py` contains no `raise`, no `assert`
-and no `Exception` — it writes `*SURFACE` entries and nothing else. And
-`meshsetsgetter.get_constraints_tie_faces` (`:794-800`) does no validation
-either: it slices `_get_elements` output straight into `TieSlaveFaces` /
-`TieMasterFaces`.
+must raise."* It did not. `femsolver/calculix/write_constraint_tie.py` had no
+`raise`, no `assert`, no `Exception`; and the tie check in `checksanalysis`
+counted references while its own message said *"two needed faces"* — it never
+asked whether either reference **was** a face.
 
-So an **E-shaped** connection — an Edge selected on a shell, the F family's
-sibling in §8.4 — does not fail. Nothing turns a selected Edge on a shell into
-an edge face (S3-S6), so the reference resolves to no faces and the slave
-surface comes out empty or improperly bounded. That is a **silent wrong deck on
-a path that is now on by default** — the failure class §7 calls load-bearing,
-and the one this whole plan exists to eliminate.
+So an **E-shaped** connection passed validation, and the writer then built a
+`*SURFACE` whose face index came from an edge mask: a deck that means nothing,
+with no error from FreeCAD and none from CalculiX — a silent wrong deck on a
+path that is now on by default.
 
-§8.5's `G10`/`G11` were the enforcement mechanism and were never written. To
-close: raise in the tie writer (or in reference resolution) when a Tie reference
-resolves to an edge or interior dimension on a mixed mesh. That is strictly less
-work than either coupling fix, and the ADR already requires it.
+Fixed by `checksanalysis._tie_references_that_are_not_faces`: every tie
+reference must resolve to dimension 2 (a face, or a compound of faces), judged
+by what the shape holds rather than by its `ShapeType`. Verified: the mixed
+suite is **29/29**, both new tests failing before the change and passing after,
+and `test_ccxtools` shows no tie-related failure. The E-family examples now
+refuse to write a deck, which is what `G10`/`G11` required.
 
 ### 11.2 A composite section on a linear mixed shell is not guarded
 
@@ -1394,14 +1393,29 @@ a mixed model by hand with a linear shell mesh. That case yields a deck ccx
 rejects (`Element 2 is not a S8R nor a S6 shell element`): loud, so less severe
 than §11.1, but planned and absent.
 
-### 11.3 Only the F1 family is solved end to end
+### 11.3 Only the F1 family is solved end to end — and by a manual probe
 
+This is weaker than "solved end to end" sounds, and it is worth being exact
+about, because the label overstates what guards the capability:
+
+- **The 27-test mixed suite never runs CalculiX.** Every call goes through
+  `FemToolsCcx(..., test_mode=True)`, and `femtools/ccxtools.py:551` refuses
+  outright: *"CalculiX can not be run if test_mode is True."* So the entire
+  matrix asserts deck text and mesh structure, not physics.
+- **The only automated solve** is the Composites test
+  `test_mixed_shell_solid_plate_solves`, which calls `runner.run(run_solver=True)`
+  and asserts a non-zero displacement — but `skipTest`s if the FEM stack is
+  unavailable, so it can silently not run at all.
+- **The Stage 7 F1 check is a manual probe** (`inspect_mixed_cantilever.py
+  --phase run`), not CI. Its model is a spar with a skin whose footprint equals
+  the top face — i.e. **F1 covered**, not F2 patch.
+
+So f2, f3, f4 and e1-e3 have never produced a displacement number anywhere.
 `constraint_mixed_face_coupling.py` (f1-f4) and
 `constraint_mixed_edge_coupling.py` (e1-e3) build real geometry, but their tests
-assert **structure and deck text**, not a solve. Solved end to end: the Stage 7
-probe's skin-over-spar (F1-shaped) and the Composites example. F3 (offset shell)
-and F4 (closed bag) have no numerical result, and the E family cannot have one
-until §11.1 or a real edge coupling lands.
+assert geometry and deck text only. §8.5's `G13` was specified as *"interactive
+only; not asserted in CI"*, so this is a decision rather than an oversight — but
+it should be read as what it is, and not as "solved end to end".
 
 ### 11.4 A mixed result displays, but the two parts are not distinguishable
 
