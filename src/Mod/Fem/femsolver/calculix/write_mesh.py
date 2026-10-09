@@ -30,7 +30,6 @@ import codecs
 from os.path import join
 
 from femsolver import settings
-from femmesh import meshtools
 
 
 def write_mesh(ccxwriter):
@@ -41,7 +40,12 @@ def write_mesh(ccxwriter):
     # skin would join the element block as shell elements. So it is chosen only
     # when the flag is on and the mesh really is mixed, and every other mesh
     # keeps the mode every existing deck was written with.
-    if settings.get_allow_mixed_elements() and meshtools.is_mixed_femmesh(ccxwriter.femmesh):
+    # The writer's mesh sets getter already worked out whether this mesh is
+    # mixed, by scanning it once. Asking meshtools again here would scan it a
+    # second time: measured at 8,087 of 47,745 samples in a profile of the
+    # mixed wing's deck write, for a boolean about a mesh that cannot have
+    # changed in between.
+    if settings.get_allow_mixed_elements() and ccxwriter.meshdatagetter.is_mixed:
         element_param = 2
     else:
         element_param = 1  # highest element order only

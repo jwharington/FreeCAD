@@ -26,12 +26,16 @@ __author__ = "Bernd Hahnebach"
 __url__ = "https://www.freecad.org"
 
 from femsolver import settings
-from femmesh import meshtools
 
 
 def _is_mixed_shell_solid(ccxwriter):
-    """True when the mesh holds shells and volumes together."""
-    return settings.get_allow_mixed_elements() and meshtools.is_mixed_femmesh(ccxwriter.femmesh)
+    """True when the mesh holds shells and volumes together.
+
+    Read from the writer's mesh sets getter, which scanned the mesh once
+    already. Asking meshtools directly scanned it again - 4,527 samples of
+    47,745 in a profile of the mixed wing's deck write.
+    """
+    return settings.get_allow_mixed_elements() and ccxwriter.meshdatagetter.is_mixed
 
 
 def _fixed_set_names(ccxwriter, femobj):

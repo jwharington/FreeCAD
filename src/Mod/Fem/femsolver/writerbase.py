@@ -146,8 +146,11 @@ class FemInputWriter:
         has no rotational degree of freedom, so a constraint applying DOF 4-6
         must name only the shell and edge nodes; the mesh sets getter records
         that split on each constraint as NodesSolid and NodesFaceEdge.
+
+        The volume set comes from the getter's cache rather than the mesh, so
+        asking per constraint does not re-scan the mesh per constraint.
         """
-        return bool(self.femmesh.Volumes) and bool(
+        return bool(self.meshdatagetter.volumes) and bool(
             self.member.geos_shellthickness or self.member.geos_beamsection
         )
 

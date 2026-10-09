@@ -1441,6 +1441,15 @@ the LS8e case this plan exists for, has no end-to-end example. §10's per-skin
 
 ### 11.6 Smaller, and open
 
+- **A solved mixed model makes the GUI unresponsive.** Opening the saved mixed
+  wing (`/tmp/wing.FCStd`, 78 MB) in the GUI and viewing `CCX_Results` is very
+  slow, and the GUI process was later found gone. The result carries **289,544**
+  displacement values for a mesh of ~35k nodes, so the result is on the expanded
+  nodes while the panel's gate wants exact node-count equality — the same
+  condition Stage 8 fixed for the smaller plate, unanswered for a model this
+  size. Worth investigating before claiming a mixed result is *displayable* at
+  scale; the timing figures above were also taken with a GUI holding it, so
+  treat any absolute number from such a run as inflated.
 - **`Stiffener` / `Bulkhead` mixed coverage** — none. `quasi_iso_stiffener_panel`
   is all shells; Bulkhead has no FEM example at all.
 - **The GUI half of §8** — `femtest/gui/test_mixed_shell_solid.py` does not

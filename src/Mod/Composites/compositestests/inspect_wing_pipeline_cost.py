@@ -47,8 +47,16 @@ def _stage(label, fn, timings):
     return value
 
 
-def measure(repeats=1):
-    """Run the wing pipeline, timing each stage. Returns the timing dict."""
+def measure(save_path=None, stop_after="solve", drape_pitch=None):
+    """Run the wing pipeline, timing each stage. Returns the timing dict.
+
+    ``stop_after`` ends the run at a named stage, so one stage can be measured
+    without paying for the rest. Without it a sweep of the drape pitch would
+    have to write a deck each time, which costs minutes and would drown the
+    thing being measured.
+    """
+    if drape_pitch is not None:
+        wing.DRAPE_PITCH_MM = drape_pitch
     timings = {}
     doc = None
     try:
@@ -84,6 +92,8 @@ def measure(repeats=1):
             lambda: wing._make_skin(doc, lower_support, "WingLowerSkin"),
             timings,
         )
+        if stop_after == "drape":
+            return timings
 
         tag = "WingPipelineCost"
         analysis, solver, mesh_obj = _stage(
@@ -118,9 +128,13 @@ def measure(repeats=1):
             timings,
         )
         mesh_obj.FemMesh = merged
+        if stop_after == "mesh":
+            return timings
 
         fem = shell_common._ccx_tools(analysis, solver, mesh_obj)
         _stage("deck.write", lambda: fem.write_inp_file(), timings)
+        if stop_after == "deck":
+            return timings
         # ccx_run, not start_ccx: only ccx_run resolves the solver binary
         # (via setup_ccx) before spawning it. start_ccx used alone passes an
         # empty binary name to Popen and dies with PermissionError.
@@ -128,6 +142,12 @@ def measure(repeats=1):
         _stage("results.load", lambda: fem.load_results(), timings)
     finally:
         if doc is not None:
+            # Saved before closing, so the solved document can be opened and
+            # looked at: a stage table says what a run cost, and nothing about
+            # whether it produced something a person can inspect.
+            if save_path:
+                doc.saveAs(save_path)
+                print(f"  saved {save_path}", flush=True)
             FreeCAD.closeDocument(doc.Name)
     return timings
 
@@ -179,6 +199,23 @@ def report(timings):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repeats", type=int, default=1, help="how many times to run")
+    parser.add_argument(
+        "--save",
+        default="",
+        help="save the solved document here (an .FCStd), to open in the GUI",
+    )
+    parser.add_argument(
+        "--stop-after",
+        choices=["drape", "mesh", "deck", "solve"],
+        default="solve",
+        help="stop once this stage is done (default: run everything)",
+    )
+    parser.add_argument(
+        "--drape-pitch",
+        type=float,
+        default=None,
+        help="override DRAPE_PITCH_MM, to measure how the drape scales",
+    )
     args = parser.parse_args()
 
     if args.repeats < 1:
@@ -188,7 +225,11 @@ def main():
 
     for run_index in range(args.repeats):
         print(f"\n=== run {run_index + 1}/{args.repeats} ===", flush=True)
-        timings = measure()
+        timings = measure(
+            save_path=args.save or None,
+            stop_after=args.stop_after,
+            drape_pitch=args.drape_pitch,
+        )
         report(timings)
     sys.stdout.flush()
     return 0
