@@ -231,7 +231,7 @@ class TestBulkheadExampleRuns(TestFreeCADFP):
         """Section I: skins, plate, flange, footprint — and the mirrored pair."""
         from Composites.compositeexamples.examples import bulkhead_section
 
-        doc = bulkhead_section.build(doc=self.doc)
+        doc = bulkhead_section.build(doc=self.doc)["doc"]
         names = ["Skin1", "Skin2", "Plate", "Flange", "Remainder",
                  "PlateM", "FlangeM", "SkinM"]
         for name in names:
@@ -245,7 +245,7 @@ class TestBulkheadExampleRuns(TestFreeCADFP):
         """Section II: the BulkheadFP must recompute, not sit Touched."""
         from Composites.compositeexamples.examples import bulkhead_section
 
-        doc = bulkhead_section.build_with_feature(doc=self.doc)
+        doc = bulkhead_section.build_with_feature(doc=self.doc)["doc"]
         member = doc.getObject("Bulkhead")
         self.assertIsNotNone(member, "no Bulkhead feature in section II")
         self.assertFalse(member.Shape.isNull(), "the feature computed nothing")

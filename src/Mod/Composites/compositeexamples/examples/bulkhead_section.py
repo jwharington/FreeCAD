@@ -82,8 +82,10 @@ def _support_features(doc, shape):
 def build(doc=None, sewn=False, **_ignored):
     """The bulkhead section over the fixture skin, in one document.
 
-    Returns the document; `doc` may be an open document (the example runner
-    hands one in) and a fresh one is made otherwise.  Each `Part::Feature`
+    Returns a mapping holding the document under ``doc``, the shape every
+    other example returns and the example runner expects; `doc` may be an
+    open document (the runner hands one in) and a fresh one is made
+    otherwise.  Each `Part::Feature`
     carries `Shape` — never `Shape.Faces`, which would make every object share
     one compound and colour and visibility would land on all of them at once.
     """
@@ -134,7 +136,7 @@ def build(doc=None, sewn=False, **_ignored):
                                    mirror_x=True)))
     _paint(holed_m, (0.15, 0.60, 0.30))
 
-    return doc
+    return {"doc": doc}
 
 
 def build_with_feature(doc=None, sewn=False, **_ignored):
@@ -165,7 +167,7 @@ def build_with_feature(doc=None, sewn=False, **_ignored):
     cutter_view = getattr(cutter, "ViewObject", None)
     if cutter_view is not None:
         cutter_view.Visibility = False
-    return doc
+    return {"doc": doc}
 
 
 def build_trimmed(doc=None, sewn=False, **_ignored):
@@ -205,4 +207,4 @@ def build_trimmed(doc=None, sewn=False, **_ignored):
     bay_view = getattr(bay, "ViewObject", None)
     if bay_view is not None:
         bay_view.Transparency = 80
-    return doc
+    return {"doc": doc}
