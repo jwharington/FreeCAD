@@ -60,6 +60,19 @@ def get_laminate(shellth_obj):
     return compshell_obj.Laminate
 
 
+def route_shell_offset(shellth_obj, compshell_obj):
+    """Route the per-skin composite offset into the FEM shell section.
+
+    CalculiX reads OFFSET from the *SHELL SECTION card, which the FEM writer
+    builds from ShellThickness.Offset; the generic writer knows nothing of
+    Composites, so the value has to reach that property before the card is
+    written.  The offset lives on the Composite::Shell because a sandwich
+    bonds a skin to each core face and the two skins offset in opposite
+    directions -- one analysis-wide scalar cannot express that.
+    """
+    shellth_obj.Offset = float(getattr(compshell_obj, "Offset", 0.0))
+
+
 def get_laminate_materials(geos):
     def get_lam(o):
         obj = o["Object"]
@@ -87,7 +100,11 @@ def shell_orientation_provider(shellth_obj, femmesh_obj, elements, orientation):
 
 
 def shell_section_provider(shellth_obj, matgeoset, orientation_name):
-    laminate = get_laminate(shellth_obj)
+    compshell_obj = get_compshell_obj(shellth_obj)
+    if not compshell_obj:
+        return None
+    route_shell_offset(shellth_obj, compshell_obj)
+    laminate = compshell_obj.Laminate
     if not laminate:
         return None
     # The writer writes a *ORIENTATION card only when the orientation

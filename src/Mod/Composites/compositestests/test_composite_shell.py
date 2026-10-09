@@ -3,6 +3,7 @@
 
 """Tests for CompositeShellFP."""
 
+import io
 import os
 import tempfile
 import unittest
@@ -10,7 +11,32 @@ import unittest
 import FreeCAD
 import Part
 
+from .example_materials import make_glass
 from .test_base import TestFreeCADFP
+
+# The FEM deck writer is an optional dependency of this Composites test
+# module: without the FEM stack the shell-section assertions are skipped.
+try:
+    import ObjectsFem
+    from femsolver.calculix.write_femelement_geometry import (
+        write_femelement_geometry,
+    )
+except ImportError:
+    ObjectsFem = None
+    write_femelement_geometry = None
+
+
+class _StubSolver:
+    ModelSpace = "3D"
+    ExcludeBendingStiffness = False
+
+
+class _StubCcxWriter:
+    """The two attributes write_femelement_geometry reads."""
+
+    def __init__(self, mat_geo_sets):
+        self.mat_geo_sets = mat_geo_sets
+        self.solver_obj = _StubSolver()
 
 
 class TestCompositeShellFP(TestFreeCADFP):
@@ -223,3 +249,120 @@ class TestRosettelessFallbackSeed(TestFreeCADFP):
         result = backend._run_solve()
         self.assertTrue(result.get("success"), f"solve failed: {result.get('error')}")
         self.assertTrue(backend.is_valid())
+
+
+class TestCompositeShellOffset(TestFreeCADFP):
+    """Per-skin laminate offset routed into the FEM shell section.
+
+    The offset makes a skin bonded to a solid core's face stiffer than the
+    un-offset mid-surface default; a reversed sign puts both skins inboard
+    and makes the sandwich softer than no offset at all, so the sign is
+    pinned to the CalculiX manual: OFFSET is the signed position of the
+    reference surface measured from the mid-surface, in units of thickness,
+    +0.5 putting the reference surface on the face the shell normal points
+    to and -0.5 on the opposite face.
+    """
+
+    def _make_laminate(self, name):
+        from Composites.features.HomogeneousLamina import HomogeneousLaminaFP
+        from Composites.features.Laminate import LaminateFP
+
+        laminate = self.doc.addObject("Part::FeaturePython", name)
+        LaminateFP(laminate)
+        plies = []
+        for angle in (0.0, 45.0):
+            ply = self.doc.addObject(
+                "Part::FeaturePython", f"{name}_Ply{int(angle)}"
+            )
+            HomogeneousLaminaFP(ply)
+            ply.Angle = angle
+            ply.Thickness = 0.5
+            ply.Material = make_glass()
+            plies.append(ply)
+        laminate.Layers = plies
+        self.doc.recompute()
+        return laminate
+
+    def _make_shell(self, name, laminate):
+        from Composites.features.CompositeShell import CompositeShellFP
+
+        support = self.doc.addObject("Part::Feature", f"{name}_Support")
+        support.Shape = Part.makePlane(100.0, 100.0)
+        shell = self.doc.addObject("Part::FeaturePython", name)
+        CompositeShellFP(shell, support)
+        shell.Laminate = laminate
+        self.doc.recompute()
+        return shell
+
+    def _deck(self, shells):
+        """Run the real FEM section writer over the given shells."""
+        from Composites.fem.drape_laminate_provider import (
+            register_drape_laminate_providers,
+        )
+
+        register_drape_laminate_providers()
+        mat_geo_sets = []
+        thickness_by_shell = {}
+        for shell in shells:
+            thickness = ObjectsFem.makeElementGeometry2D(
+                self.doc, 0.8, f"{shell.Name}_ShellThickness"
+            )
+            thickness.References = [(shell, "Face1")]
+            thickness_by_shell[shell.Name] = thickness
+            mat_geo_sets.append(
+                {
+                    "ccx_elset": True,
+                    "ccx_elset_name": f"E_{shell.Name}",
+                    "mat_obj_name": f"MAT_{shell.Name}",
+                    "shellthickness_obj": thickness,
+                }
+            )
+        buffer = io.StringIO()
+        write_femelement_geometry(buffer, _StubCcxWriter(mat_geo_sets))
+        return buffer.getvalue().splitlines(), thickness_by_shell
+
+    def test_offset_defaults_to_zero(self):
+        shell = self._make_shell("Shell", self._make_laminate("Laminate"))
+        self.assertEqual(shell.Offset, 0.0)
+
+    def test_default_offset_deck_is_unchanged(self):
+        """An unset offset must leave the section card as it was before."""
+        if write_femelement_geometry is None:
+            self.skipTest("FEM stack unavailable")
+        shell = self._make_shell("Shell", self._make_laminate("Laminate"))
+        lines, thickness_by_shell = self._deck([shell])
+        self.assertIn(
+            "*SHELL SECTION, ELSET=E_Shell, COMPOSITE, OFFSET=0", lines
+        )
+        self.assertEqual(thickness_by_shell["Shell"].Offset, 0.0)
+
+    def test_offset_reaches_shell_section_deck(self):
+        if write_femelement_geometry is None:
+            self.skipTest("FEM stack unavailable")
+        shell = self._make_shell("Shell", self._make_laminate("Laminate"))
+        shell.Offset = -0.5
+        lines, thickness_by_shell = self._deck([shell])
+        self.assertIn(
+            "*SHELL SECTION, ELSET=E_Shell, COMPOSITE, OFFSET=-0.5", lines
+        )
+        self.assertEqual(thickness_by_shell["Shell"].Offset, -0.5)
+
+    def test_two_skins_offset_in_opposite_directions(self):
+        """A sandwich's two skins take opposite signs in one analysis."""
+        if write_femelement_geometry is None:
+            self.skipTest("FEM stack unavailable")
+        top = self._make_shell("TopSkin", self._make_laminate("TopLaminate"))
+        bottom = self._make_shell(
+            "BottomSkin", self._make_laminate("BottomLaminate")
+        )
+        top.Offset = -0.5
+        bottom.Offset = 0.5
+        lines, thickness_by_shell = self._deck([top, bottom])
+        self.assertIn(
+            "*SHELL SECTION, ELSET=E_TopSkin, COMPOSITE, OFFSET=-0.5", lines
+        )
+        self.assertIn(
+            "*SHELL SECTION, ELSET=E_BottomSkin, COMPOSITE, OFFSET=0.5", lines
+        )
+        self.assertEqual(thickness_by_shell["TopSkin"].Offset, -0.5)
+        self.assertEqual(thickness_by_shell["BottomSkin"].Offset, 0.5)

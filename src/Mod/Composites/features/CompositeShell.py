@@ -67,6 +67,27 @@ def is_composite_shell(obj):
     )
 
 
+_SHELL_OFFSET_DOC = (
+    "Signed position of the shell reference surface relative to the layup "
+    "mid-surface, in units of shell thickness (CalculiX *SHELL SECTION "
+    "OFFSET). 0 puts the reference surface on the mid-surface, +0.5 on the "
+    "face the shell normal points to, -0.5 on the opposite face. Per skin: "
+    "a sandwich's two skins sit on opposite core faces and so offset in "
+    "opposite directions."
+)
+
+
+def add_shell_offset_property(obj):
+    """Add the per-skin laminate offset used as the FEM shell OFFSET."""
+    obj.addProperty(
+        type="App::PropertyFloat",
+        name="Offset",
+        group="ShellThickness",
+        doc=_SHELL_OFFSET_DOC,
+    )
+    obj.Offset = 0.0
+
+
 def is_isotropic_shell(obj):
     """True for a Composite::Shell whose laminate declares isotropic
     presentation (either tier, PRD quasi_isotropic_laminate.md D1).
@@ -108,6 +129,8 @@ class CompositeShellFP(CompositeBaseFP):
             doc="Laminate material",
         )
         # section could be composite laminate, or homogeneous lamina
+
+        add_shell_offset_property(obj)
 
         obj.addProperty(
             type="App::PropertyFloat",
@@ -226,6 +249,8 @@ class CompositeShellFP(CompositeBaseFP):
 
     def onDocumentRestored(self, fp):
         """Restore ViewProvider and initialise tracking fields."""
+        if not hasattr(fp, "Offset"):
+            add_shell_offset_property(fp)
         for attr, value in (
             ("_cached_shape_fingerprint", ""),
             ("_cached_rosette_angle", None),
