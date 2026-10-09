@@ -199,16 +199,12 @@ def add_fixed(doc, analysis, reference):
     return fixed
 
 
-def add_force(doc, analysis, reference, magnitude, direction=None):
-    """Return a force on a reference, along the reference's normal or a direction."""
+def add_force(doc, analysis, reference, magnitude, direction):
+    """Return a force of ``magnitude`` on ``reference`` along ``direction``."""
     force = ObjectsFem.makeConstraintForce(doc, "Force")
     force.References = [reference]
     force.Force = f"{magnitude:.1f} N"
-    if direction is None:
-        manager.set_direction_compat(force, reference)
-        manager.set_reversed_compat(force, False)
-    else:
-        force.DirectionVector = FreeCAD.Vector(*direction)
+    force.DirectionVector = FreeCAD.Vector(*direction)
     analysis.addObject(force)
     return force
 

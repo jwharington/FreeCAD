@@ -13,18 +13,65 @@ __title__ = "Mixed shell and solid geometry unit tests"
 __author__ = "The FreeCAD community"
 __url__ = "https://www.freecad.org"
 
+import contextlib
+import shutil
+import tempfile
 import unittest
+from pathlib import Path
 
 import FreeCAD
 
+import Fem
+import ObjectsFem
+
+from femtools import ccxtools
+from femtools import membertools
+from femsolver.calculix import writer as ccx_writer
+from femsolver.calculix import write_mesh as write_mesh_module
 from femexamples import constraint_mixed_edge_coupling as edge_coupling
 from femexamples import constraint_mixed_face_coupling as face_coupling
 from femexamples._mixed_coupling_common import paired_faces_by_plane
+from . import support_utils as testtools
 from .support_utils import fcc_print
 
 TOLERANCE = 1e-6
 FACE_VARIANTS = ("f1", "f2", "f3", "f4")
 EDGE_VARIANTS = ("e1", "e2", "e3")
+
+MIXED_FLAG_PATH = "User parameter:BaseApp/Preferences/Mod/Fem/General"
+MIXED_FLAG_NAME = "AllowMixedShellSolid"
+
+
+@contextlib.contextmanager
+def mixed_shell_solid_flag(enabled):
+    """Turn the hidden mixed-elements flag on or off, restoring the old value."""
+    group = FreeCAD.ParamGet(MIXED_FLAG_PATH)
+    previous = group.GetBool(MIXED_FLAG_NAME, False)
+    group.SetBool(MIXED_FLAG_NAME, enabled)
+    try:
+        yield
+    finally:
+        group.SetBool(MIXED_FLAG_NAME, previous)
+
+
+def node_disjoint_brick_and_shell():
+    """A C3D8 brick plus a quad on one of its faces, on node ids of its own.
+
+    The quad sits at the brick's bottom-face coordinates but shares no node with
+    it, which is the merge route the mixed plan takes. A node-merged quad is the
+    volume's own skin and getFacesOnly drops it - Trap A.
+    """
+    mesh = Fem.FemMesh()
+    corners = [
+        (x, y, z) for z in (0.0, 1.0) for x, y in ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    ]
+    for index, (x, y, z) in enumerate(corners, start=1):
+        mesh.addNode(x, y, z, index)
+    mesh.addVolume([1, 2, 3, 4, 5, 6, 7, 8])
+    for node_id, (x, y, z) in enumerate(corners[:4], start=9):
+        mesh.addNode(x, y, z, node_id)
+    mesh.addFace([9, 10, 11, 12])
+    return mesh
 
 
 class TestMixedShellSolid(unittest.TestCase):
@@ -130,6 +177,89 @@ class TestMixedShellSolid(unittest.TestCase):
             linked = {obj.Name for obj in compound.Links}
             self.assertIn("Shell", linked)
             self.assertTrue(any(name.startswith("Solid") for name in linked))
+
+    # ********************************************************************************************
+    def test_flag_never_changes_a_solid_deck(self):
+        # G3. A non-mixed mesh must write the same deck with the flag on and off:
+        # the writer picks mode 2 only for a mesh that really is mixed.
+        from femexamples.constraint_tie import setup
+
+        doc = FreeCAD.newDocument("mixed_flag_inert_solid")
+        self.addCleanup(FreeCAD.closeDocument, doc.Name)
+        setup(doc, "ccxtools")
+
+        fea = ccxtools.FemToolsCcx(doc.Analysis, doc.CalculiXCcxTools, test_mode=True)
+        fea.update_objects()
+
+        decks = {}
+        for enabled in (False, True):
+            workdir = self._temp_dir("flag_on" if enabled else "flag_off")
+            fea.setup_working_dir(str(workdir))
+            self.assertFalse(
+                fea.check_prerequisites(), "a solid example must pass prerequisites"
+            )
+            with mixed_shell_solid_flag(enabled):
+                self.assertFalse(fea.write_inp_file(), "writing the deck failed")
+            decks[enabled] = workdir / "Mesh.inp"
+
+        difference = testtools.compare_inp_files(str(decks[False]), str(decks[True]))
+        self.assertFalse(difference, difference)
+
+    # ********************************************************************************************
+    def test_flag_selects_the_mixed_element_mode(self):
+        # Stage 2's one line. With the flag off the shell never reaches the
+        # deck; with it on the same mesh writes the volume and shell blocks
+        # together, which is what element_param 2 means.
+        doc = FreeCAD.newDocument("mixed_writer_mode")
+        self.addCleanup(FreeCAD.closeDocument, doc.Name)
+        analysis = ObjectsFem.makeAnalysis(doc, "Analysis")
+        solver = ObjectsFem.makeSolverCalculiXCcxTools(doc, "CalculiXCcxTools")
+        solver.ReducedIntegration = False
+        analysis.addObject(solver)
+        mesh_obj = analysis.addObject(ObjectsFem.makeMeshGmsh(doc, "Mesh"))[0]
+        mesh_obj.FemMesh = node_disjoint_brick_and_shell()
+        doc.recompute()
+
+        member = membertools.AnalysisMember(analysis)
+        writer = ccx_writer.FemInputWriterCcx(
+            analysis, solver, mesh_obj, member, str(self._temp_dir("writer")), []
+        )
+        writer.split_inpfile = False
+
+        deck_off_path = self._written_deck(writer, self._temp_dir("mode_off"), False)
+        deck_on_path = self._written_deck(writer, self._temp_dir("mode_on"), True)
+
+        # Flag off: the shell never reaches the deck, which is why the flag exists.
+        deck_off = deck_off_path.read_text(encoding="utf-8")
+        self.assertIn("*Element, TYPE=C3D8, ELSET=Evolumes", deck_off)
+        self.assertNotIn("ELSET=Efaces", deck_off)
+
+        # Flag on: the volume and shell blocks together, against a committed golden.
+        difference = testtools.compare_inp_files(str(self._fixture_golden()), str(deck_on_path))
+        self.assertFalse(difference, difference)
+
+    def _written_deck(self, writer, workdir, flag_enabled):
+        writer.dir_name = str(workdir)
+        writer.file_name = str(workdir / "Mesh.inp")
+        with mixed_shell_solid_flag(flag_enabled):
+            inpfile = write_mesh_module.write_mesh(writer)
+        inpfile.close()
+        return Path(writer.file_name)
+
+    def _fixture_golden(self):
+        return (
+            Path(__file__).resolve().parent.parent
+            / "data"
+            / "calculix"
+            / "mixed_shell_solid_fixture.inp"
+        )
+
+    def _temp_dir(self, name):
+        root = Path(tempfile.gettempdir()) / "mixed_shell_solid" / f"{self._testMethodName}_{name}"
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        return root
 
     # ********************************************************************************************
     def _build(self, module, variant):

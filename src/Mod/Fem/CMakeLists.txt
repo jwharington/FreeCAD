@@ -476,6 +476,7 @@ SET(FemTestsCcx_SRCS
     femtest/data/calculix/material_multiple_bendingbeam_fivefaces.inp
     femtest/data/calculix/material_multiple_tensionrod_twoboxes.inp
     femtest/data/calculix/material_nonlinear.inp
+    femtest/data/calculix/mixed_shell_solid_fixture.inp
     femtest/data/calculix/square_pipe_end_twisted_edgeforces.inp
     femtest/data/calculix/square_pipe_end_twisted_nodeforces.inp
     femtest/data/calculix/thermomech_bimetal.inp

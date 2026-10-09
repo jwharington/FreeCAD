@@ -104,7 +104,13 @@ def setup(doc=None, solvertype="ccxtools", variant="f1"):
     analysis = add_analysis(doc, solvertype)
     add_shell_thickness(doc, analysis, SHELL_THICKNESS)
     add_fixed(doc, analysis, extreme_face_reference(solid_obj, axis=0, sign=-1))
-    add_force(doc, analysis, extreme_face_reference(shell_obj, axis=0, sign=1), magnitude=100.0)
+    add_force(
+        doc,
+        analysis,
+        extreme_face_reference(shell_obj, axis=0, sign=1),
+        magnitude=100.0,
+        direction=(0, 0, -1),
+    )
     for number, (shell_face, solid_face) in enumerate(
         paired_faces_by_plane(solid_obj.Shape, shell_obj.Shape, spec["tolerance"]), start=1
     ):
