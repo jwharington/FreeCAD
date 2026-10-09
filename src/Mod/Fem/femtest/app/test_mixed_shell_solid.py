@@ -342,6 +342,36 @@ class TestMixedShellSolid(unittest.TestCase):
         self.assertEqual("ShellMaterial", shells[0]["mat_obj_name"])
 
     # ********************************************************************************************
+    def test_displacement_prescribes_rotation_only_on_shell_nodes(self):
+        # Stage 6. A solid node has no rotational degree of freedom, so a
+        # displacement's DOF 4-6 must name the shell nodes alone, while DOF 1-3
+        # may name the whole set.
+        doc = FreeCAD.newDocument("mixed_displacement_dof")
+        self.addCleanup(FreeCAD.closeDocument, doc.Name)
+        face_coupling.setup(doc=doc, variant="f2")
+        shell = doc.getObject("Shell")
+
+        disp = ObjectsFem.makeConstraintDisplacement(doc, "Displacement")
+        disp.References = [(shell, "Face1")]
+        disp.rotxFree = False
+        analysis = doc.Analysis
+        analysis.addObject(disp)
+        doc.recompute()
+
+        fea = ccxtools.FemToolsCcx(analysis, doc.CalculiXCcxTools, test_mode=True)
+        fea.update_objects()
+        workdir = self._temp_dir("displacement_dof")
+        fea.setup_working_dir(str(workdir))
+        with mixed_shell_solid_flag(True):
+            self.assertFalse(fea.check_prerequisites(), "the gate must be open")
+            self.assertFalse(fea.write_inp_file(), "the deck must be written")
+
+        deck = (workdir / "Mesh.inp").read_text(encoding="utf-8")
+        self.assertIn("*NSET,NSET=DisplacementFaceEdge", deck)
+        self.assertIn("DisplacementFaceEdge,4,4,", deck)
+        self.assertNotIn("Displacement,4,4,", deck)
+
+    # ********************************************************************************************
     def test_every_variant_meshes_to_a_mixed_femmesh(self):
         # The live-Gmsh half: each variant's parts meshed alone and merged must
         # give one mesh holding volumes and separate faces. Counts only - a

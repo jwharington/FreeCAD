@@ -55,9 +55,7 @@ def get_after_write_constraint():
 
 
 def write_meshdata_constraint(f, femobj, fix_obj, ccxwriter):
-    if ccxwriter.femmesh.Volumes and (
-        len(ccxwriter.member.geos_shellthickness) > 0 or len(ccxwriter.member.geos_beamsection) > 0
-    ):
+    if ccxwriter.nodal_rotations_are_split():
         if len(femobj["NodesSolid"]) > 0:
             f.write(f"*NSET,NSET={fix_obj.Name}Solid\n")
             for n in femobj["NodesSolid"]:
@@ -76,9 +74,7 @@ def write_constraint(f, femobj, fix_obj, ccxwriter):
 
     # floats read from ccx should use {:.13G}, see comment in writer module
     solver = ccxwriter.solver_obj
-    if ccxwriter.femmesh.Volumes and (
-        len(ccxwriter.member.geos_shellthickness) > 0 or len(ccxwriter.member.geos_beamsection) > 0
-    ):
+    if ccxwriter.nodal_rotations_are_split():
         if len(femobj["NodesSolid"]) > 0:
             f.write("*BOUNDARY\n")
             f.write(fix_obj.Name + "Solid" + ",1\n")

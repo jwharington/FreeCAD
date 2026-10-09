@@ -302,29 +302,35 @@ class MeshSetsGetter:
             # add nodes to constraint_conflict_nodes, needed by constraint plane rotation
             for node in femobj["Nodes"]:
                 self.constraint_conflict_nodes.append(node)
-        # if mixed mesh with solids the node set needs to be split
-        # because solid nodes do not have rotational degree of freedom
-        if self.femmesh.Volumes and (
-            len(self.member.geos_shellthickness) > 0 or len(self.member.geos_beamsection) > 0
+            self._split_solid_and_face_edge_nodes(femobj)
+
+    def _split_solid_and_face_edge_nodes(self, femobj):
+        """Split a constraint's nodes into the solid and the shell/edge ones.
+
+        A solid node has no rotational degree of freedom, so a constraint that
+        applies DOF 4-6 must name only the shell and edge nodes. The split is
+        recorded on the constraint, and is only made when the mesh holds
+        volumes beside shells or beams - exactly when it can matter.
+        """
+        if not self.femmesh.Volumes or not (
+            self.member.geos_shellthickness or self.member.geos_beamsection
         ):
+            return
+        if not self.femelement_volumes_table:
             FreeCAD.Console.PrintMessage("We need to find the solid nodes.\n")
-            if not self.femelement_volumes_table:
-                self.femelement_volumes_table = meshtools.get_femelement_volumes_table(self.femmesh)
-            for femobj in self.member.cons_fixed:
-                # femobj --> dict, FreeCAD document object is femobj["Object"]
-                nds_solid = []
-                nds_faceedge = []
-                for n in femobj["Nodes"]:
-                    solid_node = False
-                    for ve in self.femelement_volumes_table:
-                        if n in self.femelement_volumes_table[ve]:
-                            solid_node = True
-                            nds_solid.append(n)
-                            break
-                    if not solid_node:
-                        nds_faceedge.append(n)
-                femobj["NodesSolid"] = set(nds_solid)
-                femobj["NodesFaceEdge"] = set(nds_faceedge)
+            self.femelement_volumes_table = meshtools.get_femelement_volumes_table(self.femmesh)
+        solid_nodes = set()
+        face_edge_nodes = set()
+        for node in femobj["Nodes"]:
+            in_a_volume = any(
+                node in element_nodes for element_nodes in self.femelement_volumes_table.values()
+            )
+            if in_a_volume:
+                solid_nodes.add(node)
+            else:
+                face_edge_nodes.add(node)
+        femobj["NodesSolid"] = solid_nodes
+        femobj["NodesFaceEdge"] = face_edge_nodes
 
     def get_constraints_rigidbody_nodes(self):
         if not self.member.cons_rigidbody:
@@ -337,6 +343,7 @@ class MeshSetsGetter:
             # add nodes to constraint_conflict_nodes, needed by constraint plane rotation
             for node in femobj["Nodes"]:
                 self.constraint_conflict_nodes.append(node)
+            self._split_solid_and_face_edge_nodes(femobj)
 
     def get_constraints_displacement_nodes(self):
         if not self.member.cons_displacement:
@@ -349,6 +356,7 @@ class MeshSetsGetter:
             # add nodes to constraint_conflict_nodes, needed by constraint plane rotation
             for node in femobj["Nodes"]:
                 self.constraint_conflict_nodes.append(node)
+            self._split_solid_and_face_edge_nodes(femobj)
 
     def get_constraints_jig321_nodes(self):
         if not self.member.cons_jig321:
@@ -409,6 +417,7 @@ class MeshSetsGetter:
             # femobj --> dict, FreeCAD document object is femobj["Object"]
             print_obj_info(femobj["Object"])
             femobj["Nodes"] = meshtools.get_femnodes_by_femobj_with_references(self.femmesh, femobj)
+            self._split_solid_and_face_edge_nodes(femobj)
 
     def get_constraints_transform_nodes(self):
         if not self.member.cons_transform:
@@ -418,6 +427,7 @@ class MeshSetsGetter:
             # femobj --> dict, FreeCAD document object is femobj["Object"]
             print_obj_info(femobj["Object"])
             femobj["Nodes"] = meshtools.get_femnodes_by_femobj_with_references(self.femmesh, femobj)
+            self._split_solid_and_face_edge_nodes(femobj)
 
     def get_constraints_temperature_nodes(self):
         if not self.member.cons_temperature:

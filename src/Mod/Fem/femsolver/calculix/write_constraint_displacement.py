@@ -60,6 +60,12 @@ def write_meshdata_constraint(f, femobj, disp_obj, ccxwriter):
     f.write(f"*NSET,NSET={disp_obj.Name}\n")
     for n in femobj["Nodes"]:
         f.write(f"{n},\n")
+    # DOF 4-6 go to a set of its own, holding only the shell and edge nodes:
+    # a solid node has no rotational degree of freedom to prescribe.
+    if ccxwriter.nodal_rotations_are_split():
+        f.write(f"*NSET,NSET={disp_obj.Name}FaceEdge\n")
+        for n in femobj["NodesFaceEdge"]:
+            f.write(f"{n},\n")
 
 
 def write_constraint(f, femobj, disp_obj, ccxwriter):
@@ -84,15 +90,24 @@ def write_constraint(f, femobj, disp_obj, ccxwriter):
         )
 
     if ccxwriter.member.geos_beamsection or ccxwriter.member.geos_shellthickness:
+        rotation_set = disp_obj.Name
+        if ccxwriter.nodal_rotations_are_split():
+            rotation_set = f"{disp_obj.Name}FaceEdge"
         if not disp_obj.rotxFree:
             f.write(
-                "{},4,4,{:.13G}\n".format(disp_obj.Name, disp_obj.xRotation.getValueAs("rad").Value)
+                "{},4,4,{:.13G}\n".format(
+                    rotation_set, disp_obj.xRotation.getValueAs("rad").Value
+                )
             )
         if not disp_obj.rotyFree:
             f.write(
-                "{},5,5,{:.13G}\n".format(disp_obj.Name, disp_obj.yRotation.getValueAs("rad").Value)
+                "{},5,5,{:.13G}\n".format(
+                    rotation_set, disp_obj.yRotation.getValueAs("rad").Value
+                )
             )
         if not disp_obj.rotzFree:
             f.write(
-                "{},6,6,{:.13G}\n".format(disp_obj.Name, disp_obj.zRotation.getValueAs("rad").Value)
+                "{},6,6,{:.13G}\n".format(
+                    rotation_set, disp_obj.zRotation.getValueAs("rad").Value
+                )
             )

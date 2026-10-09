@@ -139,6 +139,18 @@ class FemInputWriter:
             self.member,
         )
 
+    def nodal_rotations_are_split(self):
+        """Whether rotational DOF must stay off the mesh's solid nodes.
+
+        True when the mesh holds volumes beside shells or beams. A solid node
+        has no rotational degree of freedom, so a constraint applying DOF 4-6
+        must name only the shell and edge nodes; the mesh sets getter records
+        that split on each constraint as NodesSolid and NodesFaceEdge.
+        """
+        return bool(self.femmesh.Volumes) and bool(
+            self.member.geos_shellthickness or self.member.geos_beamsection
+        )
+
     # ********************************************************************************************
     # ********************************************************************************************
     # generic writer for constraints mesh sets and constraints property data
