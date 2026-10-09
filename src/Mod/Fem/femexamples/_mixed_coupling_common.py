@@ -25,10 +25,8 @@ import Part
 
 import ObjectsFem
 
-from femmesh import meshtools
-
 from . import manager
-from .meshes import generate_mesh
+from .meshes.merged_mesh import mesh_parts_separately
 
 STEEL = {
     "Name": "CalculiX-Steel",
@@ -220,29 +218,4 @@ def add_mesh(doc, analysis, shape):
     return femmesh_obj
 
 
-def mesh_parts_separately(doc, parts):
-    """Mesh every part alone, then merge the results into one mixed FemMesh.
 
-    The mesher never sees the parts together, so a shell that coincides with a
-    solid face keeps node ids of its own. That is required twice over: a shared
-    3D-to-2D node is a hinge in CalculiX, and ``getFacesOnly`` drops a shell
-    whose nodes are a subset of a volume's, so a merged shell would vanish from
-    the deck with no error.
-    """
-    generated = [_meshed_part(doc, index, part) for index, part in enumerate(parts)]
-    merged = generated[0][1]
-    for _, extra in generated[1:]:
-        merged, _, _ = meshtools.merge_femmeshes(merged, extra)
-    for mesh_obj, _ in generated:
-        doc.removeObject(mesh_obj.Name)
-    return merged
-
-
-def _meshed_part(doc, index, part):
-    mesh_obj = ObjectsFem.makeMeshGmsh(doc, f"PartMesh{index}")
-    mesh_obj.Shape = part
-    mesh_obj.SecondOrderLinear = False
-    doc.recompute()
-    if not generate_mesh.mesh_from_mesher(mesh_obj, "gmsh"):
-        raise RuntimeError(f"meshing {part.Name} failed")
-    return mesh_obj, mesh_obj.FemMesh
