@@ -27,6 +27,7 @@ import ObjectsFem
 from femtools import ccxtools
 from femtools import membertools
 from femtools.checksanalysis import check_member_for_solver_calculix
+from femmesh import meshsetsgetter
 from femsolver.calculix import writer as ccx_writer
 from femsolver.calculix import write_mesh as write_mesh_module
 from femexamples import constraint_mixed_edge_coupling as edge_coupling
@@ -294,6 +295,51 @@ class TestMixedShellSolid(unittest.TestCase):
         self.assertEqual(1, deck.count("*SHELL SECTION"), deck)
         self.assertIn("ELSET=Evolumes", deck)
         self.assertIn("ELSET=Efaces", deck)
+
+    # ********************************************************************************************
+    def test_two_materials_section_their_own_dimension(self):
+        # Stage 5, multiple materials. The solid material must section the
+        # volumes and the shell material the faces, and neither may reach the
+        # other's section - a mixed model's two materials reference different
+        # kinds of sub-shape.
+        doc = FreeCAD.newDocument("mixed_two_materials")
+        self.addCleanup(FreeCAD.closeDocument, doc.Name)
+        face_coupling.setup(doc=doc, variant="f2")
+        analysis = doc.Analysis
+        shell = doc.getObject("Shell")
+
+        # The solid material keeps empty references: a reference to the solid
+        # would match the shell patch lying on its face as well, which is the
+        # ambiguity per-dimension sections exist to resolve. The shell material
+        # names the shell face it is to section.
+        shell_material = ObjectsFem.makeMaterialSolid(doc, "ShellMaterial")
+        shell_steel = shell_material.Material
+        shell_steel["Name"] = "ShellSteel"
+        shell_steel["YoungsModulus"] = "210000 MPa"
+        shell_steel["PoissonRatio"] = "0.30"
+        shell_material.Material = shell_steel
+        shell_material.References = [(shell, "Face1")]
+        analysis.addObject(shell_material)
+        doc.recompute()
+
+        mesh_obj = doc.getObject("Mesh")
+        member = membertools.AnalysisMember(analysis)
+        getter = meshsetsgetter.MeshSetsGetter(analysis, doc.CalculiXCcxTools, mesh_obj, member)
+        with mixed_shell_solid_flag(True):
+            getter.get_element_sets_material_and_femelement_geometry()
+
+        shells = [s for s in getter.mat_geo_sets if "shellthickness_obj" in s]
+        solids = [s for s in getter.mat_geo_sets if "shellthickness_obj" not in s]
+        self.assertEqual(1, len(solids), getter.mat_geo_sets)
+        self.assertEqual(1, len(shells), getter.mat_geo_sets)
+        self.assertTrue(solids[0]["ccx_elset"], solids[0])
+        self.assertTrue(shells[0]["ccx_elset"], shells[0])
+        self.assertFalse(
+            set(solids[0]["ccx_elset"]) & set(shells[0]["ccx_elset"]),
+            "an element may not appear in both sections",
+        )
+        self.assertEqual("MechanicalMaterial", solids[0]["mat_obj_name"])
+        self.assertEqual("ShellMaterial", shells[0]["mat_obj_name"])
 
     # ********************************************************************************************
     def test_every_variant_meshes_to_a_mixed_femmesh(self):

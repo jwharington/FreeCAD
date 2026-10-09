@@ -38,6 +38,22 @@ from femtools import fem_extension_registry
 from femtools.femutils import type_of_obj
 
 
+def _material_elements_for_dimension(mat_data, dimension):
+    """A material's element ids for one dimension, or None if it has none there.
+
+    A non-mixed mesh never fills FEMElementsByDim, and its FEMElements is the
+    material's only set, so it is returned whatever it holds. A mixed mesh does
+    fill the map, and None there means this dimension does not apply to this
+    material - it references the other kind of sub-shape - so its section of
+    this kind must not be written.
+    """
+    by_dim = mat_data.get("FEMElementsByDim")
+    if by_dim is None:
+        return mat_data["FEMElements"]
+    elements = by_dim.get(dimension)
+    return elements if elements else None
+
+
 class MeshSetsGetter:
     def __init__(self, analysis_obj, solver_obj, mesh_obj, member):
         # class attributes from parameter values
@@ -950,11 +966,10 @@ class MeshSetsGetter:
         )
 
     def get_material_elements(self):
-        # it only works if either Volumes or Shellthicknesses or Beamsections
-        # are in the material objects, it means it does not work
-        # for mixed meshes and multiple materials, this is checked in check_prerequisites
-        # the femelement_table is only calculated for
-        # the highest dimension in get_femelement_table
+        # A mixed mesh needs each material's ids kept per dimension: its two
+        # materials reference different kinds of sub-shape, so one pass writes
+        # volume ids and the next face ids, and a single slot would keep only
+        # the last. Each pass records what it assigned before the next runs.
         FreeCAD.Console.PrintMessage("Materials\n")
         if self.femmesh.Volumes:
             # we only could do this for volumes
@@ -965,18 +980,28 @@ class MeshSetsGetter:
             # there we have to check of some geometric objects
             # get element ids and write them into the femobj
             self.get_solid_element_sets(self.member.mats_linear)
+            self._record_material_elements_by_dimension(3)
         if self.member.geos_shellthickness:
             if not self.femelement_faces_table:
                 self.femelement_faces_table = meshtools.get_femelement_faces_table(self.femmesh)
             meshtools.get_femelement_sets(
                 self.femmesh, self.femelement_faces_table, self.member.mats_linear
             )
+            self._record_material_elements_by_dimension(2)
         if self.member.geos_beamsection or self.member.geos_fluidsection:
             if not self.femelement_edges_table:
                 self.femelement_edges_table = meshtools.get_femelement_edges_table(self.femmesh)
             meshtools.get_femelement_sets(
                 self.femmesh, self.femelement_edges_table, self.member.mats_linear
             )
+
+    def _record_material_elements_by_dimension(self, dimension):
+        """Keep what the pass that just ran assigned, under its own dimension."""
+        if not meshtools.is_mixed_femmesh(self.femmesh):
+            return
+        for mat_data in self.member.mats_linear:
+            if "FEMElements" in mat_data:
+                mat_data.setdefault("FEMElementsByDim", {})[dimension] = mat_data["FEMElements"]
 
     def get_element_sets_material_and_femelement_geometry(self):
         if not self.member.mats_linear:
@@ -1242,7 +1267,9 @@ class MeshSetsGetter:
         if "FEMElements" in shellth_data:
             elements = shellth_data["FEMElements"]
         elif "FEMElements" in mat_data:
-            elements = mat_data["FEMElements"]
+            elements = _material_elements_for_dimension(mat_data, 2)
+            if elements is None:
+                return matgeoset
         else:
             return matgeoset
 
@@ -1305,7 +1332,9 @@ class MeshSetsGetter:
         shellth_obj = shellth_data["Object"]
         for mat_data in self.member.mats_linear:
             mat_obj = mat_data["Object"]
-            elset_data = mat_data["FEMElements"]
+            elset_data = _material_elements_for_dimension(mat_data, 2)
+            if elset_data is None:
+                continue
             names = [
                 {"long": mat_obj.Name, "short": mat_data["ShortName"]},
                 {"long": shellth_obj.Name, "short": "S0"},
@@ -1318,7 +1347,7 @@ class MeshSetsGetter:
             for mat_data in self.member.mats_linear:
                 mat_obj = mat_data["Object"]
                 shellth_ids = set(shellth_data["FEMElements"])
-                mat_ids = set(mat_data["FEMElements"])
+                mat_ids = set(_material_elements_for_dimension(mat_data, 2) or [])
                 # empty intersection sets possible
                 elset_data = list(sorted(shellth_ids.intersection(mat_ids)))
                 if elset_data:
@@ -1344,7 +1373,9 @@ class MeshSetsGetter:
     def get_mat_geo_sets_multiple_mat_solid(self):
         for mat_data in self.member.mats_linear:
             mat_obj = mat_data["Object"]
-            elset_data = mat_data["FEMElements"]
+            elset_data = _material_elements_for_dimension(mat_data, 3)
+            if elset_data is None:
+                continue
             names = [
                 {"long": mat_obj.Name, "short": mat_data["ShortName"]},
                 {"long": "Solid", "short": "Solid"},
