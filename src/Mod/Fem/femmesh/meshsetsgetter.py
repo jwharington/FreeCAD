@@ -31,30 +31,47 @@ __url__ = "https://www.freecad.org"
 import time
 
 import FreeCAD
-from femtools.femutils import get_refshape_type, type_of_obj
+from femtools.femutils import type_of_obj
+from femtools.geomtools import get_element
 
 from femmesh import meshtools
 from femtools import fem_extension_registry
 from femtools.femutils import type_of_obj
 
 
-_REFERENCE_SHAPE_FOR_DIMENSION = {
-    3: frozenset({"Solid", "Compound"}),
-    2: frozenset({"Face"}),
-    1: frozenset({"Edge"}),
-    0: frozenset({"Vertex"}),
-}
+_SHAPE_TYPE_DIMENSION = {"Solid": 3, "Face": 2, "Edge": 1, "Vertex": 0}
 
 
-def _reference_shape_matches(obj, allowed):
-    """Whether a material's references are of an allowed shape, or absent.
+def _reference_dimension(fem_doc_object):
+    """The element dimension a material's references belong to, or None.
 
-    Absent references mark the catch-all material, which takes the leftovers of
-    every dimension and so belongs to every pass.
+    None means the material has no references - the catch-all, which belongs to
+    every dimension. Otherwise the dimension comes from the shape the reference
+    actually resolves to. A Compound is judged by what it *holds*, not by its
+    ShapeType: a compound of faces is a shell part, and calling it a solid would
+    send that material to the volume pass and leave the shell unsectioned.
     """
-    if not obj.References:
-        return True
-    return get_refshape_type(obj) in allowed
+    if not fem_doc_object.References:
+        return None
+    first_ref = fem_doc_object.References[0]
+    return _shape_dimension(get_element(first_ref[0], first_ref[1][0]))
+
+
+def _shape_dimension(shape):
+    """The element dimension of a shape, judged by what it holds.
+
+    A recognised ShapeType answers directly. Anything else - a Compound, for
+    one - is whatever its contents make it: solids mean a solid part, faces a
+    shell part, edges a beam part.
+    """
+    if shape is None:
+        return None
+    if shape.ShapeType in _SHAPE_TYPE_DIMENSION:
+        return _SHAPE_TYPE_DIMENSION[shape.ShapeType]
+    for dimension, attribute in ((3, "Solids"), (2, "Faces"), (1, "Edges"), (0, "Vertexes")):
+        if getattr(shape, attribute, None):
+            return dimension
+    return None
 
 
 def _material_elements_for_dimension(mat_data, dimension):
@@ -1050,11 +1067,10 @@ class MeshSetsGetter:
         """
         if not meshtools.is_mixed_femmesh(self.femmesh):
             return list(self.member.mats_linear)
-        allowed = _REFERENCE_SHAPE_FOR_DIMENSION[dimension]
         return [
             mat_data
             for mat_data in self.member.mats_linear
-            if _reference_shape_matches(mat_data["Object"], allowed)
+            if _reference_dimension(mat_data["Object"]) in (None, dimension)
         ]
 
     def _record_material_elements_by_dimension(self, dimension, materials):

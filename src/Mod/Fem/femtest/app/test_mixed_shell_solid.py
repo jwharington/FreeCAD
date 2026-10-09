@@ -77,6 +77,25 @@ def node_disjoint_brick_and_shell():
     return mesh
 
 
+def _square_face():
+    """The quad of two_bricks_and_a_shell(), as a standalone face.
+
+    It covers half of the first brick's top on purpose: a shell need not cover
+    a whole solid face.
+    """
+    return Part.Face(
+        Part.makePolygon(
+            [
+                FreeCAD.Vector(0.0, 0.0, 1.0),
+                FreeCAD.Vector(0.5, 0.0, 1.0),
+                FreeCAD.Vector(0.5, 1.0, 1.0),
+                FreeCAD.Vector(0.0, 1.0, 1.0),
+                FreeCAD.Vector(0.0, 0.0, 1.0),
+            ]
+        )
+    )
+
+
 def two_bricks_and_a_shell():
     """Two C3D8 bricks apart, plus a quad on the first brick's top face.
 
@@ -94,7 +113,10 @@ def two_bricks_and_a_shell():
     for index, (x, y, z) in enumerate(corners, start=9):
         mesh.addNode(x + 2.0, y, z, index)
     mesh.addVolume([9, 10, 11, 12, 13, 14, 15, 16])
-    for index, (x, y) in enumerate(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)), start=17):
+    # The quad covers only part of the brick's top: a shell need not cover a
+    # whole solid, and the material it carries must still resolve to its own
+    # dimension.
+    for index, (x, y) in enumerate(((0.0, 0.0), (0.5, 0.0), (0.5, 1.0), (0.0, 1.0)), start=17):
         mesh.addNode(x, y, 1.0, index)
     mesh.addFace([17, 18, 19, 20])
     return mesh
@@ -266,6 +288,31 @@ class TestMixedShellSolid(unittest.TestCase):
             )
 
     # ********************************************************************************************
+    def test_shape_dimension_follows_a_compound_contents(self):
+        # A Compound is whatever it holds, and its ShapeType says only that it is
+        # a compound. Calling a compound of faces a solid would send that
+        # material to the volume pass and leave the shell unsectioned, which is
+        # the mistake the dimension dispatch exists to avoid in the first place.
+        from femmesh.meshsetsgetter import _shape_dimension
+
+        square = Part.makeFace(
+            Part.makePolygon(
+                [
+                    FreeCAD.Vector(0.0, 0.0, 0.0),
+                    FreeCAD.Vector(1.0, 0.0, 0.0),
+                    FreeCAD.Vector(1.0, 1.0, 0.0),
+                    FreeCAD.Vector(0.0, 1.0, 0.0),
+                    FreeCAD.Vector(0.0, 0.0, 0.0),
+                ]
+            )
+        )
+        solid = Part.makeBox(1.0, 1.0, 1.0)
+        self.assertEqual(2, _shape_dimension(square))
+        self.assertEqual(3, _shape_dimension(solid))
+        self.assertEqual(2, _shape_dimension(Part.makeCompound([square, square.copy()])))
+        self.assertEqual(3, _shape_dimension(Part.makeCompound([solid, solid.copy()])))
+
+    # ********************************************************************************************
     def test_two_solid_materials_do_not_claim_the_shell(self):
         # A material that references a solid resolves by node geometry
         # (get_femnodes_by_refshape), and get_material_elements runs its face
@@ -285,17 +332,7 @@ class TestMixedShellSolid(unittest.TestCase):
         box_b = doc.addObject("Part::Box", "BoxB")
         box_b.Placement.Base = FreeCAD.Vector(2.0, 0.0, 0.0)
         shell = doc.addObject("Part::Feature", "Shell")
-        shell.Shape = Part.Face(
-            Part.makePolygon(
-                [
-                    FreeCAD.Vector(0.0, 0.0, 1.0),
-                    FreeCAD.Vector(1.0, 0.0, 1.0),
-                    FreeCAD.Vector(1.0, 1.0, 1.0),
-                    FreeCAD.Vector(0.0, 1.0, 1.0),
-                    FreeCAD.Vector(0.0, 0.0, 1.0),
-                ]
-            )
-        )
+        shell.Shape = _square_face()
 
         mesh_obj = analysis.addObject(ObjectsFem.makeMeshGmsh(doc, "Mesh"))[0]
         mesh_obj.FemMesh = two_bricks_and_a_shell()
@@ -303,21 +340,11 @@ class TestMixedShellSolid(unittest.TestCase):
         compound.Links = [box_a, box_b, shell]
         mesh_obj.Shape = compound
 
-        def steel(name):
-            material = ObjectsFem.makeMaterialSolid(doc, name)
-            data = material.Material
-            data["Name"] = name
-            data["YoungsModulus"] = "210000 MPa"
-            data["PoissonRatio"] = "0.30"
-            material.Material = data
-            analysis.addObject(material)
-            return material
-
-        material_a = steel("MaterialA")
+        material_a = self._steel_material(doc, analysis, "MaterialA")
         material_a.References = [(box_a, "Solid1")]
-        material_b = steel("MaterialB")
+        material_b = self._steel_material(doc, analysis, "MaterialB")
         material_b.References = [(box_b, "Solid1")]
-        material_shell = steel("MaterialShell")
+        material_shell = self._steel_material(doc, analysis, "MaterialShell")
         material_shell.References = [(shell, "Face1")]
         doc.recompute()
 
@@ -334,6 +361,54 @@ class TestMixedShellSolid(unittest.TestCase):
             solid_face_elements,
             "a material referencing a solid must not claim the shell's faces",
         )
+
+    # ********************************************************************************************
+    def test_compound_references_land_in_their_own_dimension(self):
+        # A material may reference a Compound, and get_element resolves that to
+        # a shape whose ShapeType is only "Compound". Which pass it belongs to
+        # is decided by what the compound holds, so a compound of faces must not
+        # be sent to the volume pass, nor a compound of solids to the face pass.
+        doc = FreeCAD.newDocument("compound_references")
+        self.addCleanup(FreeCAD.closeDocument, doc.Name)
+        analysis = ObjectsFem.makeAnalysis(doc, "Analysis")
+        solver = ObjectsFem.makeSolverCalculiXCcxTools(doc, "CalculiXCcxTools")
+        analysis.addObject(solver)
+        analysis.addObject(ObjectsFem.makeElementGeometry2D(doc, 0.1, "ShellThickness"))
+
+        box_a = doc.addObject("Part::Feature", "BoxA")
+        box_a.Shape = Part.makeBox(1.0, 1.0, 1.0)
+        box_b = doc.addObject("Part::Feature", "BoxB")
+        box_b.Shape = Part.makeBox(1.0, 1.0, 1.0, FreeCAD.Vector(2.0, 0.0, 0.0))
+        shell = doc.addObject("Part::Feature", "Shell")
+        shell.Shape = _square_face()
+
+        solids_compound = doc.addObject("Part::Feature", "SolidsCompound")
+        solids_compound.Shape = Part.makeCompound([box_a.Shape, box_b.Shape])
+        faces_compound = doc.addObject("Part::Feature", "FacesCompound")
+        faces_compound.Shape = Part.makeCompound([shell.Shape])
+
+        mesh_obj = analysis.addObject(ObjectsFem.makeMeshGmsh(doc, "Mesh"))[0]
+        mesh_obj.FemMesh = two_bricks_and_a_shell()
+        mesh_obj.Shape = solids_compound
+
+        material_solids = self._steel_material(doc, analysis, "MaterialSolids")
+        material_solids.References = [(solids_compound, "")]
+        material_faces = self._steel_material(doc, analysis, "MaterialFaces")
+        material_faces.References = [(faces_compound, "")]
+        doc.recompute()
+
+        member = membertools.AnalysisMember(analysis)
+        getter = meshsetsgetter.MeshSetsGetter(analysis, solver, mesh_obj, member)
+        with mixed_shell_solid_flag(True):
+            getter.get_element_sets_material_and_femelement_geometry()
+
+        by_name = {m["Object"].Name: m for m in member.mats_linear}
+        solids = by_name["MaterialSolids"]["FEMElementsByDim"]
+        faces = by_name["MaterialFaces"]["FEMElementsByDim"]
+        self.assertTrue(solids.get(3), "a compound of solids sections the volumes")
+        self.assertFalse(solids.get(2), "a compound of solids must not claim faces")
+        self.assertTrue(faces.get(2), "a compound of faces sections the faces")
+        self.assertFalse(faces.get(3), "a compound of faces must not claim volumes")
 
     # ********************************************************************************************
     def test_mixed_flag_defaults_on(self):
@@ -711,6 +786,16 @@ class TestMixedShellSolid(unittest.TestCase):
 
     def _ties(self, doc):
         return [obj for obj in doc.Objects if obj.Name.startswith("Tie")]
+
+    def _steel_material(self, doc, analysis, name):
+        material = ObjectsFem.makeMaterialSolid(doc, name)
+        data = material.Material
+        data["Name"] = name
+        data["YoungsModulus"] = "210000 MPa"
+        data["PoissonRatio"] = "0.30"
+        material.Material = data
+        analysis.addObject(material)
+        return material
 
     def _subname(self, reference):
         subname = reference[1]
