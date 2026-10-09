@@ -1632,6 +1632,17 @@ def get_elements(sets_getter, ref_pair, face_masks, edge_masks):
     return (*elem, is_sub_element)
 
 
+def _reference_object_is_solid(ref_obj):
+    """True when a reference's object is a solid, so its faces bound volumes.
+
+    Deciding by the object rather than by the sub-shape is what tells a face of
+    a solid apart from a shell that lies on the same plane, which the mesh's
+    coordinates alone cannot.
+    """
+    shape = getattr(ref_obj, "Shape", None)
+    return shape is not None and len(shape.Solids) > 0
+
+
 def get_elements_by_reference_dimension(sets_getter, ref_pair, geom_type, face_masks, edge_masks):
     """Resolve one geometry reference against the elements of its own dimension.
 
@@ -1653,12 +1664,22 @@ def get_elements_by_reference_dimension(sets_getter, ref_pair, geom_type, face_m
         case "Solid":
             sub, elem = get_elements_by_references_of_dimension(sets_getter, ref_pair, 3)
         case "Face":
-            sub, elem = get_elements_by_references_of_dimension(sets_getter, ref_pair, 2)
-            if not elem:
+            if _reference_object_is_solid(ref_obj):
+                # A face on a solid bounds a volume element, not a shell. Resolve
+                # it as a sub-element straight away: trying the shell table first
+                # would match a shell lying on the same plane and make the master
+                # surface identical to the slave.
                 sub, elem = get_subelements_by_references(
                     sets_getter, ref_pair, face_masks, edge_masks
                 )
                 is_sub_element = True
+            else:
+                sub, elem = get_elements_by_references_of_dimension(sets_getter, ref_pair, 2)
+                if not elem:
+                    sub, elem = get_subelements_by_references(
+                        sets_getter, ref_pair, face_masks, edge_masks
+                    )
+                    is_sub_element = True
         case "Edge":
             sub, elem = get_elements_by_references_of_dimension(sets_getter, ref_pair, 1)
             if not elem:

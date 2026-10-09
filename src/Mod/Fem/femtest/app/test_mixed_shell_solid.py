@@ -167,6 +167,39 @@ class TestMixedShellSolid(unittest.TestCase):
                 self.assertTrue(self._subname(tie.References[1]).startswith("Face"))
 
     # ********************************************************************************************
+    def test_tie_master_surface_is_the_solid_not_the_shell(self):
+        # A face reference on a solid bounds its volume elements; it is not the
+        # shell that merely lies on the same plane. Resolving the master as the
+        # shell made the two tie surfaces identical, and ccx then cascaded on
+        # the deck without ever solving it.
+        doc = FreeCAD.newDocument("mixed_tie_surfaces")
+        self.addCleanup(FreeCAD.closeDocument, doc.Name)
+        face_coupling.setup(doc=doc, variant="f2")
+
+        mesh = doc.getObject("Mesh").FemMesh
+        volume_ids = set(mesh.Volumes)
+        shell_ids = set(mesh.FacesOnly)
+        self.assertTrue(volume_ids, "the fixture must have volume elements")
+        self.assertTrue(shell_ids, "the fixture must have separate shell elements")
+
+        fea = ccxtools.FemToolsCcx(doc.Analysis, doc.CalculiXCcxTools, test_mode=True)
+        fea.update_objects()
+        workdir = self._temp_dir("tie_surfaces")
+        fea.setup_working_dir(str(workdir))
+        with mixed_shell_solid_flag(True):
+            self.assertFalse(fea.check_prerequisites(), "the gate must be open")
+            self.assertFalse(fea.write_inp_file(), "the deck must be written")
+        deck = (workdir / "Mesh.inp").read_text(encoding="utf-8")
+
+        slave = {int(entry.split(",")[0]) for entry in self._surface_entries(deck, "TIE_DEPTie1")}
+        master = {int(entry.split(",")[0]) for entry in self._surface_entries(deck, "TIE_INDTie1")}
+        self.assertTrue(slave, "the slave surface must not be empty")
+        self.assertTrue(master, "the master surface must not be empty")
+        self.assertTrue(slave <= shell_ids, (slave - shell_ids))
+        self.assertTrue(master <= volume_ids, (master - volume_ids))
+        self.assertFalse(slave & master, "the two tie surfaces must not be the same")
+
+    # ********************************************************************************************
     def test_compound_links_the_solid_and_the_shell(self):
         for module, variant in (
             (face_coupling, "f1"),
@@ -490,3 +523,16 @@ class TestMixedShellSolid(unittest.TestCase):
         if isinstance(subname, (list, tuple)):
             return subname[0]
         return subname
+
+    def _surface_entries(self, deck, name):
+        entries, collecting = [], False
+        for line in deck.splitlines():
+            if line.startswith("*SURFACE"):
+                collecting = f"NAME={name}" in line
+                continue
+            if line.startswith("*"):
+                collecting = False
+                continue
+            if collecting and line.strip():
+                entries.append(line.strip())
+        return entries
