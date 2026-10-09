@@ -59,6 +59,7 @@ import argparse
 import hashlib
 import importlib
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -144,20 +145,26 @@ def build_snapshot() -> tuple[dict, dict]:
     """Return ({example: digest}, {example: reason_it_was_skipped})."""
     digests: dict[str, str] = {}
     skipped: dict[str, str] = {}
-    with tempfile.TemporaryDirectory(prefix="deck_snapshot_") as tmp:
-        root = Path(tmp)
-        for module_name in discover_examples():
-            workdir = root / module_name
-            workdir.mkdir()
-            try:
-                deck = generate_deck(module_name, workdir)
-            except Exception as exc:
-                skipped[module_name] = f"{type(exc).__name__}: {exc}"[:200]
-                continue
-            if deck is None or not deck.exists():
-                skipped[module_name] = "writer produced no deck"
-                continue
-            digests[module_name] = _normalised_digest(deck)
+    # A FIXED work directory, not a fresh temporary one. The path reaches the
+    # deck (the writer logs *INCLUDE and file lines containing it), so a random
+    # path changes the hash of every deck on every run and the snapshot can
+    # never reproduce. Verified by the check failing with the same
+    # PYTHONHASHSEED, which ruled out string-hash ordering as the cause.
+    root = Path(tempfile.gettempdir()) / "deck_snapshot_work"
+    shutil.rmtree(root, ignore_errors=True)
+    root.mkdir(parents=True)
+    for module_name in discover_examples():
+        workdir = root / module_name
+        workdir.mkdir()
+        try:
+            deck = generate_deck(module_name, workdir)
+        except Exception as exc:
+            skipped[module_name] = f"{type(exc).__name__}: {exc}"[:200]
+            continue
+        if deck is None or not deck.exists():
+            skipped[module_name] = "writer produced no deck"
+            continue
+        digests[module_name] = _normalised_digest(deck)
     return digests, skipped
 
 
