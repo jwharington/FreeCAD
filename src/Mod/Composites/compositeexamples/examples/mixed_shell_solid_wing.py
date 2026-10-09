@@ -364,6 +364,10 @@ def build(doc=None, run_solver=False):
         [core, upper_support, lower_support],
         max_size=MESH_SIZE_MM,
         element_order="2nd",
+        # Off, or the leading edge drives the size instead of MESH_SIZE_MM:
+        # the 3.2 mm nose radius at gmsh's default curvature count asks for
+        # 1.7 mm elements and the whole core inherits them.
+        curvature_size=0,
     )
     geometry = doc.addObject("Part::Compound", f"{tag}_Geometry")
     geometry.Links = [core, upper_support, lower_support]

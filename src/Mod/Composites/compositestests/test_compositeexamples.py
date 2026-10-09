@@ -459,12 +459,6 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
         self.assertIsNotNone(result["max_displacement"])
         self.assertGreater(result["max_displacement"], 0.0)
 
-    @unittest.skip(
-        "hangs the suite: the core meshes to ~293k points because MESH_SIZE_MM "
-        "does not reach it, and merging ~386k nodes does not converge in "
-        "reasonable time. run-tests.sh has no timeout, so this blocks the "
-        "whole run rather than failing. Fix the sizing first, then re-arm."
-    )
     def test_mixed_shell_solid_wing_solves(self):
         """A real biaxial laminate on a foam core, in one mixed solve.
 

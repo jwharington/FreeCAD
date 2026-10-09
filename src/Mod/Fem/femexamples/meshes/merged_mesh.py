@@ -27,7 +27,7 @@ from femmesh import meshtools
 from . import generate_mesh
 
 
-def mesh_parts_separately(doc, parts, max_size=None, element_order=None):
+def mesh_parts_separately(doc, parts, max_size=None, element_order=None, curvature_size=None):
     """Mesh every part alone, then merge the results into one mixed FemMesh.
 
     The mesher never sees the parts together, so a shell that coincides with a
@@ -37,10 +37,12 @@ def mesh_parts_separately(doc, parts, max_size=None, element_order=None):
     ``max_size`` caps the element size on every part, which the default gmsh
     sizing does not do on a long part. ``element_order`` sets the element
     order, which a layered composite ``*SHELL SECTION`` requires: CalculiX
-    accepts one only on S8R and S6 shells, never on S4.
+    accepts one only on S8R and S6 shells, never on S4. ``curvature_size`` sets
+    gmsh's curvature-based refinement, which is what actually decides the size
+    on a curved part unless it is turned off - see ``_meshed_part``.
     """
     generated = [
-        _meshed_part(doc, index, part, max_size, element_order)
+        _meshed_part(doc, index, part, max_size, element_order, curvature_size)
         for index, part in enumerate(parts)
     ]
     merged = generated[0][1]
@@ -51,10 +53,18 @@ def mesh_parts_separately(doc, parts, max_size=None, element_order=None):
     return merged
 
 
-def _meshed_part(doc, index, part, max_size=None, element_order=None):
+def _meshed_part(doc, index, part, max_size=None, element_order=None, curvature_size=None):
     mesh_obj = ObjectsFem.makeMeshGmsh(doc, f"PartMesh{index}")
     mesh_obj.Shape = part
     mesh_obj.SecondOrderLinear = False
+    if curvature_size is not None:
+        # Curvature sizing refines independently of max_size, and on a small
+        # radius it overrides the cap outright: a NACA 2412 leading edge is
+        # 1.1019*t^2*c = 3.2 mm, so gmsh's default 12 elements per 2*pi asks for
+        # 1.7 mm elements there, and a 24 mm thick section carries that size
+        # through the whole volume - 294,917 points against 21,332 with it off.
+        # 0 deactivates it and lets max_size govern.
+        mesh_obj.MeshSizeFromCurvature = curvature_size
     if max_size is not None:
         mesh_obj.CharacteristicLengthMax = max_size
         # netgen is the fallback when no gmsh binary exists, and it reads
