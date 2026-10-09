@@ -82,6 +82,8 @@ def measure(save_path=None, stop_after="solve", drape_pitch=None):
             lambda: wing._make_skin_support(doc, "WingLowerSkinSupport", lower),
             timings,
         )
+        if stop_after == "geometry":
+            return timings
         upper_skin, _ = _stage(
             "drape.upper",
             lambda: wing._make_skin(doc, upper_support, "WingUpperSkin"),
@@ -128,6 +130,13 @@ def measure(save_path=None, stop_after="solve", drape_pitch=None):
             timings,
         )
         mesh_obj.FemMesh = merged
+        # The production helper removes the per-part meshes once they are merged.
+        # Leaving them behind would make a saved document carry three extra
+        # meshes no real model has, and on open each one builds its own view
+        # geometry - so the document would be measured with twice the mesh it
+        # should have.
+        for part_mesh, _ in generated:
+            doc.removeObject(part_mesh.Name)
         if stop_after == "mesh":
             return timings
 
@@ -206,7 +215,7 @@ def main():
     )
     parser.add_argument(
         "--stop-after",
-        choices=["drape", "mesh", "deck", "solve"],
+        choices=["geometry", "drape", "mesh", "deck", "solve"],
         default="solve",
         help="stop once this stage is done (default: run everything)",
     )

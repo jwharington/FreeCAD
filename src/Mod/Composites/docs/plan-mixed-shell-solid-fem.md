@@ -1471,11 +1471,38 @@ the LS8e case this plan exists for, has no end-to-end example. §10's per-skin
   Consequence for the fix: for a composite mixed model it is not a deck option.
   Either the reader maps expanded results back onto the mesh, or the panel and
   the result object must cope with an frd 8x the mesh without freezing. Neither
-  is small and neither has been attempted. **The freeze itself has not been
-  reproduced or profiled** — only the data sizes above are measured, so which
-  layer to change is still an inference. The timing figures earlier in this
-  section were also taken with a GUI holding this document, so treat any
-  absolute number from such a run as inflated.
+  is small and neither has been attempted.
+
+  **The stages have now been separated, and the cost is not where the size is.**
+  Building the same wing up to each stage and opening each save in the GUI
+  (`inspect_document_load_cost.py`, clean documents with the per-part meshes
+  removed):
+
+  | stage | objects | GUI open | delta | headless open |
+  |---|---|---|---|---|
+  | geometry | 3 | 0.15 s | — | 0.20 s |
+  | + composite shells | 29 | 7.30 s | **+7.15 s (48 %)** | 0.55 s |
+  | + FEM mesh | 41 | 12.46 s | +5.16 s (35 %) | 0.72 s |
+  | + results | 45 | 14.84 s | +2.38 s (16 %) | 2.50 s |
+
+  Three things follow, and two of them contradict what this section assumed.
+  The cost is **GUI-only** - headless the whole lot is 2.5 s - so it is
+  ViewProvider construction, not document parsing. It is **not the results**:
+  the 289,241-node frd adds the *smallest* stage, while the two draped composite
+  shells add the largest, at 3.6 s each for a 296 KB document. And **nothing
+  re-executes on load** - measured as zero drape solves and 0.00 s of settling
+  recompute at every stage - so this is not a re-solve hiding behind a load.
+  Rendering is also cheap: making the mesh and result visible and fitting the
+  3D view costs 0.39 s.
+
+  So the culprit is eager per-object view geometry, worst for `CompositeShell`
+  (the drape weave), next for `FemMesh`, least for the result. 3.6 s for one
+  draped shell of ~8,000 lattice points is ~0.4 ms per point, which is the
+  signature of building Coin objects one at a time. **The interaction path is
+  still unmeasured** - everything above is opening a document - so what makes
+  the GUI *unresponsive* rather than merely slow to open is not yet established.
+  The timing figures earlier in this section were taken with a GUI holding a
+  78 MB document, so treat any absolute number from such a run as inflated.
 - **`Stiffener` / `Bulkhead` mixed coverage** — none. `quasi_iso_stiffener_panel`
   is all shells; Bulkhead has no FEM example at all.
 - **The GUI half of §8** — `femtest/gui/test_mixed_shell_solid.py` does not
