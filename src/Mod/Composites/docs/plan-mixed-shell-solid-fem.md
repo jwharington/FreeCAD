@@ -788,6 +788,43 @@ Do not guess further flags: read `src/Mod/Fem/TestFemApp.py` and
 `src/Mod/Fem/TestFemGui.py` for the registered module names before the
 first invocation of any new case.
 
+### 8.10 Invoke Composites modules fully qualified, and check the count
+
+`run-tests.sh <bare-name>` resolves to `compositestests.<name>`, which is the
+wrong package root for Composites. These modules do relative imports that need
+`Composites.` as the root, so the bare path either errors outright
+(`test_composite_shell`: *attempted relative import beyond top-level package*,
+from `example_materials.py`'s `..mechanics`) or, worse, **succeeds while
+collecting a fraction of the module**.
+
+Measured on `test_laminate`: `run-tests.sh test_laminate` collects **6 of 19**
+tests and exits 0, silently skipping `TestLaminateFP` and
+`TestQuasiIsotropicEntryGuards` — including the case that was failing. The same
+module run as
+
+```bash
+FreeCADCmd -t Composites.compositestests.test_laminate
+```
+
+collects all 19 and passes. Use the fully qualified form.
+
+**This is a measurement hazard, not just an inconvenience.** A green that ran a
+third of its tests is worse than a red suite, and every count quoted from the
+bare path is suspect. Two consequences for this plan:
+
+- Where a command here says `run-tests.sh <name>`, read it as
+  `FreeCADCmd -t Composites.compositestests.<name>` instead.
+- When a count matters, compare the number of tests *collected* against the
+  number of `def test_` in the module. That check costs one grep and it is the
+  only thing that would have caught the above.
+
+The root cause is not yet pinned: `test_base.py` installs its `FreeCADGui` stub
+only when `FreeCADGui` is absent from `sys.modules`, so which stub is live
+depends on import order, and the two roots import differently. Fixing
+`resolve_module` in the skill's `run-tests.sh` is the obvious repair, but it is
+shared tooling used by every workbench and wants its own verification rather
+than a change fenced in behind feature work.
+
 ### 8.9 Visualisation cases (V1-V3)
 
 §8.5's matrix asserts deck text only, which leaves the two silent failure modes
