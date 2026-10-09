@@ -276,6 +276,25 @@ class TestMixedShellSolid(unittest.TestCase):
                 message,
             )
 
+    # ********************************************************************************************
+    def test_mixed_deck_carries_a_solid_and_a_shell_section(self):
+        # Stage 5. The deck must section the volumes once, the shell once, and
+        # put no element in both.
+        doc, analysis, solver, mesh_obj = self._mixed_analysis_document()
+        fea = ccxtools.FemToolsCcx(analysis, solver, test_mode=True)
+        fea.update_objects()
+        workdir = self._temp_dir("sections")
+        fea.setup_working_dir(str(workdir))
+        with mixed_shell_solid_flag(True):
+            self.assertFalse(fea.check_prerequisites(), "the gate must be open")
+            self.assertFalse(fea.write_inp_file(), "the deck must be written")
+        deck = (workdir / "Mesh.inp").read_text(encoding="utf-8")
+
+        self.assertEqual(1, deck.count("*SOLID SECTION"), deck)
+        self.assertEqual(1, deck.count("*SHELL SECTION"), deck)
+        self.assertIn("ELSET=Evolumes", deck)
+        self.assertIn("ELSET=Efaces", deck)
+
     def _mixed_analysis_document(self, with_beam_section=False):
         doc = FreeCAD.newDocument(f"{self._testMethodName}_analysis")
         self.addCleanup(FreeCAD.closeDocument, doc.Name)
