@@ -1498,11 +1498,37 @@ the LS8e case this plan exists for, has no end-to-end example. §10's per-skin
   So the culprit is eager per-object view geometry, worst for `CompositeShell`
   (the drape weave), next for `FemMesh`, least for the result. 3.6 s for one
   draped shell of ~8,000 lattice points is ~0.4 ms per point, which is the
-  signature of building Coin objects one at a time. **The interaction path is
-  still unmeasured** - everything above is opening a document - so what makes
-  the GUI *unresponsive* rather than merely slow to open is not yet established.
-  The timing figures earlier in this section were taken with a GUI holding a
-  78 MB document, so treat any absolute number from such a run as inflated.
+  signature of building Coin objects one at a time.
+
+  **And the freeze itself is now reproduced and explained - it is picking, and
+  it is a different object again.** Reported symptom: panning and re-zoom are
+  fine, but scroll-zoom with the pointer *over the body* stalls for seconds,
+  and over empty space it does not. A wheel notch issues a ray pick, so a ray
+  pick over the body against empty space measures it exactly:
+
+  | configuration | pick |
+  |---|---|
+  | pointer over the body, everything visible | **0.44-0.48 s** |
+  | pointer over empty space | 0.000 s |
+  | model mesh `WingPipelineCost_FEMMesh` alone | **0.023 s** |
+  | **result mesh `CCX_Results_Mesh` alone** | **0.412 s** |
+  | `CCX_Results` or `Pipeline_CCX_Results` alone | 0.000 s |
+
+  The slow object is **the results mesh** - the one FreeCAD builds from the frd -
+  and it holds **289,239 nodes against the model mesh's 35,383**. So the
+  oversized frd does matter after all, just not for the reason this section
+  first gave: it makes a pickable 289k-node display mesh whose every hover pick
+  costs 0.4 s. Display mode is irrelevant (even `Nodes` only is 0.42 s) and the
+  scene graph has just 2,648 nodes, so it is neither triangle count nor
+  traversal - it is the pick against that object.
+
+  **The fix is one property.** `CCX_Results_Mesh.Selectable = False` takes the
+  pick from 0.477 s to 0.026 s, and hiding it does the same. Nothing else tried
+  helps: `Selectable = False` on the *model* mesh changes nothing (its pick was
+  already 0.023 s, which is why testing it there proved nothing), and
+  `ShowInner = True` makes it worse (0.735 s). Either stop the result mesh being
+  selectable by default, or stop it being 8x the model in the first place -
+  the second also fixes the display gate and the memory.
 - **`Stiffener` / `Bulkhead` mixed coverage** — none. `quasi_iso_stiffener_panel`
   is all shells; Bulkhead has no FEM example at all.
 - **The GUI half of §8** — `femtest/gui/test_mixed_shell_solid.py` does not
