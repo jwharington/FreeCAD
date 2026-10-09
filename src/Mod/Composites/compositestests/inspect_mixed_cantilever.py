@@ -531,6 +531,27 @@ def _measure(builder, name, args):
         FreeCAD.closeDocument(doc.Name)
 
 
+BUILDERS = {
+    "mixed": _build_mixed,
+    "solid": _build_all_solid,
+    "bare": _build_bare,
+    "tied_solid": _build_tied_solid,
+    "compound": _build_compound,
+}
+
+
+def measure(builder, name, workdir, ccx=DEFAULT_CCX, phase="run", output3d=None):
+    """Build and run one model, returning its tip deflection, or None if not run.
+
+    The entry point for callers other than main(). The numerical test would
+    otherwise have to fabricate an argparse namespace to reach a model, and
+    holding the model definitions in one place is the point - a second copy
+    would be free to drift away from the one whose numbers the plan quotes.
+    """
+    args = argparse.Namespace(phase=phase, workdir=workdir, ccx=ccx, output3d=output3d)
+    return _measure(builder, name, args)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--ccx", default=DEFAULT_CCX, help="path to the ccx binary")
@@ -573,18 +594,11 @@ def main(argv: list[str] | None = None) -> int:
     previous_flag = group.GetBool("AllowMixedShellSolid", False)
     group.SetBool("AllowMixedShellSolid", True)
 
-    builders = {
-        "mixed": _build_mixed,
-        "solid": _build_all_solid,
-        "bare": _build_bare,
-        "tied_solid": _build_tied_solid,
-        "compound": _build_compound,
-    }
     names = ["mixed", "solid"] if args.model == "all" else [args.model]
     results = {}
     try:
         for name in names:
-            results[name] = _measure(builders[name], name, args)
+            results[name] = _measure(BUILDERS[name], name, args)
     finally:
         group.SetBool("AllowMixedShellSolid", previous_flag)
         if args.keep:
