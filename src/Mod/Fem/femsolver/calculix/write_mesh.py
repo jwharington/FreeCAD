@@ -29,12 +29,22 @@ __url__ = "https://www.freecad.org"
 import codecs
 from os.path import join
 
+from femsolver import settings
 from femmesh import meshtools
 
 
 def write_mesh(ccxwriter):
 
-    element_param = 1  # highest element order only
+    # Mode 2 ("FEM elements only") writes volumes together with the faces and
+    # edges that belong to no volume, which is the only way a shell reaches the
+    # deck on a mixed mesh. On a pure mesh it would be wrong: the volume's own
+    # skin would join the element block as shell elements. So it is chosen only
+    # when the flag is on and the mesh really is mixed, and every other mesh
+    # keeps the mode every existing deck was written with.
+    if settings.get_allow_mixed_elements() and meshtools.is_mixed_femmesh(ccxwriter.femmesh):
+        element_param = 2
+    else:
+        element_param = 1  # highest element order only
     group_param = False  # do not write mesh group data
 
     is_reduced = ccxwriter.solver_obj.ReducedIntegration
