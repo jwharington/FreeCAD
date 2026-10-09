@@ -40,6 +40,7 @@ from ._mixed_coupling_common import (
     find_edge_reference,
     find_face_reference,
     make_compound,
+    mesh_parts_separately,
     planar_face,
 )
 
@@ -84,7 +85,7 @@ leaves the coupling gap visible instead of hinging it by shared nodes.
     )
 
 
-def setup(doc=None, solvertype="ccxtools", variant="e2"):
+def setup(doc=None, solvertype="ccxtools", variant="e2", test_mode=False):
     if variant not in _VARIANTS:
         raise ValueError(f"unknown variant {variant!r}; expected one of {sorted(_VARIANTS)}")
     if doc is None:
@@ -127,7 +128,9 @@ def setup(doc=None, solvertype="ccxtools", variant="e2"):
             spec["tolerance"],
         )
 
-    add_mesh(doc, analysis, geom_obj)
+    mesh_obj = add_mesh(doc, analysis, geom_obj)
+    if not test_mode:
+        mesh_obj.FemMesh = mesh_parts_separately(doc, [*solid_objs, shell_obj])
     doc.recompute()
     return doc
 

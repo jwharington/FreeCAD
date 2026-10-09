@@ -39,6 +39,7 @@ from ._mixed_coupling_common import (
     add_shape,
     extreme_face_reference,
     make_compound,
+    mesh_parts_separately,
     paired_faces_by_plane,
     planar_face,
 )
@@ -84,7 +85,7 @@ over the covered footprint, never shared nodes.
     )
 
 
-def setup(doc=None, solvertype="ccxtools", variant="f1"):
+def setup(doc=None, solvertype="ccxtools", variant="f1", test_mode=False):
     if variant not in _VARIANTS:
         raise ValueError(f"unknown variant {variant!r}; expected one of {sorted(_VARIANTS)}")
     if doc is None:
@@ -123,7 +124,9 @@ def setup(doc=None, solvertype="ccxtools", variant="f1"):
             spec["tolerance"],
         )
 
-    add_mesh(doc, analysis, geom_obj)
+    mesh_obj = add_mesh(doc, analysis, geom_obj)
+    if not test_mode:
+        mesh_obj.FemMesh = mesh_parts_separately(doc, [solid_obj, shell_obj])
     doc.recompute()
     return doc
 

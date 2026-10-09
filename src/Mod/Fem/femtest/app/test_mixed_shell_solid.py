@@ -295,6 +295,50 @@ class TestMixedShellSolid(unittest.TestCase):
         self.assertIn("ELSET=Evolumes", deck)
         self.assertIn("ELSET=Efaces", deck)
 
+    # ********************************************************************************************
+    def test_every_variant_meshes_to_a_mixed_femmesh(self):
+        # The live-Gmsh half: each variant's parts meshed alone and merged must
+        # give one mesh holding volumes and separate faces. Counts only - a
+        # live mesh is not byte-stable and must not be asserted as if it were.
+        for module, variants in (
+            (face_coupling, FACE_VARIANTS),
+            (edge_coupling, EDGE_VARIANTS),
+        ):
+            for variant in variants:
+                doc = FreeCAD.newDocument(f"mesh_{module.__name__[-4:]}_{variant}")
+                self.addCleanup(FreeCAD.closeDocument, doc.Name)
+                module.setup(doc=doc, variant=variant)
+                mesh = doc.getObject("Mesh").FemMesh
+                self.assertGreater(len(mesh.Volumes), 0, variant)
+                self.assertGreater(len(mesh.FacesOnly), 0, variant)
+
+    # ********************************************************************************************
+    def test_example_meshes_to_a_runnable_mixed_deck(self):
+        # The example's own geometry, each part meshed alone and merged, must
+        # reach the writer with the flag on and section both of its parts. This
+        # is the end of the route the merge helper exists for.
+        doc = FreeCAD.newDocument("mixed_example_end_to_end")
+        self.addCleanup(FreeCAD.closeDocument, doc.Name)
+        face_coupling.setup(doc=doc, variant="f2")
+
+        mesh_obj = doc.getObject("Mesh")
+        self.assertGreater(len(mesh_obj.FemMesh.Volumes), 0)
+        self.assertGreater(len(mesh_obj.FemMesh.FacesOnly), 0)
+
+        fea = ccxtools.FemToolsCcx(doc.Analysis, doc.CalculiXCcxTools, test_mode=True)
+        fea.update_objects()
+        workdir = self._temp_dir("end_to_end")
+        fea.setup_working_dir(str(workdir))
+        with mixed_shell_solid_flag(True):
+            self.assertFalse(fea.check_prerequisites(), "the gate must be open")
+            self.assertFalse(fea.write_inp_file(), "the deck must be written")
+
+        deck = (workdir / "Mesh.inp").read_text(encoding="utf-8")
+        self.assertIn("ELSET=Evolumes", deck)
+        self.assertIn("ELSET=Efaces", deck)
+        self.assertIn("*SOLID SECTION", deck)
+        self.assertIn("*SHELL SECTION", deck)
+
     def _mixed_analysis_document(self, with_beam_section=False):
         doc = FreeCAD.newDocument(f"{self._testMethodName}_analysis")
         self.addCleanup(FreeCAD.closeDocument, doc.Name)
@@ -356,7 +400,7 @@ class TestMixedShellSolid(unittest.TestCase):
     def _build(self, module, variant):
         doc = FreeCAD.newDocument(f"{self.__class__.__name__}_{variant}")
         self.addCleanup(FreeCAD.closeDocument, doc.Name)
-        module.setup(doc=doc, variant=variant)
+        module.setup(doc=doc, variant=variant, test_mode=True)
         return doc
 
     def _solids(self, doc):
