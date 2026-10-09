@@ -25,17 +25,31 @@ __title__ = "FreeCAD FEM calculix write inpfile step output"
 __author__ = "Bernd Hahnebach"
 __url__ = "https://www.freecad.org"
 
+from femsolver import settings
+from femmesh import meshtools
+
+
+def _is_mixed_shell_solid(ccxwriter):
+    """True when the mesh holds shells and volumes together."""
+    return settings.get_allow_mixed_elements() and meshtools.is_mixed_femmesh(ccxwriter.femmesh)
+
 
 def write_step_output(f, ccxwriter):
 
     f.write("\n{}\n".format(59 * "*"))
     f.write("** Outputs --> frd file\n")
+    mixed_shell_solid = _is_mixed_shell_solid(ccxwriter)
     if (
         ccxwriter.member.geos_beamsection
         or ccxwriter.member.geos_shellthickness
         or ccxwriter.member.geos_fluidsection
     ):
-        if ccxwriter.solver_obj.Output3d:
+        # A mixed result is only displayable in 2d. The result panel shows a
+        # result when its node numbers equal the mesh node count exactly, and
+        # 3d puts shell results on expanded nodes whose numbering differs from
+        # the mesh's. 2d keeps them on the original shell nodes, so the gate
+        # passes on node count rather than on a special case.
+        if ccxwriter.solver_obj.Output3d and not mixed_shell_solid:
             f.write("*NODE FILE, OUTPUT=3d\n")
         else:
             f.write("*NODE FILE, OUTPUT=2d\n")
@@ -52,7 +66,13 @@ def write_step_output(f, ccxwriter):
     else:
         f.write("U\n")
     if not ccxwriter.member.geos_fluidsection:
-        f.write("*EL FILE, GLOBAL=NO\n")
+        # *EL FILE defaults to expanded nodes just as *NODE FILE does, so a
+        # mixed deck that set only the nodal card to 2d would put element
+        # results on a second, larger node set inside the same frd.
+        if mixed_shell_solid:
+            f.write("*EL FILE, OUTPUT=2d, GLOBAL=NO\n")
+        else:
+            f.write("*EL FILE, GLOBAL=NO\n")
         variables = "S, E"
         if ccxwriter.analysis_type == "thermomech":
             variables += ", HFL"

@@ -230,6 +230,29 @@ class TestMixedShellSolid(unittest.TestCase):
             )
 
     # ********************************************************************************************
+    def test_mixed_deck_agrees_on_output_dimension(self):
+        # V3. *EL FILE defaults to expanded nodes just as *NODE FILE does, so a
+        # deck that sets only the nodal card to 2d puts element results on a
+        # second, larger node set inside the same frd: one file, two node
+        # numberings. Both cards must say 2d, and the solver's Output3d default
+        # (True) must not win on a mixed mesh, because 3d is undisplayable.
+        doc, analysis, solver, mesh_obj = self._mixed_analysis_document()
+        self.assertTrue(solver.Output3d, "the fixture must exercise the 3d default")
+
+        fea = ccxtools.FemToolsCcx(analysis, solver, test_mode=True)
+        fea.update_objects()
+        workdir = self._temp_dir("output_dimension")
+        fea.setup_working_dir(str(workdir))
+        with mixed_shell_solid_flag(True):
+            self.assertFalse(fea.check_prerequisites(), "the gate must be open")
+            self.assertFalse(fea.write_inp_file(), "the deck must be written")
+        deck = (workdir / "Mesh.inp").read_text(encoding="utf-8")
+
+        self.assertIn("*NODE FILE, OUTPUT=2d", deck)
+        self.assertIn("*EL FILE, OUTPUT=2d", deck)
+        self.assertNotIn("OUTPUT=3d", deck)
+
+    # ********************************************************************************************
     def test_compound_links_the_solid_and_the_shell(self):
         for module, variant in (
             (face_coupling, "f1"),
