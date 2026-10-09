@@ -387,6 +387,32 @@ def _run_ccx_bounded(cmd, workdir, timeout, cap=CCX_OUTPUT_CAP):
     return proc.returncode, "".join(kept), truncated
 
 
+def _report_result_visibility(mesh_obj, result, displacements):
+    """V1 and V2 of the plan's section 8.9: is the result drawable at all?
+
+    V1 is the panel gate itself - the frd's node set must equal the mesh's.
+    V2 is the one that matters: a shell missing from the result as opposed to
+    missing from the deck cannot be seen in deck text, so check that the shell
+    nodes and the solid nodes both carry a displacement.
+    """
+    femmesh = mesh_obj.FemMesh
+    print(
+        f"    V1 frd nodes={len(result.NodeNumbers)} mesh nodes={femmesh.NodeCount} "
+        f"gate={'PASS' if len(result.NodeNumbers) == femmesh.NodeCount else 'FAIL'}"
+    )
+    shell_nodes = {n for eid in femmesh.FacesOnly for n in femmesh.getElementNodes(eid)}
+    solid_nodes = {n for eid in femmesh.Volumes for n in femmesh.getElementNodes(eid)}
+    shell_moved = [displacements[n].Length for n in shell_nodes if n in displacements]
+    solid_moved = [displacements[n].Length for n in solid_nodes if n in displacements]
+    print(
+        f"    V2 shell nodes moving={len(shell_moved)}/{len(shell_nodes)} "
+        f"max={max(shell_moved, default=0.0):.3e} | "
+        f"solid nodes moving={len(solid_moved)}/{len(solid_nodes)} "
+        f"max={max(solid_moved, default=0.0):.3e} | "
+        f"{'PASS' if shell_moved and solid_moved else 'FAIL'}"
+    )
+
+
 def _run_and_read_tip(analysis, solver, mesh_obj, workdir, ccx):
     fea = _write_deck(analysis, solver, workdir)
     base = os.path.basename(os.path.splitext(fea.inp_file_name)[0])
@@ -403,6 +429,7 @@ def _run_and_read_tip(analysis, solver, mesh_obj, workdir, ccx):
         raise RuntimeError("no result object after loading the frd")
 
     displacements = dict(zip(result.NodeNumbers, result.DisplacementVectors))
+    _report_result_visibility(mesh_obj, result, displacements)
     tip_nodes = [
         node_id
         for node_id, node in mesh_obj.FemMesh.Nodes.items()
@@ -418,6 +445,8 @@ def _measure(builder, name, args):
     doc = FreeCAD.newDocument(name)
     try:
         analysis, solver, mesh_obj = builder(doc)
+        if args.output3d is not None:
+            solver.Output3d = args.output3d
         femmesh = mesh_obj.FemMesh
         print(
             f"[{name}] nodes={femmesh.NodeCount} volumes={femmesh.VolumeCount} "
@@ -449,12 +478,20 @@ def main(argv: list[str] | None = None) -> int:
         help="stop after meshing, after writing the deck, or run ccx too",
     )
     parser.add_argument(
+        "--output3d",
+        choices=["on", "off"],
+        default=None,
+        help="set the solver's Output3d flag; default leaves it as built",
+    )
+    parser.add_argument(
         "--model",
         choices=["mixed", "solid", "bare", "tied_solid", "all"],
         default="all",
         help="which model(s) to build",
     )
     args = parser.parse_args(argv)
+    if args.output3d is not None:
+        args.output3d = args.output3d == "on"
 
     args.workdir = (
         os.path.join(tempfile.gettempdir(), "mixed_cantilever")

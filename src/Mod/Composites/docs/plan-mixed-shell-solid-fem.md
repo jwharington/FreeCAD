@@ -1,9 +1,10 @@
 # Plan: Mixed shell + solid elements in one FEM analysis
 
-**Date:** 2026-10-02 (revision 2026-10-09) · **Status:** in progress — Stages 1–7 done and
-verified; Stage 8 next. Stage 7's coupling check passes at **0.09 %** against an
+**Date:** 2026-10-02 (revision 2026-10-09) · **Status:** in progress — Stages 1–8 done and
+verified; Stage 9 next. Stage 7's coupling check passes at **0.09 %** against an
 all-solid rebuild, after fixing two defects it found (a solid's face resolving to
-a coincident shell; a tie written on the wrong shell face). See §3, Stage 7.
+a coincident shell; a tie written on the wrong shell face). Stage 8 makes a mixed
+result displayable (`OUTPUT=2d` on both file cards). See §3.
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
 shells wants to coexist with locally solid features in the *same*
 analysis. Today it cannot: FreeCAD's FEM pipeline is built around
@@ -293,21 +294,52 @@ A quieter hazard sits beside it: FreeCAD writes `*NODE FILE, OUTPUT=2d` but
 hold nodal results at original nodes and element results at expanded nodes. That
 is the shape of fault that colours a model wrongly without ever erroring.
 
-Steps:
+Steps, and what came of them:
 
-1. From a real mixed run, record the frd node numbering under each `OUTPUT`
-   setting against the `FemMesh` node set, and state which passes the gate.
-2. Decide one: keep `OUTPUT=2d` and document the loss of through-thickness
-   shell stresses, or make the gate dimension-aware and teach the result reader
-   to map expanded nodes back onto the `FemMesh`.
-3. Make `*NODE FILE` and `*EL FILE` agree on `OUTPUT` for a mixed model.
-4. Re-check `task_result_mechanical.py:796`. Its `not VolumeCount` branch exists
-   to say *"beam or shell FEM Meshes not yet supported"*; on a mixed mesh it is
-   unreachable by construction, so it must become dimension-aware or go.
+1. **Measured.** The frd node numbering against the `FemMesh` node set, on the
+   same mixed model, by `compositestests/inspect_mixed_cantilever.py`:
 
-*Exit criterion:* a mixed result displays both parts — shell and solid — with
-the gate passing on node count rather than on a special case, and one matrix
-case (§8.9) asserting *displayable* rather than merely *written*.
+   | solver `Output3d` | `*NODE FILE` | frd nodes | mesh nodes | panel gate |
+   |---|---|---|---|---|
+   | off | `OUTPUT=2d` | 3910 | 3910 | **PASS** |
+   | on | `OUTPUT=3d` | 4519 | 3910 | **FAIL** |
+
+   The plan's premise was wrong on one point: `Output3d` defaults to **True**
+   (`femobjects/solver_calculix.py`), so a mixed model does **not** get `2d` by
+   default — it gets `3d` and fails the gate.
+2. **Decided: keep `OUTPUT=2d`.** It passes the gate on node count, which is
+   the exit criterion; making the gate dimension-aware and mapping expanded
+   nodes back onto the `FemMesh` is a much larger change for a result the panel
+   cannot show anyway. The loss of through-thickness shell stresses is
+   **documented, not hidden**: 2d averages them (manual, *"averaging removes
+   the bending stresses in beams and shells"*).
+3. **`*EL FILE` now agrees.** The manual is explicit that the default is
+   expanded nodes for **both** cards (*"Default storage for quantities
+   requested by the \*NODE FILE and \*EL FILE is in the expanded nodes"*), so a
+   deck that set only the nodal card to 2d would put element results on a
+   second, larger node set inside one frd. `write_step_output.py` now writes
+   `OUTPUT=2d` on both, and ignores `Output3d` **only for a mixed mesh**, so no
+   other deck changes — proven by the §4 snapshot reporting *no deck changed*.
+   Regression test `test_mixed_deck_agrees_on_output_dimension`.
+4. **`task_result_mechanical.py:796` needs no change.** The branch is reached
+   only when the node counts differ, and on a mixed mesh `VolumeCount` is
+   non-zero, so the *"beam or shell not yet supported"* message is correctly
+   never produced for a mixed model: it falls through to the honest generic
+   message. With step 3 the gate passes for mixed meshes, so neither message is
+   reached at all. Left as is, deliberately.
+
+*Exit criterion: met.* A mixed result displays both parts — shell and solid —
+with the gate passing on node count rather than on a special case:
+
+  * **V1** (gate): frd nodes 3910 == mesh nodes 3910 → **PASS**.
+  * **V2** (both parts visible in the result, by node id against the mesh's own
+    by-dimension tables): shell 477/477 nodes moving, solid 3433/3433 → **PASS**.
+  * **V3** (cards agree): `*NODE FILE, OUTPUT=2d` and
+    `*EL FILE, OUTPUT=2d, GLOBAL=NO` → asserted in CI without ccx.
+
+V1/V2 need a CalculiX binary, so they are probe assertions (`--phase run`),
+not CI tests; V3 is in the FEM suite as
+`test_mixed_deck_agrees_on_output_dimension`.
 
 *Back out:* additive to the result panel. Reverting leaves the deck unchanged,
 since nothing here writes the deck.
@@ -519,7 +551,7 @@ Close them before anyone proposes the single-pass Gmsh route.
 | **A tie with the wrong shell side fails silently.** The writer must pick the side of the expanded shell that meets the master (`write_constraint_tie._shell_slave_face`). Stage 7 measured the failure: the joint was one thickness out, ccx printed `WARNING in gentiedmpc: no tied MPC` to stdout only, the job finished, and the deflection was exactly the uncoupled one — the deck text was indistinguishable from a working one | Fixed and regression-tested (`test_tie_slave_side_follows_the_shell_offset`). G13's numerical check is the guard that makes a silent uncoupling impossible to ship, which is why a text-only deck test is not enough |
 | **A hinged mixed model fails silently, not loudly.** D2's hinge variant returned a ~2.5e12 deflection magnification with **no `*ERROR` and no warning** from ccx | The "loud error, not a silent hinge" requirement stands, and G13's numerical check is **load-bearing** — a hinge will not announce itself and cannot be caught by a deck-text test |
 | **Composite `*SHELL SECTION` accepts only S8R and S6.** Measured in D3: an `S4` shell with a composite section is rejected outright — `Element 2 is not a S8R nor a S6 shell element.` | Stage 2/5 must emit S8R or S6 for the shell side of a mixed model when the section is composite; asserted in §8.5 via `getElementType`, never assumed. This is not optional for the plan's motivating Composites case. |
-| **A mixed result is written but cannot be displayed.** The panel gate is exact node-count equality, and `OUTPUT=3d` moves shell results to expanded nodes whose numbering differs from the mesh's. The failure is an error dialog at best, wrong colours at worst | Stage 8 owns the `OUTPUT` decision and the gate; §8.9's V2 asserts both parts are visible in a built result object. Until Stage 8, the deliverable is headless-only and §8's GUI column is reduced accordingly |
+| **A mixed result is written but cannot be displayed.** The panel gate is exact node-count equality, and `OUTPUT=3d` moves shell results to expanded nodes whose numbering differs from the mesh's. The failure is an error dialog at best, wrong colours at worst | **Closed by Stage 8.** `Output3d` defaults True, which is the failing case; `write_step_output.py` now writes `OUTPUT=2d` on both `*NODE FILE` and `*EL FILE` for a mixed mesh and ignores that flag there, so the gate passes on node count. V1, V2 and V3 pass (§3, Stage 8). The cost is through-thickness shell stresses in the frd, documented rather than hidden |
 | Node-count inference lurking in code paths not yet read (Stage 4 is the wide one) | Stage 1 ships dimension-tagged tables and Stage 4 asserts on element **types**, not counts |
 | A mixed model silently double-sections elements | Stage 5's explicit no-element-in-two-sections assertion |
 | Flag leaks into normal paths and changes existing decks | Golden-file comparison over the whole `femtest/data/calculix/` set at every stage; the flag is read in exactly one function |
