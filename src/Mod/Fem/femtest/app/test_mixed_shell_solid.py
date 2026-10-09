@@ -26,6 +26,7 @@ import ObjectsFem
 
 from femtools import ccxtools
 from femtools import membertools
+from femtools.checksanalysis import check_member_for_solver_calculix
 from femsolver.calculix import writer as ccx_writer
 from femsolver.calculix import write_mesh as write_mesh_module
 from femexamples import constraint_mixed_edge_coupling as edge_coupling
@@ -210,16 +211,7 @@ class TestMixedShellSolid(unittest.TestCase):
         # Stage 2's one line. With the flag off the shell never reaches the
         # deck; with it on the same mesh writes the volume and shell blocks
         # together, which is what element_param 2 means.
-        doc = FreeCAD.newDocument("mixed_writer_mode")
-        self.addCleanup(FreeCAD.closeDocument, doc.Name)
-        analysis = ObjectsFem.makeAnalysis(doc, "Analysis")
-        solver = ObjectsFem.makeSolverCalculiXCcxTools(doc, "CalculiXCcxTools")
-        solver.ReducedIntegration = False
-        analysis.addObject(solver)
-        mesh_obj = analysis.addObject(ObjectsFem.makeMeshGmsh(doc, "Mesh"))[0]
-        mesh_obj.FemMesh = node_disjoint_brick_and_shell()
-        doc.recompute()
-
+        doc, analysis, solver, mesh_obj = self._mixed_analysis_document()
         member = membertools.AnalysisMember(analysis)
         writer = ccx_writer.FemInputWriterCcx(
             analysis, solver, mesh_obj, member, str(self._temp_dir("writer")), []
@@ -237,6 +229,86 @@ class TestMixedShellSolid(unittest.TestCase):
         # Flag on: the volume and shell blocks together, against a committed golden.
         difference = testtools.compare_inp_files(str(self._fixture_golden()), str(deck_on_path))
         self.assertFalse(difference, difference)
+
+    # ********************************************************************************************
+    def test_flag_opens_the_mixed_prerequisites_gate(self):
+        # Stage 3. The refusal of a shell thickness on a volume mesh is the
+        # whole reason a mixed analysis cannot run; it must be gone with the
+        # flag on and unchanged with it off.
+        messages = {}
+        for enabled in (False, True):
+            doc, analysis, solver, mesh_obj = self._mixed_analysis_document()
+            fea = ccxtools.FemToolsCcx(analysis, solver, test_mode=True)
+            fea.update_objects()
+            fea.setup_working_dir(str(self._temp_dir("gate_on" if enabled else "gate_off")))
+            with mixed_shell_solid_flag(enabled):
+                messages[enabled] = fea.check_prerequisites()
+
+        self.assertIn(
+            "Shell thicknesses defined but FEM mesh has volume elements.", messages[False]
+        )
+        self.assertNotIn(
+            "Shell thicknesses defined but FEM mesh has volume elements.", messages[True]
+        )
+
+        # And the analysis now reaches the writer instead of being refused. The
+        # deck's mesh section is the Stage 2 golden; its sections are Stage 5's.
+        doc, analysis, solver, mesh_obj = self._mixed_analysis_document()
+        fea = ccxtools.FemToolsCcx(analysis, solver, test_mode=True)
+        fea.update_objects()
+        fea.setup_working_dir(str(self._temp_dir("gate_write")))
+        with mixed_shell_solid_flag(True):
+            self.assertFalse(fea.check_prerequisites(), "the gate must be open")
+            self.assertFalse(fea.write_inp_file(), "the deck must be written")
+
+    # ********************************************************************************************
+    def test_flag_still_refuses_beam_sections_with_shell_thickness(self):
+        # Beams stay out of scope: the flag opens the shell-and-solid gate, and
+        # nothing else.
+        for enabled in (False, True):
+            doc, analysis, solver, mesh_obj = self._mixed_analysis_document(with_beam_section=True)
+            member = membertools.AnalysisMember(analysis)
+            with mixed_shell_solid_flag(enabled):
+                message = check_member_for_solver_calculix(analysis, solver, mesh_obj, member)
+            self.assertIn(
+                "Beam sections and shell thicknesses in one analysis are not "
+                "supported at the moment.",
+                message,
+            )
+
+    def _mixed_analysis_document(self, with_beam_section=False):
+        doc = FreeCAD.newDocument(f"{self._testMethodName}_analysis")
+        self.addCleanup(FreeCAD.closeDocument, doc.Name)
+        analysis = ObjectsFem.makeAnalysis(doc, "Analysis")
+        solver = ObjectsFem.makeSolverCalculiXCcxTools(doc, "CalculiXCcxTools")
+        solver.ReducedIntegration = False
+        analysis.addObject(solver)
+
+        material = ObjectsFem.makeMaterialSolid(doc, "Material")
+        steel = material.Material
+        steel["Name"] = "CalculiX-Steel"
+        steel["YoungsModulus"] = "210000 MPa"
+        steel["PoissonRatio"] = "0.30"
+        material.Material = steel
+        analysis.addObject(material)
+
+        analysis.addObject(ObjectsFem.makeElementGeometry2D(doc, 10, "ShellThickness"))
+        if with_beam_section:
+            analysis.addObject(ObjectsFem.makeElementGeometry1D(doc, name="BeamSection"))
+
+        mesh_obj = analysis.addObject(ObjectsFem.makeMeshGmsh(doc, "Mesh"))[0]
+        mesh_obj.FemMesh = node_disjoint_brick_and_shell()
+
+        # The fixture mesh has no geometry of its own; a unit box on the same
+        # coordinates gives the constraints something to reference and the
+        # analysis something to satisfy before it can be written.
+        box = doc.addObject("Part::Box", "Box")
+        mesh_obj.Shape = box
+        fixed = ObjectsFem.makeConstraintFixed(doc, "Fixed")
+        fixed.References = [(box, "Face1")]
+        analysis.addObject(fixed)
+        doc.recompute()
+        return doc, analysis, solver, mesh_obj
 
     def _written_deck(self, writer, workdir, flag_enabled):
         writer.dir_name = str(workdir)

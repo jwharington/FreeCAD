@@ -33,6 +33,8 @@ import FreeCAD
 
 from FreeCAD import Units
 
+from femsolver import settings
+
 from . import femutils
 from .checksmaterials import check_linear_material
 
@@ -40,6 +42,11 @@ from .checksmaterials import check_linear_material
 def check_member_for_solver_calculix(analysis, solver, mesh, member):
 
     message = ""
+
+    # Shell and solid elements may only coexist when the mixed path is enabled.
+    # With it off every rule below behaves exactly as it did before the flag
+    # existed, including the error a mixed analysis is refused with.
+    allow_mixed = settings.get_allow_mixed_elements()
 
     # mesh
     if not mesh:
@@ -89,6 +96,9 @@ def check_member_for_solver_calculix(analysis, solver, mesh, member):
                     "(Only one empty references list is allowed!).\n"
                 )
             has_no_references = True
+    # A mixed model is the one case where the materials' reference shape types
+    # must differ - a solid material references a Solid and a shell material a
+    # Face - so the one-shape-type rule is relaxed under the flag.
     mat_ref_shty = ""
     for m in member.mats_linear:
         ref_shty = femutils.get_refshape_type(m["Object"])
@@ -96,7 +106,7 @@ def check_member_for_solver_calculix(analysis, solver, mesh, member):
             ref_shty = "Solid"
         if not mat_ref_shty:
             mat_ref_shty = ref_shty
-        if mat_ref_shty and ref_shty and ref_shty != mat_ref_shty:
+        if not allow_mixed and mat_ref_shty and ref_shty and ref_shty != mat_ref_shty:
             # mat_ref_shty could be empty in one material
             # only the not empty ones should have the same shape type
             message += (
@@ -314,7 +324,7 @@ def check_member_for_solver_calculix(analysis, solver, mesh, member):
                     )
                 has_no_references = True
         if mesh:
-            if mesh.FemMesh.VolumeCount > 0:
+            if mesh.FemMesh.VolumeCount > 0 and not allow_mixed:
                 message += "Shell thicknesses defined but FEM mesh has volume elements.\n"
             if mesh.FemMesh.FaceCount == 0:
                 message += "Shell thicknesses defined but FEM mesh has no shell elements.\n"
