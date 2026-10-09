@@ -115,7 +115,10 @@ endif()
 # ── Python sources (collect recursively) ────────────────────────
 # RELATIVE so fc_copy_sources builds dest paths as <build>/Mod/Composites/<rel>
 # instead of nesting the absolute source path under the dest.
-file(GLOB_RECURSE Composites_PY_SRCS_ALL RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+# CONFIGURE_DEPENDS so a newly added file enters the list on the next build;
+# without it the glob is only evaluated at configure time and a new source is
+# silently never copied to the build tree.
+file(GLOB_RECURSE Composites_PY_SRCS_ALL CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     "*.py"
     "*.svg"
     "*.ui"
