@@ -1,10 +1,10 @@
 # Plan: Mixed shell + solid elements in one FEM analysis
 
 **Date:** 2026-10-02 (revision 2026-10-09) · **Status:** in progress — Stages 1–8 done and
-verified; Stage 9 next. Stage 7's coupling check passes at **0.09 %** against an
-all-solid rebuild, after fixing two defects it found (a solid's face resolving to
-a coincident shell; a tie written on the wrong shell face). Stage 8 makes a mixed
-result displayable (`OUTPUT=2d` on both file cards). See §3.
+verified and the mixed path is **on by default** (Stage 9's promotion). Remaining:
+a Composites example and its merge helper. Stage 7's coupling check passes at
+**0.09 %** against an all-solid rebuild, after fixing two defects it found; Stage 8
+makes a mixed result displayable (`OUTPUT=2d` on both file cards). See §3.
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
 shells wants to coexist with locally solid features in the *same*
 analysis. Today it cannot: FreeCAD's FEM pipeline is built around
@@ -353,13 +353,25 @@ matches the headless golden". Decide this before Stage 4, not after.
 
 ### Stage 9 — Composites-facing finish, and delete the flag
 
+- ~~Flip the default to on~~ — **done.** `settings.get_allow_mixed_elements()`
+  now returns `True` when `General/AllowMixedShellSolid` is unset, so the mixed
+  path is what everyone gets and setting the parameter to `False` is the
+  rollback. Doing it safely needed `checksanalysis` to gate its two relaxations
+  on the mesh actually being mixed rather than on the flag alone: otherwise a
+  shell thickness on a mesh with volumes but no shells would have been quietly
+  accepted once the flag was on by default. The deck snapshot now sets the flag
+  off explicitly, because its invariant is about flag-off decks, and it still
+  reports *no deck changed*. Tests: `test_mixed_flag_defaults_on`,
+  `test_flag_on_still_refuses_a_shell_thickness_on_a_solid_mesh`.
 - Promote the mesh-merge helper into `Composites/util/fem_util.py`
-  (shell meshes + solid meshes → one `FemMesh`) if Stage 7 validated the
-  merge route.
+  (shell meshes + solid meshes → one `FemMesh`). `meshtools.merge_femmeshes`
+  is the primitive; the Composites helper should compose it, not copy it, and
+  it needs the example below to have a caller. **Not started.**
 - Add a Composites example under `compositeexamples/examples/` per the
-  `_shell_example_common.py` pattern.
-- Flip the default to on, keep the flag one release, then delete the
-  getter and the flag branches.
+  `_shell_example_common.py` pattern — a laminate shell skin and a solid
+  feature in one analysis, which is the motivating case for the whole plan.
+  **Not started.**
+- Delete the getter and the flag branches after one release.
 
 ---
 
