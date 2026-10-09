@@ -121,7 +121,10 @@ def measure(repeats=1):
 
         fem = shell_common._ccx_tools(analysis, solver, mesh_obj)
         _stage("deck.write", lambda: fem.write_inp_file(), timings)
-        _stage("solve.ccx", lambda: fem.start_ccx(), timings)
+        # ccx_run, not start_ccx: only ccx_run resolves the solver binary
+        # (via setup_ccx) before spawning it. start_ccx used alone passes an
+        # empty binary name to Popen and dies with PermissionError.
+        _stage("solve.ccx", lambda: fem.ccx_run(), timings)
         _stage("results.load", lambda: fem.load_results(), timings)
     finally:
         if doc is not None:
