@@ -44,7 +44,9 @@ Getting there exposed two defects, both now fixed:
 
 The probe still knows how to isolate those: `--model bare` is the spar alone,
 `--model tied_solid` replaces the shell with a solid slab joined the same way,
-and `--phase write` stops before ccx.
+`--model compound` points the two materials at a compound of solids and a
+compound of faces rather than at bare shapes (and gives the tie the whole skin
+compound as its slave), and `--phase write` stops before ccx.
 
 Usage, from the repo root:
 
@@ -146,6 +148,18 @@ def _edge_at_xz(obj, x, z):
         if abs(point.x - x) < 1e-6 and abs(point.z - z) < 1e-6:
             return (obj, f"Edge{index}")
     raise ValueError(f"{obj.Name} has no edge at x={x}, z={z}")
+
+
+def _material(doc, analysis, name, references):
+    material = ObjectsFem.makeMaterialSolid(doc, name)
+    steel = material.Material
+    steel["Name"] = "CalculiX-Steel"
+    steel["YoungsModulus"] = YOUNGS_MODULUS
+    steel["PoissonRatio"] = POISSON_RATIO
+    material.Material = steel
+    material.References = references
+    analysis.addObject(material)
+    return material
 
 
 def _add_material(analysis, doc, with_shell_thickness):
@@ -308,6 +322,56 @@ def _build_tied_solid(doc):
 
     tie = ObjectsFem.makeConstraintTie(doc, "Tie")
     tie.References = [_face_at_z(slab, SPAR_HEIGHT), _face_at_z(spar, SPAR_HEIGHT)]
+    tie.Tolerance = 1.0
+    analysis.addObject(tie)
+
+    mesh_obj = analysis.addObject(ObjectsFem.makeMeshGmsh(doc, "Mesh"))[0]
+    mesh_obj.Shape = compound
+    mesh_obj.ElementOrder = "2nd" if SECOND_ORDER else "1st"
+    mesh_obj.FemMesh = merged
+    doc.recompute()
+    return analysis, solver, mesh_obj
+
+
+def _build_compound(doc):
+    """The cantilever again, with the materials referencing compounds.
+
+    A material may point at a Compound rather than a bare solid or face, and its
+    reference must still land in the pass for its own dimension. Here the spar
+    is a compound of solids and the skin a compound of faces, so both compound
+    forms go through the writer and ccx, not only through the sets getter.
+    """
+    spar, spar_mesh = _meshed_part(doc, "Spar", Part.makeCompound([_spar_shape()]))
+    skin, skin_mesh = _meshed_part(doc, "Skin", Part.makeCompound([_skin_shape()]))
+    merged, _, _ = meshtools.merge_femmeshes(spar_mesh.FemMesh, skin_mesh.FemMesh)
+    doc.removeObject(spar_mesh.Name)
+    doc.removeObject(skin_mesh.Name)
+
+    compound = doc.addObject("Part::Compound", "MixedGeometry")
+    compound.Links = [spar, skin]
+
+    analysis = ObjectsFem.makeAnalysis(doc, "Analysis")
+    solver = _add_solver(analysis, doc)
+    _material(doc, analysis, "SolidMaterial", [(spar, "")])
+    _material(doc, analysis, "ShellMaterial", [(skin, "")])
+    thickness = ObjectsFem.makeElementGeometry2D(doc, SKIN_THICKNESS, "ShellThickness")
+    thickness.Offset = -0.5
+    analysis.addObject(thickness)
+
+    fixed = ObjectsFem.makeConstraintFixed(doc, "Fixed")
+    fixed.References = [_face_at_x(spar, 0.0)]
+    analysis.addObject(fixed)
+
+    force = ObjectsFem.makeConstraintForce(doc, "Force")
+    force.References = [_edge_at_xz(spar, LENGTH, 0.0)]
+    force.Force = f"{FORCE} N"
+    force.DirectionVector = Vector(0, 0, -1)
+    analysis.addObject(force)
+
+    tie = ObjectsFem.makeConstraintTie(doc, "Tie")
+    # The slave is the whole skin compound, which is what a multi-patch skin
+    # would be, rather than one named face of it.
+    tie.References = [(skin, ""), _top_face(spar)]
     tie.Tolerance = 1.0
     analysis.addObject(tie)
 
@@ -485,7 +549,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--model",
-        choices=["mixed", "solid", "bare", "tied_solid", "all"],
+        choices=["mixed", "solid", "bare", "tied_solid", "compound", "all"],
         default="all",
         help="which model(s) to build",
     )
@@ -514,6 +578,7 @@ def main(argv: list[str] | None = None) -> int:
         "solid": _build_all_solid,
         "bare": _build_bare,
         "tied_solid": _build_tied_solid,
+        "compound": _build_compound,
     }
     names = ["mixed", "solid"] if args.model == "all" else [args.model]
     results = {}
