@@ -72,9 +72,9 @@ path must carry **explicit dimension tags**, sourced from
 
 | Decision | Default | Revisit |
 |---|---|---|
-| Where the fix lives | **FreeCAD FEM core** (`src/Mod/Fem`), flag-gated and upstreamable. Composites consumes it and owns only the mesh-merge helper + example. | Stage 8 |
+| Where the fix lives | **FreeCAD FEM core** (`src/Mod/Fem`), flag-gated and upstreamable. Composites consumes it and owns only the mesh-merge helper + example. | Stage 9 |
 | Shell↔solid coupling | **`*TIE` with position tolerance**, non-conformal meshes, on **node-disjoint** meshes. Chosen because (a) Trap A makes node-merged shells on a solid boundary undetectable, and (b) the CalculiX manual (§8.3) states that a shared 3D↔2D node is a **hinge by design**, so node sharing is not a coupling mechanism at all. `*TIE` covers **face interfaces only** — edge-connected shapes (§8.4, family E) have no mechanism in the tree and are a scope decision for ADR 0004. | Stage 0 |
-| Safety gate while incomplete | **Hidden dev parameter** `AllowMixedShellSolid` in `User parameter:BaseApp/Preferences/Mod/Fem/General`, default `False`, read through one getter in `femsolver/settings.py` (next to `get_write_comments`). Deleted in the final stage. | Stage 8 |
+| Safety gate while incomplete | **Hidden dev parameter** `AllowMixedShellSolid` in `User parameter:BaseApp/Preferences/Mod/Fem/General`, default `False`, read through one getter in `femsolver/settings.py` (next to `get_write_comments`). Deleted in the final stage. | Stage 9 |
 
 **Invariant for the whole plan:** with the flag off, every generated
 `.inp` is **byte-identical** to today's. Every existing golden file in
@@ -206,8 +206,9 @@ Extract the `NodesSolid` / `NodesFaceEdge` split from
 `get_constraints_fixed_nodes` into one helper and use it in Displacement
 (`write_constraint_displacement.py:86` currently emits DOF 4-6 to the
 whole nset — a hard error for solid-only nodes), PlaneRotation,
-Transform and RigidBody. In `write_step_output.py:33-44`, a mixed model
-always writes `*NODE FILE, OUTPUT=3d`, never `2d`.
+Transform and RigidBody. `write_step_output.py:33-44` is deliberately
+left alone here: the `OUTPUT=2d`/`3d` choice shown there is a
+visualisation decision rather than a DOF one, and Stage 8 owns it.
 
 *Exit criterion:* per-constraint golden diffs showing DOF 4-6 applied
 only to shell/edge nodes; a ccx run (if a binary is configured) that
@@ -229,7 +230,64 @@ independent reference — the same model built fully solid, or an
 analytic estimate. The tolerance is **stated before the run** and is
 never relaxed afterwards to make the test pass.
 
-### Stage 8 — Composites-facing finish, and delete the flag
+### Stage 8 — Visualisation of mixed results
+
+The plan used to carry one unjustified prescription here — *"a mixed model
+always writes `*NODE FILE, OUTPUT=3d`, never `2d`"* — which is the **opposite**
+of what visualisation needs. This stage replaces the prescription with a
+measured decision.
+
+The gate is exact. `task_result_mechanical.py:790-801` shows a result only when
+`FemMesh.NodeCount == len(result_obj.NodeNumbers)`; anything else raises a
+dialog. The `not VolumeCount` test at `:796` only chooses *which* message — on a
+mixed mesh it is always false, so a mismatch reports the generic *"Result node
+numbers are not equal to FEM Mesh NodeCount."*
+
+Which way that gate falls is decided by the deck:
+
+| `*NODE FILE` | where results land | node-count gate | cost |
+|---|---|---|---|
+| `OUTPUT=2d` | the original shell nodes | **passes** | shell results are averaged through the thickness — *"averaging removes the bending stresses in beams and shells"* |
+| `OUTPUT=3d` | the expanded brick nodes, whose *"nodal numbering is different from the shell nodes"* | **fails** | full 3D shell stresses, and nothing displays them |
+
+`write_step_output.py:33-44` already writes `OUTPUT=2d` whenever a
+`ShellThickness` object exists, unless the solver's existing `Output3d` flag is
+set. For a mixed model the working configuration is therefore the **default**,
+and no new flag is needed. The decision is whether to keep that default or
+invest in reading expanded results back onto the mesh.
+
+A quieter hazard sits beside it: FreeCAD writes `*NODE FILE, OUTPUT=2d` but
+`*EL FILE, GLOBAL=NO` with no `OUTPUT`, which defaults to 3D. One frd can
+hold nodal results at original nodes and element results at expanded nodes. That
+is the shape of fault that colours a model wrongly without ever erroring.
+
+Steps:
+
+1. From a real mixed run, record the frd node numbering under each `OUTPUT`
+   setting against the `FemMesh` node set, and state which passes the gate.
+2. Decide one: keep `OUTPUT=2d` and document the loss of through-thickness
+   shell stresses, or make the gate dimension-aware and teach the result reader
+   to map expanded nodes back onto the `FemMesh`.
+3. Make `*NODE FILE` and `*EL FILE` agree on `OUTPUT` for a mixed model.
+4. Re-check `task_result_mechanical.py:796`. Its `not VolumeCount` branch exists
+   to say *"beam or shell FEM Meshes not yet supported"*; on a mixed mesh it is
+   unreachable by construction, so it must become dimension-aware or go.
+
+*Exit criterion:* a mixed result displays both parts — shell and solid — with
+the gate passing on node count rather than on a special case, and one matrix
+case (§8.9) asserting *displayable* rather than merely *written*.
+
+*Back out:* additive to the result panel. Reverting leaves the deck unchanged,
+since nothing here writes the deck.
+
+**This is the cleanest cut in the plan.** If the deliverable is reduced to *"runs
+headless and writes a correct, runnable mixed deck"*, Stage 8 drops whole — and
+Stage 6 must then not touch `write_step_output.py` at all, because leaving the
+existing `ShellThickness` behaviour alone is already the more displayable
+choice. §8's GUI column then shrinks to "`setup()` completes and the deck
+matches the headless golden". Decide this before Stage 4, not after.
+
+### Stage 9 — Composites-facing finish, and delete the flag
 
 - Promote the mesh-merge helper into `Composites/util/fem_util.py`
   (shell meshes + solid meshes → one `FemMesh`) if Stage 7 validated the
@@ -358,6 +416,7 @@ Close them before anyone proposes the single-pass Gmsh route.
 | ~~Whether `*TIE` carries a shell slave node's rotational DOF~~ — **resolved, and it does** | Probes D1/D2/D3 ran before any production code existed; results in §9.8. A tied shell root is within **1.7 %** of a clamped root. G13 remains the regression guard. |
 | **A hinged mixed model fails silently, not loudly.** D2's hinge variant returned a ~2.5e12 deflection magnification with **no `*ERROR` and no warning** from ccx | The "loud error, not a silent hinge" requirement stands, and G13's numerical check is **load-bearing** — a hinge will not announce itself and cannot be caught by a deck-text test |
 | **Composite `*SHELL SECTION` accepts only S8R and S6.** Measured in D3: an `S4` shell with a composite section is rejected outright — `Element 2 is not a S8R nor a S6 shell element.` | Stage 2/5 must emit S8R or S6 for the shell side of a mixed model when the section is composite; asserted in §8.5 via `getElementType`, never assumed. This is not optional for the plan's motivating Composites case. |
+| **A mixed result is written but cannot be displayed.** The panel gate is exact node-count equality, and `OUTPUT=3d` moves shell results to expanded nodes whose numbering differs from the mesh's. The failure is an error dialog at best, wrong colours at worst | Stage 8 owns the `OUTPUT` decision and the gate; §8.9's V2 asserts both parts are visible in a built result object. Until Stage 8, the deliverable is headless-only and §8's GUI column is reduced accordingly |
 | Node-count inference lurking in code paths not yet read (Stage 4 is the wide one) | Stage 1 ships dimension-tagged tables and Stage 4 asserts on element **types**, not counts |
 | A mixed model silently double-sections elements | Stage 5's explicit no-element-in-two-sections assertion |
 | Flag leaks into normal paths and changes existing decks | Golden-file comparison over the whole `femtest/data/calculix/` set at every stage; the flag is read in exactly one function |
@@ -660,12 +719,13 @@ which is what actually verifies `merge_femmeshes`.
 - **Stage 3** adds G5 and G6, and converts G10/G11 from *"reports the gap"*
 to real coupling **only if** the ADR chose option 1 or 2.
 - **Stage 5** adds G4's section assertion and G7.
-- **Stage 6** adds G12; **Stage 7** adds G13.
+- **Stage 6** adds G12; **Stage 7** adds G13; **Stage 8** adds the V cases of
+  §8.9.
 
 A case whose stage has not landed is registered in the test module but
 kept out of `TestFemApp.py` / `TestFemGui.py` until it can pass, so the
 suite is never red on purpose. Deleting that scaffolding in the final
-stage is part of Stage 8.
+stage is part of Stage 9.
 
 ### 8.8 Running them
 
@@ -685,6 +745,23 @@ build/debug/bin/FreeCAD --run-test TestFemGui
 Do not guess further flags: read `src/Mod/Fem/TestFemApp.py` and
 `src/Mod/Fem/TestFemGui.py` for the registered module names before the
 first invocation of any new case.
+
+### 8.9 Visualisation cases (V1-V3)
+
+§8.5's matrix asserts deck text only, which leaves the two silent failure modes
+of this work — a hinge, and a shell dropped by Trap A — with no end-to-end
+detector at all. These three assert that a result is *displayable*, not merely
+that it was written.
+
+| Case | Builds on | Assertion | First green at |
+|---|---|---|---|
+| **V1** | G13's mixed run | the frd's node set matches the `FemMesh` node set exactly, so `task_result_mechanical`'s gate passes without a special case | Stage 8 |
+| **V2** | V1 | a `Fem::ResultMechanical` built from that frd has **both** parts visible: shell nodes and solid nodes each carry non-zero displacement, checked by node id against the mesh's own by-dimension tables (§1 Stage 1) | Stage 8 |
+| **V3** | G4 | `*NODE FILE` and `*EL FILE` agree on `OUTPUT` in the written deck, so nodal and element results cannot land on different node numbering | Stage 8 |
+
+V2 is the one that matters. It is the only assertion anywhere in this plan that
+would catch a shell missing from the **result** as opposed to missing from the
+deck, and deck text cannot distinguish the two.
 
 ---
 
@@ -949,4 +1026,49 @@ against `choices` and rejects it, so an argument-less call failed with
 case names by hand. It surfaced on the mesh probe only because that one is
 called programmatically as `main([])`, but the deck probe carried the same
 latent fault.
+
+---
+
+## 10. Adjacent: a laminate OFFSET property, adoptable out of order
+
+Not a stage of this plan. It can be built, tested and landed **before Stage 0**,
+and it removes a wrong-answer risk from the plan's motivating case.
+
+**What.** Give the Composites laminate a per-skin offset and route it into the
+FEM `ShellThickness.Offset` property.
+
+**Why it is nearly free.** The capability already exists in FEM:
+`write_femelement_geometry.py:155` writes
+`*SHELL SECTION, {elsetdef}{material}, OFFSET={offset:.13G}` from
+`shellth_obj.Offset`, and the `ShellThickness` object already carries that
+property. A grep across `src/Mod/Composites/objects/` and
+`util/fem_util.py` finds no offset anywhere, so the leaf is missing but the
+trunk is there.
+
+**Why this plan needs it.** A shell-solid sandwich is two face interfaces —
+the F family — and the two skins are bonded to the core's opposite faces.
+The shell's reference surface lands on the core face, so each skin sits a
+half-thickness inboard of its own midsurface, and sandwich bending stiffness
+goes as the square of the separation between the skins. Thin skins: negligible.
+Thick laminates: an answer that is quietly too soft, with nothing to signal it.
+
+**Why it can go early.** It needs no mixed mesh at all. A pure shell model can
+carry the offset, so it is verifiable against an equivalent solid model or a
+closed-form sandwich solution today, independently of every stage here.
+
+**Two design points, both cheap to get wrong.**
+
+1. The offset must be **per skin, not per analysis**. A sandwich's two skins
+offset in opposite directions, and one model-wide scalar cannot say that.
+2. Confirm the sign and direction against the manual before exposing it in a
+   GUI. The offset is in units of shell thickness, and with `COMPOSITE` it
+   shifts the whole stacked section relative to the reference surface. Reversed
+   signs put both skins inboard and make the sandwich *softer than no offset at
+   all*, which still looks plausible in a fringe plot.
+
+*Exit criterion:* a shell-only sandwich case whose bending stiffness matches an
+equivalent solid model within a tolerance stated before the run, with the
+offsetted model measurably stiffer than the un-offsetted one. If the offsetted
+model comes out softer, the sign is wrong — and that is the check, not a
+review of the code.
 
