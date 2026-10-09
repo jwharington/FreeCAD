@@ -257,6 +257,15 @@ never relaxed afterwards to make the test pass.
 build/debug/bin/FreeCAD --run-test TestFemGui
 ```
 
+**Known pre-existing canary failure.** `run-tests.sh test_laminate` exits 1 on
+`TestQuasiIsotropicEntryGuards.test_texture_plan_activation_creates_nothing`
+(`AttributeError: module 'FreeCADGui' has no attribute 'Selection'`, raised
+through `Composites/mechanics/stack_model.py:303`). Confirmed pre-existing by
+stashing every change this plan has made and re-running: the same single error
+appears, 18 tests pass, with nothing in the plan's files on the traceback. Do
+not read it as a regression from any stage here, and do not chase it from this
+plan — it belongs to the quasi-isotropic stack-model work.
+
 Confirm the exact `-t` module spelling before first use rather than
 guessing flags — `src/Mod/Fem/TestFemApp.py` shows the test modules the
 FEM suite registers, and `src/Mod/Fem/CMakeLists.txt` shows which files
@@ -306,15 +315,38 @@ deck-text test for a physics result.
 
 ---
 
-## 6. Findings (filled in by Stage 0)
+## 6. Findings (measured by the §9 probes)
+
+The Stage 0 spike asked what the pipeline sees for three candidate mesh
+strategies. Two are answered by probes §9.4 and §9.9; the third is recorded as
+unrun rather than guessed.
 
 | Candidate | `VolumeCount` | `FaceCount` | `len(FacesOnly)` | `Efaces` written? | Verdict |
 |---|---|---|---|---|---|
-| a. compound, Gmsh | | | | | |
-| b. separate meshes, merged | | | | | |
-| c. coincident sheet, Gmsh | | | | | |
+| a. compound (solid + sheet), Gmsh | — | — | — | — | **not run** — see below |
+| b. solid and sheet meshed separately, merged in Python | 1 | 1 | 1 | **yes** | **adopted.** The shell survives detection and reaches the deck. |
+| c. sheet coincident with a solid face, Gmsh | — | — | — | — | **not run.** Same expectation as (a), same caveat. |
+| c′. sheet sharing the solid's nodes, hand-built | 1 | 1 | **0** | **no** | Trap A, executed: the shell is dropped with no error and no warning. |
+| b′. candidate b through `compact_mesh` | 1 | 1 | 1 | **yes** | renumbering does not break detection (ids unique, not contiguous). |
 
-Coupling route confirmed by Stage 0: *not yet recorded.*
+Rows b, c′ and b′ are measured on one C3D8 brick plus one quad at the same
+four coordinates, so the only variable is whether the quad shares the brick's
+nodes (§9.9). Rows a and c need Gmsh on a compound and are recorded as unrun.
+
+**Coupling route confirmed by Stage 0:** `*TIE` on a **node-disjoint** merged
+mesh. A shell root tied to a solid face deflects within **1.7 %** of a root
+fixed in DOF 1-6 (§9.8, D2), and a genuine hinge magnifies deflection by
+~2.5e12 with no diagnostics — so the coupling is real and the failure mode is
+silent, which is why G13's numerical check is load-bearing.
+
+**Why the Gmsh candidates are unrun, and what that leaves open.** Gmsh on a
+compound matters only if FreeCAD is ever to build a mixed mesh in one meshing
+pass rather than by merging two. The merge route (b) is verified end to end and
+is what §3 builds, so (a) and (c) cannot change the plan's shape now. Both are
+*expected* to fail — `Coherence Mesh` would make the sheet's nodes a subset of
+the solid's, which is exactly the mechanism row c′ measures — but that
+expectation is inference, not measurement, and must not be quoted as a finding.
+Close them before anyone proposes the single-pass Gmsh route.
 
 ---
 
