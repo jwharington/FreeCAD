@@ -232,34 +232,32 @@ never relaxed afterwards to make the test pass.
 
 *Measured:* `compositestests/inspect_mixed_cantilever.py` (a spar with a
 skin on top, joined by `*TIE`, loaded at the spar tip). The tolerance was
-5 % against the all-solid rebuild **stated before the run**, and it is
-**not met**:
+5 % against the all-solid rebuild **stated before the run**, and it is met:
+the mixed model gives 6.4223e-02 mm against 6.4163e-02 mm, a difference of
+**0.09 %**. The tied skin carries the section.
 
-| skin offset | section | tip deflection | vs all-solid |
-|---|---|---|---|
-| `-0.5` (on top, the manual's sign) | z=20..25 | 1.22e-01 mm | **1.90×** — the bare spar |
-| `+0.5` (inside) | z=15..20 | 9.18e-02 mm | 1.39× |
+Getting there found and fixed two defects:
 
-With the skin correctly **on top** the tied joint is as soft as the spar with
-no skin at all: the skin adds nothing. Second order (C3D10 + S6) changes
-neither ratio, so it is not a discretisation artefact. The reading is that a
-`*TIE` constrains a shell's translations but not its rotations, so a skin
-bonded on one side can rotate about the bond line and shed the membrane strain
-that would let it act as a flange. D2's moment transfer was measured at a shell
-**root edge with the load on the shell**, which is a different mechanism, so it
-does not cover this case. Stage 7 is therefore **not passed**; the probe stays
-committed as the instrument for the open question.
+1. **A solid's face resolved to a coincident shell.** In a mixed mesh a face
+   reference tried the shell table first, so a `*TIE`'s master surface came out
+   identical to its slave and ccx cascaded through an under-determined
+   constraint set without ever solving. Fixed by deciding on the referenced
+   *object* (`meshtools.get_elements_by_reference_dimension`); regression test
+   `test_mixed_shell_solid.py::test_tie_master_surface_is_the_solid_not_the_shell`.
+2. **The tie wrote the wrong shell side.** CalculiX numbers a shell's faces 1
+   and 2 as the two sides of its 3D expansion (`*SURFACE`, manual), and the
+   section offset decides which of those meets the master. The writer wrote
+   face 2 on every shell. With the skin on top, face 2 is a whole thickness
+   away from the spar, so **no tied MPC was generated at all** and the skin
+   floated — the mixed model then returned bit-for-bit the bare spar, 1.90× the
+   all-solid. Fixed by `write_constraint_tie._shell_slave_face`; regression test
+   `test_mixed_shell_solid.py::test_tie_slave_side_follows_the_shell_offset`.
 
-*Found on the way, and fixed:* building the probe exposed a real defect in the
-coupling path. In a mixed mesh a face reference to a **solid** resolved to a
-coincident **shell**, so a `*TIE`'s master surface came out identical to its
-slave and ccx read the deck and cascaded through an under-determined constraint
-set without ever solving it (which is also what made the probe's first version
-consume all memory — the cascade is unbounded output).
-`meshtools.get_elements_by_reference_dimension` now decides by the referenced
-*object*: an object that owns solids resolves a face through its volume
-elements. Regression test
-`test_mixed_shell_solid.py::test_tie_master_surface_is_the_solid_not_the_shell`.
+Defect 2 is worth remembering for how it failed: a joint one thickness out of
+position is **silent**. ccx prints `WARNING in gentiedmpc: no tied MPC` to
+stdout only, the job finishes normally, and the deflection is exactly the
+uncoupled one. That is the silent-hinge risk this stage exists to catch, and
+G13's numerical check is what caught it — the deck text looked fine.
 
 ### Stage 8 — Visualisation of mixed results
 
@@ -484,19 +482,19 @@ Rows b, c′ and b′ are measured on one C3D8 brick plus one quad at the same
 four coordinates, so the only variable is whether the quad shares the brick's
 nodes (§9.9). Rows a and c need Gmsh on a compound and are recorded as unrun.
 
-**Coupling route confirmed by Stage 0, and qualified by Stage 7:** `*TIE` on a
-**node-disjoint** merged mesh. A shell root tied to a solid face deflects within
-**1.7 %** of a root fixed in DOF 1-6 (§9.8, D2), and a genuine hinge magnifies
-deflection by ~2.5e12 with no diagnostics — so the coupling is real and the
-failure mode is silent, which is why G13's numerical check is load-bearing.
+**Coupling route confirmed, by Stage 0 and now end to end by Stage 7:** `*TIE`
+on a **node-disjoint** merged mesh. A shell root tied to a solid face deflects
+within **1.7 %** of a root fixed in DOF 1-6 (§9.8, D2), and a genuine hinge
+magnifies deflection by ~2.5e12 with no diagnostics — so the coupling is real
+and the failure mode is silent, which is why G13's numerical check is
+load-bearing.
 
-**Stage 7 qualified that confirmation.** D2 ties a shell's **root edge** and
-loads the shell; the Stage 7 probe ties a skin over a solid's **face** and loads
-the spar. The face case does **not** reproduce composite action: with the skin
-the right way up it is as soft as the spar alone (§3, Stage 7). A translational
-tie constrains the shell's nodes but not its rotations, so a single-sided skin
-sheds the membrane strain it would need to act as a flange. D2 therefore proves
-*coupling*, not *composite action*, and must not be quoted for the latter.
+**Stage 7 carried that to a flange and it holds.** A skin tied over a solid's
+face and loaded through the spar gives 6.4223e-02 mm against 6.4163e-02 mm for
+the all-solid rebuild — 0.09 % (§3, Stage 7). Getting there required fixing the
+shell side the tie writes (defect 2 in Stage 7); before that fix the joint sat
+one thickness out of tolerance, no `*TIE` MPC was generated, and the deck
+looked correct while behaving as if the skin were absent.
 
 **Why the Gmsh candidates are unrun, and what that leaves open.** Gmsh on a
 compound matters only if FreeCAD is ever to build a mixed mesh in one meshing
@@ -514,8 +512,8 @@ Close them before anyone proposes the single-pass Gmsh route.
 | Risk | Mitigation |
 |---|---|
 | **A shell↔solid connection is attempted by sharing nodes and becomes a silent hinge.** The Manual (§8.3): *"The connection between 3D elements and all other elements (1D or 2D) is always hinged."* Shared 3D↔2D nodes are knots, whose rotations the solid cannot resist | The merge route is node-disjoint by construction (§8.3); coupling is declared by `*TIE` only; G5 asserts the `*TIE` cards exist, G10/G11 make an uncouplable edge connection a loud error, and G13's numerical check would expose a hinge as excess tip deflection |
-| ~~Whether `*TIE` carries a shell slave node's rotational DOF~~ — **resolved at a root edge only** | Probes D1/D2/D3 ran before any production code existed; results in §9.8. A tied shell **root edge** is within **1.7 %** of a clamped root. **Stage 7 shows this does not extend to a skin tied over a solid face** (§3, Stage 7): rotations are free, and a single-sided skin does not act as a flange. G13 remains the regression guard, and it currently **fails**. |
-| **A single-sided `*TIE` does not make a skin act as a flange.** Stage 7: with the skin correctly on top (offset `-0.5`) the tied cantilever is as soft as the bare spar (1.90× the all-solid rebuild), and going to second order does not help | Stage 7 is **not passed**; the route is not claimed proven. `compositestests/inspect_mixed_cantilever.py` is the instrument. Options to examine before the next stage: tie both shell surfaces, couple rotations as well as translations, or place the shell's reference surface at the interface the solid actually deforms. Decide by measurement, not by preference. |
+| ~~Whether `*TIE` carries a shell slave node's rotational DOF~~ — **resolved, and it does** | Probes D1/D2/D3 ran before any production code existed; results in §9.8. A tied shell root is within **1.7 %** of a clamped root, and Stage 7 shows a tied **flange** within **0.09 %** of an all-solid rebuild. G13 remains the regression guard. |
+| **A tie with the wrong shell side fails silently.** The writer must pick the side of the expanded shell that meets the master (`write_constraint_tie._shell_slave_face`). Stage 7 measured the failure: the joint was one thickness out, ccx printed `WARNING in gentiedmpc: no tied MPC` to stdout only, the job finished, and the deflection was exactly the uncoupled one — the deck text was indistinguishable from a working one | Fixed and regression-tested (`test_tie_slave_side_follows_the_shell_offset`). G13's numerical check is the guard that makes a silent uncoupling impossible to ship, which is why a text-only deck test is not enough |
 | **A hinged mixed model fails silently, not loudly.** D2's hinge variant returned a ~2.5e12 deflection magnification with **no `*ERROR` and no warning** from ccx | The "loud error, not a silent hinge" requirement stands, and G13's numerical check is **load-bearing** — a hinge will not announce itself and cannot be caught by a deck-text test |
 | **Composite `*SHELL SECTION` accepts only S8R and S6.** Measured in D3: an `S4` shell with a composite section is rejected outright — `Element 2 is not a S8R nor a S6 shell element.` | Stage 2/5 must emit S8R or S6 for the shell side of a mixed model when the section is composite; asserted in §8.5 via `getElementType`, never assumed. This is not optional for the plan's motivating Composites case. |
 | **A mixed result is written but cannot be displayed.** The panel gate is exact node-count equality, and `OUTPUT=3d` moves shell results to expanded nodes whose numbering differs from the mesh's. The failure is an error dialog at best, wrong colours at worst | Stage 8 owns the `OUTPUT` decision and the gate; §8.9's V2 asserts both parts are visible in a built result object. Until Stage 8, the deliverable is headless-only and §8's GUI column is reduced accordingly |

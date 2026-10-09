@@ -26,20 +26,25 @@ Two things make the comparison meaningful:
     FILE, so a *.dat readout would validate a deck no user can produce.
 
 Tolerance, fixed before the run and never relaxed (repo rule): the mixed tip
-deflection must be within 5% of the all-solid reference. That threshold is not
-met, and this probe exists to say so rather than to hide it. Measured with the
-tie resolving correctly and ccx solving:
+deflection must be within 5% of the all-solid reference. It is: the mixed model
+gives 6.4223e-02 mm against 6.4163e-02 mm, a difference of 0.09%.
 
-  * offset -0.5 (skin on top, z=20..25): tip 1.22e-01 mm, which is the spar
-    alone (1.90x the all-solid). The skin stiffens nothing.
-  * offset +0.5 (skin inside, z=15..20): tip 9.18e-02 mm (1.39x the all-solid).
-    The skin contributes about two fifths of its parallel-axis share.
+Getting there exposed two defects, both now fixed:
 
-Second order changed neither ratio materially, so this is not a discretisation
-artefact: C3D10 and S6 give the same picture as C3D4 and S3. The open question
-is why a skin bonded on one side does not act as a flange; a *TIE constrains a
-shell's translations but not its rotations, which is the leading candidate and
-is recorded in section 7 of the plan.
+  * a face reference on a solid resolved to a coincident shell, so a *TIE's
+    master surface came out identical to its slave and ccx cascaded without
+    solving (`meshtools.get_elements_by_reference_dimension`);
+  * the tie wrote the shell slave surface as face 2 on every element, but
+    CalculiX numbers a shell's faces 1 and 2 as the two sides of the shell's 3D
+    expansion, and the section offset decides which one meets the master. With
+    the skin on top, face 2 is a whole thickness away, so CalculiX generated no
+    tied MPC at all and the skin floated: the mixed model then returned exactly
+    the bare spar. That silent failure is what made the result look like a
+    hinge (`write_constraint_tie._shell_slave_face`).
+
+The probe still knows how to isolate those: `--model bare` is the spar alone,
+`--model tied_solid` replaces the shell with a solid slab joined the same way,
+and `--phase write` stops before ccx.
 
 Usage, from the repo root:
 
@@ -119,6 +124,11 @@ def _skin_shape():
 
 def _solid_reference_shape():
     return Part.makeBox(LENGTH, WIDTH, SPAR_HEIGHT + SKIN_THICKNESS)
+
+
+def _skin_slab_shape():
+    """The skin as a solid slab sitting on the spar, for the bonded reference."""
+    return Part.makeBox(LENGTH, WIDTH, SKIN_THICKNESS, Vector(0, 0, SPAR_HEIGHT))
 
 
 def _face_at_x(obj, x):
@@ -227,10 +237,86 @@ def _build_mixed(doc):
 
 
 def _top_face(obj):
+    return _face_at_z(obj, SPAR_HEIGHT)
+
+
+def _face_at_z(obj, z):
     for index, face in enumerate(obj.Shape.Faces, start=1):
-        if abs(face.CenterOfMass.z - SPAR_HEIGHT) < 1e-6:
+        if abs(face.CenterOfMass.z - z) < 1e-6:
             return (obj, f"Face{index}")
-    raise ValueError(f"{obj.Name} has no face at z={SPAR_HEIGHT}")
+    raise ValueError(f"{obj.Name} has no face at z={z}")
+
+
+def _build_bare(doc):
+    """The spar alone: the measured baseline the skin has to beat."""
+    spar, spar_mesh = _meshed_part(doc, "Spar", _spar_shape())
+    solid_mesh = spar_mesh.FemMesh
+    doc.removeObject(spar_mesh.Name)
+
+    analysis = ObjectsFem.makeAnalysis(doc, "Analysis")
+    solver = _add_solver(analysis, doc)
+    _add_material(analysis, doc, with_shell_thickness=False)
+
+    fixed = ObjectsFem.makeConstraintFixed(doc, "Fixed")
+    fixed.References = [_face_at_x(spar, 0.0)]
+    analysis.addObject(fixed)
+
+    force = ObjectsFem.makeConstraintForce(doc, "Force")
+    force.References = [_edge_at_xz(spar, LENGTH, 0.0)]
+    force.Force = f"{FORCE} N"
+    force.DirectionVector = Vector(0, 0, -1)
+    analysis.addObject(force)
+
+    mesh_obj = analysis.addObject(ObjectsFem.makeMeshGmsh(doc, "Mesh"))[0]
+    mesh_obj.Shape = spar
+    mesh_obj.ElementOrder = "2nd" if SECOND_ORDER else "1st"
+    mesh_obj.FemMesh = solid_mesh
+    doc.recompute()
+    return analysis, solver, mesh_obj
+
+
+def _build_tied_solid(doc):
+    """The skin as a solid slab, tied to the spar at z=20.
+
+    Same two materials and the same disjoint-node join as the mixed model, so
+    the only difference is that the skin is a volume rather than a shell. If the
+    result is the bonded one, the tie is fine and the shell is the problem; if
+    it matches the spar alone, the join itself does not bond.
+    """
+    spar, spar_mesh = _meshed_part(doc, "Spar", _spar_shape())
+    slab, slab_mesh = _meshed_part(doc, "Skin", _skin_slab_shape())
+    merged, _, _ = meshtools.merge_femmeshes(spar_mesh.FemMesh, slab_mesh.FemMesh)
+    doc.removeObject(spar_mesh.Name)
+    doc.removeObject(slab_mesh.Name)
+
+    compound = doc.addObject("Part::Compound", "BondedGeometry")
+    compound.Links = [spar, slab]
+
+    analysis = ObjectsFem.makeAnalysis(doc, "Analysis")
+    solver = _add_solver(analysis, doc)
+    _add_material(analysis, doc, with_shell_thickness=False)
+
+    fixed = ObjectsFem.makeConstraintFixed(doc, "Fixed")
+    fixed.References = [_face_at_x(spar, 0.0)]
+    analysis.addObject(fixed)
+
+    force = ObjectsFem.makeConstraintForce(doc, "Force")
+    force.References = [_edge_at_xz(spar, LENGTH, 0.0)]
+    force.Force = f"{FORCE} N"
+    force.DirectionVector = Vector(0, 0, -1)
+    analysis.addObject(force)
+
+    tie = ObjectsFem.makeConstraintTie(doc, "Tie")
+    tie.References = [_face_at_z(slab, SPAR_HEIGHT), _face_at_z(spar, SPAR_HEIGHT)]
+    tie.Tolerance = 1.0
+    analysis.addObject(tie)
+
+    mesh_obj = analysis.addObject(ObjectsFem.makeMeshGmsh(doc, "Mesh"))[0]
+    mesh_obj.Shape = compound
+    mesh_obj.ElementOrder = "2nd" if SECOND_ORDER else "1st"
+    mesh_obj.FemMesh = merged
+    doc.recompute()
+    return analysis, solver, mesh_obj
 
 
 def _build_all_solid(doc):
@@ -364,7 +450,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--model",
-        choices=["mixed", "solid", "all"],
+        choices=["mixed", "solid", "bare", "tied_solid", "all"],
         default="all",
         help="which model(s) to build",
     )
@@ -386,7 +472,12 @@ def main(argv: list[str] | None = None) -> int:
     previous_flag = group.GetBool("AllowMixedShellSolid", False)
     group.SetBool("AllowMixedShellSolid", True)
 
-    builders = {"mixed": _build_mixed, "solid": _build_all_solid}
+    builders = {
+        "mixed": _build_mixed,
+        "solid": _build_all_solid,
+        "bare": _build_bare,
+        "tied_solid": _build_tied_solid,
+    }
     names = ["mixed", "solid"] if args.model == "all" else [args.model]
     results = {}
     try:
