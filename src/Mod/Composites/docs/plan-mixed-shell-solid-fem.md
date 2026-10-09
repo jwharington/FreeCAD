@@ -2,7 +2,8 @@
 
 **Date:** 2026-10-02 (revision 2026-10-09) · **Status:** in progress — Stages 1–8 done and
 verified and the mixed path is **on by default** (Stage 9's promotion). Remaining:
-a Composites example, and publishing the mesh-merge routine from Fem. Stage 7's coupling check passes at
+publishing the mesh-merge routine from Fem (general, not Composites') and a consumer
+example. Stage 7's coupling check passes at
 **0.09 %** against an all-solid rebuild, after fixing two defects it found; Stage 8
 makes a mixed result displayable (`OUTPUT=2d` on both file cards). See §3.
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
@@ -76,7 +77,7 @@ path must carry **explicit dimension tags**, sourced from
 
 | Decision | Default | Revisit |
 |---|---|---|
-| Where the fix lives | **FreeCAD FEM core** (`src/Mod/Fem`), flag-gated and upstreamable. Composites consumes it and owns only its example; the mesh-merge routine is published from Fem rather than copied into Composites. | Stage 9 |
+| Where the fix lives | **FreeCAD FEM core** (`src/Mod/Fem`), flag-gated and upstreamable, and **general**: a mixed model's shell need not be a composite shell — a plain steel shell over a solid feature wants exactly the same path — so nothing here, the mesh-merge routine included, is Composites-specific. Composites is one consumer, not the owner. | Stage 9 |
 | Shell↔solid coupling | **`*TIE` with position tolerance**, non-conformal meshes, on **node-disjoint** meshes. Chosen because (a) Trap A makes node-merged shells on a solid boundary undetectable, and (b) the CalculiX manual (§8.3) states that a shared 3D↔2D node is a **hinge by design**, so node sharing is not a coupling mechanism at all. `*TIE` covers **face interfaces only** — edge-connected shapes (§8.4, family E) have no mechanism in the tree and are a scope decision for ADR 0004. | Stage 0 |
 | Safety gate while incomplete | **Hidden dev parameter** `AllowMixedShellSolid` in `User parameter:BaseApp/Preferences/Mod/Fem/General`, default `False`, read through one getter in `femsolver/settings.py` (next to `get_write_comments`). Deleted in the final stage. | Stage 9 |
 
@@ -351,7 +352,7 @@ existing `ShellThickness` behaviour alone is already the more displayable
 choice. §8's GUI column then shrinks to "`setup()` completes and the deck
 matches the headless golden". Decide this before Stage 4, not after.
 
-### Stage 9 — Composites-facing finish, and delete the flag
+### Stage 9 — Promotion, publishing the general merge routine, and deleting the flag
 
 - ~~Flip the default to on~~ — **done.** `settings.get_allow_mixed_elements()`
   now returns `True` when `General/AllowMixedShellSolid` is unset, so the mixed
@@ -363,16 +364,20 @@ matches the headless golden". Decide this before Stage 4, not after.
   off explicitly, because its invariant is about flag-off decks, and it still
   reports *no deck changed*. Tests: `test_mixed_flag_defaults_on`,
   `test_flag_on_still_refuses_a_shell_thickness_on_a_solid_mesh`.
-- Promote the mesh-merge routine to a **public Fem home**, not a Composites
-  copy. What is needed is "mesh each part alone, then merge node-disjoint"
-  (§8.3), and that routine already exists as
-  `femexamples/_mixed_coupling_common.mesh_parts_separately`. It is private and
-  lives under the Fem *examples*, so a Composites example importing it would be
-  reaching into another workbench's internals. `meshtools.merge_femmeshes` is
-  only the primitive underneath. The fix is to make the routine public once and
-  have both the Fem examples and the Composites example call it. Writing a
-  second copy in `Composites/util/fem_util.py` would duplicate it for no gain.
-  **Not started.**
+- Publish the mesh-merge routine from **Fem**, publicly and generically:
+  "mesh each part alone, then merge them node-disjoint" (§8.3), for **any** 2D
+  shell and 3D solid, composite or not. It is not Composites' to own — a
+  non-composite shell wants it just as much — and it is not a Composites
+  convenience. It exists as
+  `femexamples/_mixed_coupling_common.mesh_parts_separately`, which is private
+  and lives under the *examples*. Layering note: the routine calls
+  `femexamples.meshes.generate_mesh`, which imports `gmshtools`, and
+  `gmshtools` already imports `meshtools`, so the routine cannot move down into
+  `meshtools` without a cycle. "Publishing" it therefore means either promoting
+  `generate_mesh` to a public Fem module too, and putting the routine above
+  `gmshtools`, or exposing the routine from the examples package without the
+  underscore. Decide that when the first non-example caller appears; do not add
+  a Composites copy. **Not started.**
 - Add a Composites example under `compositeexamples/examples/` per the
   `_shell_example_common.py` pattern — a laminate shell skin and a solid
   feature in one analysis, which is the motivating case for the whole plan.
