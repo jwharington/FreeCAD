@@ -141,6 +141,19 @@ class CompositeShellFP(CompositeBaseFP):
         obj.DrapePitch = 20.0
 
         obj.addProperty(
+            type="App::PropertyBool",
+            name="DrapeAnalyzeCoverage",
+            group="Draping",
+            doc=(
+                "Measure the drape's coverage geometry. A diagnostic rather "
+                "than part of the solve: it costs O(samples x quads + quads^2), "
+                "about half a drape, and nothing in production reads its "
+                "result. Off by default."
+            ),
+        )
+        obj.DrapeAnalyzeCoverage = False
+
+        obj.addProperty(
             type="App::PropertyLinkList",
             name="DrapeCuts",
             group="Draping",

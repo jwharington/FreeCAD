@@ -79,6 +79,9 @@ def main():
 
         def __init__(self, pitch):
             self.pitch = float(pitch)
+            # This tool reports coverage, which is a diagnostic and off by
+            # default.
+            self.analyze_coverage = True
 
     class _LcsStub:
         """LCS stand-in feeding NextDrapeBackend._build_seed exactly as the

@@ -909,11 +909,12 @@ class NextDrapeBackend(DrapeBackend):
             "projection_tol": getattr(mesh, "projection_tol", 0.5),
             "boundary_tol": getattr(mesh, "boundary_tol", 1e-3),
             "use_geodesic": getattr(mesh, "use_geodesic", False),
-            # Real coverage measurement (the sampling analysis): opt-in here
-            # because the 95 % coverage gate reads it.  The C++ default is
-            # off (O(samples x quads + quads^2)); tests and the CLI opt in
-            # on their own side.
-            "analyze_coverage": True,
+            # Coverage geometry is a diagnostic, not part of the solve: it is
+            # O(samples x quads + quads^2) and measured at about half a drape's
+            # runtime, and nothing in production reads its result - only the
+            # tests and tools that assert on coverage_ratio. Off unless the
+            # caller asks for it, so an ordinary drape does not pay for it.
+            "analyze_coverage": bool(getattr(mesh, "analyze_coverage", False)),
         }
         # When cut wires are specified, enable the C++ cut-wire blocking
         # engine. The dart wires themselves go through "dart_wires" as

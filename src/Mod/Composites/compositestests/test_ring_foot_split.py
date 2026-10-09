@@ -153,6 +153,9 @@ class TestRingFootSplit(StiffenerCompositeFixture, TestFreeCADFP, unittest.TestC
             plate=left,
         )
         panel.DrapePitch = 10.0
+        # The coverage_ratio assertion below needs the diagnostic, which is off
+        # unless asked for.
+        panel.DrapeAnalyzeCoverage = True
         self.doc.recompute()
 
         raw = panel.DrapeDiagnostics

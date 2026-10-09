@@ -188,6 +188,10 @@ class StiffenerCompositeFixture(TestFreeCADFP):
             panel.Rosette = rosette
         if pitch is not None:
             panel.DrapePitch = pitch
+        # This fixture asserts on coverage_ratio. Coverage geometry is a
+        # diagnostic and is off unless asked for, so ask for it here rather
+        # than have every production drape pay for it.
+        panel.DrapeAnalyzeCoverage = True
         self.doc.recompute()
         return panel
 

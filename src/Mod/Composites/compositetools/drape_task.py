@@ -96,8 +96,11 @@ def run_drape_task(
 
         # Lightweight params carrier (NextDrape no longer needs mesh input).
         class _SolverParams:
-            def __init__(self, pitch):
+            def __init__(self, pitch, analyze_coverage):
                 self.pitch = float(pitch)
+                # Off unless the shell asks: the coverage diagnostic costs about
+                # half a drape and only the tests read its result.
+                self.analyze_coverage = bool(analyze_coverage)
 
         dart_wires = _dart_wire_shapes(fp)
 
@@ -107,7 +110,7 @@ def run_drape_task(
 
         # 3. Create backend and run diagnostics
         backend = NextDrapeBackend(
-            _SolverParams(fp.DrapePitch), lcs, shape,
+            _SolverParams(fp.DrapePitch, fp.DrapeAnalyzeCoverage), lcs, shape,
             dart_wires=dart_wires,
         )
         diag = backend.diagnostics()
