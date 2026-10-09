@@ -81,6 +81,9 @@ SET(FemExamples_SRCS
     femexamples/constraint_centrif.py
     femexamples/constraint_contact_shell_shell.py
     femexamples/constraint_contact_solid_solid.py
+    femexamples/_mixed_coupling_common.py
+    femexamples/constraint_mixed_edge_coupling.py
+    femexamples/constraint_mixed_face_coupling.py
     femexamples/constraint_jig321.py
     femexamples/constraint_reaction.py
     femexamples/assembly_linkbody_pendulum.py
@@ -412,6 +415,7 @@ SET(FemTestsApp_SRCS
     femtest/app/test_hydro_jig_commits.py
     femtest/app/test_material.py
     femtest/app/test_mesh.py
+    femtest/app/test_mixed_shell_solid.py
     femtest/app/test_meshtools_junction_tolerance.py
     femtest/app/test_object.py
     femtest/app/test_open.py
