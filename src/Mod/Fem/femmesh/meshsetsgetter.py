@@ -31,11 +31,30 @@ __url__ = "https://www.freecad.org"
 import time
 
 import FreeCAD
-from femtools.femutils import type_of_obj
+from femtools.femutils import get_refshape_type, type_of_obj
 
 from femmesh import meshtools
 from femtools import fem_extension_registry
 from femtools.femutils import type_of_obj
+
+
+_REFERENCE_SHAPE_FOR_DIMENSION = {
+    3: frozenset({"Solid", "Compound"}),
+    2: frozenset({"Face"}),
+    1: frozenset({"Edge"}),
+    0: frozenset({"Vertex"}),
+}
+
+
+def _reference_shape_matches(obj, allowed):
+    """Whether a material's references are of an allowed shape, or absent.
+
+    Absent references mark the catch-all material, which takes the leftovers of
+    every dimension and so belongs to every pass.
+    """
+    if not obj.References:
+        return True
+    return get_refshape_type(obj) in allowed
 
 
 def _material_elements_for_dimension(mat_data, dimension):
@@ -980,6 +999,14 @@ class MeshSetsGetter:
         # materials reference different kinds of sub-shape, so one pass writes
         # volume ids and the next face ids, and a single slot would keep only
         # the last. Each pass records what it assigned before the next runs.
+        #
+        # Each pass also takes only the materials whose references belong to
+        # its dimension. A reference is resolved by node geometry
+        # (get_femnodes_by_refshape), so without that a material referencing a
+        # solid would reach the shell faces lying on that solid, and two solids
+        # each with a material of its own could not be told apart. The shell
+        # part and the solid part reference different kinds of sub-shape on
+        # purpose, so they are dispatched separately.
         FreeCAD.Console.PrintMessage("Materials\n")
         if self.femmesh.Volumes:
             # we only could do this for volumes
@@ -989,27 +1016,58 @@ class MeshSetsGetter:
             # and the edges of the faces as edges
             # there we have to check of some geometric objects
             # get element ids and write them into the femobj
-            self.get_solid_element_sets(self.member.mats_linear)
-            self._record_material_elements_by_dimension(3)
+            solid_materials = self._materials_for_dimension(3)
+            if solid_materials:
+                self.get_solid_element_sets(solid_materials)
+                self._record_material_elements_by_dimension(3, solid_materials)
         if self.member.geos_shellthickness:
             if not self.femelement_faces_table:
                 self.femelement_faces_table = meshtools.get_femelement_faces_table(self.femmesh)
-            meshtools.get_femelement_sets(
-                self.femmesh, self.femelement_faces_table, self.member.mats_linear
-            )
-            self._record_material_elements_by_dimension(2)
+            shell_materials = self._materials_for_dimension(2)
+            if shell_materials:
+                meshtools.get_femelement_sets(
+                    self.femmesh, self.femelement_faces_table, shell_materials
+                )
+                self._record_material_elements_by_dimension(2, shell_materials)
         if self.member.geos_beamsection or self.member.geos_fluidsection:
             if not self.femelement_edges_table:
                 self.femelement_edges_table = meshtools.get_femelement_edges_table(self.femmesh)
-            meshtools.get_femelement_sets(
-                self.femmesh, self.femelement_edges_table, self.member.mats_linear
-            )
+            edge_materials = self._materials_for_dimension(1)
+            if edge_materials:
+                meshtools.get_femelement_sets(
+                    self.femmesh, self.femelement_edges_table, edge_materials
+                )
 
-    def _record_material_elements_by_dimension(self, dimension):
-        """Keep what the pass that just ran assigned, under its own dimension."""
+    def _materials_for_dimension(self, dimension):
+        """The materials one pass should consider.
+
+        A non-mixed mesh keeps the old behaviour: every material goes to every
+        pass. On a mixed mesh a material goes only to the pass for its
+        references' own dimension, so a solid reference cannot claim shell
+        faces and a face reference cannot claim volumes. A material with no
+        references stays the catch-all and goes to every pass, taking that
+        pass's leftovers.
+        """
+        if not meshtools.is_mixed_femmesh(self.femmesh):
+            return list(self.member.mats_linear)
+        allowed = _REFERENCE_SHAPE_FOR_DIMENSION[dimension]
+        return [
+            mat_data
+            for mat_data in self.member.mats_linear
+            if _reference_shape_matches(mat_data["Object"], allowed)
+        ]
+
+    def _record_material_elements_by_dimension(self, dimension, materials):
+        """Keep what the pass that just ran assigned, under its own dimension.
+
+        Only the materials that pass considered are recorded: a material left
+        out of a pass still carries its FEMElements from the previous one, and
+        recording that here would give it a section of a dimension it has no
+        elements for.
+        """
         if not meshtools.is_mixed_femmesh(self.femmesh):
             return
-        for mat_data in self.member.mats_linear:
+        for mat_data in materials:
             if "FEMElements" in mat_data:
                 mat_data.setdefault("FEMElementsByDim", {})[dimension] = mat_data["FEMElements"]
 

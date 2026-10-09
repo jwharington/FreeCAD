@@ -20,6 +20,7 @@ import unittest
 from pathlib import Path
 
 import FreeCAD
+import Part
 
 import Fem
 import ObjectsFem
@@ -73,6 +74,29 @@ def node_disjoint_brick_and_shell():
     for node_id, (x, y, z) in enumerate(corners[:4], start=9):
         mesh.addNode(x, y, z, node_id)
     mesh.addFace([9, 10, 11, 12])
+    return mesh
+
+
+def two_bricks_and_a_shell():
+    """Two C3D8 bricks apart, plus a quad on the first brick's top face.
+
+    Every element has node ids of its own, so the quad is a shell and not a
+    brick's skin. The two bricks exist so each can carry a material of its own,
+    which is the case a solid reference must not confuse with the shell.
+    """
+    mesh = Fem.FemMesh()
+    corners = [
+        (x, y, z) for z in (0.0, 1.0) for x, y in ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    ]
+    for index, (x, y, z) in enumerate(corners, start=1):
+        mesh.addNode(x, y, z, index)
+    mesh.addVolume([1, 2, 3, 4, 5, 6, 7, 8])
+    for index, (x, y, z) in enumerate(corners, start=9):
+        mesh.addNode(x + 2.0, y, z, index)
+    mesh.addVolume([9, 10, 11, 12, 13, 14, 15, 16])
+    for index, (x, y) in enumerate(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)), start=17):
+        mesh.addNode(x, y, 1.0, index)
+    mesh.addFace([17, 18, 19, 20])
     return mesh
 
 
@@ -240,6 +264,76 @@ class TestMixedShellSolid(unittest.TestCase):
                 all(entry.endswith("," + expected) for entry in entries),
                 (offset, entries[:3]),
             )
+
+    # ********************************************************************************************
+    def test_two_solid_materials_do_not_claim_the_shell(self):
+        # A material that references a solid resolves by node geometry
+        # (get_femnodes_by_refshape), and get_material_elements runs its face
+        # pass over every material, so a solid reference also reaches shell
+        # faces whose nodes lie on that solid. One solid plus one shell dodges
+        # this by leaving the solid material's references empty, but only one
+        # material may do that, so two solids plus a shell has no working form
+        # until the material lookup is dispatched by dimension.
+        doc = FreeCAD.newDocument("two_solids_and_a_shell")
+        self.addCleanup(FreeCAD.closeDocument, doc.Name)
+        analysis = ObjectsFem.makeAnalysis(doc, "Analysis")
+        solver = ObjectsFem.makeSolverCalculiXCcxTools(doc, "CalculiXCcxTools")
+        analysis.addObject(solver)
+        analysis.addObject(ObjectsFem.makeElementGeometry2D(doc, 0.1, "ShellThickness"))
+
+        box_a = doc.addObject("Part::Box", "BoxA")
+        box_b = doc.addObject("Part::Box", "BoxB")
+        box_b.Placement.Base = FreeCAD.Vector(2.0, 0.0, 0.0)
+        shell = doc.addObject("Part::Feature", "Shell")
+        shell.Shape = Part.Face(
+            Part.makePolygon(
+                [
+                    FreeCAD.Vector(0.0, 0.0, 1.0),
+                    FreeCAD.Vector(1.0, 0.0, 1.0),
+                    FreeCAD.Vector(1.0, 1.0, 1.0),
+                    FreeCAD.Vector(0.0, 1.0, 1.0),
+                    FreeCAD.Vector(0.0, 0.0, 1.0),
+                ]
+            )
+        )
+
+        mesh_obj = analysis.addObject(ObjectsFem.makeMeshGmsh(doc, "Mesh"))[0]
+        mesh_obj.FemMesh = two_bricks_and_a_shell()
+        compound = doc.addObject("Part::Compound", "Geometry")
+        compound.Links = [box_a, box_b, shell]
+        mesh_obj.Shape = compound
+
+        def steel(name):
+            material = ObjectsFem.makeMaterialSolid(doc, name)
+            data = material.Material
+            data["Name"] = name
+            data["YoungsModulus"] = "210000 MPa"
+            data["PoissonRatio"] = "0.30"
+            material.Material = data
+            analysis.addObject(material)
+            return material
+
+        material_a = steel("MaterialA")
+        material_a.References = [(box_a, "Solid1")]
+        material_b = steel("MaterialB")
+        material_b.References = [(box_b, "Solid1")]
+        material_shell = steel("MaterialShell")
+        material_shell.References = [(shell, "Face1")]
+        doc.recompute()
+
+        member = membertools.AnalysisMember(analysis)
+        getter = meshsetsgetter.MeshSetsGetter(analysis, solver, mesh_obj, member)
+        with mixed_shell_solid_flag(True):
+            getter.get_element_sets_material_and_femelement_geometry()
+
+        by_name = {m["Object"].Name: m for m in member.mats_linear}
+        solid_face_elements = set(by_name["MaterialA"]["FEMElementsByDim"].get(2, []))
+        shell_face_elements = set(by_name["MaterialShell"]["FEMElementsByDim"].get(2, []))
+        self.assertTrue(solid_face_elements.isdisjoint(shell_face_elements), solid_face_elements)
+        self.assertFalse(
+            solid_face_elements,
+            "a material referencing a solid must not claim the shell's faces",
+        )
 
     # ********************************************************************************************
     def test_mixed_flag_defaults_on(self):
