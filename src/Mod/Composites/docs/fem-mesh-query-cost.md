@@ -65,17 +65,24 @@ Two tools, because the two halves need different instruments.
    process is required rather than attaching: `kernel.yama.ptrace_scope` is 1
    here, which forbids attaching to a process this shell did not start.
 
-One stage table, one real solve path:
+One stage table, one real solve path, after the fixes below:
 
-| stage | s |
-|---|---|
-| geometry (core + two skin supports) | 0.20 |
-| drape.upper / drape.lower | 26.9 / 26.6 |
-| fem setup (sections, loads, ties) | 0.03 |
-| mesh.gmsh core / upper / lower | 1.52 / 1.02 / 0.98 |
-| mesh.merge | 0.49 |
-| **deck.write** | **>500, never returned** |
-| solve.ccx | not reached |
+| stage | s | share |
+|---|---|---|
+| geometry (core + two skin supports) | 0.14 | 0.0 % |
+| drape.upper / drape.lower | 26.20 / 25.89 | 13.6 % |
+| fem setup (sections, loads, ties) | 0.04 | 0.0 % |
+| mesh.gmsh core / upper / lower | 1.61 / 0.89 / 0.82 | 0.9 % |
+| mesh.merge | 0.53 | 0.1 % |
+| **deck.write** | **286.56** | **74.8 %** |
+| **solve.ccx** | **26.56** | **6.9 %** |
+| results.load | 14.00 | 3.7 % |
+| **TOTAL** | **383.26** | |
+
+**Writing the deck costs 10.8x the solve.** Generating the mesh (gmsh) and
+merging it are together 1 % of the run, so the suspicion that mesh *handling*
+dominates was right in substance and wrong in location: it is the deck write,
+which builds node and element sets out of the mesh, that dominates.
 
 Function level, 43,727 samples:
 
@@ -104,14 +111,46 @@ with the subset test it is emulating:
 The predicate is unchanged, so no deck may change. That is the invariant the
 verification below checks.
 
-## Verification
+## Verification, and what the fixes actually bought
 
 * **Deck snapshot unchanged** — `run_inspect_deck_snapshot.py --check` reports
   *no deck changed and no example moved*, so the predicate still selects the
-  same faces on all 42 generated decks.
-* **FEM suite green** — `femtest.app.test_mesh` and the mixed matrix pass.
-* **Re-measured** with the same cost tool, so the improvement is a number
-  rather than an expectation.
+  same faces on all 42 generated decks. This is the check that matters: the
+  whole risk of touching `getFacesOnly` is reclassifying a face.
+* **FEM suites green** — `femtest.app.test_mesh` and the mixed matrix, 51/51.
+* **Measured, not assumed**, with the same cost tool after each change:
+
+| change | effect |
+|---|---|
+| `getFacesOnly`/`getEdgesOnly` linear instead of rebuilding sets per pair | that function's samples 36,243 → 4,945 (−86 %) |
+| element sets scanned once per getter instead of three times | deck write 459 s → 292 s |
+| per-element set names hashed to 20 characters | the wing solves at all |
+| `get_femelements_by_femnodes_std` membership against a set | **no measurable effect**: 292 s → 286 s |
+
+That last row is recorded because it was wrong. The profile put 13 % of samples
+there and the quadratic membership test looked like the cause; it is not. The
+cost in that function is walking the whole element table once per geometry
+reference, which no change to the membership test can address.
+
+## A third defect, found only because the deck write finally finished
+
+Once the deck was written in a reasonable time, CalculiX rejected it outright:
+
+    *ERROR reading *NSET/ELSET: set name too long
+
+The per-element `*ELSET` name appended an element id to a concatenation of
+material, shell and thickness identifiers and reached **82 characters**;
+CalculiX allows 80 (manual, *NSET/ELSET). FreeCAD checked the base name, and the
+writer then appended `_21604` to it, which is how a name that passed the check
+still arrived over the limit. The prefix is now hashed to 20 characters with the
+element id kept — md5, not `hash()`, which is salted per process and would make
+decks irreproducible.
+
+Two things follow from that, and both are worth keeping. First, this defect was
+invisible until two performance defects in front of it were fixed: the model had
+never once been solved, and nothing said so. Second, the numbers in the table
+above are for a model that now runs for the first time, so treat any earlier
+figure for "the solve" as having measured nothing at all.
 
 ## Two other costs found on the way, both real, neither the wall
 
