@@ -1441,15 +1441,41 @@ the LS8e case this plan exists for, has no end-to-end example. §10's per-skin
 
 ### 11.6 Smaller, and open
 
-- **A solved mixed model makes the GUI unresponsive.** Opening the saved mixed
-  wing (`/tmp/wing.FCStd`, 78 MB) in the GUI and viewing `CCX_Results` is very
-  slow, and the GUI process was later found gone. The result carries **289,544**
-  displacement values for a mesh of ~35k nodes, so the result is on the expanded
-  nodes while the panel's gate wants exact node-count equality — the same
-  condition Stage 8 fixed for the smaller plate, unanswered for a model this
-  size. Worth investigating before claiming a mixed result is *displayable* at
-  scale; the timing figures above were also taken with a GUI holding it, so
-  treat any absolute number from such a run as inflated.
+- **A solved mixed model makes the GUI unresponsive, and its result is ~8x the
+  mesh.** Opening the saved mixed wing (`/tmp/wing.FCStd`, 78 MB) in the GUI and
+  viewing `CCX_Results` is very slow, and the GUI process was later found gone.
+  Measured on that deck and its frd: the deck defines **35,385 nodes** (ids
+  1..35,385, all distinct and contiguous, and no element references beyond
+  them), while the frd declares **289,241** — the mesh's own nodes plus
+  **253,856 expansion nodes** with ids up to 414,924. So the result spans 8x the
+  mesh, the panel's exact-node-count gate cannot pass, and the GUI carries 8x the
+  data it should.
+
+  **`OUTPUT=2d` does not prevent this for this model**, which is where Stage 8
+  generalised too far from a smaller case. Re-running ccx on the same deck with
+  each setting: `OUTPUT=2d` → 289,241 frd nodes, `OUTPUT=3d` → 275,189. The
+  manual says why: 2D output *"averages the fields in the expanded elements to
+  obtain the values in the nodes of the original 1d and 2d elements"* — the
+  expanded model is present either way, so the option changes where the
+  *results* land, not which nodes the frd lists. The probe's own model did give
+  3910 == 3910, so mixed-ness is not the trigger; the wing's shells carry a
+  **composite** section, the probe's a homogeneous one. Removing the per-element
+  `ORIENTATION` from every shell section and re-running still gave 289,241, so
+  the orientation cards are ruled out. That leaves the layered `COMPOSITE`
+  section itself as the candidate, and it has **not** been isolated from model
+  size: the probe's comparison is small *and* homogeneous, the wing is large
+  *and* composite. The `*NODE FILE` placement was also checked and is correct -
+  it sits inside the step (`*STEP` at line 180,061, `*NODE FILE` at 180,254),
+  which the manual requires for the option to apply at all.
+
+  Consequence for the fix: for a composite mixed model it is not a deck option.
+  Either the reader maps expanded results back onto the mesh, or the panel and
+  the result object must cope with an frd 8x the mesh without freezing. Neither
+  is small and neither has been attempted. **The freeze itself has not been
+  reproduced or profiled** — only the data sizes above are measured, so which
+  layer to change is still an inference. The timing figures earlier in this
+  section were also taken with a GUI holding this document, so treat any
+  absolute number from such a run as inflated.
 - **`Stiffener` / `Bulkhead` mixed coverage** — none. `quasi_iso_stiffener_panel`
   is all shells; Bulkhead has no FEM example at all.
 - **The GUI half of §8** — `femtest/gui/test_mixed_shell_solid.py` does not
