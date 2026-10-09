@@ -123,6 +123,12 @@ EXAMPLES = {
         "module": ".examples.mixed_shell_solid_plate",
         "name": "Mixed shell and solid plate (laminate skin over a solid spar)",
     },
+    "mixed_shell_solid_wing": {
+        "module": ".examples.mixed_shell_solid_wing",
+        "name": (
+            "Mixed shell and solid wing (biaxial carbon skins over a foam core)"
+        ),
+    },
     "quasi_iso_cylindrical_panel": {
         "module": ".examples.quasi_iso_cylindrical_panel",
         "name": "Quasi-isotropic cylindrical panel (curvature needs no drape)",

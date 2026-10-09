@@ -66,17 +66,11 @@ def make_demo_laminate():
     )
 
 
-def make_qi_laminate(doc, name, angles=(0.0, 45.0, -45.0, 90.0), ply_thickness=0.2):
-    """A symmetric quasi-isotropic laminate as document objects.
-
-    ``IsotropicEquivalent`` is set, so the solver sees one isotropic layer and
-    no orthotropic orientation machinery; that keeps an example's FEM path
-    independent of the drape backend.
-    """
+def _make_orthotropic_plies(doc, name, angles, ply_thickness):
+    """One UD carbon/epoxy lamina per angle, numbered in stack order."""
     import FreeCAD
 
     _prepare_feature_import_environment()
-    from ...features.CompositeLaminate import CompositeLaminateFP
     from ...features.FibreCompositeLamina import FibreCompositeLaminaFP
 
     plies = []
@@ -89,6 +83,20 @@ def make_qi_laminate(doc, name, angles=(0.0, 45.0, -45.0, 90.0), ply_thickness=0
         ply.Angle = angle
         ply.WeaveType = WeaveType.UD.name
         plies.append(ply)
+    return plies
+
+
+def make_qi_laminate(doc, name, angles=(0.0, 45.0, -45.0, 90.0), ply_thickness=0.2):
+    """A symmetric quasi-isotropic laminate as document objects.
+
+    ``IsotropicEquivalent`` is set, so the solver sees one isotropic layer and
+    no orthotropic orientation machinery; that keeps an example's FEM path
+    independent of the drape backend.
+    """
+    _prepare_feature_import_environment()
+    from ...features.CompositeLaminate import CompositeLaminateFP
+
+    plies = _make_orthotropic_plies(doc, name, angles, ply_thickness)
 
     laminate = doc.addObject("App::FeaturePython", name)
     CompositeLaminateFP(laminate, laminae=plies)
@@ -96,6 +104,36 @@ def make_qi_laminate(doc, name, angles=(0.0, 45.0, -45.0, 90.0), ply_thickness=0
     laminate.FibreVolumeFraction = 55
     laminate.Symmetry = SymmetryType.Even.name
     laminate.IsotropicEquivalent = True
+    doc.recompute()
+    return laminate
+
+
+def make_biaxial_laminate(doc, name, ply_thickness, angle=45.0, fabric_layers=1):
+    """A balanced biaxial fabric laminate as document objects.
+
+    Each fabric layer contributes a ``+angle`` and a ``-angle`` ply and the
+    stack is mirrored about the mid-plane (``SymmetryType.Even``), so
+    ``fabric_layers=1`` is ``[+angle/-angle]s``: balanced, so no
+    extension-shear coupling, and symmetric, so no bend-twist coupling.
+
+    Unlike :func:`make_qi_laminate`, this laminate is left orthotropic rather
+    than declared isotropic-equivalent: the solver sees a real per-ply
+    composite section and a fibre orientation, which is what a biaxial skin
+    has to carry.
+    """
+    _prepare_feature_import_environment()
+    from ...features.CompositeLaminate import CompositeLaminateFP
+
+    half_angles = []
+    for _ in range(fabric_layers):
+        half_angles += [angle, -angle]
+    plies = _make_orthotropic_plies(doc, name, half_angles, ply_thickness)
+
+    laminate = doc.addObject("App::FeaturePython", name)
+    CompositeLaminateFP(laminate, laminae=plies)
+    laminate.ResinMaterial = _resin_material()
+    laminate.FibreVolumeFraction = 55
+    laminate.Symmetry = SymmetryType.Even.name
     doc.recompute()
     return laminate
 

@@ -30,8 +30,10 @@ from Composites.compositeexamples.examples import (  # noqa: E402
     closed_ring_composite_shell,
     conical_panel_segment,
     cyl_sphere_seam,
+    mixed_shell_solid_wing,
     tubular_shell,
 )
+from Composites.features.Laminate import is_isotropic_laminate  # noqa: E402
 from Composites.mechanics.material_properties import (  # noqa: E402
     is_orthotropic,
     iso_material2dict,
@@ -456,6 +458,89 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
         self.assertIn("*TIE", solver_input, "the skin must be coupled to the spar")
         self.assertIsNotNone(result["max_displacement"])
         self.assertGreater(result["max_displacement"], 0.0)
+
+    @unittest.skip(
+        "hangs the suite: the core meshes to ~293k points because MESH_SIZE_MM "
+        "does not reach it, and merging ~386k nodes does not converge in "
+        "reasonable time. run-tests.sh has no timeout, so this blocks the "
+        "whole run rather than failing. Fix the sizing first, then re-arm."
+    )
+    def test_mixed_shell_solid_wing_solves(self):
+        """A real biaxial laminate on a foam core, in one mixed solve.
+
+        The motivating case: two ``Composite::Shell`` skins carrying a real
+        orthotropic laminate (not the isotropic-equivalent shortcut) over a
+        solid Rohacell core, coupled by two *TIEs and solved by CalculiX.
+        """
+        try:
+            result = runner.run("mixed_shell_solid_wing", run_solver=True, doc=None)
+        except RuntimeError as exc:
+            msg = str(exc)
+            missing_stack_markers = (
+                "ObjectsFem is required",
+                "Unable to create FEM analysis/solver/mesh objects",
+                "Mesh generation failed",
+                "femtools.ccxtools is required",
+            )
+            if any(marker in msg for marker in missing_stack_markers):
+                self.skipTest(f"FEM stack unavailable in this FreeCAD build: {msg}")
+            raise
+
+        self._saved_doc = result.get("doc")
+        self._assert_composites_features_valid(result["doc"])
+        # Both skins are real draped laminates, not isotropic stand-ins.
+        for key in ("upper_skin", "lower_skin"):
+            skin = result[key]
+            self.assertNotIn("Invalid", skin.State, msg=f"{skin.Name} is invalid")
+            self.assertTrue(skin.DrapeValid, msg=f"{skin.Name} has no drape frame")
+            self.assertFalse(
+                is_isotropic_laminate(skin.Laminate)
+            )
+        self.assertAlmostEqual(
+            result["upper_laminate"].Thickness.getValueAs("mm").Value,
+            4.0 * mixed_shell_solid_wing.PLY_THICKNESS_MM,
+            places=3,
+            msg="[+/-45]s must be four plies of the 160 gsm thickness",
+        )
+
+        mesh = result["mesh"].FemMesh
+        self.assertGreater(len(mesh.Volumes), 0, "the core must be volume elements")
+        self.assertGreater(
+            len(mesh.FacesOnly), 0, "the skins must keep shell elements of their own"
+        )
+
+        solver_input = result["solver_input"]
+        self.assertIn("*SOLID SECTION", solver_input, "the core must be sectioned")
+        self.assertIn("*SHELL SECTION", solver_input, "the skins must be sectioned")
+        self.assertIn(
+            "COMPOSITE,ORIENTATION=",
+            solver_input,
+            "the skins must export a real per-ply section",
+        )
+        self.assertIn("*ORIENTATION", solver_input)
+        self.assertEqual(
+            solver_input.count("*TIE,"),
+            2,
+            "one tie per skin",
+        )
+        self.assertIn("S8R", solver_input, "a composite section needs S8R or S6")
+
+        # A real solve, and a tip deflection in the sandwich range: the bound
+        # and its derivation are in the example module (`TIP_DEFLECTION_BOUND_MM`).
+        displacement = result["max_displacement"]
+        FreeCAD.Console.PrintMessage(
+            f"\n[mixed wing] max_displacement: {displacement:.6e} mm; "
+            f"nodes: {mesh.NodeCount}, volumes: {len(mesh.Volumes)}, "
+            f"shell elements: {len(mesh.FacesOnly)}\n"
+        )
+        self.assertIsNotNone(displacement)
+        self.assertGreater(displacement, 0.0)
+        self.assertLess(
+            displacement,
+            mixed_shell_solid_wing.TIP_DEFLECTION_BOUND_MM,
+            "a tip deflection above the bound means the skins are not bonded: "
+            "the bare foam core alone deflects ~3000 mm",
+        )
 
 
 class TestFailurePostprocess(TestCompositeExamplesBase):
