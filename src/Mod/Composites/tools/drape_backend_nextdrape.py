@@ -33,6 +33,23 @@ def _import_engine():
     return Composites_drape.DrapeEngine
 
 
+def _require_drapable_shape(shape: Any) -> None:
+    """Reject a shape whose faces the solver cannot walk.
+
+    A ply is draped over a surface, so the shape must be a face, a shell or
+    a compound of them.  A solid's periodic side face shares its seam edge
+    with no other face, and the solver's seam walk assumes two adjacent
+    faces per edge: it reads past the one-entry list and carries a null
+    face into the lattice, which segfaults on the next trace.  Rejecting
+    the solid here reports the failure instead of crashing the process.
+    """
+    if getattr(shape, "ShapeType", None) == "Solid":
+        raise ValueError(
+            "the drape support must be a shell or a face, not a solid — "
+            "a ply is draped over a surface"
+        )
+
+
 def _dump_solver_input(shape: Any, seed: dict, params: dict) -> None:
     """Dump the exact solver inputs to FC_DRAPE_DUMP_DIR when set.
 
@@ -503,6 +520,7 @@ class NextDrapeBackend(DrapeBackend):
             seed = self._build_seed()
             params = self._build_params()
             solver_shape = self._cut_shape if self._use_cut_shape else self._shape
+            _require_drapable_shape(solver_shape)
             _dump_solver_input(solver_shape, seed, params)
             self._result = self._engine.compute(solver_shape, seed, params)
             if not self._result.get("success"):

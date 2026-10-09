@@ -69,6 +69,21 @@ class TestCompositeShellFP(TestFreeCADFP):
         laminate = self._create_laminate()
         shell.Laminate = laminate
         self.assertIs(shell.Laminate, laminate)
+
+    def test_solid_support_is_rejected_not_crashed(self):
+        """A solid is not a drape surface: the solve must fail, not crash.
+
+        The inherited fixture support is a solid cylinder; its periodic
+        side face drives nextdrape's seam walk past the end of a one-entry
+        adjacency list, carrying a null face into the lattice and
+        segfaulting the C++ solver.  Rejecting the solid before the solve
+        turns that input into a reported failure.
+        """
+        shell = self._create_shell()
+        shell.Laminate = self._create_laminate()
+        self.assertFalse(shell.DrapeValid)
+        self.assertIn("not a solid", shell.DrapeQuality)
+
     def test_live_support_shape_tracks_moved_support(self):
         """Known-issue #6: geometry queries must read the live support, not
         the shell's cached Shape snapshot."""

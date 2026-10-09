@@ -3,7 +3,6 @@
 
 from typing import List
 
-import FreeCADGui
 from FreeCAD import Console
 from pivy import coin
 
@@ -77,6 +76,8 @@ class VPCompositeBase:
         vobj.addDisplayMode(self.standard, "Standard")
 
     def setEdit(self, vobj, mode=0):
+        import FreeCADGui
+
         if self._taskPanel is None:
             # avoid edit mode by return False
             # https://forum.freecad.org/viewtopic.php?t=12139&start=10#p161062
@@ -87,10 +88,14 @@ class VPCompositeBase:
         return True
 
     def unsetEdit(self, vobj, mode=0):
+        import FreeCADGui
+
         FreeCADGui.Control.closeDialog()
         return True
 
     def doubleClicked(self, vobj):
+        import FreeCADGui
+
         guidoc = FreeCADGui.getDocument(vobj.Object.Document)
         # check if another VP is in edit mode
         # https://forum.freecad.org/viewtopic.php?t=13077#p104702
