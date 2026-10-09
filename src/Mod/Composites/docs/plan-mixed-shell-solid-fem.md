@@ -1,6 +1,9 @@
 # Plan: Mixed shell + solid elements in one FEM analysis
 
-**Date:** 2026-10-02 · **Status:** proposed, not started
+**Date:** 2026-10-02 (revision 2026-10-09) · **Status:** in progress — Stages 1–7 done and
+verified; Stage 8 next. Stage 7's coupling check passes at **0.09 %** against an
+all-solid rebuild, after fixing two defects it found (a solid's face resolving to
+a coincident shell; a tie written on the wrong shell face). See §3, Stage 7.
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
 shells wants to coexist with locally solid features in the *same*
 analysis. Today it cannot: FreeCAD's FEM pipeline is built around
@@ -1192,11 +1195,17 @@ closed-form sandwich solution today, independently of every stage here.
 
 1. The offset must be **per skin, not per analysis**. A sandwich's two skins
 offset in opposite directions, and one model-wide scalar cannot say that.
-2. Confirm the sign and direction against the manual before exposing it in a
-   GUI. The offset is in units of shell thickness, and with `COMPOSITE` it
-   shifts the whole stacked section relative to the reference surface. Reversed
-   signs put both skins inboard and make the sandwich *softer than no offset at
-   all*, which still looks plausible in a fringe plot.
+2. Confirm the sign and direction against the manual. The offset is in units of
+   shell thickness, and the manual's definition is: *"OFFSET=0.5 means that the
+   reference surface is the top surface of the shell"* (`*SHELL SECTION`, and
+   the same paragraph defines which of the expanded faces is `S1` and which is
+   `S2`). A positive offset therefore puts the section on the
+   **negative-normal** side of the reference surface, and the sign is chosen per
+   skin from which way that skin's core lies. Reversed signs put both skins
+   inboard and make the sandwich *softer than no offset at all*, which still
+   looks plausible in a fringe plot. Stage 7 fixed a silent coupling bug caused
+   by exactly this definition — a `*TIE` written on the wrong shell face (§3) —
+   so treat the sign as load-bearing, not cosmetic.
 
 *Exit criterion:* a shell-only sandwich case whose bending stiffness matches an
 equivalent solid model within a tolerance stated before the run, with the
