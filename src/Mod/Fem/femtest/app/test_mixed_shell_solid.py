@@ -656,6 +656,45 @@ class TestMixedShellSolid(unittest.TestCase):
             )
 
     # ********************************************************************************************
+    def test_tie_on_a_non_face_is_refused(self):
+        # ADR 0004 obligation 3: a connection that cannot be expressed as a
+        # surface must fail loudly. The tie check counted references but never
+        # asked whether one *was* a face - the message said "two needed faces"
+        # and no face was ever checked - so a tie on an edge passed validation
+        # and the writer then built a *SURFACE whose face index came from an
+        # edge mask. A deck that means nothing, produced silently.
+        for sub_ref in ("Edge1", "Vertex1"):
+            doc, analysis, solver, mesh_obj = self._mixed_analysis_document()
+            box = doc.getObject("Box")
+            tie = ObjectsFem.makeConstraintTie(doc, "Tie")
+            tie.References = [(box, "Face1"), (box, sub_ref)]
+            analysis.addObject(tie)
+            doc.recompute()
+
+            member = membertools.AnalysisMember(analysis)
+            with mixed_shell_solid_flag(True):
+                message = check_member_for_solver_calculix(analysis, solver, mesh_obj, member)
+            self.assertIn(sub_ref, message, message)
+            self.assertIn("not a face", message, message)
+
+    # ********************************************************************************************
+    def test_tie_on_two_faces_is_still_accepted(self):
+        # The guard must refuse only what it is for. Two faces - including a
+        # face of a solid, which resolves through the sub-element path rather
+        # than the shell table - stay valid.
+        doc, analysis, solver, mesh_obj = self._mixed_analysis_document()
+        box = doc.getObject("Box")
+        tie = ObjectsFem.makeConstraintTie(doc, "Tie")
+        tie.References = [(box, "Face1"), (box, "Face2")]
+        analysis.addObject(tie)
+        doc.recompute()
+
+        member = membertools.AnalysisMember(analysis)
+        with mixed_shell_solid_flag(True):
+            message = check_member_for_solver_calculix(analysis, solver, mesh_obj, member)
+        self.assertNotIn("not a face", message, message)
+
+    # ********************************************************************************************
     def test_mixed_deck_carries_a_solid_and_a_shell_section(self):
         # Stage 5. The deck must section the volumes once, the shell once, and
         # put no element in both.

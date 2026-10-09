@@ -38,6 +38,26 @@ from femmesh import meshtools
 
 from . import femutils
 from .checksmaterials import check_linear_material
+from .geomtools import get_element
+
+
+def _tie_references_that_are_not_faces(tie_obj):
+    """Sub-references of a tie that cannot form a surface.
+
+    A ``*TIE`` couples two surfaces, so a reference that resolves to an edge, a
+    vertex or a solid cannot be expressed as one. Without this the writer goes
+    on to build a ``*SURFACE`` whose face index came from an edge mask: a deck
+    that means nothing, with no error from FreeCAD and none from CalculiX.
+
+    The dimension is taken from what the referenced shape holds rather than
+    from its ``ShapeType``, so a compound of faces stays a valid reference.
+    """
+    offenders = []
+    for obj, sub_refs in tie_obj.References:
+        for sub_ref in sub_refs:
+            if meshtools.get_shape_dimension(get_element(obj, sub_ref)) != 2:
+                offenders.append(sub_ref or obj.Name)
+    return offenders
 
 
 def check_member_for_solver_calculix(analysis, solver, mesh, member):
@@ -236,12 +256,16 @@ def check_member_for_solver_calculix(analysis, solver, mesh, member):
     # tie
     if member.cons_tie:
         for c in member.cons_tie:
+            tie = c["Object"]
             items = 0
-            for reference in c["Object"].References:
+            for reference in tie.References:
                 items += len(reference[1])
             if items != 2:
-                message += "{} doesn't reference exactly two needed faces.\n".format(
-                    c["Object"].Name
+                message += "{} doesn't reference exactly two needed faces.\n".format(tie.Name)
+                continue
+            for sub_ref in _tie_references_that_are_not_faces(tie):
+                message += "{} references {}, which is not a face; a tie couples two surfaces.\n".format(
+                    tie.Name, sub_ref
                 )
     # sectionprint
     if member.cons_sectionprint:
