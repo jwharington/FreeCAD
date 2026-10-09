@@ -792,38 +792,33 @@ first invocation of any new case.
 
 `run-tests.sh <bare-name>` resolves to `compositestests.<name>`, which is the
 wrong package root for Composites. These modules do relative imports that need
-`Composites.` as the root, so the bare path either errors outright
-(`test_composite_shell`: *attempted relative import beyond top-level package*,
-from `example_materials.py`'s `..mechanics`) or, worse, **succeeds while
-collecting a fraction of the module**.
+`Composites.` as the root, so under the bare root those imports fail outright —
+`test_composite_shell` reports *attempted relative import beyond top-level
+package*, from `example_materials.py`'s `..mechanics`.
 
-Measured on `test_laminate`: `run-tests.sh test_laminate` collects **6 of 19**
-tests and exits 0, silently skipping `TestLaminateFP` and
-`TestQuasiIsotropicEntryGuards` — including the case that was failing. The same
-module run as
+All three resolution paths in the script now use the qualified root: the
+single-module path, the glob path (which passed a bare name with **no** package
+at all), and the no-argument full-suite path (which hardcoded the wrong root for
+every module in the list).
+
+**How to count tests, because getting this wrong twice cost real time.** Do
+**not** count them from `run-tests.sh`'s stdout. On success `run_one` prints only
+`grep -E '^(PASS|FAIL|…)' "$log" | tail -6`, so a passing module appears to have
+run six tests; on failure it prints the whole log. Counting test ids from that
+output therefore undercounts *exactly when the run succeeds*, which is how a
+healthy 19-test module was twice mistaken for one running 6.
+
+Use the timings file the script already prints at startup — one line per test,
+written from Python so FreeCAD's console spam cannot corrupt it:
 
 ```bash
-FreeCADCmd -t Composites.compositestests.test_laminate
+tf=$(run-tests.sh test_laminate 2>&1 | sed -n 's/^timings file: //p')
+grep -cE '^[0-9]' "$tf"            # number of tests actually run
+grep -E '^[0-9]' "$tf" | grep -v PASS   # anything not passing
 ```
 
-collects all 19 and passes. Use the fully qualified form.
-
-**This is a measurement hazard, not just an inconvenience.** A green that ran a
-third of its tests is worse than a red suite, and every count quoted from the
-bare path is suspect. Two consequences for this plan:
-
-- Where a command here says `run-tests.sh <name>`, read it as
-  `FreeCADCmd -t Composites.compositestests.<name>` instead.
-- When a count matters, compare the number of tests *collected* against the
-  number of `def test_` in the module. That check costs one grep and it is the
-  only thing that would have caught the above.
-
-The root cause is not yet pinned: `test_base.py` installs its `FreeCADGui` stub
-only when `FreeCADGui` is absent from `sys.modules`, so which stub is live
-depends on import order, and the two roots import differently. Fixing
-`resolve_module` in the skill's `run-tests.sh` is the obvious repair, but it is
-shared tooling used by every workbench and wants its own verification rather
-than a change fenced in behind feature work.
+Cross-check against `grep -c 'def test_' <module>.py`. A count that does not
+match the module is the signal, and it costs one grep.
 
 ### 8.9 Visualisation cases (V1-V3)
 
