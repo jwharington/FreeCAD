@@ -28,13 +28,16 @@ up working on `.inp` text after the fact.
 ### Two traps that are not obvious from the layer list
 
 **Trap A — `getFacesOnly()` cannot distinguish a deliberate shell from a
-volume's own skin.** `FemMesh::getFacesOnly` (`FemMesh.cpp:841-863`)
+volume's own skin.** `FemMesh::getFacesOnly` (`FemMesh.cpp:841-875`)
 classifies a face as "shell" when its node set is **not** a subset of
 any volume's node set. So a shell meshed conformally *on* a solid's
 boundary, or a midsurface that gmsh turns into an internal volume
 boundary after `Coherence Mesh;`, is silently **not** a shell and is
 dropped by mesh-write mode 2. The mesh strategy (Stage 0) exists to
 establish, by experiment, which geometry arrangement survives this test.
+
+The test is on **node ids, not coordinates** — a distinction that decides
+the whole "solid covered by a shell" family and is pinned down in §8.3.
 
 **Trap B — element dimension is inferred from node count.** The
 reference→element machinery keys off `len(element_nodes)`:
@@ -70,7 +73,7 @@ path must carry **explicit dimension tags**, sourced from
 | Decision | Default | Revisit |
 |---|---|---|
 | Where the fix lives | **FreeCAD FEM core** (`src/Mod/Fem`), flag-gated and upstreamable. Composites consumes it and owns only the mesh-merge helper + example. | Stage 8 |
-| Shell↔solid coupling | **`*TIE` with position tolerance**, non-conformal meshes. Chosen because Trap A makes conformal shells on a solid boundary undetectable. Conformal coupling stays out of scope. | Stage 0 |
+| Shell↔solid coupling | **`*TIE` with position tolerance**, non-conformal meshes, on **node-disjoint** meshes. Chosen because (a) Trap A makes node-merged shells on a solid boundary undetectable, and (b) the CalculiX manual (§8.3) states that a shared 3D↔2D node is a **hinge by design**, so node sharing is not a coupling mechanism at all. `*TIE` covers **face interfaces only** — edge-connected shapes (§8.4, family E) have no mechanism in the tree and are a scope decision for ADR 0004. | Stage 0 |
 | Safety gate while incomplete | **Hidden dev parameter** `AllowMixedShellSolid` in `User parameter:BaseApp/Preferences/Mod/Fem/General`, default `False`, read through one getter in `femsolver/settings.py` (next to `get_write_comments`). Deleted in the final stage. | Stage 8 |
 
 **Invariant for the whole plan:** with the flag off, every generated
@@ -102,8 +105,29 @@ whether `writeABAQUS(elemParam=2)` emits an `Efaces` block.
 *Back out:* delete the script. Nothing in the tree changed.
 
 If candidate (c) is the only one that works, or none does, the coupling
-default is overturned → **write `docs/adr/0004-shell-solid-element-dimensionality.md`**
-recording the replacement before continuing.
+default is overturned.
+
+**Stage 0 also always writes one ADR** —
+`docs/adr/0004-shell-solid-coupling-and-interface-dimension.md` — because
+the spike raises a second, independent question the candidates cannot
+answer: an **edge-connected** shell↔solid shape has no coupling mechanism
+in the tree at all (§8.4.1), and whether to build one (`*EQUATION`) or to
+declare it out of scope changes the size of this work. The ADR records the
+chosen interface-dimension policy and, if the candidate spike overturns the
+Tie default, the replacement coupling as well. §8.5 G10/G11 enforce whatever
+it decides.
+
+**Stage −1 (§9) runs first and gates everything below it.** It validates the
+plan's premises — does ccx accept a mixed deck, does `*TIE` carry moment,
+does the mode-2 writer emit what §8.3 assumes — using probes that touch no
+production file. If P1 or P2 fails, the stages below are re-shaped before any
+of them is started. Do not begin Stage 0 until §9 has an answer for P1.
+
+**Stage 0 additionally settles the coupling question the manual leaves open.**
+The manual says a *shared-node* 3D↔2D connection is a hinge; it says nothing
+about whether `*TIE`'s MPCs carry a shell slave node's rotations. Probe **D2**
+(§9.4) answers that with a tip-deflection ratio before any F-family stage
+depends on it, and the measured ratio is the number the ADR records.
 
 ### Stage 1 — New primitives, zero call sites
 
@@ -224,12 +248,19 @@ never relaxed afterwards to make the test pass.
 ~/.pi/agent/skills/freecad-dev/scripts/run-tests.sh test_laminate
 
 # FEM app tests, including the golden-deck comparison
-~/.pixi/envs/default/bin/FreeCADCmd -t Fem.test_ccxtools
+~/.pixi/envs/default/bin/FreeCADCmd -t femtest.app.test_ccxtools
+
+# The mixed-mesh geometry matrix of §8
+~/.pixi/envs/default/bin/FreeCADCmd -t femtest.app.test_mixed_shell_solid
+
+# The GUI half of §8 (needs a display; see §8.8)
+build/debug/bin/FreeCAD --run-test TestFemGui
 ```
 
 Confirm the exact `-t` module spelling before first use rather than
 guessing flags — `src/Mod/Fem/TestFemApp.py` shows the test modules the
-FEM suite registers.
+FEM suite registers, and `src/Mod/Fem/CMakeLists.txt` shows which files
+are installed under `Mod/Fem/` at all.
 
 Run the FEM app tests after **every** stage, not only after Stages 2
 and 3. They are the only mechanism that proves the off-flag is inert.
@@ -247,14 +278,31 @@ deck-text test for a physics result.
   share the same single-dimension assumption and are blocked by the same
   code; Stage 4's by-dimension dispatch is what makes them reachable
   later, but nothing here unblocks them.
-- Conformal shared-node shell↔solid coupling (see Trap A).
+- Conformal shared-node shell↔solid coupling (see Trap A). This is not a
+  preference: the CalculiX manual (§8.3) states that the 3D↔2D connection is
+  **always hinged** when nodes are shared, so a conformal shared-node
+  connection cannot be used as a coupling mechanism at all. The merge route
+  is node-disjoint by construction and couples through `*TIE`.
+- Merging interface nodes as a cheap E-family coupling. Eliminated in §8.4.1:
+  it is a documented hinge, not a weak joint.
+- **Edge-connected shell↔solid coupling is out of scope by default — but
+  the reason is narrower than first stated.** Probe D2 (§9.8) showed ccx
+  couples a shell-edge `*TIE` with full moment transfer, so the blocker is
+  FreeCAD's reference→surface mapping, not CalculiX, and not a missing
+  `*EQUATION` capability. The default is a loud error, not a silent hinge;
+  ADR 0004 may promote this to in-scope, in which case the cheap fix is to let
+  an Edge selection on a shell yield its edge face (S3-S6). An `*EQUATION`
+  writer remains the fallback.
 - Multiple mesh objects per analysis
   (`membertools.get_mesh_to_solve` still raises). Mixing happens inside
   one `FemMesh`, not across two.
 - Any change to Z88, Elmer, CalculiX-objects, MyStran or OOFEM writers.
   The flag path is CalculiX-only.
 - Layered/composite shell sections beyond what
-  `fem_extension_registry` already provides.
+  `fem_extension_registry` already provides. Note that D3 (§9.8) constrains
+  the element type instead: a composite `*SHELL SECTION` is accepted only for
+  **S8R and S6**, so the shell side of a mixed composite model cannot use
+  linear shells.
 
 ---
 
@@ -274,8 +322,536 @@ Coupling route confirmed by Stage 0: *not yet recorded.*
 
 | Risk | Mitigation |
 |---|---|
-| `*TIE` to a shell surface behaves differently in ccx than assumed | Stage 0 spike + Stage 7 numerical check, both before any behaviour is user-visible |
+| **A shell↔solid connection is attempted by sharing nodes and becomes a silent hinge.** The Manual (§8.3): *"The connection between 3D elements and all other elements (1D or 2D) is always hinged."* Shared 3D↔2D nodes are knots, whose rotations the solid cannot resist | The merge route is node-disjoint by construction (§8.3); coupling is declared by `*TIE` only; G5 asserts the `*TIE` cards exist, G10/G11 make an uncouplable edge connection a loud error, and G13's numerical check would expose a hinge as excess tip deflection |
+| ~~Whether `*TIE` carries a shell slave node's rotational DOF~~ — **resolved, and it does** | Probes D1/D2/D3 ran before any production code existed; results in §9.8. A tied shell root is within **1.7 %** of a clamped root. G13 remains the regression guard. |
+| **A hinged mixed model fails silently, not loudly.** D2's hinge variant returned a ~2.5e12 deflection magnification with **no `*ERROR` and no warning** from ccx | The "loud error, not a silent hinge" requirement stands, and G13's numerical check is **load-bearing** — a hinge will not announce itself and cannot be caught by a deck-text test |
+| **Composite `*SHELL SECTION` accepts only S8R and S6.** Measured in D3: an `S4` shell with a composite section is rejected outright — `Element 2 is not a S8R nor a S6 shell element.` | Stage 2/5 must emit S8R or S6 for the shell side of a mixed model when the section is composite; asserted in §8.5 via `getElementType`, never assumed. This is not optional for the plan's motivating Composites case. |
 | Node-count inference lurking in code paths not yet read (Stage 4 is the wide one) | Stage 1 ships dimension-tagged tables and Stage 4 asserts on element **types**, not counts |
 | A mixed model silently double-sections elements | Stage 5's explicit no-element-in-two-sections assertion |
 | Flag leaks into normal paths and changes existing decks | Golden-file comparison over the whole `femtest/data/calculix/` set at every stage; the flag is read in exactly one function |
 | Work stalls half-done, leaving an unusable combination | The flag makes "half-done" a supported state: off = today's behaviour, including today's error message |
+| **Edge-connected shell↔solid cannot be *generated* by FreeCAD.** Corrected by D2 (§9.8): ccx couples a shell-edge `*TIE` with full moment transfer, so CalculiX is not the blocker — the reference→surface mapping is | §8.4.1 revised: the first-choice fix is now to let an Edge selection on a shell yield its edge face (S3-S6), which is less work than a `*EQUATION` writer; until then G10/G11 make it a loud error |
+| A merged mesh assertion assumes contiguous element ids | `compact_mesh` (`meshtools.py:2205-2216`) leaves id gaps for faces despite its docstring; §8.3 requires uniqueness/monotonicity assertions instead |
+| A golden deck is captured from a live Gmsh mesh and rots on a Gmsh upgrade | R1: byte-compared decks only from frozen `create_nodes`/`create_elements` meshes; live-Gmsh cases assert structure only |
+
+---
+
+## 8. Geometry test cases (headless + GUI)
+
+The stages in §3 say *what to change*; this section says *how we prove it
+on real geometry*, through both entry points, before anything is
+user-visible. Every case here is geometry-driven: real `Part` shapes in a
+`femexamples` module, not a hand-built `FemMesh` in a unit test.
+
+**Admission rule for any case in this matrix.** A case enters the matrix
+only when (i) it declares the stage that first makes it pass, and (ii) the
+same `femexamples` module produces the *same deck* headless and in the
+GUI. A case that passes only in one of the two modes is not finished.
+
+### 8.1 What already exists to build on
+
+| Piece | Where | Why it matters here |
+|---|---|---|
+| Geometry + analysis builder | `femexamples/<name>.py` → `get_information()` + `setup(doc=None, solvertype="ccxtools")` | The *only* place today where a full analysis is built from real geometry. Same module is loaded by the GUI Examples browser. |
+| GUI-conditional setup | `femexamples/constraint_tie.py:124-127` — `if FreeCAD.GuiUp: … ViewObject.hide()` | The existing precedent for one module serving both modes. Every branch is ViewObject-only. |
+| Headless workflow test | `femtest/app/test_ccxtools.py:340` `input_file_writing_test` | Does exactly the workflow we need: `check_prerequisites()` → `write_inp_file()` → `testtools.compare_inp_files()` against `femtest/data/calculix/<base>.inp`. |
+| Deck comparator | `femtest/app/support_utils.py:260` `compare_inp_files` | Already normalises the volatile `** written …` header lines, so a golden compare is stable. |
+| Deterministic mesh route | `femexamples/meshes/generate_mesh.py:49` `mesh_from_existing(create_nodes, create_elements)` | Freezes a mesh as a committed node/element list — the reason every ccx golden is reproducible. |
+| GUI test harness | `femtest/gui/test_open.py`, registered in `TestFemGui.py:25`, listed at `CMakeLists.txt:773` | The template for a GUI test that asserts on real `ViewObject` proxies. |
+| Element dimension tags | `FemMesh.Volumes` / `FacesOnly` / `EdgesOnly`, `FemMesh.getElementType` | The only sound basis for mixed assertions (see Trap B in §1). |
+
+### 8.2 The four safety rules
+
+These are what make the matrix "no surprises". Each is a rule because
+ignoring it has a specific failure mode.
+
+**R1 — a golden deck is never written from a live Gmsh mesh.** Gmsh output
+varies between Gmsh versions, so a byte-compared `.inp` built straight from
+`mesh_from_mesher()` rots on an unrelated Gmsh upgrade. Therefore each
+mixed case splits in two:
+
+- a **structural** test over the live Gmsh mesh (element counts per
+dimension, `Efaces` elset present, `getElementType` per element) — never a
+byte compare;
+- a **frozen** mesh, committed under `femexamples/meshes/` as a
+`create_nodes`/`create_elements` pair, used by every golden comparison.
+
+The geometry is still genuinely exercised: the structural test meshes it,
+and the constraints in the frozen-mesh example reference the real
+`Part::Feature` sub-shapes, exactly as `constraint_tie.py` does today.
+
+**R2 — `setup()` may branch on `FreeCAD.GuiUp` only for `ViewObject`.** Any
+branch that can change geometry, the mesh, the analysis tree, or the deck
+is a bug. The GUI test asserts the deck written from the GUI-built
+document is equal to the headless golden, so the two entry points cannot
+drift apart silently.
+
+**R3 — assert on dimension tags, never on node counts.** Element counts per
+round-trip through `Volumes`/`FacesOnly`/`EdgesOnly` and `getElementType`.
+A node-count assertion passes on a tetra mesh misread as a shell mesh
+(tetra4 ≡ quad4, Trap B), which is precisely the bug this work exists to
+prevent.
+
+**R4 — an unlisted file is invisible, not failing.** `src/Mod/Fem/CMakeLists.txt`
+installs Python files by explicit list (`FemTestsApp_SRCS:404`,
+`FemGuiTests_SRCS:773`, `FemExamples_SRCS:50`, `FemTestsCcx_SRCS:433`). A
+test file or golden that is not added there never installs; `-t` then
+fails with *module not found* — or worse, compares against a *stale*
+golden left behind by an earlier install. Every new file in §8.6 is
+added to its list in the same commit that adds the file.
+
+### 8.3 Trap A, precisely: it is node identity, not coincidence
+
+`FemMesh::getFacesOnly` (`src/Mod/Fem/App/FemMesh.cpp:841-875`) states its
+own algorithm:
+
+> *"for each face … if the face nodes are a subset of the volume nodes … add
+> the face to the volume faces … if face doesn't belong to a volume add it
+> to faces only."*
+
+The membership test is on **node ids**, not on coordinates. So the rule that
+governs every "solid covered by a shell" case is:
+
+| Shell nodes | `getFacesOnly()` | Survives `elemParam=2`? |
+|---|---|---|
+| its **own** nodes at coincident coordinates (node-disjoint) | not a subset → reported | **yes** |
+| nodes **shared** with the solid (merged, or one Gmsh mesh with coherence) | subset → dropped | no — the shell silently disappears |
+
+This is why §2's route survives. `compact_mesh` (`meshtools.py:2180-2235`)
+renumbers nodes **1:1 in enumeration order and never merges coincident
+ones**, so `merge_femmeshes(base, extra)` yields a node-disjoint mesh by
+construction. Trap A therefore fires only for a *single* Gmsh mesh of a
+compound with `CoherenceMesh` — not for the Python merge route. That is a
+much narrower trap than §1's wording suggests, and it is the reason the
+covered-solid cases below are testable at all.
+
+`G8` and `G9` pin the failing condition; `G4`-`G7` pin the working one, so
+a regression in either direction is caught.
+
+**Node-disjointness is required for a second, independent reason: shared
+nodes cannot couple a shell to a solid at all.** The CalculiX manual, S8/S8R
+section (identical wording in the 2.7 and 2.18 manuals):
+
+> *"Beam and shell elements are always connected in a stiff way if they share
+> common nodes. This, however, does not apply to plane stress, plane strain and
+> axisymmetric elements."* — the stiff-by-shared-nodes rule is for 1D↔2D only.
+>
+> *"For an internal hinge between 1D or 2D elements the nodes must be doubled
+> and connected with MPC's. The connection between 3D elements and all other
+> elements (1D or 2D) is always hinged."*
+
+The mechanism: shells are *"automatically expanded into 20-node brick
+elements"*, and a shared shell node becomes a **knot** — a rigid body with
+seven DOF (3 translations, 3 rotations, uniform expansion) at the reference
+node. A solid element can see only that node's three translations, so the
+shell's rotations have no counterpart on the solid side and nothing resists
+them. A hinge, by design.
+
+Consequence for the whole plan: **a shell↔solid connection must be declared
+by MPCs (`*TIE` or `*EQUATION`), never by node sharing.** Node sharing does
+not merely couple weakly — it silently produces the hinge §7 warns about.
+That is why the merge route in §2 is node-disjoint by construction: it is a
+requirement of the coupling, not a limitation of it.
+
+**A second, unsigned hazard in the same helper.** `compact_mesh` advances
+`ele_id` twice per face (once before `addFace`, once after) while edges and
+volumes advance once, so its output **does** contain id gaps despite the
+docstring claiming it *"removes all gaps in node and element ids"*.
+Assertions on merged meshes must therefore test **uniqueness and
+monotonicity, never contiguity**. A contiguity assertion would fail on
+correct output and teach us nothing.
+
+### 8.4 Coupling geometry taxonomy
+
+Shapes fall into three families, distinguished by the **measure of the
+interface**, because that — not the mesh — decides which CalculiX coupling
+can express them.
+
+**F — face interface (measure 2).** The shell lies on, or parallel-offset
+from, a solid face. `*TIE` is the right mechanism and the writer already
+supports it.
+
+| Id | Shape | Notes |
+|---|---|---|
+| F1 | solid **fully covered** by a coincident, node-disjoint shell | the "solid wrapped in a shell" case; one tie per wrapped face |
+| F2 | shell **patch** over one face of a larger solid (partial coverage) | tie only the patch footprint |
+| F3 | shell **offset** from the solid (laminate midsurface standing off a core) | the physically honest composite model; tolerance must exceed the offset |
+| F4 | solid **fully enclosed** by a closed shell (a shell "bag") | needs the shell topologically closed, tie on every solid face |
+
+**E — edge interface (measure 1).** The shell meets the solid only along an
+edge, so the connection carries a moment that a surface tie cannot express.
+**No mechanism for this exists in the tree today** — see §8.4.1.
+
+| Id | Shape | Notes |
+|---|---|---|
+| E1 | shell plate continuing a solid block from one of its edges | the classic "shell welded to a solid" |
+| E2 | shell **web** meeting a solid plate at 90° along an edge | the stiffener-to-skin case |
+| E3 | shell **bridging two** separate solids, edge-connected at both ends | two interfaces, both of the E kind |
+
+**X — degenerate.** Kept as negative tests so the failure modes stay visible.
+
+| Id | Shape | Expected today |
+|---|---|---|
+| X1 | shell coincident **and node-merged** with the solid (one Gmsh compound, coherence on) | shell vanishes → `len(FacesOnly) == 0` |
+| X2 | shell passing **through** the solid interior (embedded sheet) | not a boundary face; excluded from `FacesOnly` by definition |
+
+#### 8.4.1 The E family is blocked in the **writer**, not in CalculiX
+
+> **Corrected by measurement — see §9.8.** Probe D2 tied a shell's root
+> *edge* to a solid face in a hand-written deck and ccx coupled it with full
+> moment transfer. `*TIE` therefore **can** express an edge interface, and the
+> heading above was too strong. What follows is the original reasoning,
+> retained because the writer-side limits it cites are still real and still
+> the reason the E family is unavailable *from FreeCAD*.
+
+`*TIE` cannot be *generated* for an edge interface. Verified, not assumed:
+
+- `write_constraint_tie.py:63-77` writes `*SURFACE, NAME=…` entries of the
+form `elem,S{n}` — a surface reference derived from a face index, with no
+path that yields a shell edge face (S3-S6) from a selected Edge.
+- `meshsetsgetter.get_constraints_tie_faces:809-815` feeds it from faces
+only (`TieSlaveFaces` / `TieMasterFaces`).
+- Searching `src/Mod/Fem` for `EQUATION` finds **no CalculiX `*EQUATION`
+writer at all**. The one hit, `femsolver/elmer/sifio.py:39`, is Elmer's
+unrelated SIF keyword; `write_step_equation.py` writes `*STEP`, despite the
+name.
+
+The blocker is therefore a **reference→surface mapping** (Stage 4's territory),
+not a missing CalculiX capability and not necessarily new writer code. Options:
+
+1. **Extend the reference resolution so an Edge selection on a shell yields
+its edge face (S3-S6)** for `*TIE`. D2 shows ccx handles the resulting deck
+with moment transfer, so this is the cheap route if Stage 4's by-dimension
+dispatch can produce the face index. This *replaces* the earlier
+"add a `*EQUATION` writer" option as the first choice — it is strictly less work.
+2. **Add a `*EQUATION` writer** — still correct and general, but now a
+fallback rather than the primary route, and only needed if option 1 turns out
+to be impossible for some reference shape.
+3. **~~Merge only the edge nodes, leaving the rest disjoint.~~ Eliminated.**
+By the manual wording quoted in §8.3, a shared 3D↔2D node is a **hinge by
+design** — a knot whose rotations the solid cannot resist. Merging edge nodes
+would not produce a weak connection; it would produce exactly the
+silently-hinged joint §7 warns about, with no error and no warning. Not an
+option at any cost.
+4. **Declare E out of scope** — keep §5's exclusion, with the taxonomy
+recording why, and make the missing coupling a **loud error** rather than a
+silent hinge.
+
+This is a scope decision, not an implementation detail. Per §2's revisit rule
+it belongs in the ADR written at Stage 0 —
+`docs/adr/0004-shell-solid-coupling-and-interface-dimension.md` — recording
+which of 1, 2 and 4 is chosen and what it costs.
+
+**Until that ADR exists, the mixed path must fail loudly on an E-shaped
+connection.** `G10` and `G11` exist to enforce exactly that.
+
+### 8.5 The matrix
+
+`G1` and `G2` are controls that pass today; `G0`, `G8` and `G9` are negative
+tests pinning today's behaviour; `G10` and `G11` pin the *gap* in today's
+behaviour. The rest are gated on the stage that makes them pass. Nothing
+here is expected to go green early.
+
+| Case | Family | Geometry | Mesh route | Assertion (headless) | Assertion (GUI) | First green at |
+|---|---|---|---|---|---|---|
+| **G0** | control | existing pure-solid example, **flag off**, with a `ShellThickness` object attached | frozen | `check_prerequisites()` still returns today's *"Shell thicknesses defined but FEM mesh has volume elements."* — verbatim | pressing **Run** on a mixed example in the Examples browser surfaces the same error text | today |
+| **G1** | control | `femexamples/ccx_cantilever_base_face.py` (solid) | frozen | existing `input_file_writing_test` golden compare — unchanged | deck written from the GUI-built document equals the headless golden | today |
+| **G2** | control | `femexamples/ccx_cantilever_ele_quad4.py` (shell) | frozen | existing golden compare — unchanged | as G1 | today |
+| **G3** | control | G1 geometry, **flag on**, no shell elements present | frozen | deck byte-identical to G1's golden — the flag-inert guard | same | Stage 2 |
+| **G4** | **F2** | shell **patch** over one face of a larger solid | live Gmsh (structural) + frozen merged mesh | structural: `len(Volumes)>0`, `len(FacesOnly)>0`, each element's dimension from its own table; frozen: one `*SOLID SECTION`, ≥1 `*SHELL SECTION`, an `*ELSET,ELSET=Efaces`, `*TIE, POSITION TOLERANCE` | setup completes, analysis tree builds, deck == headless golden | Stage 2 (deck) / Stage 5 (sections) |
+| **G5** | **F1** | solid **fully wrapped** in a coincident, node-disjoint shell | live Gmsh + frozen | as G4, plus one `*TIE` per wrapped face and **no element id in two elsets** | as headless | Stage 3 |
+| **G6** | **F3** | shell **offset** from the solid (laminate midsurface over a core) | live Gmsh + frozen | as G4; `POSITION TOLERANCE` ≥ the offset, read back from the deck | as headless | Stage 3 |
+| **G7** | **F4** | solid **fully enclosed** by a closed shell bag | live Gmsh + frozen | as G5; the shell face set is topologically closed | as headless | Stage 5 |
+| **G8** | **X1** | sheet coincident **and node-merged** with the solid (one Gmsh compound, coherence on) | live Gmsh | `len(FemMesh.FacesOnly) == 0` — the shell vanishes. Pins Trap A | same | today (asserts current behaviour) |
+| **G9** | **X2** | sheet passing **through** the solid interior | live Gmsh | the sheet is not reported by `FacesOnly` | same | today |
+| **G10** | **E2** | shell web ⊥ solid plate, edge-connected (stiffener T-joint) | live Gmsh + frozen | a Tie whose reference is an **Edge** raises a clear error instead of writing an unusable `*SURFACE`; the assertion is that the gap is *detected and reported*, never silently hinged | as headless | Stage 0 (gap detection); real coupling only if ADR 0004 selects an edge mechanism |
+| **G11** | **E1/E3** | shell plate continuing a solid from one edge; shell bridging two solids | live Gmsh + frozen | as G10 | as headless | Stage 0 (gap detection) |
+| **G12** | **F1** | G5 geometry with a `ConstraintDisplacement` | frozen | DOF 4-6 appear **only** on shell nodes; solid-only nodes get DOF 1-3. Grounds on `meshsetsgetter.get_constraints_fixed_nodes:288-307` and `write_constraint_displacement.py:86` | same | Stage 6 |
+| **G13** | **F1** | G5 geometry, cantilever in bending | frozen | tip deflection within a tolerance **stated in the test before the run**, against the same model rebuilt fully solid | interactive only; not asserted in CI | Stage 7 |
+
+G13 is the only case that needs a CalculiX binary. If none is configured,
+the plan records that gap (§4) rather than substituting a deck-text check
+for a physics result.
+
+### 8.6 Files the matrix adds
+
+| File | Purpose |
+|---|---|
+| `femtest/app/test_mixed_shell_solid.py` | headless half of G0-G13 |
+| `femtest/gui/test_mixed_shell_solid.py` | GUI half of G0-G12 |
+| `femexamples/constraint_mixed_face_coupling.py` | F-family geometry + analysis; `setup(doc, variant="f1"|"f2"|"f3"|"f4")`, default `f1` |
+| `femexamples/constraint_mixed_edge_coupling.py` | E-family geometry + analysis; `setup(doc, variant="e1"|"e2"|"e3")`, default `e2` |
+| `femexamples/meshes/mesh_mixed_face_coupling_f*.py` | frozen merged meshes for G4-G7, G12, G13 |
+| `femexamples/meshes/mesh_mixed_edge_coupling_e*.py` | frozen meshes for G10, G11 |
+| `femtest/data/calculix/constraint_mixed_*.inp` | the mixed goldens |
+| `femtest/data/mesh/mixed_*.npy`-or-text snapshots | structural baselines for the R1 half of G4-G7 |
+
+A `variant` keyword with a default is compatible with the browser: it
+launches examples as `setup()` or `setup(solvertype="…")`
+(`examplesgui.py:246-252`), so the default variant is what a GUI user gets
+and the other variants are reachable only from the tests and the Python
+console.
+
+Registration, per R4: both test modules into `FemTestsApp_SRCS` /
+`FemGuiTests_SRCS`; the imports into `TestFemApp.py` / `TestFemGui.py`
+(the `FemTestNN` / `FemGuiTestNN` numbering at the end of each); the
+example and mesh modules into `FemExamples_SRCS`; the goldens into
+`FemTestsCcx_SRCS` / `FemTestsMesh_SRCS`.
+
+Three of these are user-visible and must be declared as such in the stage
+that lands them: the new examples appear in the FEM **Examples browser**;
+**Run** on a mixed example with the flag off produces the §3 Stage-3 error
+in the GUI; and `mesh_from_mesher` starts running on a compound for the F
+variants. All three are intentional, and none changes an existing document
+or deck.
+
+Note the `meshtype` and `not_files` handling in
+`femexamples/examplesgui.py:57-70` — the new examples get a `"meshtype":
+"mixed"` entry in `get_information()` and are *not* added to `not_files`,
+so they are loadable in the GUI. That is what makes the GUI half of §8.5
+meaningful rather than synthetic.
+
+### 8.7 Ordering inside the matrix
+
+The cases are written **before** the stage that should make them pass, and
+land in the tree skipped-or-failing-on-purpose until then. Concretely:
+
+- **Stage 0** writes the controls and the negatives — G0, G1, G2 — which
+must pass immediately, plus G8, G9 (Trap A and its interior variant) and
+G10, G11 (the E-family gap). All of these assert *today's* behaviour,
+including the two traps, so they are the yardstick for everything after. The
+ADR from §8.4.1 is written in the same commit.
+- **Stage 1** writes G3, the flag-inert guard, which must stay
+byte-identical for the rest of the work; and the structural half of G4,
+which is what actually verifies `merge_femmeshes`.
+- **Stage 2** adds G4's golden half.
+- **Stage 3** adds G5 and G6, and converts G10/G11 from *"reports the gap"*
+to real coupling **only if** the ADR chose option 1 or 2.
+- **Stage 5** adds G4's section assertion and G7.
+- **Stage 6** adds G12; **Stage 7** adds G13.
+
+A case whose stage has not landed is registered in the test module but
+kept out of `TestFemApp.py` / `TestFemGui.py` until it can pass, so the
+suite is never red on purpose. Deleting that scaffolding in the final
+stage is part of Stage 8.
+
+### 8.8 Running them
+
+```bash
+# headless — the whole matrix
+~/.pixi/envs/default/bin/FreeCADCmd -t femtest.app.test_mixed_shell_solid
+
+# headless — one case (loader path, arbitrary nesting is supported)
+~/.pixi/envs/default/bin/FreeCADCmd -t \
+  femtest.app.test_mixed_shell_solid.TestMixedShellSolid.test_G13_bending_deflection
+
+# GUI — needs a display, and TestFemGui is not in __unit_test__
+# (`InitGui.py:59` keeps it commented out), so it is invoked explicitly
+build/debug/bin/FreeCAD --run-test TestFemGui
+```
+
+Do not guess further flags: read `src/Mod/Fem/TestFemApp.py` and
+`src/Mod/Fem/TestFemGui.py` for the registered module names before the
+first invocation of any new case.
+
+---
+
+## 9. Risk-first premise validation (Stage −1)
+
+### 9.1 Premises are not implementation
+
+Every stage in §3 changes `src/Mod/Fem`. But the plan rests on a handful of
+factual claims about code and physics that are **not ours** — CalculiX
+behaviour, and the `writeABAQUS` C++ path. Those claims can be falsified
+*now*, before a line of the plan is implemented, and two of them would change
+the plan's shape if they turned out false.
+
+So: validate the premises first, with **additive probes that touch no
+production file**. Two rules.
+
+- **No probe edits `src/Mod/Fem`.** Nothing lands there until the premises
+  hold, so §2's byte-identical invariant is never even at risk.
+- **No probe is a throwaway.** Per the repo's tooling discipline each is a
+  committed inspection CLI, so a premise that must be re-checked on a new ccx
+  or a new Gmsh is re-checked from the same file rather than rewritten.
+
+### 9.2 The gate assumptions
+
+| Id | Premise | If false | Evidence today | Probe |
+|---|---|---|---|---|
+| **P1** | ccx accepts one deck containing solids **and** shells (`*ELEMENT,TYPE=C3D10` + `TYPE=S6`, `*SOLID SECTION` + `*SHELL SECTION`) | The plan is dead — no amount of FreeCAD-side work yields a runnable mixed model | none; never tested | D1 |
+| **P2** | `*TIE` between a **shell slave** and a **solid master** transfers moment — i.e. is not a hinge | The whole F family (§8.4) collapses; only `*EQUATION` remains, and no writer for it exists | manual is silent; §8.3's hinge statement is about *shared nodes*, a different case | D2 |
+| **P3** | a **composite** `*SHELL SECTION` block coexists with `*SOLID SECTION` in one deck | the Composites use case (laminated skin over a solid core) is out of reach even if P1 holds | none | D3 |
+| **P4** | `FemMesh.writeABAQUS(..., elemParam=2, ...)` emits volumes **and** `Efaces` on a *mixed* `FemMesh` | Stage 2 is not a one-line change; the C++ path needs work first | reachable from the GUI (§9.3) but **no test covers it** and it has never run on a mixed mesh | M1 |
+| **P5** | `getFacesOnly()` reports a **node-disjoint** shell inside a mixed `FemMesh` — the §8.3 claim | the node-disjoint merge route is wrong and §8.3 must be rewritten | code-read only, never executed | M1 |
+| **P6** | merge-by-renumbering produces a mesh that still satisfies P4 and P5 | Stage 1's `merge_femmeshes` is the wrong abstraction | `compact_mesh` is tested on pure meshes only | M2 |
+
+### 9.3 A finding that changes P4's status: `elemParam=2` is not dead code
+
+Stage 2 was recorded as "wiring up an unused mode". It is not unused — it is
+**user-facing and default-on for GUI mesh export**:
+
+- `src/Mod/Fem/App/AppFemPy.cpp:257` reads
+  `Mod/Fem/Abaqus:AbaqusElementChoice` with **default 2**.
+- `src/Mod/Fem/Gui/DlgSettingsFemExportAbaqus.ui:52` exposes that preference
+  with the design-time selection at index 2 and a tooltip that documents the
+  semantics exactly: *"FEM: Only FEM elements will be exported. This means
+  only edges not belonging to faces and **faces not belonging to volumes**."*
+
+Three consequences, all of which belong in the plan proper:
+
+1. **P4 is lower risk than first claimed.** The C++ mode-2 path has a real
+   entry point and is presumably exercised by users exporting `.inp`.
+2. **Stage 2 makes the solver deck agree with the export dialog's default** —
+   a consistency argument in its favour, not a novel idea.
+3. **Trap A is documented, user-facing, default behaviour.** The tooltip
+   describes `getFacesOnly()` verbatim. A user who exports a conformal
+   shell+volume mesh gets the shell faces silently dropped *today, by
+   default*. That is a fourth consequence to add to §1, and it strengthens
+   node-disjoint merging from "the chosen route" to "the only route".
+
+### 9.4 D1–D3 — deck probes (ccx only, no FreeCAD code)
+
+One committed CLI, `compositestests/inspect_mixed_deck_premises.py`, built
+like the existing `inspect_*` tools. It writes decks by hand, runs `ccx -i`,
+and reads the `.dat`.
+
+- **D1** — two-element mixed model: one C3D10 solid, one S6 shell, `*TIE`
+  across the interface, one end fixed, tip load. *Pass:* ccx completes and
+  writes a `.dat`. This is P1, and it gates D2 and D3.
+- **D2** — the same geometry built three ways: **(a)** shell tied to solid as
+  in D1, **(b)** the same model rebuilt **fully solid**, **(c)** D1 with the
+  `*TIE` removed. *Pass:*
+  `|u_tip(a) − u_tip(b)| / u_tip(b) < 0.10` **and** `u_tip(c) > 3·u_tip(a)`.
+  (a)≈(b) with (c)≫(a) means a tie. (a)≈(c) means a hinge. Anything else
+  means neither: print all three deflections and stop rather than guess.
+  This single run decides §2's coupling default.
+- **D3** — D1 with `*SHELL SECTION, COMPOSITE` (two layers) replacing the
+  homogeneous `*SHELL SECTION`. *Pass:* ccx completes. P3.
+
+D2's tolerance is stated before the run and is never relaxed afterwards (repo
+rule). If it fails, that is the finding — not a tuning problem.
+
+### 9.5 M1–M2 — mesh probes (pure Python)
+
+Also outside `src/Mod/Fem`, as `compositestests/inspect_mixed_mesh_premises.py`.
+These only `import Fem` and call the existing Python API; they become the
+seeds of Stage 1/2's unit tests once the premises hold.
+
+- **M1** — build a `Fem.FemMesh` with one tetra volume and one **node-disjoint**
+  quad at coincident coordinates. Assert `len(Volumes) == 1` and
+  `len(FacesOnly) == 1`; then `writeABAQUS(path, 2, False)` and assert the
+  file contains a volume block, a shell block, and an `Efaces` elset. Then
+  rebuild with the quad's nodes **shared** with the tetra and assert
+  `len(FacesOnly) == 0`. M1 covers **P4 and P5** in one file, and executes
+  Trap A rather than arguing it.
+- **M2** — merge two separately built meshes by renumbering (the
+  `compact_mesh` discipline) and re-run M1's assertions on the result.
+  P6.
+
+### 9.6 Failure branches
+
+| Fails | Consequence for the plan |
+|---|---|
+| **P1** | Stop. The plan needs re-shaping around deck-level merging or a different solver; §3 is void. |
+| **P2** | §8.4's F family collapses into the E family. `*EQUATION` moves from "the E-family gap" to "required for every shell↔solid connection", ADR 0004 becomes mandatory before Stage 3, and the plan roughly doubles. |
+| **P3** | The Composites skin-over-core case is unreachable; §2's "Composites consumes it" is dropped and the plan's value shrinks to the FEM core alone. |
+| **P4** | Stage 2 grows: the C++ mode-2 path is debugged first, with M1 as its regression test. |
+| **P5** | §8.3 is wrong. Either the merge route must produce what `getFacesOnly` accepts, or the writer must stop inferring and take explicit element sets — a different Stage 2. |
+| **P6** | Stage 1's `merge_femmeshes` design is revised while it still has no call sites. |
+
+### 9.7 Cost and ordering
+
+The order is forced rather than chosen: **D1 before D2 and D3** (no point
+probing tie behaviour on a deck ccx rejects), and **D1–D3 before M1/M2 if a
+ccx binary is available**, because a deck-level answer to P2 can make mesh
+work pointless. M1/M2 are independent of D1–D3 and can run in parallel.
+
+The whole stage is two new files. To retract it: delete them. Nothing in
+`src/Mod/Fem` or `src/Mod/Composites` is touched, so §2's invariant is not
+at risk and §4's existing test commands are unaffected.
+
+Where ccx is unavailable, D1–D3 cannot be substituted by deck-text checks —
+P1–P3 are claims about what ccx *does*. Record the gap (§4) and stop; do not
+infer them from a written deck.
+
+### 9.8 Results (measured)
+
+Run with the committed probe
+`src/Mod/Composites/compositestests/inspect_mixed_deck_premises.py`
+against `/home/jmw/.local/bin/ccx` (`Version DEVELOPMENT`).
+
+| Case | Premise | Result |
+|---|---|---|
+| D1 | P1 — ccx accepts a mixed solid+shell deck | **holds.** ccx exit 0, `Job finished`, no `*ERROR`. One C3D8 + one S8R, `*SOLID SECTION` + `*SHELL SECTION`, coincident-face `*TIE`. |
+| D3 | P3 — composite `*SHELL SECTION` beside `*SOLID SECTION` | **holds, with a constraint** — see below. |
+| D2 | P2 — `*TIE` shell↔solid carries moment | **holds, decisively.** see below. |
+
+#### D3 carries a constraint that was not in the plan
+
+My first D3 deck used `S4` and ccx **rejected it**:
+
+> `Element 2 is not a S8R nor a S6 shell element.`
+> `*ERROR in calinput: at least one fatal error message while reading the`
+> `input deck: CalculiX stops.`
+
+Composite shell sections are restricted to **S8R and S6** (the manual says so;
+this is now measured). Consequences for the plan:
+
+- **Stage 2 and Stage 5 must emit S8R or S6 for the shell portion of a mixed
+  model when the section is composite.** A Composites laminated skin is
+  exactly that case, so this is not optional for the plan's motivating use.
+- The plan's existing golden decks use whatever element the existing writer
+  picks; that choice is now constrained for the composite path and must be
+  asserted, not assumed.
+- Add this to §8.5's matrix as an assertion on G4/G5: the shell elements in a
+  mixed deck are S8R or S6, checked by `getElementType`.
+
+#### D2: the plan's coupling default is confirmed by measurement
+
+Shell cantilever, 2 × S4, span 20, width 10, thickness 2, tip load 1.0 at
+each of two tip nodes (total 2.0), E = 210000. The interface is the shell's
+root **edge** — the E family, the one §8.4.1 called blocked.
+
+| Variant | Root condition | tip `\|uz\|` | vs clamped |
+|---|---|---|---|
+| `clamped` | nodes 9,10 fixed in DOF **1-6** | 0.003366 | 1.0 |
+| `tie` | root edge face **S3** tied to block face **S5** | 0.003422 | **1.0165** |
+| `hinge` | nodes 9,10 fixed in DOF **1-3** only | 8.34e9 | 2.5e12 |
+
+Analytic reference `δ = PL³/3EI` = **0.00381**. Both `clamped` and `tie` land
+~11 % below it, which is what a two-element linear-shell mesh should give.
+
+Readings:
+
+1. **P2 holds.** A `*TIE` root is within **1.7 %** of a fully clamped root.
+   §2's `*TIE` default is now measured, not merely argued from the manual.
+   The pessimistic reading — that `*TIE` inherits the shared-node hinge — is
+   **wrong**.
+2. **The E family is not blocked in CalculiX.** This was an *edge* interface
+   and it carried full moment. §8.4.1 has been corrected accordingly: the
+   blocker is FreeCAD's reference→surface mapping, not ccx, and the cheapest
+   fix is to let an Edge selection on a shell yield its edge face (S3-S6) for
+   `*TIE` — which is **less work than the `*EQUATION` writer** the plan had
+   ranked first.
+3. **The `hinge` variant is a strong discriminator but a useless reference.**
+   Fixing DOF 1-3 only is the manual's own definition of a shell hinge, and
+   ccx returns a ~2.5e12 magnification with **no `*ERROR` and no warning** — a
+   near-singular mode left unreported. So: a hinged model does not fail loudly.
+   That independently justifies §7's "loud error, not a silent hinge"
+   requirement, and it means G13's numerical check is load-bearing — a hinge
+   will not announce itself.
+
+#### Two probe bugs found and fixed
+
+The first run reported false failures, both in the probe rather than the
+premises, and both worth recording because the plan's Stage 0 spike can make
+the same mistakes:
+
+- **Success was tested by the wrong file.** `*NODE FILE` writes `.frd`;
+  only `*NODE PRINT` writes `.dat`. D1 was declared a failure while ccx had in
+  fact completed normally. The criterion is now `exit == 0` **and**
+  `"Job finished" in stdout` **and** no `*ERROR` on either stream.
+- **`S4` is invalid for a composite section** (above), which was a defect in
+  my deck, not in P3.
+
