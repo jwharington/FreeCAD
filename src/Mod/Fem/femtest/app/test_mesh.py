@@ -843,6 +843,10 @@ class TestMeshMixed(unittest.TestCase):
         getter = SimpleNamespace(
             femmesh=femmesh,
             is_mixed=True,
+            # the element sets the getter now shares, one scan each
+            volumes=femmesh.Volumes,
+            faces_only=femmesh.FacesOnly,
+            edges_only=femmesh.EdgesOnly,
             femnodes_mesh=femmesh.Nodes,
             femelement_table=femelement_table,
             femnodes_ele_table=meshtools.get_femnodes_ele_table(femmesh.Nodes, femelement_table),

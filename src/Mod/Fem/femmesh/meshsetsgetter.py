@@ -89,14 +89,19 @@ class MeshSetsGetter:
         self.ccx_efaces = "Efaces"
         self.ccx_eedges = "Eedges"
         self.mat_geo_sets = []
-        # Worked out on first use, then kept. is_mixed_femmesh asks FemMesh for
-        # its faces-only set, which is a full scan of the mesh, and this getter
-        # consults the answer per geometry reference and per material - so
-        # recomputing it made writing one deck dominated by a single query
-        # repeated dozens of times. The mesh cannot change for the life of this
-        # getter, which is what makes caching it here safe; a cache keyed on the
-        # mesh itself would go stale on a renumbering and silently change which
-        # faces count as shells.
+        # Element sets the whole getter shares, each worked out on first use.
+        # FemMesh.FacesOnly is a full scan of the mesh - tens of seconds on a
+        # 35k-node part - and three different callers below want the same answer
+        # about the same unchanged mesh, so it is scanned once and shared
+        # rather than once each. See docs/fem-mesh-query-cost.md.
+        #
+        # Caching here is safe for a reason worth stating: the mesh cannot
+        # change for the life of a getter. A cache keyed on the mesh itself
+        # would go stale on a renumbering and silently change which faces count
+        # as shells, which this predicate must not do.
+        self._volumes = None
+        self._faces_only = None
+        self._edges_only = None
         self._is_mixed = None
         self.theshape = None
         if self.mesh_object:
@@ -344,7 +349,9 @@ class MeshSetsGetter:
             return
         if not self.femelement_volumes_table:
             FreeCAD.Console.PrintMessage("We need to find the solid nodes.\n")
-            self.femelement_volumes_table = meshtools.get_femelement_volumes_table(self.femmesh)
+            self.femelement_volumes_table = meshtools.get_femelement_volumes_table(
+                self.femmesh, self.volumes
+            )
         solid_nodes = set()
         face_edge_nodes = set()
         for node in femobj["Nodes"]:
@@ -569,14 +576,42 @@ class MeshSetsGetter:
     # ********************************************************************************************
     # ********************************************************************************************
     @property
-    def is_mixed(self):
-        """Whether the mesh holds shells of its own alongside volumes.
+    def volumes(self):
+        """The mesh's volume element ids, scanned once."""
+        if self._volumes is None:
+            self._volumes = self.femmesh.Volumes
+        return self._volumes
 
-        Memoised, because the underlying query scans the whole mesh and every
-        caller here is asking about the same unchanged mesh.
+    @property
+    def faces_only(self):
+        """The mesh's shell face element ids, scanned once.
+
+        Every caller below asks this of the same unchanged mesh, and one scan
+        costs tens of seconds, so it is shared. This is the query that used to
+        dominate the whole run; see docs/fem-mesh-query-cost.md.
+        """
+        if self._faces_only is None:
+            self._faces_only = self.femmesh.FacesOnly
+        return self._faces_only
+
+    @property
+    def edges_only(self):
+        """The mesh's beam edge element ids, scanned once."""
+        if self._edges_only is None:
+            self._edges_only = self.femmesh.EdgesOnly
+        return self._edges_only
+
+    @property
+    def is_mixed(self):
+        """Whether the mesh holds shells or beams of its own beside volumes.
+
+        Same predicate as :func:`meshtools.is_mixed_femmesh`, but answered from
+        the shared sets so it does not pay for a scan of its own.
         """
         if self._is_mixed is None:
-            self._is_mixed = meshtools.is_mixed_femmesh(self.femmesh)
+            self._is_mixed = self.femmesh.VolumeCount != 0 and (
+                bool(self.faces_only) or bool(self.edges_only)
+            )
         return self._is_mixed
 
     def _get_elements(self, obj):
@@ -974,7 +1009,9 @@ class MeshSetsGetter:
         # get element ids and write them into the objects
         FreeCAD.Console.PrintMessage("Shell thicknesses\n")
         if not self.femelement_faces_table:
-            self.femelement_faces_table = meshtools.get_femelement_faces_table(self.femmesh)
+            self.femelement_faces_table = meshtools.get_femelement_faces_table(
+                self.femmesh, self.faces_only
+            )
         meshtools.get_femelement_sets(
             self.femmesh, self.femelement_faces_table, self.member.geos_shellthickness
         )
@@ -1040,7 +1077,9 @@ class MeshSetsGetter:
                 self._record_material_elements_by_dimension(3, solid_materials)
         if self.member.geos_shellthickness:
             if not self.femelement_faces_table:
-                self.femelement_faces_table = meshtools.get_femelement_faces_table(self.femmesh)
+                self.femelement_faces_table = meshtools.get_femelement_faces_table(
+                    self.femmesh, self.faces_only
+                )
             shell_materials = self._materials_for_dimension(2)
             if shell_materials:
                 meshtools.get_femelement_sets(

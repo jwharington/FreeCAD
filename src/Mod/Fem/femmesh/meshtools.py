@@ -169,7 +169,7 @@ def get_femelement_table(femmesh):
 
 
 # ************************************************************************************************
-def get_femelement_tables_by_dim(femmesh):
+def get_femelement_tables_by_dim(femmesh, volumes=None, faces_only=None, edges_only=None):
     """Element tables split by the element's own dimension.
 
     Returns ``{3: {id: [nodes]}, 2: {...}, 1: {...}}``: dimension 3 is volumes,
@@ -183,18 +183,30 @@ def get_femelement_tables_by_dim(femmesh):
     face bounding a volume belongs to that volume, is not a shell element, and
     is absent from the dimension-2 table.
     """
+    # The sets may be handed in when the caller has already scanned them: each
+    # of these is a full walk of the mesh, and a getter that needs all three
+    # should pay for them once. See MeshSetsGetter and
+    # docs/fem-mesh-query-cost.md.
+    if volumes is None:
+        volumes = femmesh.Volumes
+    if faces_only is None:
+        faces_only = femmesh.FacesOnly
+    if edges_only is None:
+        edges_only = femmesh.EdgesOnly
     return {
-        3: {i: femmesh.getElementNodes(i) for i in femmesh.Volumes},
-        2: {i: femmesh.getElementNodes(i) for i in femmesh.FacesOnly},
-        1: {i: femmesh.getElementNodes(i) for i in femmesh.EdgesOnly},
+        3: {i: femmesh.getElementNodes(i) for i in volumes},
+        2: {i: femmesh.getElementNodes(i) for i in faces_only},
+        1: {i: femmesh.getElementNodes(i) for i in edges_only},
     }
 
 
 # ************************************************************************************************
-def get_femelement_volumes_table(femmesh):
+def get_femelement_volumes_table(femmesh, volumes=None):
     """get_femelement_volumes_table(femmesh): { elementid : [ nodeid, nodeid, ... , nodeid ] }"""
     table = {}
-    for i in femmesh.Volumes:
+    if volumes is None:
+        volumes = femmesh.Volumes
+    for i in volumes:
         table[i] = femmesh.getElementNodes(i)
     return table
 
@@ -1755,7 +1767,12 @@ def get_elements_by_references_of_dimension(sets_getter, femobj_ref, dimension):
     """
     if not sets_getter.femelement_tables_by_dim:
         sets_getter.femelement_tables_by_dim.update(
-            get_femelement_tables_by_dim(sets_getter.femmesh)
+            get_femelement_tables_by_dim(
+                sets_getter.femmesh,
+                sets_getter.volumes,
+                sets_getter.faces_only,
+                sets_getter.edges_only,
+            )
         )
     elements = sets_getter.femelement_tables_by_dim[dimension]
     if dimension not in sets_getter.femnodes_ele_tables_by_dim:
