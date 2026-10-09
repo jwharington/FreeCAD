@@ -21,6 +21,7 @@
  ***************************************************************************/
 
 #include <Python.h>
+#include <algorithm>
 #include <cstdlib>
 #include <memory>
 
@@ -795,6 +796,17 @@ std::list<int> FemMesh::getNodeElements(int id, SMDSAbs_ElementType type) const
 
 std::set<int> FemMesh::getEdgesOnly() const
 {
+    // As getFacesOnly above, and fixed for the same reason: the face node sets
+    // are built once rather than once per (edge, face) pair, and the subset
+    // test is std::includes rather than an intersection compared for equality.
+    std::vector<std::set<int>> faceNodes;
+    SMDS_FaceIteratorPtr aFaceIter = myMesh->GetMeshDS()->facesIterator();
+    while (aFaceIter->more()) {
+        const SMDS_MeshFace* aFace = aFaceIter->next();
+        std::list<int> fnodes = getElementNodes(aFace->GetID());
+        faceNodes.emplace_back(fnodes.begin(), fnodes.end());
+    }
+
     std::set<int> resultIDs;
 
     // edges
@@ -805,27 +817,13 @@ std::set<int> FemMesh::getEdgesOnly() const
         std::set<int> aEdgeNodes(enodes.begin(), enodes.end());  // convert list to set
         bool edgeBelongsToAFace = false;
 
-        // faces
-        SMDS_FaceIteratorPtr aFaceIter = myMesh->GetMeshDS()->facesIterator();
-        while (aFaceIter->more()) {
-            const SMDS_MeshFace* aFace = aFaceIter->next();
-            std::list<int> fnodes = getElementNodes(aFace->GetID());
-            std::set<int> aFaceNodes(fnodes.begin(), fnodes.end());  // convert list to set
-
-            // if aEdgeNodes is not a subset of any aFaceNodes --> aEdge does not belong to any Face
-            std::vector<int> inodes;
-            std::set_intersection(
-                aFaceNodes.begin(),
-                aFaceNodes.end(),
-                aEdgeNodes.begin(),
-                aEdgeNodes.end(),
-                std::back_inserter(inodes)
-            );
-            std::set<int> intersection_nodes(
-                inodes.begin(),
-                inodes.end()
-            );  // convert vector to set
-            if (aEdgeNodes == intersection_nodes) {
+        for (const std::set<int>& aFaceNodes : faceNodes) {
+            if (std::includes(
+                    aFaceNodes.begin(),
+                    aFaceNodes.end(),
+                    aEdgeNodes.begin(),
+                    aEdgeNodes.end()
+                )) {
                 edgeBelongsToAFace = true;
                 break;
             }
@@ -840,28 +838,24 @@ std::set<int> FemMesh::getEdgesOnly() const
 
 std::set<int> FemMesh::getFacesOnly() const
 {
-    // How it works ATM:
-    // for each face
-    //     get the face nodes
-    //     for each volume
-    //         get the volume nodes
-    //         if the face nodes are a subset of the volume nodes
-    //             add the face to the volume faces and break
-    //     if face doesn't belong to a volume
-    //         add it to faces only
+    // A face belongs to a volume when its nodes are a *subset* of that
+    // volume's. That is a membership test rather than a geometric one, and it
+    // is the test the mixed path depends on: "faces that do not belong to a
+    // volume" is what makes a mesh mixed. It is preserved exactly here.
     //
-    // This means it is iterated over a lot of volumes many times, this is quite expensive!
-    //
-    // TODO make this faster
-    // Idea:
-    // for each volume
-    //     get the faces and add them to the volume faces
-    // for each face
-    //     if not in volume faces
-    //     add it to the faces only
-    //
-    // but the volume faces do not seem to know their global mesh ID, I could not find any method in
-    // SMESH
+    // The volume node sets are built once, before the face loop. Rebuilding one
+    // per (face, volume) pair - together with the intersection set the subset
+    // test used to go through - made this quadratic in allocations, and it
+    // dominated the entire run: 36,243 of 43,727 py-spy samples in a single
+    // call on a 35k-node mixed mesh, around six minutes of wall time. See
+    // docs/fem-mesh-query-cost.md.
+    std::vector<std::set<int>> volumeNodes;
+    SMDS_VolumeIteratorPtr aVolIter = myMesh->GetMeshDS()->volumesIterator();
+    while (aVolIter->more()) {
+        const SMDS_MeshVolume* aVol = aVolIter->next();
+        std::list<int> vnodes = getElementNodes(aVol->GetID());
+        volumeNodes.emplace_back(vnodes.begin(), vnodes.end());
+    }
 
     std::set<int> resultIDs;
 
@@ -873,28 +867,18 @@ std::set<int> FemMesh::getFacesOnly() const
         std::set<int> aFaceNodes(fnodes.begin(), fnodes.end());  // convert list to set
         bool faceBelongsToAVolume = false;
 
-        // volumes
-        SMDS_VolumeIteratorPtr aVolIter = myMesh->GetMeshDS()->volumesIterator();
-        while (aVolIter->more()) {
-            const SMDS_MeshVolume* aVol = aVolIter->next();
-            std::list<int> vnodes = getElementNodes(aVol->GetID());
-            std::set<int> aVolNodes(vnodes.begin(), vnodes.end());  // convert list to set
-
-            // if aFaceNodes is not a subset of any aVolNodes --> aFace does not belong to any
-            // Volume
-            std::vector<int> inodes;
-            std::set_intersection(
-                aVolNodes.begin(),
-                aVolNodes.end(),
-                aFaceNodes.begin(),
-                aFaceNodes.end(),
-                std::back_inserter(inodes)
-            );
-            std::set<int> intersection_nodes(
-                inodes.begin(),
-                inodes.end()
-            );  // convert vector to set
-            if (aFaceNodes == intersection_nodes) {
+        // std::includes over two sorted sets is the subset test: aFaceNodes is
+        // a subset of aVolNodes exactly when every face node is present in the
+        // volume's node set, which is what intersecting the two and comparing
+        // the result for equality computed - without building either the
+        // vector or the second set.
+        for (const std::set<int>& aVolNodes : volumeNodes) {
+            if (std::includes(
+                    aVolNodes.begin(),
+                    aVolNodes.end(),
+                    aFaceNodes.begin(),
+                    aFaceNodes.end()
+                )) {
                 faceBelongsToAVolume = true;
                 break;
             }
