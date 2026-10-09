@@ -39,39 +39,20 @@ from femtools import fem_extension_registry
 from femtools.femutils import type_of_obj
 
 
-_SHAPE_TYPE_DIMENSION = {"Solid": 3, "Face": 2, "Edge": 1, "Vertex": 0}
-
-
 def _reference_dimension(fem_doc_object):
     """The element dimension a material's references belong to, or None.
 
     None means the material has no references - the catch-all, which belongs to
     every dimension. Otherwise the dimension comes from the shape the reference
-    actually resolves to. A Compound is judged by what it *holds*, not by its
-    ShapeType: a compound of faces is a shell part, and calling it a solid would
-    send that material to the volume pass and leave the shell unsectioned.
+    actually resolves to, judged by what that shape holds (see
+    :func:`meshtools.get_shape_dimension`): a compound of faces is a shell part,
+    and calling it a solid would send that material to the volume pass and leave
+    the shell unsectioned.
     """
     if not fem_doc_object.References:
         return None
     first_ref = fem_doc_object.References[0]
-    return _shape_dimension(get_element(first_ref[0], first_ref[1][0]))
-
-
-def _shape_dimension(shape):
-    """The element dimension of a shape, judged by what it holds.
-
-    A recognised ShapeType answers directly. Anything else - a Compound, for
-    one - is whatever its contents make it: solids mean a solid part, faces a
-    shell part, edges a beam part.
-    """
-    if shape is None:
-        return None
-    if shape.ShapeType in _SHAPE_TYPE_DIMENSION:
-        return _SHAPE_TYPE_DIMENSION[shape.ShapeType]
-    for dimension, attribute in ((3, "Solids"), (2, "Faces"), (1, "Edges"), (0, "Vertexes")):
-        if getattr(shape, attribute, None):
-            return dimension
-    return None
+    return meshtools.get_shape_dimension(get_element(first_ref[0], first_ref[1][0]))
 
 
 def _material_elements_for_dimension(mat_data, dimension):

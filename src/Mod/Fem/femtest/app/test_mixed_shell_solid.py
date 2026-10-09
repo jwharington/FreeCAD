@@ -293,7 +293,7 @@ class TestMixedShellSolid(unittest.TestCase):
         # a compound. Calling a compound of faces a solid would send that
         # material to the volume pass and leave the shell unsectioned, which is
         # the mistake the dimension dispatch exists to avoid in the first place.
-        from femmesh.meshsetsgetter import _shape_dimension
+        from femmesh.meshtools import get_shape_dimension
 
         square = Part.makeFace(
             Part.makePolygon(
@@ -307,10 +307,10 @@ class TestMixedShellSolid(unittest.TestCase):
             )
         )
         solid = Part.makeBox(1.0, 1.0, 1.0)
-        self.assertEqual(2, _shape_dimension(square))
-        self.assertEqual(3, _shape_dimension(solid))
-        self.assertEqual(2, _shape_dimension(Part.makeCompound([square, square.copy()])))
-        self.assertEqual(3, _shape_dimension(Part.makeCompound([solid, solid.copy()])))
+        self.assertEqual(2, get_shape_dimension(square))
+        self.assertEqual(3, get_shape_dimension(solid))
+        self.assertEqual(2, get_shape_dimension(Part.makeCompound([square, square.copy()])))
+        self.assertEqual(3, get_shape_dimension(Part.makeCompound([solid, solid.copy()])))
 
     # ********************************************************************************************
     def test_two_solid_materials_do_not_claim_the_shell(self):
@@ -329,7 +329,9 @@ class TestMixedShellSolid(unittest.TestCase):
         analysis.addObject(ObjectsFem.makeElementGeometry2D(doc, 0.1, "ShellThickness"))
 
         box_a = doc.addObject("Part::Box", "BoxA")
+        box_a.Length, box_a.Width, box_a.Height = 1.0, 1.0, 1.0
         box_b = doc.addObject("Part::Box", "BoxB")
+        box_b.Length, box_b.Width, box_b.Height = 1.0, 1.0, 1.0
         box_b.Placement.Base = FreeCAD.Vector(2.0, 0.0, 0.0)
         shell = doc.addObject("Part::Feature", "Shell")
         shell.Shape = _square_face()
@@ -409,6 +411,56 @@ class TestMixedShellSolid(unittest.TestCase):
         self.assertFalse(solids.get(2), "a compound of solids must not claim faces")
         self.assertTrue(faces.get(2), "a compound of faces sections the faces")
         self.assertFalse(faces.get(3), "a compound of faces must not claim volumes")
+
+    # ********************************************************************************************
+    def test_tie_resolves_a_compound_shell_slave(self):
+        # A skin meshed as several faces is a Compound, and a *TIE may name that
+        # compound as its slave. It must resolve to the shell elements; the
+        # compound's ShapeType is only "Compound", so a dispatch that reads the
+        # ShapeType alone sends it to the sub-element search instead.
+        doc = FreeCAD.newDocument("tie_compound_slave")
+        self.addCleanup(FreeCAD.closeDocument, doc.Name)
+        analysis = ObjectsFem.makeAnalysis(doc, "Analysis")
+        solver = ObjectsFem.makeSolverCalculiXCcxTools(doc, "CalculiXCcxTools")
+        analysis.addObject(solver)
+        analysis.addObject(ObjectsFem.makeElementGeometry2D(doc, 0.1, "ShellThickness"))
+
+        box_a = doc.addObject("Part::Box", "BoxA")
+        box_a.Length, box_a.Width, box_a.Height = 1.0, 1.0, 1.0
+        box_b = doc.addObject("Part::Box", "BoxB")
+        box_b.Length, box_b.Width, box_b.Height = 1.0, 1.0, 1.0
+        box_b.Placement.Base = FreeCAD.Vector(2.0, 0.0, 0.0)
+        skin = doc.addObject("Part::Feature", "Skin")
+        skin.Shape = Part.makeCompound([_square_face()])
+
+        mesh_obj = analysis.addObject(ObjectsFem.makeMeshGmsh(doc, "Mesh"))[0]
+        mesh_obj.FemMesh = two_bricks_and_a_shell()
+        compound = doc.addObject("Part::Compound", "Geometry")
+        compound.Links = [box_a, box_b, skin]
+        mesh_obj.Shape = compound
+
+        top_face = next(
+            f"Face{index}"
+            for index, face in enumerate(box_a.Shape.Faces, start=1)
+            if abs(face.CenterOfMass.z - 1.0) < 1e-6
+        )
+        tie = ObjectsFem.makeConstraintTie(doc, "Tie")
+        tie.References = [(skin, ""), (box_a, top_face)]
+        tie.Tolerance = 1.0
+        analysis.addObject(tie)
+        doc.recompute()
+
+        member = membertools.AnalysisMember(analysis)
+        getter = meshsetsgetter.MeshSetsGetter(analysis, solver, mesh_obj, member)
+        with mixed_shell_solid_flag(True):
+            getter.get_constraints_tie_faces()
+
+        tie_data = member.cons_tie[0]
+        slave = tie_data["TieSlaveFaces"][0]
+        master = tie_data["TieMasterFaces"][0]
+        self.assertTrue(slave[1], "the slave surface must not be empty")
+        self.assertFalse(slave[2], "a compound shell slave must resolve to shell elements")
+        self.assertTrue(master[2], "the solid master resolves to its volume faces")
 
     # ********************************************************************************************
     def test_mixed_flag_defaults_on(self):

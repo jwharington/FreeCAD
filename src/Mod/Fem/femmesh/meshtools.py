@@ -133,8 +133,18 @@ def get_femnodes_by_refshape(femmesh, ref):
         elif r.ShapeType == "Solid":
             nodes += get_nodes_by_solid_with_fallback(femmesh, r)
         elif r.ShapeType == "Compound":
-            for s in r.Solids:
-                nodes += get_nodes_by_solid_with_fallback(femmesh, s)
+            # A compound holds whatever it was made of, so take its parts by
+            # their own kind. Reading only its Solids finds nothing for a
+            # compound of faces, which is how a multi-patch skin is built, and
+            # leaves the reference silently empty.
+            for solid in r.Solids:
+                nodes += get_nodes_by_solid_with_fallback(femmesh, solid)
+            for face in r.Faces:
+                nodes += get_nodes_by_face_with_fallback(femmesh, face)
+            for edge in r.Edges:
+                nodes += get_nodes_by_edge_with_fallback(femmesh, edge)
+            for vertex in r.Vertexes:
+                nodes += get_nodes_by_vertex_with_fallback(femmesh, vertex)
         else:
             FreeCAD.Console.PrintMessage("  No Vertice, Edge, Face or Solid as reference shapes!\n")
     return nodes
@@ -399,7 +409,12 @@ def get_femelements_by_femnodes_bin(femelement_table, femnodes_ele_table, node_l
     FreeCAD.Console.PrintMessage("binary search: get_femelements_by_femnodes_bin\n")
     vol_masks = {4: 15, 6: 63, 8: 255, 10: 1023, 15: 32767, 20: 1048575}
     # Now we are looking for nodes inside of the Volumes = filling the bit_pattern_dict
-    bit_pattern_dict = get_bit_pattern_dict(femelement_table, femnodes_ele_table, node_list)
+    #
+    # The bit pattern sets one bit per node, so a node listed twice sets its bit
+    # twice and the element can never equal its mask. A node set really does
+    # repeat a node when a reference names several sub-shapes that share it, so
+    # collapse the list first.
+    bit_pattern_dict = get_bit_pattern_dict(femelement_table, femnodes_ele_table, set(node_list))
     # search
     ele_list = []  # The ele_list contains the result of the search.
     for ele in bit_pattern_dict:
@@ -1632,6 +1647,28 @@ def get_elements(sets_getter, ref_pair, face_masks, edge_masks):
     return (*elem, is_sub_element)
 
 
+_SHAPE_TYPE_DIMENSION = {"Solid": 3, "Face": 2, "Edge": 1, "Vertex": 0}
+
+
+def get_shape_dimension(shape):
+    """The element dimension of a shape, judged by what it holds.
+
+    A recognised ShapeType answers directly. Anything else - a Compound, for
+    one - is whatever its contents make it: solids mean a solid part, faces a
+    shell part, edges a beam part. Reading the ShapeType alone would call a
+    compound of faces a solid, and a reference that resolves through a compound
+    is a real case, not a hypothetical one.
+    """
+    if shape is None:
+        return None
+    if shape.ShapeType in _SHAPE_TYPE_DIMENSION:
+        return _SHAPE_TYPE_DIMENSION[shape.ShapeType]
+    for dimension, attribute in ((3, "Solids"), (2, "Faces"), (1, "Edges"), (0, "Vertexes")):
+        if getattr(shape, attribute, None):
+            return dimension
+    return None
+
+
 def _reference_object_is_solid(ref_obj):
     """True when a reference's object is a solid, so its faces bound volumes.
 
@@ -1660,10 +1697,14 @@ def get_elements_by_reference_dimension(sets_getter, ref_pair, geom_type, face_m
     ref_obj, sub_ref = ref_pair
     sub = (ref_obj, (sub_ref,))
     is_sub_element = False
-    match geom_type:
-        case "Solid":
+    # The dimension comes from what the referenced shape holds, not from its
+    # ShapeType: a Compound is a compound of whatever it contains, so a compound
+    # of faces is a shell reference and must not be sent to the sub-element
+    # search, which finds nothing and leaves the surface empty.
+    match get_shape_dimension(ref_obj.getSubObject(sub_ref)):
+        case 3:
             sub, elem = get_elements_by_references_of_dimension(sets_getter, ref_pair, 3)
-        case "Face":
+        case 2:
             if _reference_object_is_solid(ref_obj):
                 # A face on a solid bounds a volume element, not a shell. Resolve
                 # it as a sub-element straight away: trying the shell table first
@@ -1680,7 +1721,7 @@ def get_elements_by_reference_dimension(sets_getter, ref_pair, geom_type, face_m
                         sets_getter, ref_pair, face_masks, edge_masks
                     )
                     is_sub_element = True
-        case "Edge":
+        case 1:
             sub, elem = get_elements_by_references_of_dimension(sets_getter, ref_pair, 1)
             if not elem:
                 sub, elem = get_subelements_by_references(
@@ -1761,12 +1802,15 @@ def get_elements_by_references(
         bit_pattern_dict = get_bit_pattern_dict(
             femelement_table, femnodes_ele_table, charged_volume_node_set
         )
-        sh = feat.getSubObject(sub_ref)
-        if sh.ShapeType == "Solid":
+        # Dispatch on what the shape holds, not on its ShapeType: a reference
+        # that resolves to a Compound matches none of the named types and would
+        # silently return no elements at all.
+        dimension = get_shape_dimension(feat.getSubObject(sub_ref))
+        if dimension == 3:
             elem = get_element_volumes_elements_from_binary_search(bit_pattern_dict)
-        elif sh.ShapeType == "Face":
+        elif dimension == 2:
             elem = get_element_faces_elements_from_binary_search(bit_pattern_dict)
-        elif sh.ShapeType == "Edge":
+        elif dimension == 1:
             elem = get_element_edges_elements_from_binary_search(bit_pattern_dict)
 
         result = (sub, elem)
