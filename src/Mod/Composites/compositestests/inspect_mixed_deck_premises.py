@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2026 John Wharington jwharington@gmail.com
+
 """Deck-level premise probes for the mixed shell+solid FEM plan.
 
 Answers, with real CalculiX runs and no FreeCAD involvement, the gate
@@ -364,12 +367,16 @@ def main(argv: list[str] | None = None) -> int:
         "cases",
         nargs="*",
         default=None,
-        choices=["d1", "d3", "d2"],
         help="which cases to run (default: all)",
     )
     args = parser.parse_args(argv)
+    # Not argparse `choices`: a nargs="*" positional validates its empty default
+    # against choices and rejects it, so an argument-less call fails.
     if not args.cases:
         args.cases = ["d1", "d3", "d2"]
+    unknown = [case for case in args.cases if case not in ("d1", "d3", "d2")]
+    if unknown:
+        parser.error(f"unknown case(s): {', '.join(unknown)}; choose from d1, d3, d2")
 
     if not os.path.exists(args.ccx):
         print(f"ccx not found at {args.ccx}; use --ccx to point at one", file=sys.stderr)
