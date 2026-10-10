@@ -179,6 +179,7 @@ SET(FemExampleMeshes_SRCS
 SET(FemInOut_SRCS
     feminout/__init__.py
     feminout/convert2TetGen.py
+    feminout/ccxdat.py
     feminout/exportNastranMesh.py
     feminout/importCcxDatResults.py
     feminout/importCcxFrdResults.py
