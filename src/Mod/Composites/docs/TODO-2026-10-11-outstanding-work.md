@@ -199,9 +199,21 @@ it.  "§" refers to `plan-mixed-shell-solid-fem.md`.
       if it comes out softer, the sign is wrong.
 
 - [ ] **B9 — §11.10, housekeeping and deliberate leftovers.**
-  - [ ] **B9.1 — `test_rosette_scenarios` SIGSEGV** on a compound of boxes: the
-        guard covers top-level solids only.  Unrelated to the flag.  *Exit:*
-        either extend the guard or record the limitation where the test lives.
+  - [ ] **B9.1 — `test_rosette_scenarios` SIGSEGV on a compound of solids.**
+        Measured 2026-10-11: `test_rosette_save_load_complex` crashes the C++
+        solver, and it is **not** the fixture's overlapping boxes — a compound
+        of two *disjoint, convex, planar-faced* boxes crashes too, so **any**
+        compound of solids does.  The degenerate face reaches
+        `SurfaceNavigator::FaceGeometryCache::For` through the seam path
+        (`LatticeNodePlacer::SeamCrossingTarget` → `SurfaceProjection::
+        TraceStepToExit` → `PointToUV`), and the crash is in the **nextdrape
+        submodule** (`src/3rdParty/nextdrape`), not in Composites.
+        **Not the fix:** widening `_require_drapable_shape` to reject a compound
+        that holds solids.  A compound of solids is a legitimate drape support
+        — its faces are the surface — so refusing it removes a capability
+        rather than repairing the crash.  *Exit:* nextdrape drapes a compound
+        of solids, with a nextdrape regression test for it, and the FreeCAD
+        side keeps a fixture that drapes (rather than being refused).
   - [ ] **B9.2 — delete the flag getter and its branches** —
         `femsolver/settings.py::get_allow_mixed_elements` and its call sites —
         **after one release has shipped** with the default on.  Deliberate, not
