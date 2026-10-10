@@ -1569,8 +1569,13 @@ the LS8e case this plan exists for, has no end-to-end example. §10's per-skin
 
   Still open: the exact arithmetic of the extra-node numbering (289,240 records
   against 289,241 declared, with id gaps of 2 and 4), and per-layer stress
-  fidelity after mapping. Also undecided: whether to keep the `Selectable = False`
-  mitigation now that the result mesh is 35k nodes and no longer needs it.
+  fidelity after mapping.
+
+  The `Selectable = False` mitigation is **kept**. It is no longer load-bearing -
+  at 35,384 nodes a pick costs 0.063-0.073 s even when selectable, against 0.45 s
+  for the expanded mesh, so it is not what makes the GUI usable any more - but it
+  still nearly halves the pick (0.073 -> 0.040 s), which makes it a cheap
+  optimisation rather than wasted weight.
 - **`Stiffener` / `Bulkhead` mixed coverage** — none. `quasi_iso_stiffener_panel`
   is all shells; Bulkhead has no FEM example at all.
 - **The GUI half of §8** — `femtest/gui/test_mixed_shell_solid.py` does not
