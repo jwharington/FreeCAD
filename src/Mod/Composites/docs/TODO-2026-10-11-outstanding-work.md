@@ -156,9 +156,17 @@ it.  "§" refers to `plan-mixed-shell-solid-fem.md`.
   - [ ] **B5.1 — only F1 has a compared-pair displacement check.**  The offset
         and bag families have no natural all-solid equivalent; decide whether to
         build one for each, or state why the check cannot exist per family.
-  - [ ] **B5.2 — the 31-test FEM mixed suite still never runs CalculiX**
-        (`test_mode=True`; `femtools/ccxtools.py:551` refuses).  Either run one
-        solve there or record the division of labour explicitly.
+  - [x] **B5.2 — DONE (2026-10-11).**  The mixed suite now solves once:
+        `test_a_mixed_face_deck_solves_through_the_fem_solver` (a
+        `@pytest.mark.slow` function) runs the f1 face-coupling example
+        through `FemToolsCcx.run()` and asserts ccx accepts the deck and a
+        result is read back.  What the result *means* stays with the
+        Composites suite's `test_mixed_coupling_numerical.py`, which drives
+        the composite pipeline — the division is stated in the test's own
+        docstring, because this file's 31 structural fixtures carry no
+        constraints and no loads and cannot be solved.  Verified:
+        **32 passed** in 2.9 s.  (The `slow` marker is unregistered repo-wide,
+        so this test warns exactly as the existing slow Fem tests do.)
   - [ ] **B5.3 — `test_mixed_shell_solid_plate_solves` can `skipTest`** when the
         FEM stack is unavailable, so it is weaker than the numerical test
         (which skips only when no `ccx` binary exists).  Narrow the skip.

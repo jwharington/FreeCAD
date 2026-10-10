@@ -21,6 +21,7 @@ from pathlib import Path
 
 import FreeCAD
 import Part
+import pytest
 
 import Fem
 import ObjectsFem
@@ -989,3 +990,40 @@ class TestMixedShellSolid(unittest.TestCase):
             if collecting and line.strip():
                 entries.append(line.strip())
         return entries
+
+
+# ---------------------------------------------------------------------------
+# One real solve, so this suite is not all deck text.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.slow
+def test_a_mixed_face_deck_solves_through_the_fem_solver(tmp_path):
+    """ccx accepts a mixed deck and a result comes back.
+
+    The fixtures in this file carry no constraints and no loads - they exist
+    to assert deck text and mesh structure - so the solve runs on the f1
+    face-coupling example, which has both.  What is asserted here is the Fem
+    layer only: the deck solves and a result is read back.  What the result
+    *means* - the tied skin against an all-solid rebuild, and each face
+    family's untied-node count - belongs to the Composites suite's
+    ``test_mixed_coupling_numerical.py``, which drives the composite pipeline;
+    repeating that comparison here would be a second copy of it.
+    """
+    doc = face_coupling.setup(variant="f1")
+    try:
+        fea = ccxtools.FemToolsCcx(analysis=doc.Analysis, solver=doc.CalculiXCcxTools)
+        with mixed_shell_solid_flag(True):
+            fea.setup_working_dir(str(tmp_path))
+            solved = fea.run()
+        assert solved, "ccx refused the mixed deck; see the log above"
+        results = [
+            o for o in doc.Analysis.Group
+            if o.isDerivedFrom("Fem::FemResultObject")
+        ]
+        assert results, "the mixed deck solved but no result was read back"
+        displacements = [float(v) for v in results[0].DisplacementLengths]
+        assert displacements, "the result carries no displacement"
+        assert max(displacements) > 0.0, "the mixed deck solved to zero displacement"
+    finally:
+        FreeCAD.closeDocument(doc.Name)
