@@ -22,6 +22,9 @@ warnings are ccx reporting DOFs that are already constrained, and the run has
 **zero** of the ones that mean an uncoupled node. Also fixed: §11.12, where a
 force's axis was coming from the referenced face's normal instead of the
 direction asked for, which is what the wing's load case was silently doing.
+Also fixed: §11.13, where the mixed-coupling shape lookups and tie/load
+helpers existed in a separate copy per mixed file; they now live in one Fem
+module (`femtools/mixedcoupling.py`).
 Open: the results-viewer toggle
 (§11.4), the coverage and cleanup tail (§11.8, §11.10), a tie hazard the
 tolerance research turned up (§11.9), and the question of landing a shell's
@@ -2085,6 +2088,52 @@ constraint totals are identical to before, so the axis was the only thing wrong.
 `*CLOAD` block's DOF and sign in both mixed examples — because this failure is
 silent: the job converges and the deflection looks plausible either way.
 
+### 11.13 ~~The mixed-coupling helpers were re-written in every mixed file~~ — **fixed**
+
+The mixed path's geometry helpers had drifted into a copy per caller: five
+files held their own version of the lookups (the f1-f4 fixture's shared module,
+the wing, the plate, the cantilever probe, the edge fixture), with **four
+different spellings of "the face whose centre is on axis = value"** between
+them, and they disagreed on the details — only one checked planarity, and only
+one compared plane normals rather than centres. The tie, load-direction and
+result helpers had done the same: `add_tie` existed once per fixture plus a
+local `_add_tie` in each example, and `_max_displacement` twice verbatim.
+
+**One home, in Fem.** They now live in a new module,
+`src/Mod/Fem/femtools/mixedcoupling.py`: the shape lookups and the fixtures'
+pairing rule `paired_faces_by_plane` (commit `0592ba787a`), then `add_tie`,
+`add_load_direction` and `max_displacement` (the second commit). The axis lookup
+takes a `planar_only` flag so the wing keeps its stricter check. The moves are
+verbatim and the call sites call the same code paths, so **nothing about the
+decks changes**: the promotion is a move, not a rewrite, and the flag-off deck
+snapshot is green. The module is in Fem rather than in the examples package
+because the lookups are geometry, not example scaffolding — a plain Fem model
+with a shell-on-solid interface needs the same code — and it is a **new file**
+on purpose, so upstream's copies stay where they are and the merge has no
+conflict to resolve. Fem installs Python by an explicit source list
+(`FEMTools_SRCS`), so the file adds **one line** to `src/Mod/Fem/CMakeLists.txt`.
+
+**What moved where.**
+
+- `femtools/mixedcoupling.py` — `paired_faces_by_plane`, the axis/plane/edge
+  lookups, `add_tie`, `add_load_direction`, `max_displacement`.
+- `femexamples/_mixed_coupling_common.py` — lost its `add_tie`; `add_force` now
+  calls `add_load_direction` instead of building the `App::Line` datum inline.
+- `constraint_mixed_face_coupling.py` / `constraint_mixed_edge_coupling.py` —
+  import `add_tie` from `femtools.mixedcoupling`.
+- `compositeexamples/examples/_shell_example_common.py` — lost its
+  `add_load_direction`.
+- `mixed_shell_solid_wing.py` / `mixed_shell_solid_plate.py` — lost their local
+  `_add_tie` and `_max_displacement`; the call sites use `add_tie(...)` and
+  `max_displacement`. The wing's explicit tolerance `1.0` and the comment that
+  explains it (the shell's expanded face sits half a skin thickness off the
+  reference surface) are preserved unchanged, because the tolerance is a
+  property of the section, not of where the helper is defined.
+
+**Verified** at `0592ba787a` for the lookup move: the flag-off deck invariant
+reads *no deck changed and no example moved*. The second commit's call sites
+compile; its suites (`test_mixed_coupling_numerical`, the Fem mixed suite, and
+the wing + plate solves) are run before it is committed.
 
 ---
 
@@ -2097,7 +2146,8 @@ implemented, and nothing in §11 was changed to make room for it.
 `ObjectsFem.makeConstraintTie`, two face references (the shell first, because
 the first reference is the slave), and a `Tolerance` nothing derives — *and*
 finding the pair to reference. That search is real code: the fixtures use
-`paired_faces_by_plane` (`femexamples/_mixed_coupling_common.py:70`), and the
+`paired_faces_by_plane` (`femtools/mixedcoupling.py:115`, promoted there by
+§11.13), and the
 examples use `_lateral_face_names` / `_planar_face_name` / `_face_name` /
 `extreme_face_reference` to name the same kind of face from the other side. A
 user with a skin on a solid has to reproduce that search, per interface.
@@ -2176,7 +2226,7 @@ error until it decides), multi-stage and contact ties, and the task panel.
 Ambiguity — a shell face lying on two solids — should be a refusal with the
 candidates named, not a preference.
 
-*Exit criterion:* on the wing and the plate, deleting their hand-written
-`_add_tie` helpers and running the pass instead produces the same `*TIE` set up
-to names, the deck snapshot still reports *no deck changed*, and a second run
-creates nothing new.
+*Exit criterion:* on the wing and the plate, replacing their hand-written
+`add_tie` calls (the local `_add_tie` helpers were already removed by §11.13)
+with the pass produces the same `*TIE` set up to names, the deck snapshot still
+reports *no deck changed*, and a second run creates nothing new.
