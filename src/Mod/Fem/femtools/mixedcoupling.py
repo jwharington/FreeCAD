@@ -15,6 +15,7 @@ references, and nothing else.
 """
 
 import FreeCAD
+import ObjectsFem
 
 COINCIDENT_TOLERANCE = 1e-6
 _ROUND_DIGITS = 6
@@ -129,6 +130,50 @@ def paired_faces_by_plane(solid_shape, shell_shape, tolerance):
             if gap <= tolerance:
                 pairs.append((f"Face{shell_index}", f"Face{solid_index}"))
     return pairs
+
+
+def add_tie(doc, analysis, name, slave_ref, master_ref, tolerance):
+    """Return a ``*TIE`` from a shell slave reference to a solid master one.
+
+    The slave reference comes first because that is the surface the writer
+    expands and ties, and the one its position tolerance has to reach: a shell
+    slave is tied through the nodes CalculiX generates half a thickness either
+    side of the reference surface, so the tolerance is a property of the
+    section, not a number to guess.
+    """
+    tie = ObjectsFem.makeConstraintTie(doc, name)
+    tie.References = [slave_ref, master_ref]
+    tie.Tolerance = tolerance
+    analysis.addObject(tie)
+    return tie
+
+
+def add_load_direction(doc, name, direction):
+    """Return an element giving a force the axis ``direction``.
+
+    A force's axis reaches the deck through ``Direction``. ``DirectionVector``
+    cannot carry it: Fem treats that property as an output and recomputes it
+    from the referenced face's normal whenever the constraint is recomputed,
+    which leaves the load along the face normal instead of the axis asked for.
+    Fem reads a datum element's local Z axis as a direction, so this returns an
+    ``App::Line`` rotated to point along ``direction``.
+    """
+    obj = doc.addObject("App::Line", name)
+    obj.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(0.0, 0.0, 0.0),
+        FreeCAD.Rotation(FreeCAD.Vector(0.0, 0.0, 1.0), FreeCAD.Vector(*direction)),
+    )
+    return obj
+
+
+def max_displacement(analysis):
+    """The largest nodal displacement in an analysis' result, or ``None``."""
+    for obj in analysis.Group:
+        if obj.isDerivedFrom("Fem::FemResultObject"):
+            lengths = getattr(obj, "DisplacementLengths", None)
+            if lengths:
+                return max(float(value) for value in lengths)
+    return None
 
 
 def _edge_endpoints(edge):

@@ -56,7 +56,12 @@ import FreeCAD
 import Part
 
 from femexamples.meshes.merged_mesh import mesh_parts_separately
-from femtools.mixedcoupling import face_reference_on_axis
+from femtools.mixedcoupling import (
+    add_load_direction,
+    add_tie,
+    face_reference_on_axis,
+    max_displacement,
+)
 
 from ...features.CompositeShell import CompositeShellFP
 from ...features.Rosette import RosetteFP
@@ -67,7 +72,6 @@ from ._shell_example_common import (
     _create_fem_base,
     _run_ccx,
     _set_constraint_refs,
-    add_load_direction,
     ensure_document,
     make_biaxial_laminate,
 )
@@ -345,7 +349,9 @@ def _add_core_material(doc, analysis, core, tag):
 
 def _add_load_case(doc, analysis, core, tag):
     fixed = ObjectsFem.makeConstraintFixed(doc, f"{tag}_Fixed")
-    _set_constraint_refs(fixed, [face_reference_on_axis(core, "y", 0.0, planar_only=True)])
+    _set_constraint_refs(
+        fixed, [face_reference_on_axis(core, "y", 0.0, planar_only=True)]
+    )
     _add_analysis_member(analysis, fixed)
 
     force = ObjectsFem.makeConstraintForce(doc, f"{tag}_Force")
@@ -360,25 +366,6 @@ def _add_load_case(doc, analysis, core, tag):
     direction = add_load_direction(doc, f"{tag}_LoadDirection", (0.0, 0.0, -1.0))
     force.Direction = (direction, [])
     _add_analysis_member(analysis, force)
-
-
-def _add_tie(doc, analysis, support, core, core_face, tag):
-    tie = ObjectsFem.makeConstraintTie(doc, f"{tag}_Tie")
-    _set_constraint_refs(tie, [(support, "Face1"), (core, core_face)])
-    # The position tolerance also has to reach the shell's expanded face,
-    # which sits half a skin thickness (0.33 mm) off the reference surface.
-    tie.Tolerance = 1.0
-    _add_analysis_member(analysis, tie)
-    return tie
-
-
-def _max_displacement(analysis):
-    for obj in analysis.Group:
-        if obj.isDerivedFrom("Fem::FemResultObject"):
-            lengths = getattr(obj, "DisplacementLengths", None)
-            if lengths:
-                return max(float(value) for value in lengths)
-    return None
 
 
 def build(doc=None, run_solver=False):
@@ -427,8 +414,24 @@ def build(doc=None, run_solver=False):
     )
     _add_core_material(doc, analysis, core, tag)
     _add_load_case(doc, analysis, core, tag)
-    _add_tie(doc, analysis, upper_support, core, upper_face, f"{tag}_Upper")
-    _add_tie(doc, analysis, lower_support, core, lower_face, f"{tag}_Lower")
+    # The position tolerance also has to reach the shell's expanded face,
+    # which sits half a skin thickness (0.33 mm) off the reference surface.
+    add_tie(
+        doc,
+        analysis,
+        f"{tag}_Upper_Tie",
+        (upper_support, "Face1"),
+        (core, upper_face),
+        1.0,
+    )
+    add_tie(
+        doc,
+        analysis,
+        f"{tag}_Lower_Tie",
+        (lower_support, "Face1"),
+        (core, lower_face),
+        1.0,
+    )
 
     # The mesher never sees the parts together: a skin sharing the core's
     # nodes would be a hinge, and would stop being detected as a shell.
@@ -459,7 +462,7 @@ def build(doc=None, run_solver=False):
             "analysis": analysis,
             "solver": solver,
             "mesh": mesh_obj,
-            "max_displacement": _max_displacement(analysis),
+            "max_displacement": max_displacement(analysis),
             "inp_file": os.path.abspath(fem.inp_file_name),
             "solver_input": solver_input,
         }

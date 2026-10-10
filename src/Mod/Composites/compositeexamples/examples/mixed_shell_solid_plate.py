@@ -30,7 +30,13 @@ import FreeCAD
 import Part
 
 from femexamples.meshes.merged_mesh import mesh_parts_separately
-from femtools.mixedcoupling import edge_reference_at, face_reference_on_axis
+from femtools.mixedcoupling import (
+    add_load_direction,
+    add_tie,
+    edge_reference_at,
+    face_reference_on_axis,
+    max_displacement,
+)
 
 from ...features.CompositeShell import CompositeShellFP
 from ._shell_example_common import (
@@ -39,7 +45,6 @@ from ._shell_example_common import (
     _create_fem_base,
     _run_ccx,
     _set_constraint_refs,
-    add_load_direction,
     ensure_document,
     make_qi_laminate,
 )
@@ -116,27 +121,6 @@ def _add_load_case(doc, analysis, spar, tag):
     _add_analysis_member(analysis, force)
 
 
-def _add_tie(doc, analysis, spar, support, tag):
-    import ObjectsFem
-
-    tie = ObjectsFem.makeConstraintTie(doc, f"{tag}_Tie")
-    _set_constraint_refs(
-        tie, [(support, "Face1"), face_reference_on_axis(spar, "z", SPAR_HEIGHT)]
-    )
-    tie.Tolerance = 1.0
-    _add_analysis_member(analysis, tie)
-    return tie
-
-
-def _max_displacement(analysis):
-    for obj in analysis.Group:
-        if obj.isDerivedFrom("Fem::FemResultObject"):
-            lengths = getattr(obj, "DisplacementLengths", None)
-            if lengths:
-                return max(float(value) for value in lengths)
-    return None
-
-
 def build(doc=None, run_solver=False):
     """Build the mixed skin-on-spar cantilever; ``run_solver=True`` solves it."""
     doc = _ensure_document(doc)
@@ -155,7 +139,14 @@ def build(doc=None, run_solver=False):
     _add_shell_section_and_material(doc, analysis, support, tag, shell_obj=shell)
     _add_spar_material(doc, analysis, spar, tag)
     _add_load_case(doc, analysis, spar, tag)
-    _add_tie(doc, analysis, spar, support, tag)
+    add_tie(
+        doc,
+        analysis,
+        f"{tag}_Tie",
+        (support, "Face1"),
+        face_reference_on_axis(spar, "z", SPAR_HEIGHT),
+        1.0,
+    )
 
     # The mesher never sees the two together: a skin sharing the spar's nodes
     # would be a hinge, and would stop being detected as a shell.
@@ -177,7 +168,7 @@ def build(doc=None, run_solver=False):
             "analysis": analysis,
             "solver": solver,
             "mesh": mesh_obj,
-            "max_displacement": _max_displacement(analysis),
+            "max_displacement": max_displacement(analysis),
             "inp_file": os.path.abspath(fem.inp_file_name),
             "solver_input": solver_input,
         }

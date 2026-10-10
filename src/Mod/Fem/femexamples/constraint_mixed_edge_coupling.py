@@ -28,6 +28,7 @@ import FreeCAD
 import Part
 
 from femtools.mixedcoupling import (
+    add_tie,
     extreme_edge_reference,
     extreme_face_reference,
     find_edge_reference,
@@ -42,7 +43,6 @@ from ._mixed_coupling_common import (
     add_mesh,
     add_shell_thickness,
     add_shape,
-    add_tie,
     make_compound,
     mesh_parts_separately,
     planar_face,

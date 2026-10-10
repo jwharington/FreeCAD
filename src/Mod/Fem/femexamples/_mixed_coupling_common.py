@@ -25,6 +25,8 @@ import Part
 
 import ObjectsFem
 
+from femtools.mixedcoupling import add_load_direction
+
 from . import manager
 from .meshes.merged_mesh import mesh_parts_separately
 
@@ -96,15 +98,6 @@ def add_shell_thickness(doc, analysis, thickness, offset=0.0):
     return thickness_obj
 
 
-def add_tie(doc, analysis, name, slave_ref, master_ref, tolerance):
-    """Return a Tie from a shell slave reference to a solid master reference."""
-    tie = ObjectsFem.makeConstraintTie(doc, name)
-    tie.References = [slave_ref, master_ref]
-    tie.Tolerance = tolerance
-    analysis.addObject(tie)
-    return tie
-
-
 def add_fixed(doc, analysis, reference):
     fixed = ObjectsFem.makeConstraintFixed(doc, "Fixed")
     fixed.References = [reference]
@@ -126,12 +119,7 @@ def add_force(doc, analysis, reference, magnitude, direction):
     force = ObjectsFem.makeConstraintForce(doc, "Force")
     force.References = [reference]
     force.Force = f"{magnitude:.1f} N"
-    direction_obj = doc.addObject("App::Line", "ForceDirection")
-    direction_obj.Placement = FreeCAD.Placement(
-        FreeCAD.Vector(0.0, 0.0, 0.0),
-        FreeCAD.Rotation(FreeCAD.Vector(0.0, 0.0, 1.0), FreeCAD.Vector(*direction)),
-    )
-    force.Direction = (direction_obj, [])
+    force.Direction = (add_load_direction(doc, "ForceDirection", direction), [])
     analysis.addObject(force)
     return force
 
