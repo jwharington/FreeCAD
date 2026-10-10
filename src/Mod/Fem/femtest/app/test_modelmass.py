@@ -11,6 +11,8 @@ than reached for in a document.
 
 import re
 
+import FreeCAD
+import Part
 import pytest
 
 from femtools import modelmass
@@ -98,6 +100,87 @@ def test_a_member_no_section_owns_is_refused():
 def test_a_section_the_deck_does_not_write_is_refused():
     with pytest.raises(RuntimeError, match=r"the deck does not write"):
         modelmass.masses({"Skin": 1000.0}, {"Skin": "Panel_Section"}, {})
+
+
+# --- centre of gravity and inertia ------------------------------------------
+
+
+def _shape_members(shapes, sigma):
+    """``masses`` output plus the geometry it cannot supply, for shapes."""
+    areas = {name: shape.Area for name, shape in shapes.items()}
+    owners = {name: "%s_Section" % name for name in shapes}
+    stacks = {"%s_Section" % name: [(sigma, 1.0)] for name in shapes}
+    by_member = modelmass.masses(areas, owners, stacks)
+    centroids = {name: shape.CenterOfMass for name, shape in shapes.items()}
+    inertia = {name: shape.MatrixOfInertia for name, shape in shapes.items()}
+    return by_member, centroids, inertia
+
+
+def test_inertia_of_a_plate_is_its_analytic_second_moment():
+    width, height, sigma = 10.0, 20.0, 5e-7
+    plate = Part.makePlane(width, height)
+    by_member, centroids, inertia = _shape_members({"Plate": plate}, sigma)
+    props = modelmass.mass_properties(by_member, centroids, inertia)
+    assert props["center_of_mass"].x == pytest.approx(plate.CenterOfMass.x)
+    assert props["center_of_mass"].y == pytest.approx(plate.CenterOfMass.y)
+    ixx = sigma * (width * height ** 3 / 12.0) * 1e6
+    iyy = sigma * (height * width ** 3 / 12.0) * 1e6
+    assert props["inertia"].A11 == pytest.approx(ixx)
+    assert props["inertia"].A22 == pytest.approx(iyy)
+    assert props["inertia"].A33 == pytest.approx(ixx + iyy)
+    assert props["total_g"] == pytest.approx(width * height * sigma * 1e6)
+
+
+def test_parallel_axis_shifts_inertia_to_the_combined_centroid():
+    width, height, sigma = 10.0, 20.0, 5e-7
+    left = Part.makePlane(width, height)
+    # A fresh plane: TopoShape.translate mutates in place, so translating the
+    # left plate's shape would move that one too.
+    right = Part.makePlane(width, height).translate(FreeCAD.Vector(100.0, 0.0, 0.0))
+    by_member, centroids, inertia = _shape_members(
+        {"Left": left, "Right": right}, sigma)
+    props = modelmass.mass_properties(by_member, centroids, inertia)
+    assert props["center_of_mass"].x == pytest.approx(55.0)
+    assert props["center_of_mass"].y == pytest.approx(10.0)
+    mass_g = width * height * sigma * 1e6
+    offset = 50.0
+    ixx = 2 * sigma * (width * height ** 3 / 12.0) * 1e6
+    iyy = 2 * sigma * (height * width ** 3 / 12.0) * 1e6 + 2 * mass_g * offset ** 2
+    izz = (2 * sigma * ((width * height ** 3 + height * width ** 3) / 12.0) * 1e6
+           + 2 * mass_g * offset ** 2)
+    assert props["inertia"].A11 == pytest.approx(ixx)
+    assert props["inertia"].A22 == pytest.approx(iyy)
+    assert props["inertia"].A33 == pytest.approx(izz)
+    assert props["inertia"].A12 == pytest.approx(0.0, abs=1e-9)
+
+
+def test_an_origin_shifts_the_moments_by_the_parallel_axis_theorem():
+    width, height, sigma = 10.0, 20.0, 5e-7
+    plate = Part.makePlane(width, height)
+    by_member, centroids, inertia = _shape_members({"Plate": plate}, sigma)
+    about_cog = modelmass.mass_properties(by_member, centroids, inertia)
+    about_origin = modelmass.mass_properties(
+        by_member, centroids, inertia, origin=FreeCAD.Vector(0.0, 0.0, 0.0))
+    mass_g = width * height * sigma * 1e6
+    cog = about_cog["center_of_mass"]
+    assert about_origin["inertia"].A22 == pytest.approx(
+        about_cog["inertia"].A22 + mass_g * (cog.x ** 2 + cog.z ** 2))
+    assert about_origin["inertia"].A11 == pytest.approx(
+        about_cog["inertia"].A11 + mass_g * (cog.y ** 2 + cog.z ** 2))
+
+
+def test_summary_and_report_carry_center_of_gravity_and_inertia():
+    plate = Part.makePlane(10.0, 20.0)
+    by_member, centroids, inertia = _shape_members({"Plate": plate}, 5e-7)
+    props = modelmass.mass_properties(by_member, centroids, inertia)
+    summary = modelmass.summarize(by_member, {}, properties=props)
+    assert summary["center_of_mass"].x == pytest.approx(5.0)
+    assert summary["inertia"].A11 > 0.0
+    lines = []
+    modelmass.log_report(summary, lines.append)
+    text = "\n".join(lines)
+    assert "centre of gravity" in text
+    assert "inertia about the centre of gravity" in text
 
 
 def test_layups_and_summary_agree_with_the_mass():

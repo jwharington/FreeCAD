@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2026 John Wharington jwharington@gmail.com
 
-"""What a built article weighs, member by member, from the deck it solves on.
+"""What a built article weighs and balances, from the deck it solves on.
 
 Mass is not in the results: a static solve says nothing about it, and no card
 in the deck adds it up.  It follows from two things that are stated elsewhere,
@@ -18,9 +18,16 @@ units the deck is written in: mm, Mg.  A member's mass is its area times
 The caller supplies the areas and the member-to-section mapping: which parts
 exist and how the model names a section are the article's properties, not the
 deck's.  Nothing here reads a document or an object name.
+
+The same per-member masses give the article's centre of gravity and inertia
+tensor, once the caller also passes each shape's centroid and surface
+second-moment matrix (:func:`mass_properties`); the deck's plies and densities
+say how heavy each surface is, but only the geometry says where it sits.
 """
 
 import re
+
+import FreeCAD
 
 from femtools import deckcheck
 
@@ -138,8 +145,62 @@ def masses(areas, owners, stacks):
         by_member[name] = {"area": area,
                            "section": section,
                            "thickness": sum(t for _, t in stack),
+                           "areal": areal,
                            "mass_g": area * areal * GRAMS_PER_MG}
     return by_member
+
+
+def _surface_inertia(matrix):
+    """``(Ixx, Ixy, Ixz, Iyy, Iyz, Izz)`` of a shape's surface second-moment
+    matrix, about the shape's own centroid."""
+    return (matrix.A11, matrix.A12, matrix.A13,
+            matrix.A22, matrix.A23, matrix.A33)
+
+
+def mass_properties(by_member, centroids, inertia, origin=None):
+    """Total mass, centre of gravity and inertia tensor of a whole article.
+
+    ``centroids`` is ``{member: area centroid}`` and ``inertia`` is
+    ``{member: surface second-moment matrix about that centroid}`` — the two
+    geometric facts the deck's plies and densities cannot supply, read from the
+    shapes the mesh was cut from.  A member is treated as its mid-surface
+    carrying the laminate's areal density, so its own inertia about its centroid
+    is ``Σ(ρ·t)`` times its surface second moments.
+
+    The tensor is shifted to the article's centre of gravity by the parallel
+    axis theorem and returned as a ``FreeCAD.Matrix`` in g·mm² (the same mass
+    unit :func:`masses` reports as ``mass_g``), with ``center_of_mass`` in mm.
+    ``origin`` is where moments are taken about; it defaults to the centre of
+    gravity, and passing a point shifts the tensor there instead.
+    """
+    total_mg = sum(member["mass_g"] for member in by_member.values()) / GRAMS_PER_MG
+    if not total_mg:
+        raise RuntimeError("an article with no mass has no centre of gravity")
+    cog = FreeCAD.Vector(0.0, 0.0, 0.0)
+    for name, member in by_member.items():
+        cog += centroids[name] * (member["mass_g"] / GRAMS_PER_MG)
+    cog = cog / total_mg
+    reference = cog if origin is None else origin
+    tensor = [0.0] * 6
+    for name, member in by_member.items():
+        mass_mg = member["mass_g"] / GRAMS_PER_MG
+        sigma = member["areal"]
+        own = _surface_inertia(inertia[name])
+        shift = centroids[name] - reference
+        tensor[0] += sigma * own[0] + mass_mg * (shift.y ** 2 + shift.z ** 2)
+        tensor[1] += sigma * own[1] - mass_mg * shift.x * shift.y
+        tensor[2] += sigma * own[2] - mass_mg * shift.x * shift.z
+        tensor[3] += sigma * own[3] + mass_mg * (shift.x ** 2 + shift.z ** 2)
+        tensor[4] += sigma * own[4] - mass_mg * shift.y * shift.z
+        tensor[5] += sigma * own[5] + mass_mg * (shift.x ** 2 + shift.y ** 2)
+    matrix = FreeCAD.Matrix()
+    (matrix.A11, matrix.A12, matrix.A13,
+     matrix.A22, matrix.A23, matrix.A33) = (value * GRAMS_PER_MG
+                                            for value in tensor)
+    matrix.A21, matrix.A31, matrix.A32 = matrix.A12, matrix.A13, matrix.A23
+    return {"total_g": total_mg * GRAMS_PER_MG,
+            "center_of_mass": cog,
+            "inertia": matrix}
 
 
 def layups(owners, blocks_by_section, path):
@@ -170,18 +231,41 @@ def layups(owners, blocks_by_section, path):
     return by_member
 
 
-def summarize(by_member, layup_table):
+def summarize(by_member, layup_table, properties=None):
     """The article's mass: total, per laminate, and per member, in grams.
 
     Per laminate is what a layup iteration changes; per member is where a
     cut-vs-uncut difference actually sits, which is the question two articles
-    are built to ask.
+    are built to ask.  Passing :func:`mass_properties`' result adds the centre
+    of gravity and the inertia tensor to the summary.
     """
     by_laminate = {}
     for member in by_member.values():
         key = member["section"][:-len("_Section")]
         by_laminate[key] = by_laminate.get(key, 0.0) + member["mass_g"]
-    return {"total_g": sum(m["mass_g"] for m in by_member.values()),
-            "by_laminate": by_laminate,
-            "by_member": by_member,
-            "layups": layup_table}
+    result = {"total_g": sum(m["mass_g"] for m in by_member.values()),
+              "by_laminate": by_laminate,
+              "by_member": by_member,
+              "layups": layup_table}
+    if properties is not None:
+        result["center_of_mass"] = properties["center_of_mass"]
+        result["inertia"] = properties["inertia"]
+    return result
+
+
+def log_report(result, log):
+    """Say what the article weighs and balances: laminate by laminate, then the
+    total, then the centre of gravity and the inertia tensor about it."""
+    for laminate, grams in sorted(result["by_laminate"].items()):
+        log("  %-34s %8.0f g" % (laminate, grams))
+    log("mass: %.0f g (%.3f kg)" % (result["total_g"], result["total_g"] / 1e3))
+    if "center_of_mass" in result:
+        cog = result["center_of_mass"]
+        log("centre of gravity: (%.2f, %.2f, %.2f) mm" % (cog.x, cog.y, cog.z))
+    if "inertia" in result:
+        matrix = result["inertia"]
+        log("inertia about the centre of gravity (g·mm²):")
+        for row in ((matrix.A11, matrix.A12, matrix.A13),
+                    (matrix.A21, matrix.A22, matrix.A23),
+                    (matrix.A31, matrix.A32, matrix.A33)):
+            log("  [ %13.4e %13.4e %13.4e ]" % row)
