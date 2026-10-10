@@ -169,6 +169,29 @@ def test_an_origin_shifts_the_moments_by_the_parallel_axis_theorem():
         about_cog["inertia"].A11 + mass_g * (cog.y ** 2 + cog.z ** 2))
 
 
+def test_a_compound_of_faces_combines_their_centroids_and_inertia():
+    width, height = 10.0, 20.0
+    left = Part.makePlane(width, height)
+    right = Part.makePlane(width, height).translate(
+        FreeCAD.Vector(100.0, 0.0, 0.0))
+    compound = Part.makeCompound([left, right])
+    area, centroid, inertia = modelmass.surface_properties(compound)
+    assert area == pytest.approx(2 * width * height)
+    assert centroid.x == pytest.approx(55.0)
+    offset = 50.0
+    iyy = (2 * (height * width ** 3 / 12.0)
+           + 2 * (width * height) * offset ** 2)
+    assert inertia.A22 == pytest.approx(iyy)
+
+
+def test_a_single_face_reports_its_own_properties():
+    area, centroid, inertia = modelmass.surface_properties(
+        Part.makePlane(10.0, 20.0))
+    assert area == pytest.approx(200.0)
+    assert centroid.x == pytest.approx(5.0)
+    assert inertia.A11 == pytest.approx(10.0 * 20.0 ** 3 / 12.0)
+
+
 def test_summary_and_report_carry_center_of_gravity_and_inertia():
     plate = Part.makePlane(10.0, 20.0)
     by_member, centroids, inertia = _shape_members({"Plate": plate}, 5e-7)

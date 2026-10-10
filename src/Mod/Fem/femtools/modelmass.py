@@ -157,6 +157,42 @@ def _surface_inertia(matrix):
             matrix.A22, matrix.A23, matrix.A33)
 
 
+def surface_properties(shape):
+    """``(area, centroid, surface second moments)`` of a shell part.
+
+    A face, a shell, or a compound of them.  A compound has no ``CenterOfMass``
+    or ``MatrixOfInertia`` of its own, so its faces are combined by area: the
+    centroid is the area-weighted mean, and each face's second moments are
+    shifted to it by the parallel axis theorem.  The returned matrix is in mm⁴
+    about that centroid, which is what :func:`mass_properties` scales by a
+    laminate's areal density.
+    """
+    faces = list(getattr(shape, "Faces", ()))
+    if not faces:
+        return shape.Area, shape.CenterOfMass, shape.MatrixOfInertia
+    area = sum(face.Area for face in faces)
+    centroid = FreeCAD.Vector(0.0, 0.0, 0.0)
+    for face in faces:
+        centroid += face.CenterOfMass * face.Area
+    centroid = centroid / area
+    tensor = [0.0] * 6
+    for face in faces:
+        own = _surface_inertia(face.MatrixOfInertia)
+        shift = face.CenterOfMass - centroid
+        weight = face.Area
+        tensor[0] += own[0] + weight * (shift.y ** 2 + shift.z ** 2)
+        tensor[1] += own[1] - weight * shift.x * shift.y
+        tensor[2] += own[2] - weight * shift.x * shift.z
+        tensor[3] += own[3] + weight * (shift.x ** 2 + shift.z ** 2)
+        tensor[4] += own[4] - weight * shift.y * shift.z
+        tensor[5] += own[5] + weight * (shift.x ** 2 + shift.y ** 2)
+    matrix = FreeCAD.Matrix()
+    (matrix.A11, matrix.A12, matrix.A13,
+     matrix.A22, matrix.A23, matrix.A33) = tensor
+    matrix.A21, matrix.A31, matrix.A32 = matrix.A12, matrix.A13, matrix.A23
+    return area, centroid, matrix
+
+
 def mass_properties(by_member, centroids, inertia, origin=None):
     """Total mass, centre of gravity and inertia tensor of a whole article.
 
