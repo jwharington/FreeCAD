@@ -19,7 +19,10 @@ laminate, §11.6's GUI freeze — traced to the layered `COMPOSITE` section expa
 the frd to **8x** the mesh (289,241 nodes against 35,385) and fixed in the frd
 reader — and §11.7, which turned out not to be a defect at all: the wing's tie
 warnings are ccx reporting DOFs that are already constrained, and the run has
-**zero** of the ones that mean an uncoupled node. Open: the results-viewer toggle
+**zero** of the ones that mean an uncoupled node. Also fixed: §11.12, where a
+force's axis was coming from the referenced face's normal instead of the
+direction asked for, which is what the wing's load case was silently doing.
+Open: the results-viewer toggle
 (§11.4), the coverage and cleanup tail (§11.8, §11.10), a tie hazard the
 tolerance research turned up (§11.9), and the question of landing a shell's
 expansion node on the contact plane (§11.11), which is written up and
@@ -1581,11 +1584,24 @@ core and a 160 gsm biaxial carbon-epoxy `Composite::Shell` on each lateral
 surface — a real per-ply `[+/-45]s` laminate with a fibre orientation, not a
 smeared equivalent. The skins are meshed apart from the core and merged
 node-disjoint (§8.3), then tied. The load case is a cantilever, so the tip
-deflection is interpretable, and the test's bound is **50 mm** — between the
-~6 mm a skin-stiffened sandwich estimate gives and the ~3000 mm the bare foam
-core gives — so it proves the skins are carrying the bending rather than merely
-that the job finished. (It is a bound, not a compared pair; the compared-pair
-check lives in §11.3's numerical test, on a smaller model.)
+deflection is interpretable, and the test's bound is a factor on an estimate
+**computed from the model**: the skins' in-plane stiffness `A11 = sum(C11_k t_k)`
+read from the laminate's own merged layers (`FEMLayers`, the ones the writer
+emits), the outline's section integrals taken from the same NACA ordinates the
+core is built from, and the core's shear modulus from its own two properties.
+That ideal sandwich gives **46 mm**; the solve gives **94.9 mm**, so the bound is
+the estimate **x4** — the ~2x the ideal omits is the section distortion and shear
+lag a sandwich beam does not have, while the bare foam core would be ~65x the
+estimate. (It is a bound, not a compared pair; the compared-pair check lives in
+§11.3's numerical test, on a smaller model.)
+
+**The bound was 50 mm against a ~6 mm estimate until `b45b7fb10f`, and both were
+wrong for the same reason**: the estimate used `E_skin = 135 GPa`, which is the
+ply's *fibre-direction* modulus, while the skins are `[+/-45]s` and the deck's
+own `A11` gives 31.5 GPa for them. The load was also not going where the code
+said — it followed the tip face's **+Y** normal instead of −Z, which is a
+spanwise load rather than a bending one, and that is why a bound that should have
+failed passed. Both are fixed; §11.12 has the mechanism.
 
 **It could not run until three FEM defects and a mesh-sizing bug in front of it
 were fixed**, which is why it is recorded here and not only in the example:
@@ -1886,7 +1902,9 @@ equations` is unchanged at 74, 36, 33 and 101, while `concentrated loads` falls
 from 40, 32, 20 and 20 to 0. So in these four models the force adds **loads and
 no constraint at all**, and cannot take a DOF from the tie. f3 is the
 discriminating case: its shell carries no SPC, so a collision could only have
-appeared as a warning, and it has none either way.
+appeared as a warning, and it has none either way. Re-measured after §11.12 moved
+the load onto its intended axis: identical counts, identical `.nam` contents and
+identical constraint totals, so the table above is the same before and after.
 
 That is also the order the source requires, which is what makes the null result
 mean something: `gen3dforc` runs at input reading (`calinput.f:1327`) and
@@ -2018,3 +2036,147 @@ remove it, while the same model with that offset writes and solves with zero
 uncoupled nodes.
 
 
+### 11.12 ~~A force's axis came from the referenced face's normal, not from the direction asked for~~ — **fixed**
+
+Every mixed model in this work loaded along the normal of the face its force was
+attached to, whatever the code said. The wing's tip face made that a *spanwise*
+load rather than the cantilever load §11.5 asserts; f1 and f4 loaded **+x** and
+f2, f3, f4 **+z**.
+
+**`DirectionVector` is not an input.** It is declared
+`App::Prop_ReadOnly | App::Prop_Output`, *"Direction of arrows"*
+(`FemConstraintForce.cpp:49-55`), and the input is `Direction`, a link to
+*"Element giving direction of constraint"* (`:38-46`). The overwrite chain, all
+of it in C++:
+
+- `Constraint::execute()` calls `References.touch()` on **every** recompute
+  (`FemConstraint.cpp:136-138`);
+- that fires `Constraint::onChanged(&References)`, which recomputes
+  `NormalDirection` from the first referenced **face** (`:167`, `:192`);
+- that fires `ConstraintForce::onChanged(&NormalDirection)`, which overwrites
+  `DirectionVector` with ±`NormalDirection` whenever `Direction.getValue()` is
+  null — *"Set a default direction if no direction reference has been given"*
+  (`FemConstraintForce.cpp:129-139`). The guard asks whether a `Direction` link
+  exists, not whether a direction was set.
+
+`analysis.addObject()` touches the constraint, so the overwrite happens while the
+model is built and is already in place when the deck is written. A reference that
+is not a face (an edge) never recomputes `NormalDirection`, which is why
+`mixed_shell_solid_plate` and all five `inspect_mixed_cantilever` forces — every
+one of them edge-referenced — were correct by accident, and why §11.3's F1
+comparison (0.09 % and 1.90x) is unaffected and still stands.
+
+**Measured** in a scratch document before any code changed: a face-referenced
+force set to `(0,0,-1)` reads `(0,0,1)` back after build+recompute; the same on an
+edge reference keeps `(0,0,-1)`. In the decks it was visible as `*CLOAD` on DOF 1
+(f1, f4) or DOF 3 (f2, f3) with **positive** values, and no `*TRANSFORM` exists
+in any of them to make the DOF numbering local.
+
+**Fixed** by giving each force a `Direction` element: an `App::Line` datum whose
+local Z axis is the axis wanted, which is what `Constraint::getDirection` reads
+from a datum (`FemConstraint.cpp:533-535`). One in
+`_mixed_coupling_common.add_force` for the f1-f4 fixtures, and a shared
+`add_load_direction()` in `_shell_example_common` for the wing (the core's curved
+profile offers neither a linear Z edge nor a planar Z face to point at) and the
+plate. All four face-family decks now write their load on **DOF 3, negative**, and
+nothing else about them changed: the tie warnings, the `.nam` contents and ccx's
+constraint totals are identical to before, so the axis was the only thing wrong.
+`test_compositeexamples` pins it — `_assert_loads_point_along_minus_z` asserts the
+`*CLOAD` block's DOF and sign in both mixed examples — because this failure is
+silent: the job converges and the deflection looks plausible either way.
+
+
+---
+
+## 12. Proposed: assign the ties from the references the model already carries
+
+**Status: proposal, to be reviewed before any code.** Nothing here is
+implemented, and nothing in §11 was changed to make room for it.
+
+**Today's cost.** Coupling a skin to a core means writing the tie by hand —
+`ObjectsFem.makeConstraintTie`, two face references (the shell first, because
+the first reference is the slave), and a `Tolerance` nothing derives — *and*
+finding the pair to reference. That search is real code: the fixtures use
+`paired_faces_by_plane` (`femexamples/_mixed_coupling_common.py:70`), and the
+examples use `_lateral_face_names` / `_planar_face_name` / `_face_name` /
+`extreme_face_reference` to name the same kind of face from the other side. A
+user with a skin on a solid has to reproduce that search, per interface.
+
+**The observation behind the proposal.** The model already declares both halves
+of every interface, in objects the pipeline already walks:
+
+- the **solid** — its material's reference, resolved dimension-aware by
+  `meshsetsgetter.get_material_elements` (`:1052`), with
+  `meshtools.get_shape_dimension` (`:1671`) judging dimension by contents so a
+  compound is not mistaken for a solid;
+- the **shell faces** — the shell-thickness object's references
+  (`membertools.py:266` collects `Fem::ElementGeometry2D`), which
+  `meshsetsgetter.get_shell_elements` (`:957`) already resolves to element
+  faces. A Composites skin always has one: the provider routes the offset
+  through `ShellThickness` (`drape_laminate_provider.route_shell_offset`), and
+  the examples create one per skin.
+
+So the interface set is derivable: **the shell-thickness references that lie on
+a face of a solid the analysis declares**. The tie is then a *derived* object
+rather than a searched-for one, and the search helper already written for the
+fixtures is the rule to reuse.
+
+**The proposal, stated plainly.** A pass over the analysis that (1) collects the
+solids from the dimension-3 material references, (2) collects the shell faces
+from the shell-thickness references, (3) pairs them with the fixture's rule —
+parallel normals, planes within a tolerance — and (4) creates one
+`Fem::ConstraintTie` per pair, shell reference first, with a derived tolerance.
+
+**Review.**
+
+*Where it lives, and when it runs.* The pairing rule has to leave
+`femexamples` for Fem proper — the same promotion Stage 9 did for
+`mesh_parts_separately` — so that a plain shell gets it too, with Composites
+supplying only the shell-thickness objects it already creates. *When* matters
+more than where. Doing it in the writer, or in `meshsetsgetter`, means coupling
+that no object records: invisible in the tree, uneditable, and impossible to
+switch off for one interface. ADR 0004 obliges a connection that cannot be
+expressed to *raise*; silently inventing connections is that failure in reverse.
+So an explicit command/helper that **creates the tie objects** keeps the writer
+untouched and the coupling visible, which is also the order Stage 8/9 used
+(headless helper first, GUI command later).
+
+*Four things that have to be settled first.*
+
+1. **Over-coupling is the default failure.** A shell face lying on a solid face
+   is not always a bond: a stiffener web standing on a plate, a patch left free
+   on purpose, two parts that merely touch. Pairing every coincidence would
+   silently stiffen models that are correct today. The pass therefore needs an
+   opt-out per interface, a report of what it created, and a stated coincidence
+   tolerance (`COINCIDENT_TOLERANCE = 1e-6`, the value the fixtures use). A
+   *declared gap* (the F3/F4 50 mm families) should be a later opt-in, because
+   nothing in the model states that gap today.
+2. **The tolerance must be derived, not typed.** §11.3 measured what happens
+   when it is picked (30 and 5 untied nodes at `t = 10`), and a *default* of
+   `0.0` is not even zero to ccx, which replaces it with its own `tolloc`
+   (§11.11). For a coincident interface the requirement is `t·(0.5−|offset|)`
+   (§11.11's table), and this pass is the natural home for that derivation,
+   because it is the same geometry walk that does the pairing.
+3. **It depends on fixing the slave-side lookup.** `_shell_slave_face`
+   (`write_constraint_tie.py:60-77`) takes the offset from the **first**
+   non-suppressed shell-thickness object in the analysis. §10 requires a
+   sandwich's two skins to offset in opposite directions, so with real offsets
+   one of the two ties names the far face — a whole thickness out, inside no
+   tolerance, and silent. Auto-tieing a two-skin model on top of that would
+   generate the very failure §3 fixed, at scale. Per-shell lookup first.
+4. **The meshing rule cannot be automated here.** The tie only couples if the
+   shell's nodes are disjoint from the solid's (`mesh_parts_separately`, Trap
+   A), which is decided when the mesh is built and before any tie exists. The
+   pass should therefore *check* it — the mesh's `FacesOnly` must hold the
+   shell — and refuse rather than create a tie that couples nothing, the same
+   loud-not-silent rule as §11.1's guard on non-face references.
+
+*Out of scope for a first cut:* edge interfaces (ADR 0004 keeps those a loud
+error until it decides), multi-stage and contact ties, and the task panel.
+Ambiguity — a shell face lying on two solids — should be a refusal with the
+candidates named, not a preference.
+
+*Exit criterion:* on the wing and the plate, deleting their hand-written
+`_add_tie` helpers and running the pass instead produces the same `*TIE` set up
+to names, the deck snapshot still reports *no deck changed*, and a second run
+creates nothing new.
