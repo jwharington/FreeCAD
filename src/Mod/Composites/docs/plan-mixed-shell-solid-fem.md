@@ -1522,13 +1522,55 @@ the LS8e case this plan exists for, has no end-to-end example. §10's per-skin
   scene graph has just 2,648 nodes, so it is neither triangle count nor
   traversal - it is the pick against that object.
 
-  **The fix is one property.** `CCX_Results_Mesh.Selectable = False` takes the
-  pick from 0.477 s to 0.026 s, and hiding it does the same. Nothing else tried
+  **The first mitigation** was `CCX_Results_Mesh.Selectable = False`, which takes
+  the pick from 0.477 s to 0.026 s (committed, `af92dc0568`). Nothing else tried
   helps: `Selectable = False` on the *model* mesh changes nothing (its pick was
-  already 0.023 s, which is why testing it there proved nothing), and
-  `ShowInner = True` makes it worse (0.735 s). Either stop the result mesh being
-  selectable by default, or stop it being 8x the model in the first place -
-  the second also fixes the display gate and the memory.
+  already 0.023 s, which is why testing it there proved nothing), `ShowInner =
+  True` makes it worse (0.735 s), and `SelectionStyle = "BoundBox"` does nothing
+  either - it only sets `SoFCSelectionRoot::selectionStyle`
+  (`Gui/ViewProviderDocumentObject.cpp:233`), which decides how a hit is
+  *reported*, not whether Coin's ray pick walks the geometry. What actually
+  cheapens a pick is `SoPickStyle::UNPICKABLE`, set by
+  `ViewProviderGeometryObject::setSelectable`
+  (`Gui/ViewProviderGeometryObject.cpp:346-373`).
+
+  Which is why the **post pipeline** needed different treatment: its view
+  provider (`ViewProviderFemPostPipeline` : `ViewProviderFemPostObject` :
+  `Gui::ViewProviderDocumentObject`) does not inherit `ViewProviderGeometryObject`
+  - where `Selectable` is declared - and its root holds **zero `SoPickStyle`
+  nodes**, so its geometry is always walked. Introducing one took its pick from
+  0.269 s to 0.024 s. Not applied, because the root fix makes it unnecessary.
+
+  **The root cause, isolated** - same deck, nodes and elements byte-identical,
+  only the sections changed:
+
+  | deck | shell sections | frd nodes | extra |
+  |---|---|---|---|
+  | original | 6,822 x `COMPOSITE` | 289,241 | 253,855 |
+  | homogeneous | 1 x `*SHELL SECTION` | **35,385** | **0** |
+
+  So it is the **layered `COMPOSITE` section** - not model size, and not
+  mixed-ness. The manual says why `OUTPUT=2d` could never help: *"In the .frd
+  file, however, each layer is expanded independently ... (no matter whether the
+  parameter OUTPUT=3D was used)."* ccx reports "layers per element: 8", and the
+  extra ids sit on the shell normal at exactly the ply thickness (0.0831 mm).
+
+  **Fixed in the reader** (`089a6fcae7`): when the frd's nodes are a strict
+  superset of the model mesh's, the result mesh is the analysis's own mesh and
+  the result rows are filtered to it. Measured on a real import: result mesh
+  289,239 -> **35,383** nodes, max |u| 0.113354 -> 0.113326 (0.02 %), frd import
+  19.5 s -> **6.5 s**, and a pick over the body with the pipeline in `Surface`
+  mode showing a field **0.29-0.48 s -> 0.036 s**. The scroll lag is gone.
+
+  **The trade**, recorded because it is a real loss: through-thickness and
+  per-layer stresses are averaged away on the displayed mesh, so individual plies
+  are no longer separable. The expanded mesh was the only way to see per-layer
+  fields.
+
+  Still open: the exact arithmetic of the extra-node numbering (289,240 records
+  against 289,241 declared, with id gaps of 2 and 4), and per-layer stress
+  fidelity after mapping. Also undecided: whether to keep the `Selectable = False`
+  mitigation now that the result mesh is 35k nodes and no longer needs it.
 - **`Stiffener` / `Bulkhead` mixed coverage** — none. `quasi_iso_stiffener_panel`
   is all shells; Bulkhead has no FEM example at all.
 - **The GUI half of §8** — `femtest/gui/test_mixed_shell_solid.py` does not
