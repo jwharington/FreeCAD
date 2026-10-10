@@ -23,7 +23,6 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import FreeCAD
-import numpy as np
 import ObjectsFem
 from femmesh import meshsetsgetter
 from femobjects.constraint_hydrostaticpressure import (
@@ -106,6 +105,9 @@ class TestHydroJigCommits(unittest.TestCase):
             member=member,
             solver_obj=solver_obj,
             analysis_type="static",
+            # write_step_output asks the getter that already scanned the mesh
+            # whether the model is mixed; a real writer always carries it.
+            meshdatagetter=SimpleNamespace(is_mixed=False),
         )
 
         buf = StringIO()
@@ -299,6 +301,10 @@ class TestHydroJigCommits(unittest.TestCase):
             AngularAcceleration=Vector(0.0, 0.0, 0.0),
             RelativeVelocity=Vector(0.0, 0.0, 0.0),
             LinearVelocity=Vector(7.0, 8.0, 9.0),
+            # Coriolis is emitted only in decomposition mode, and decomposition
+            # needs a centre of mass off the rotation axis: with both at the
+            # origin there is no rotation drive and no CORIO to fall back for.
+            CenterOfMass=Vector(1250.0, 0.0, 0.0),
             CenterOfRotation=Vector(0.0, 0.0, 0.0),
         )
         femmesh = SimpleNamespace(
@@ -504,25 +510,43 @@ class TestHydroJigCommits(unittest.TestCase):
 
     # ********************************************************************************************
     def test_write_constraint_pressure_skips_malformed_pressurefaces_entry(self):
+        # A malformed entry is not a (feature, surface, is_sub) triple.  It must
+        # be skipped without stopping the write, and the valid entry after it
+        # must still reach the deck.  This is the pressure path: a reaction
+        # object is delivered as a distributing coupling and writes no *DLOAD.
+        class _FakeFemMesh:
+            Faces = (1,)
+            Nodes = {
+                10: Vector(0, 0, 0),
+                11: Vector(1, 0, 0),
+                12: Vector(0, 1, 0),
+            }
+
+            def getElementNodes(self, _elem_id):
+                return (10, 11, 12)
+
         femobj = {
-            "PressureFaces": [(False,)],
+            "PressureFaces": [(False,), ((None, ("Face1",)), [[1, 1]], True)],
             "PressureFaceInfo": {},
             "PressureNodeInfo": {},
         }
         prs_obj = SimpleNamespace(
             EnableAmplitude=False,
             Reversed=False,
-            Name="ConstraintReaction",
-            Proxy=SimpleNamespace(get_pressure_field=lambda _obj, _elem_info: True),
+            Name="ConstraintPressure",
+            Proxy=SimpleNamespace(),
+            Pressure=SimpleNamespace(getValueAs=lambda _unit: SimpleNamespace(Value=1.0)),
         )
         ccxwriter = SimpleNamespace(
-            mesh_object=SimpleNamespace(FemMesh=SimpleNamespace(Faces=())),
+            mesh_object=SimpleNamespace(FemMesh=_FakeFemMesh()),
         )
 
         buf = StringIO()
         write_constraint_pressure.write_meshdata_constraint(buf, femobj, prs_obj, ccxwriter)
 
-        self.assertIn("*DLOAD", buf.getvalue())
+        out = buf.getvalue()
+        self.assertIn("*DLOAD", out)
+        self.assertIn("1,P1,1", out)
 
     # ********************************************************************************************
     def test_write_constraint_pressure_handles_missing_faceinfo_for_subface_list(self):
@@ -807,15 +831,17 @@ class TestHydroJigCommits(unittest.TestCase):
         )
 
     # ********************************************************************************************
-    def test_reaction_get_pressure_field_populates_tables(self):
+    def test_reaction_get_pressure_field_reports_the_wrench_and_pressures(self):
+        # 0ce03f41f3 removed the solver-based pressure field: the resultant is
+        # delivered by the writer and get_pressure_field only fills display
+        # values.  With no face-node table the per-face projection is the only
+        # source of those values, so that is what is pinned here.
         con_reaction = ObjectsFem.makeConstraintReaction(self.document)
         con_reaction.ModelType = "Cosine"
         con_reaction.Origin.Base = Vector(0, 0, 0)
-        con_reaction.Force = Vector(0, 0, 0)
-        con_reaction.Torque = Vector(0, 0, 0)
+        con_reaction.Force = Vector(0, 0, -5)
+        con_reaction.Torque = Vector(1, 0, 0)
         proxy = con_reaction.Proxy
-        load_vec = np.array([0.0, -2.0, -3.0, 0.0, 0.0, 0.0])
-        load_len = (13.0) ** 0.5
 
         elem_info = {
             "elem": [0, 1],
@@ -823,61 +849,45 @@ class TestHydroJigCommits(unittest.TestCase):
             "area": {0: 2.0, 1: 1.5},
             "centroid": {0: Vector(0, 0, 1), 1: Vector(1, 0, 0)},
             "rev": {0: -1.0, 1: 1.0},
-            "pressure": {},
+            "pressure": [0.0, 0.0],
         }
 
-        def fake_root(fun, _x0, method=None):
-            self.assertEqual("hybr", method)
-            _ = fun(load_vec)
-            return SimpleNamespace(success=True)
-
-        with patch("femobjects.constraint_reaction.root", side_effect=fake_root):
-            ok = proxy.get_pressure_field(con_reaction, elem_info)
+        ok = proxy.get_pressure_field(con_reaction, elem_info)
 
         self.assertTrue(ok)
-        self.assertAlmostEqual(3.0 / load_len, elem_info["contact"][0])
-        self.assertAlmostEqual(2.0 / load_len, elem_info["contact"][1])
-        self.assertAlmostEqual(load_len, elem_info["load"][0])
-        self.assertAlmostEqual(load_len, elem_info["load"][1])
-        self.assertEqual(-3.0, elem_info["pressure"][0])
-        self.assertEqual(2.0, elem_info["pressure"][1])
-        self.assertEqual(Vector(0, 0, 1), elem_info["prel"][0])
-        self.assertEqual(Vector(1, 0, 0), elem_info["prel"][1])
         self.assertIs(proxy.elem_info, elem_info)
+        self.assertEqual(Vector(0, 0, -5), elem_info["reaction_force"])
+        self.assertEqual(Vector(-1, 0, 0), elem_info["reaction_torque"])
+        # Cosine projection: face 0 faces the load, face 1 is edge-on to it.
+        self.assertAlmostEqual(1.0, elem_info["pressure"][0])
+        self.assertAlmostEqual(0.0, elem_info["pressure"][1])
 
     # ********************************************************************************************
-    def test_reaction_parabolic_pressure_field_squares_contact_factor(self):
+    def test_reaction_parabolic_contact_factor_squares_the_projection(self):
+        # Parabolic still shapes the *display* pressure: a face tilted so that
+        # n.l/|l| = 0.6 gets the square, and a face turned away gets nothing.
         con_reaction = ObjectsFem.makeConstraintReaction(self.document)
         con_reaction.ModelType = "Parabolic"
-        con_reaction.Origin.Base = Vector(0, 0, 0)
-        con_reaction.Force = Vector(0, 0, 0)
-        con_reaction.Torque = Vector(0, 0, 0)
+        con_reaction.Force = Vector(0.0, 0.0, -5.0)
         proxy = con_reaction.Proxy
 
+        tilted = Vector(0.0, 0.8, 0.6)
+        self.assertAlmostEqual(0.36, proxy.get_contact(con_reaction, tilted, con_reaction.Force))
+        self.assertAlmostEqual(
+            0.0,
+            proxy.get_contact(con_reaction, Vector(0.0, 0.0, -1.0), con_reaction.Force),
+        )
+
         elem_info = {
-            "elem": [0, 1],
-            "normal": {0: Vector(0, 0, 1), 1: Vector(1, 0, 0)},
-            "area": {0: 1.0, 1: 1.0},
-            "centroid": {0: Vector(0, 0, 1), 1: Vector(0, 0, 2)},
-            "rev": {0: 1.0, 1: 1.0},
-            "pressure": {},
+            "elem": [0],
+            "normal": {0: tilted},
+            "area": {0: 1.0},
+            "centroid": {0: Vector(0, 0, 1)},
+            "rev": {0: 1.0},
+            "pressure": [0.0],
         }
-
-        def fake_root(fun, _x0, method=None):
-            self.assertEqual("hybr", method)
-            _ = fun(np.array([0.0, 0.0, -4.0, 0.0, 0.0, 0.0]))
-            return SimpleNamespace(success=True)
-
-        with patch("femobjects.constraint_reaction.root", side_effect=fake_root):
-            ok = proxy.get_pressure_field(con_reaction, elem_info)
-
-        self.assertTrue(ok)
-        self.assertEqual(1.0, elem_info["contact"][0])
-        self.assertEqual(4.0, elem_info["load"][0])
-        self.assertEqual(4.0, elem_info["pressure"][0])
-        self.assertEqual(0.0, elem_info["contact"][1])
-        self.assertEqual(4.0, elem_info["load"][1])
-        self.assertEqual(0.0, elem_info["pressure"][1])
+        self.assertTrue(proxy.get_pressure_field(con_reaction, elem_info))
+        self.assertAlmostEqual(0.36, elem_info["pressure"][0])
 
     # ********************************************************************************************
     def test_reaction_onchanged_and_restore_callbacks(self):
