@@ -20,8 +20,9 @@ the frd to **8x** the mesh (289,241 nodes against 35,385) and fixed in the frd
 reader — and §11.7, which turned out not to be a defect at all: the wing's tie
 warnings are ccx reporting DOFs that are already constrained, and the run has
 **zero** of the ones that mean an uncoupled node. Open: the fact that only the F1
-family has ever been solved (§11.3), the results-viewer toggle (§11.4), and the
-coverage and cleanup tail (§11.8, §11.9).
+family has ever been solved (§11.3), the results-viewer toggle (§11.4), the
+coverage and cleanup tail (§11.8, §11.10), and a tie hazard the tolerance
+research turned up (§11.9).
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
 shells wants to coexist with locally solid features in the *same*
 analysis. Today it cannot: FreeCAD's FEM pipeline is built around
@@ -1359,6 +1360,11 @@ The shell's reference surface lands on the core face, so each skin sits a
 half-thickness inboard of its own midsurface, and sandwich bending stiffness
 goes as the square of the separation between the skins. Thin skins: negligible.
 Thick laminates: an answer that is quietly too soft, with nothing to signal it.
+It is also what makes the tie tolerance physical rather than nominal: §11.3's
+research found that an offset-0 skin whose reference surface is the interface
+must be tied at `t/2`, while an offset that puts the reference surface *on* the
+interface leaves an expanded node at zero distance, so §10 is load-bearing for
+the tie as well as for the stiffness.
 
 **Why it can go early.** It needs no mixed mesh at all. A pure shell model can
 carry the offset, so it is verifiable against an equivalent solid model or a
@@ -1477,12 +1483,55 @@ to reach that far. Tying the *reference* nodes instead — a `TYPE=NODE` slave,
 which the manual permits — was implemented and measured: ccx accepts it and
 reports **no** untied node, but the joint is no longer rigid, **7.722483e-02 mm**
 against the all-solid rebuild's **6.416312e-02 mm** (+20 %), where the
-element-face slave gives **6.422333e-02 mm** (+0.09 %). CalculiX links an MPC on
-a reference node to the nodes of its expansion through its own expansion MPCs
-(`gen3dmpc.f`), and that link leaves a rotational freedom a rigid bond does not
-have. So a tolerance as fine as the geometric gap needs the *expanded* node at the
-reference location to be the one tied, which is a change inside CalculiX's
-expansion and tie code, not in the deck.
+element-face slave gives **6.422333e-02 mm** (+0.09 %). CalculiX links a
+reference node to its expansion nodes by an **averaging** MPC —
+`newnode + knor(indexk+3) − 2·node = 0`, so the reference node is the mean of two
+expanded nodes. It is written in `gen3dsurf.f` (for a node belonging to a nodal
+surface, which is why the `TYPE=NODE` slave inherited it) and in `gen3dmpc.f`
+(for any node that already carries an MPC); Dhondt writes the same equation out
+in the forum post cited below. The reference node is therefore not a point of
+the expanded mesh, and a tie on it constrains the mean through the thickness:
+the +20 % is what a reference node *is*, not a defect to be patched.
+
+**The fine tolerance is reachable in the deck, so there is no case for touching
+ccx.** That is the answer to the research this section was left holding open,
+and three independent readings agree — all three of them already true of decks
+FreeCAD writes:
+
+- The tolerance has to cover the distance from the expansion face `S1`/`S2`
+  names to the master face. For a lap joint that distance *is* the
+  mid-surface-to-mid-surface distance; for a joint referenced to the real
+  (offset) surface it is ~**0.2 mm** (PrePoMax forum, *TIE constraints for shell
+  weldments*, Jirip's measured conclusion, September 2026).
+- A large tolerance is not what risks a false match, which was the worry that
+  started this. Only nodes of the selected slave surface are candidates, and a
+  candidate must both sit within the tolerance orthogonally and project inside
+  the master face (the manual's criterion, quoted by FEAnalyst in that thread).
+  `t/2` is therefore the honest, exact requirement for an offset-0 shell whose
+  reference surface is the interface, not a fudge that ought to be smaller.
+- The way to make it smaller is the shell offset, not the tie code.
+  `gen3dfrom2d.f` places the two outer expansion nodes at `ref − t·(0.5+offset)`
+  and `ref + t·(0.5−offset)`, so `OFFSET=−0.5` puts the first *exactly on* the
+  reference surface (and `OFFSET=+0.5` puts the second there). Set the offset so
+  a skin's reference surface is the physical interface — §10's requirement on
+  stiffness grounds — and the face the tie names coincides with the master face,
+  and the tolerance need only cover the modelling gap. Both are `*SHELL SECTION`
+  fields FreeCAD already writes.
+
+What stands: the offset moves material through the thickness, so it changes the
+model and the result, and where the meshed surface genuinely *is* the
+mid-surface, `t/2` is what the geometry requires. What is now decided: **no ccx
+change.** The distorted joint stresses at a tie are inherited rather than ours —
+Abaqus answers that with a dedicated shell-to-solid coupling and CalculiX has
+none (forum *Tie and surfaces?*, Calc_em, December 2021). One hazard the
+research turned up is not about the tolerance at all: §11.9.
+
+Sources: CalculiX forum `t/tie-and-surfaces/887`,
+`t/tied-constraint-fails-if-a-forces-are-prescribed-to-slave-nodes/1660`,
+`t/tie-constraint-on-the-edges-of-2d-elements/2855` (a tie on the edges of
+plane-stress elements is still broken in 2.23 — that is §11.1's refused family,
+and this says refusing it was right), and PrePoMax
+`t/tie-constraints-for-shell-weldments-internal-edges-and-mid-surface-gaps/3568`.
 
 What remains open, stated exactly:
 
@@ -1761,6 +1810,9 @@ ccx's internal expansion-node numbering and do **not** match the frd's — measu
 0 of 79 present in either the `OUTPUT=2d` or the `OUTPUT=3d` frd — so a `.nam` id
 cannot be located by coordinates.
 
+And one cause that *does* mean an uncoupled node wears this same warning — a
+point load on the tie's shell slave — is §11.9.
+
 ### 11.8 Coverage the plan does not reach
 
 Two gaps in what the tests exercise, as opposed to what the code can do:
@@ -1772,7 +1824,56 @@ Two gaps in what the tests exercise, as opposed to what the code can do:
   matrix is headless-only. Amend the rule or write the test; do not leave the
   rule standing against a tree that does not satisfy it.
 
-### 11.9 Deliberate leftovers, and small bugs
+### 11.9 A point load on a tie's shell slave can drop the tie, under a warning we
+call benign
+
+A tie's slave can be lost silently when the same node carries a point load, and
+the warning it writes says "already constrained" — the cause §11.7 files as
+bookkeeping.
+
+A point force in a shell node is not applied to that node. `gen3dforc.f` writes
+the same expansion link that `gen3dsurf`/`gen3dmpc` write, but with the
+**expanded** node as the dependent term:
+
+```
+knor(indexk+1) + knor(indexk+3) − 2·node = 0
+```
+
+So whichever of the expansion's nodes the tie names as its slave can no longer be
+the dependent term of the load's MPC, and `gentiedmpc` reports *"DOF n of node X
+is not active; no tied constraint is generated"*. Guido Dhondt worked this case
+through in the forum thread *Tied constraint fails if a forces are prescribed to
+slave nodes* (`calculix.discourse.group/t/…/1660`, 3 July 2023): two shell layers
+tied on the lower face of the upper one, plus a `*CLOAD` on the upper layer, and
+the tie is lost at the loaded nodes; his remedy is to swap master and slave. He
+notes in the same post that `*DLOAD` writes no MPC, so a pressure load cannot
+cause this.
+
+Why the existing classification cannot see it: ccx's stdout is identical for
+"an SPC already prescribed this DOF" (benign) and "this DOF is dependent in the
+expansion MPC a point load created" (an uncoupled node), and
+`tied_mpc_warning_counts` counts both as *already constrained*. FreeCAD can tell
+them apart, because it wrote both the tie's slave surface and the `*CLOAD`.
+Closing action: a write-time check that reports a tie whose shell slave carries
+a `*CLOAD` node, naming the nodes and the remedy (swap master and slave, or load
+the master side). Not yet written.
+
+One thing to settle before treating this as someone else's problem: the f1-f4
+fixtures apply their 100 N force to the **shell**
+(`constraint_mixed_face_coupling.setup` —
+`add_force(..., extreme_face_reference(shell_obj, ...))`) while the tie's slave
+is also the shell, and in `_covered_solid` the shell wraps the solid, so the
+loaded face is a tied face. Whether the two collide there depends on which
+expanded node the slave face names against the one the load made dependent, so
+"0 untied slave nodes" in `test_mixed_coupling_numerical` does not by itself
+settle it. The check is ccx's two warning counts for f1-f4 split by cause, with
+and without the force.
+
+*Exit criterion:* a fixture that puts a `*CLOAD` on a shell tie slave and asserts
+the writer reports it with the nodes named, and shows the same model with the
+load on the master side (or as a `*DLOAD`) still writes and solves.
+
+### 11.10 Deliberate leftovers, and small bugs
 
 - **`test_rosette_scenarios` SIGSEGV** on a compound of boxes — the guard covers
   top-level solids only. Unrelated to the flag.
