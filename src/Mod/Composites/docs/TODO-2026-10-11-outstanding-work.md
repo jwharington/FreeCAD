@@ -24,8 +24,10 @@ mixed path is on by default, the motivating laminate wing solves, §11.1, §11.2
 §11.5, §11.6, §11.7, §11.12, §11.13 are closed); and **B9.1 / B9.1b / B9.4** —
 the compound-of-solids use-after-free, the stale edge-read cache, and the
 refusal of a support whose bodies do not touch, all nextdrape fixes taken into
-FreeCAD by `bf5129fc5b` / `<bump>`.  **B9.5 is open: the drape suite has two
-RED acceptance canaries** (see below) — pre-existing, and to be fixed.
+FreeCAD by `bf5129fc5b` / `6d9f0dc10d`.  **B9.5 is open — the drape suite has
+two RED acceptance canaries.  By the owner's decision it sits at the BOTTOM of
+this list** (see the last section), so the mixed and donation items are taken
+first; it is deferred, not accepted.
 
 ---
 
@@ -241,22 +243,6 @@ it.  "§" refers to `plan-mixed-shell-solid-fem.md`.
         two-island panel remainder is unaffected.  nextdrape `e708584`,
         FreeCAD `<bump>`.  `boxes_compound` is no longer a baseline shape (it
         is refused by design); `drape_cli --all` is 17/17 `status=ok`.
-  - [ ] **B9.5 — the acceptance canaries are RED, and that is a defect.**  The
-        drape suite is **197 passed / 2 failed** in this tree, and both
-        failures reproduce unchanged on pristine `aba05cc` with none of the
-        B9.1 work applied — they are pre-existing, not caused by it:
-        `CoverageGeometry.BentPlateDiagnosticsPopulate`
-        (`test_coverage_geometry.cpp:235`: `gapFraction` **0.5** against a
-        required < 0.05, on `MakeBentPlate(90, 100, 90, 30)`) and
-        `TexturePlan.BoundaryLinksLieOnTheDevelopedTrim`
-        (`boundaryLinksOffTrim` non-empty: **cyl-closed 23, cubic 2,
-        web_band 52**).  Both are the documented `BOUNDARY-LINK-BORN-OFF-EDGE`
-        defect firing: boundary links are born 15-28 mm long against a 5 mm
-        pitch (`QuadBuilder.cpp:769`), the far cell is refused, the fabric
-        stops short of the part edge, and the uncovered strip is the gap.
-        **A failing test is a defect, not a steady state** — the fix is the
-        birth law, not the assertions or the thresholds.  *Blocks:* nothing;
-        independent of B9.1-B9.4.
   - [ ] **B9.2 — delete the flag getter and its branches** —
         `femsolver/settings.py::get_allow_mixed_elements` and its call sites —
         **after one release has shipped** with the default on.  Deliberate, not
@@ -295,3 +281,33 @@ shared file.
 4. **B1** — the C++ change, last because it needs a rebuild.
 5. **A2** — the study-side donation tail, whose gate is the lc03 reproduction.
 6. **B7** — after **B4.1** lands and the proposal has been reviewed.
+
+---
+
+# Bottom of the list — deferred by the owner (2026-10-11)
+
+Parked, not forgotten, and not accepted: a failing test is a defect.  These are
+at the bottom by the owner's decision, so that the mixed and donation items
+ahead of them are taken first.
+
+- [ ] **B9.5 — the drape suite's acceptance canaries are RED.**  The suite is
+      **197 passed / 2 failed**, and both failures reproduce unchanged on
+      pristine `aba05cc` with none of the B9.1 work applied — pre-existing, not
+      caused by it:
+      - `CoverageGeometry.BentPlateDiagnosticsPopulate`
+        (`test_coverage_geometry.cpp:235`): `gapFraction` **0.5** against a
+        required < 0.05, on `MakeBentPlate(90, 100, 90, 30)`.
+      - `TexturePlan.BoundaryLinksLieOnTheDevelopedTrim`:
+        `boundaryLinksOffTrim` non-empty — **cyl-closed 23, cubic 2,
+        web_band 52**.
+
+      Both are the documented `BOUNDARY-LINK-BORN-OFF-EDGE` defect firing: rim
+      cells are refused by the single-neighbour and two-neighbour laws and are
+      never healed, so a boundary link is born spanning the empty gap — 15-28 mm
+      against a 5 mm pitch — and the fabric stops short of the part edge.  That
+      uncovered strip is the `gapFraction`.  `QuadBuilder.cpp:752`
+      (`OneSidedLinkStopsShort`) marks the link a fabric cut; `:769` traps it.
+      **The fix is the birth law** — never the assertions and never the
+      thresholds.  *First step:* the acceptance gate that refuses the rim cell
+      is named by the reject-gate diagnostic (`LastRejectGate()`), which is
+      already surfaced.
