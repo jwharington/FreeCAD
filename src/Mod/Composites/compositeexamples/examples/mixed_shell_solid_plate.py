@@ -30,6 +30,7 @@ import FreeCAD
 import Part
 
 from femexamples.meshes.merged_mesh import mesh_parts_separately
+from femtools.mixedcoupling import edge_reference_at, face_reference_on_axis
 
 from ...features.CompositeShell import CompositeShellFP
 from ._shell_example_common import (
@@ -83,22 +84,6 @@ def _make_skin(doc, support):
     return shell, laminate
 
 
-def _face_name(obj, *, axis, value):
-    for index, face in enumerate(obj.Shape.Faces, start=1):
-        centre = face.CenterOfMass
-        if abs(getattr(centre, axis) - value) < 1e-6:
-            return f"Face{index}"
-    raise ValueError(f"{obj.Name} has no face on {axis}={value}")
-
-
-def _edge_name(obj, *, x, z):
-    for index, edge in enumerate(obj.Shape.Edges, start=1):
-        centre = edge.CenterOfMass
-        if abs(centre.x - x) < 1e-6 and abs(centre.z - z) < 1e-6:
-            return f"Edge{index}"
-    raise ValueError(f"{obj.Name} has no edge at x={x}, z={z}")
-
-
 def _add_spar_material(doc, analysis, spar, tag):
     import ObjectsFem
 
@@ -118,11 +103,11 @@ def _add_load_case(doc, analysis, spar, tag):
     import ObjectsFem
 
     fixed = ObjectsFem.makeConstraintFixed(doc, f"{tag}_Fixed")
-    _set_constraint_refs(fixed, [(spar, _face_name(spar, axis="x", value=0.0))])
+    _set_constraint_refs(fixed, [face_reference_on_axis(spar, "x", 0.0)])
     _add_analysis_member(analysis, fixed)
 
     force = ObjectsFem.makeConstraintForce(doc, f"{tag}_Force")
-    _set_constraint_refs(force, [(spar, _edge_name(spar, x=SPAR_LENGTH, z=0.0))])
+    _set_constraint_refs(force, [edge_reference_at(spar, x=SPAR_LENGTH, z=0.0)])
     force.Force = f"{FORCE_N} N"
     # The load is global -Z, and the loaded edge runs along Y, so the axis has to
     # come from its own element rather than from the reference.
@@ -136,7 +121,7 @@ def _add_tie(doc, analysis, spar, support, tag):
 
     tie = ObjectsFem.makeConstraintTie(doc, f"{tag}_Tie")
     _set_constraint_refs(
-        tie, [(support, "Face1"), (spar, _face_name(spar, axis="z", value=SPAR_HEIGHT))]
+        tie, [(support, "Face1"), face_reference_on_axis(spar, "z", SPAR_HEIGHT)]
     )
     tie.Tolerance = 1.0
     _add_analysis_member(analysis, tie)

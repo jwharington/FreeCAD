@@ -27,6 +27,13 @@ Variants:
 import FreeCAD
 import Part
 
+from femtools.mixedcoupling import (
+    extreme_edge_reference,
+    extreme_face_reference,
+    find_edge_reference,
+    find_face_reference,
+)
+
 from . import manager
 from ._mixed_coupling_common import (
     add_analysis,
@@ -36,9 +43,6 @@ from ._mixed_coupling_common import (
     add_shell_thickness,
     add_shape,
     add_tie,
-    extreme_face_reference,
-    find_edge_reference,
-    find_face_reference,
     make_compound,
     mesh_parts_separately,
     planar_face,
@@ -110,7 +114,7 @@ def setup(doc=None, solvertype="ccxtools", variant="e2", test_mode=False):
     add_force(
         doc,
         analysis,
-        _extreme_edge_reference(shell_obj, axis=0, sign=1),
+        extreme_edge_reference(shell_obj, axis=0, sign=1),
         magnitude=100.0,
         direction=(0, 0, -1),
     )
@@ -133,19 +137,6 @@ def setup(doc=None, solvertype="ccxtools", variant="e2", test_mode=False):
         mesh_obj.FemMesh = mesh_parts_separately(doc, [*solid_objs, shell_obj])
     doc.recompute()
     return doc
-
-
-def _extreme_edge_reference(obj, axis, sign):
-    """Return ``(obj, "EdgeN")`` for the edge whose centre is furthest along an axis."""
-    best_index = None
-    best_value = None
-    for index, edge in enumerate(obj.Shape.Edges, start=1):
-        value = edge.CenterOfMass[axis] * sign
-        if best_value is None or value > best_value:
-            best_index, best_value = index, value
-    if best_index is None:
-        raise ValueError(f"{obj.Name} has no edges")
-    return (obj, f"Edge{best_index}")
 
 
 def _plate_continuing_block():

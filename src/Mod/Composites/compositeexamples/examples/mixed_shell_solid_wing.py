@@ -56,6 +56,7 @@ import FreeCAD
 import Part
 
 from femexamples.meshes.merged_mesh import mesh_parts_separately
+from femtools.mixedcoupling import face_reference_on_axis
 
 from ...features.CompositeShell import CompositeShellFP
 from ...features.Rosette import RosetteFP
@@ -306,16 +307,6 @@ def _add_texture_plans(doc, tag, shells):
     return plans
 
 
-def _planar_face_name(obj, axis, value, tolerance=1e-6):
-    """Name of the planar face whose centre lies on ``axis`` = ``value``."""
-    for index, face in enumerate(obj.Shape.Faces, start=1):
-        if face.Surface.TypeId != "Part::GeomPlane":
-            continue
-        if abs(getattr(face.CenterOfMass, axis) - value) < tolerance:
-            return f"Face{index}"
-    raise ValueError(f"{obj.Name} has no planar face on {axis}={value}")
-
-
 def _lateral_face_names(obj):
     """``(lower, upper)`` names of the extrusion's two lateral walls.
 
@@ -354,11 +345,13 @@ def _add_core_material(doc, analysis, core, tag):
 
 def _add_load_case(doc, analysis, core, tag):
     fixed = ObjectsFem.makeConstraintFixed(doc, f"{tag}_Fixed")
-    _set_constraint_refs(fixed, [(core, _planar_face_name(core, "y", 0.0))])
+    _set_constraint_refs(fixed, [face_reference_on_axis(core, "y", 0.0, planar_only=True)])
     _add_analysis_member(analysis, fixed)
 
     force = ObjectsFem.makeConstraintForce(doc, f"{tag}_Force")
-    _set_constraint_refs(force, [(core, _planar_face_name(core, "y", SPAN_MM))])
+    _set_constraint_refs(
+        force, [face_reference_on_axis(core, "y", SPAN_MM, planar_only=True)]
+    )
     force.Force = f"{FORCE_N} N"
     # The tip load is a cantilever load in global -Z. The core is a curved
     # profile extrusion, so it has no linear Z edge and no planar Z face to take

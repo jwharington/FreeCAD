@@ -28,6 +28,8 @@ Variants:
 import FreeCAD
 import Part
 
+from femtools.mixedcoupling import extreme_face_reference, paired_faces_by_plane
+
 from . import manager
 from ._mixed_coupling_common import (
     add_analysis,
@@ -37,10 +39,8 @@ from ._mixed_coupling_common import (
     add_shell_thickness,
     add_tie,
     add_shape,
-    extreme_face_reference,
     make_compound,
     mesh_parts_separately,
-    paired_faces_by_plane,
     planar_face,
 )
 

@@ -74,6 +74,7 @@ import Part
 from FreeCAD import Vector
 
 from femtools import ccxtools
+from femtools.mixedcoupling import edge_reference_at, face_reference_on_axis
 from femmesh import meshtools
 from femexamples.meshes import generate_mesh
 
@@ -131,23 +132,6 @@ def _solid_reference_shape():
 def _skin_slab_shape():
     """The skin as a solid slab sitting on the spar, for the bonded reference."""
     return Part.makeBox(LENGTH, WIDTH, SKIN_THICKNESS, Vector(0, 0, SPAR_HEIGHT))
-
-
-def _face_at_x(obj, x):
-    """Reference to the face whose plane is x = ``x`` on a box-shaped part."""
-    for index, face in enumerate(obj.Shape.Faces, start=1):
-        if abs(face.CenterOfMass.x - x) < 1e-6:
-            return (obj, f"Face{index}")
-    raise ValueError(f"{obj.Name} has no face at x={x}")
-
-
-def _edge_at_xz(obj, x, z):
-    """Reference to the edge whose mid-point is (``x``, *, ``z``)."""
-    for index, edge in enumerate(obj.Shape.Edges, start=1):
-        point = edge.CenterOfMass
-        if abs(point.x - x) < 1e-6 and abs(point.z - z) < 1e-6:
-            return (obj, f"Edge{index}")
-    raise ValueError(f"{obj.Name} has no edge at x={x}, z={z}")
 
 
 def _material(doc, analysis, name, references):
@@ -226,17 +210,20 @@ def _build_mixed(doc):
     _add_material(analysis, doc, with_shell_thickness=True)
 
     fixed = ObjectsFem.makeConstraintFixed(doc, "Fixed")
-    fixed.References = [_face_at_x(spar, 0.0)]
+    fixed.References = [face_reference_on_axis(spar, "x", 0.0)]
     analysis.addObject(fixed)
 
     force = ObjectsFem.makeConstraintForce(doc, "Force")
-    force.References = [_edge_at_xz(spar, LENGTH, 0.0)]
+    force.References = [edge_reference_at(spar, x=LENGTH, z=0.0)]
     force.Force = f"{FORCE} N"
     force.DirectionVector = Vector(0, 0, -1)
     analysis.addObject(force)
 
     tie = ObjectsFem.makeConstraintTie(doc, "Tie")
-    tie.References = [_top_face(skin), _top_face(spar)]
+    tie.References = [
+        face_reference_on_axis(skin, "z", SPAR_HEIGHT),
+        face_reference_on_axis(spar, "z", SPAR_HEIGHT),
+    ]
     # A zero position tolerance makes CalculiX cascade over an under-determined
     # constraint set and never converge; the examples use 1.0 mm here too.
     tie.Tolerance = 1.0
@@ -250,17 +237,6 @@ def _build_mixed(doc):
     return analysis, solver, mesh_obj
 
 
-def _top_face(obj):
-    return _face_at_z(obj, SPAR_HEIGHT)
-
-
-def _face_at_z(obj, z):
-    for index, face in enumerate(obj.Shape.Faces, start=1):
-        if abs(face.CenterOfMass.z - z) < 1e-6:
-            return (obj, f"Face{index}")
-    raise ValueError(f"{obj.Name} has no face at z={z}")
-
-
 def _build_bare(doc):
     """The spar alone: the measured baseline the skin has to beat."""
     spar, spar_mesh = _meshed_part(doc, "Spar", _spar_shape())
@@ -272,11 +248,11 @@ def _build_bare(doc):
     _add_material(analysis, doc, with_shell_thickness=False)
 
     fixed = ObjectsFem.makeConstraintFixed(doc, "Fixed")
-    fixed.References = [_face_at_x(spar, 0.0)]
+    fixed.References = [face_reference_on_axis(spar, "x", 0.0)]
     analysis.addObject(fixed)
 
     force = ObjectsFem.makeConstraintForce(doc, "Force")
-    force.References = [_edge_at_xz(spar, LENGTH, 0.0)]
+    force.References = [edge_reference_at(spar, x=LENGTH, z=0.0)]
     force.Force = f"{FORCE} N"
     force.DirectionVector = Vector(0, 0, -1)
     analysis.addObject(force)
@@ -311,17 +287,20 @@ def _build_tied_solid(doc):
     _add_material(analysis, doc, with_shell_thickness=False)
 
     fixed = ObjectsFem.makeConstraintFixed(doc, "Fixed")
-    fixed.References = [_face_at_x(spar, 0.0)]
+    fixed.References = [face_reference_on_axis(spar, "x", 0.0)]
     analysis.addObject(fixed)
 
     force = ObjectsFem.makeConstraintForce(doc, "Force")
-    force.References = [_edge_at_xz(spar, LENGTH, 0.0)]
+    force.References = [edge_reference_at(spar, x=LENGTH, z=0.0)]
     force.Force = f"{FORCE} N"
     force.DirectionVector = Vector(0, 0, -1)
     analysis.addObject(force)
 
     tie = ObjectsFem.makeConstraintTie(doc, "Tie")
-    tie.References = [_face_at_z(slab, SPAR_HEIGHT), _face_at_z(spar, SPAR_HEIGHT)]
+    tie.References = [
+        face_reference_on_axis(slab, "z", SPAR_HEIGHT),
+        face_reference_on_axis(spar, "z", SPAR_HEIGHT),
+    ]
     tie.Tolerance = 1.0
     analysis.addObject(tie)
 
@@ -359,11 +338,11 @@ def _build_compound(doc):
     analysis.addObject(thickness)
 
     fixed = ObjectsFem.makeConstraintFixed(doc, "Fixed")
-    fixed.References = [_face_at_x(spar, 0.0)]
+    fixed.References = [face_reference_on_axis(spar, "x", 0.0)]
     analysis.addObject(fixed)
 
     force = ObjectsFem.makeConstraintForce(doc, "Force")
-    force.References = [_edge_at_xz(spar, LENGTH, 0.0)]
+    force.References = [edge_reference_at(spar, x=LENGTH, z=0.0)]
     force.Force = f"{FORCE} N"
     force.DirectionVector = Vector(0, 0, -1)
     analysis.addObject(force)
@@ -371,7 +350,7 @@ def _build_compound(doc):
     tie = ObjectsFem.makeConstraintTie(doc, "Tie")
     # The slave is the whole skin compound, which is what a multi-patch skin
     # would be, rather than one named face of it.
-    tie.References = [(skin, ""), _top_face(spar)]
+    tie.References = [(skin, ""), face_reference_on_axis(spar, "z", SPAR_HEIGHT)]
     tie.Tolerance = 1.0
     analysis.addObject(tie)
 
@@ -393,11 +372,11 @@ def _build_all_solid(doc):
     _add_material(analysis, doc, with_shell_thickness=False)
 
     fixed = ObjectsFem.makeConstraintFixed(doc, "Fixed")
-    fixed.References = [_face_at_x(body, 0.0)]
+    fixed.References = [face_reference_on_axis(body, "x", 0.0)]
     analysis.addObject(fixed)
 
     force = ObjectsFem.makeConstraintForce(doc, "Force")
-    force.References = [_edge_at_xz(body, LENGTH, 0.0)]
+    force.References = [edge_reference_at(body, x=LENGTH, z=0.0)]
     force.Force = f"{FORCE} N"
     force.DirectionVector = Vector(0, 0, -1)
     analysis.addObject(force)

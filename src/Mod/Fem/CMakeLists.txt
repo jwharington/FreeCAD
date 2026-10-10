@@ -631,6 +631,7 @@ SET(FemTools_SRCS
     femtools/femutils.py
     femtools/geomtools.py
     femtools/membertools.py
+    femtools/mixedcoupling.py
     femtools/migrate_app.py
     femtools/objecttools.py
     femtools/tokrules.py

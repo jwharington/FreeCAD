@@ -34,7 +34,7 @@ from femsolver.calculix import writer as ccx_writer
 from femsolver.calculix import write_mesh as write_mesh_module
 from femexamples import constraint_mixed_edge_coupling as edge_coupling
 from femexamples import constraint_mixed_face_coupling as face_coupling
-from femexamples._mixed_coupling_common import paired_faces_by_plane
+from femtools.mixedcoupling import paired_faces_by_plane
 from . import support_utils as testtools
 from .support_utils import fcc_print
 
