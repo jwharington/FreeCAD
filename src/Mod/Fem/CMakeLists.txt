@@ -628,6 +628,7 @@ SET(FemTools_SRCS
     femtools/checksanalysis.py
     femtools/checksmaterials.py
     femtools/deckcheck.py
+    femtools/decknodes.py
     femtools/fem_extension_registry.py
     femtools/constants.py
     femtools/distributions.py
@@ -639,6 +640,7 @@ SET(FemTools_SRCS
     femtools/migrate_app.py
     femtools/modelmass.py
     femtools/objecttools.py
+    femtools/partexposure.py
     femtools/tokrules.py
 )
 

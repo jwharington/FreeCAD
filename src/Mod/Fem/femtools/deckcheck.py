@@ -47,20 +47,21 @@ def _numbers(tokens):
 
 
 def parse_inp(text):
-    """A written deck as ``{elements, elsets, sections, section_elsets}``.
+    """A written deck as its nodes, elements, elsets and shell sections.
 
     ``elements`` is ``{element id: [node ids]}`` handling wrapped element
     lines via the ``*Element TYPE=`` node count.  ``elsets`` is
-    ``{name: {element ids}}``.  ``sections`` is one entry per ``*SHELL
-    SECTION`` block — its elset, whether it is a layered ``COMPOSITE`` stack or
-    a single plain layer, its ply thicknesses and the material cards it names.
-    ``section_elsets`` is the set of elsets a section references.
+    ``{name: {element ids}}``.  ``nodes`` is ``{node id: (x, y, z)}``.
+    ``sections`` is one entry per ``*SHELL SECTION`` block — its elset, whether
+    it is a layered ``COMPOSITE`` stack or a single plain layer, its ply
+    thicknesses and the material cards it names.  ``section_elsets`` is the set
+    of elsets a shell or solid section references.
 
     Pure text; the caller decides what a section or element set *means* — the
     naming that maps a per-element elset back to its zone is a convention, not
     a property of the deck.
     """
-    elements, elsets, sections, section_elsets = {}, {}, [], set()
+    elements, elsets, nodes, sections, section_elsets = {}, {}, {}, [], set()
     mode, open_elset, open_element, expected_nodes = None, None, None, None
     section = None
     for raw in text.splitlines():
@@ -87,23 +88,33 @@ def parse_inp(text):
                     if part.strip().upper().startswith("ELSET="):
                         open_elset = part.strip().split("=", 1)[1].strip()
                         elsets.setdefault(open_elset, set())
-            elif upper.startswith("*SHELL SECTION"):
-                mode = "section"
+            elif upper.startswith("*NODE"):
+                mode = "node"
+            elif upper.startswith("*SHELL SECTION") or upper.startswith("*SOLID SECTION"):
                 attrs = _attrs(line)
-                section = {"elset": attrs.get("ELSET", ""),
-                           "material": attrs.get("MATERIAL", ""),
-                           "layered": "COMPOSITE" in upper,
-                           "plies": [], "cards": []}
-                sections.append(section)
-                if section["elset"]:
-                    section_elsets.add(section["elset"])
+                elset = attrs.get("ELSET", "")
+                if elset:
+                    section_elsets.add(elset)
+                if upper.startswith("*SHELL SECTION"):
+                    mode = "section"
+                    section = {"elset": elset,
+                               "material": attrs.get("MATERIAL", ""),
+                               "layered": "COMPOSITE" in upper,
+                               "plies": [], "cards": []}
+                    sections.append(section)
+                else:
+                    mode = None
             else:
                 mode = None
             continue
         if not line or mode is None:
             continue
         tokens = [token.strip() for token in line.split(",") if token.strip()]
-        if mode == "elem":
+        if mode == "node":
+            fields = line.replace(",", " ").split()
+            if len(fields) >= 4 and fields[0].isdigit():
+                nodes[int(fields[0])] = tuple(float(field) for field in fields[1:4])
+        elif mode == "elem":
             if not tokens or len(_numbers(tokens)) != len(tokens):
                 continue
             values = [int(token) for token in tokens]
@@ -130,7 +141,7 @@ def parse_inp(text):
                 continue
             if len(fields) > 2 and fields[2]:
                 section["cards"].append(fields[2])
-    return {"elements": elements, "elsets": elsets,
+    return {"elements": elements, "elsets": elsets, "nodes": nodes,
             "sections": sections, "section_elsets": section_elsets}
 
 

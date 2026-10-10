@@ -63,6 +63,15 @@ def test_wrapped_element_lines_are_joined_by_the_type():
     assert deckcheck.parse_inp(text)["elements"] == {1: [1, 2, 3, 4, 5, 6, 7, 8]}
 
 
+def test_parse_inp_collects_node_positions_and_solid_sections():
+    text = ("*Node\n1, 0.0, 0.0, 0.0\n2, 1.0, 2.0, 3.0\n"
+            "*Element, TYPE=C3D4, ELSET=Solid\n1, 1, 2, 2, 2\n"
+            "*Solid Section, ELSET=Solid\n")
+    deck = deckcheck.parse_inp(text)
+    assert deck["nodes"] == {1: (0.0, 0.0, 0.0), 2: (1.0, 2.0, 3.0)}
+    assert deck["section_elsets"] == {"Solid"}
+
+
 def test_owned_by_element_names_every_claimant():
     deck = deckcheck.parse_inp(_DECK)
     assert deckcheck.owned_by_element(deck) == {1: {"Efaces", "Eall"}}
