@@ -477,6 +477,39 @@ def _report_result_visibility(mesh_obj, result, displacements):
     )
 
 
+def _check_tie_warnings(output, base):
+    """Refuse a run where a *TIE coupled fewer nodes than it was given.
+
+    CalculiX writes ``<job>_WarnNodeMissTiedContact.nam`` for two unrelated
+    reasons, and only stdout tells them apart:
+
+    * a slave node found no opposite master face, or found one beyond the
+      position tolerance. The MPC is not generated and the node is not
+      coupled - a real defect, and a silent one, because the job still
+      converges and writes a number;
+    * the DOF already carries a boundary condition or another MPC, so no tie
+      MPC is needed. Benign: the DOF is eliminated either way.
+
+    Both write the node number to the same file, so **the .nam alone is not
+    evidence of uncoupling** - the wing's own is entirely the second case
+    (measured: 165 entries, every one "DOF is not active", none "no tied
+    MPC"). Only the first is a defect, and it is the one checked here.
+    """
+    missed = output.count("no tied MPC")
+    if missed:
+        raise RuntimeError(
+            f"{missed} slave node(s) found no opposite master face, so the "
+            f"*TIE does not couple them - see stdout for the distances and "
+            f"{base}_WarnNodeMissTiedContact.nam for the node numbers"
+        )
+    inactive = output.count("is not active")
+    if inactive:
+        print(
+            f"    tie: {inactive} DOF(s) were already constrained, so no tie "
+            f"MPC was needed (benign; not an uncoupling)"
+        )
+
+
 def _run_and_read_tip(analysis, solver, mesh_obj, workdir, ccx):
     fea = _write_deck(analysis, solver, workdir)
     base = os.path.basename(os.path.splitext(fea.inp_file_name)[0])
@@ -484,6 +517,7 @@ def _run_and_read_tip(analysis, solver, mesh_obj, workdir, ccx):
     if code != 0 or "Job finished" not in output:
         note = " (output truncated)" if truncated else ""
         raise RuntimeError(f"ccx did not finish (exit {code}){note}:\n{output[-4000:]}")
+    _check_tie_warnings(output, base)
 
     fea.load_results()
     result = next(

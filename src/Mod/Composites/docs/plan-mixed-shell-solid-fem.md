@@ -14,12 +14,14 @@ which was visible until the one in front of it was fixed; they are written up
 with their numbers in [`fem-mesh-query-cost.md`](fem-mesh-query-cost.md).
 **Remaining:** the full list is **§11**. Fixed since the last revision: §11.1 (the
 silent wrong deck on an edge-shaped connection), §11.3's F1 solve, §11.5's
-motivating laminate, and §11.6's GUI freeze — traced to the layered `COMPOSITE`
+motivating laminate, §11.6's GUI freeze — traced to the layered `COMPOSITE`
 section expanding the frd to **8x** the mesh (289,241 nodes against 35,385) and
-fixed in the frd reader. Open: the S8R/S6 guard a composite section needs
-(§11.2), the fact that only the F1 family has ever been solved (§11.3), the
-results-viewer toggle (§11.4), the wing's partly-uncoupled ties (§11.7), and what is
-left of the coverage and cleanup tail (§11.8, §11.9).
+fixed in the frd reader — and §11.7, which turned out not to be a defect at all:
+the wing's tie warnings are ccx reporting DOFs that are already constrained, and
+the run has **zero** of the ones that mean an uncoupled node. Open: the S8R/S6
+guard a composite section needs (§11.2), the fact that only the F1 family has ever
+been solved (§11.3), the results-viewer toggle (§11.4), and the coverage and
+cleanup tail (§11.8, §11.9).
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
 shells wants to coexist with locally solid features in the *same*
 analysis. Today it cannot: FreeCAD's FEM pipeline is built around
@@ -1513,8 +1515,9 @@ measurable, and the drapes are now ~54 % cheaper than when first measured
 (nextdrape submodule `5ccc7fd`, `aba05cc`).
 
 What is still open on this case: per-layer results are averaged away on the
-displayed mesh (§11.6's trade), the ties are partly uncoupled (§11.7), and the
-S8R/S6 requirement is asserted by this example but not by Fem (§11.2).
+displayed mesh (§11.6's trade), and the S8R/S6 requirement is asserted by this
+example but not by Fem (§11.2). The tie warning that looked like a third is
+accounted for in §11.7.
 
 ### 11.6 ~~A solved mixed model makes the GUI unresponsive, and its result is
 ~8x the mesh~~ — fixed
@@ -1655,17 +1658,55 @@ S8R/S6 requirement is asserted by this example but not by Fem (§11.2).
   still nearly halves the pick (0.073 -> 0.040 s), which makes it a cheap
   optimisation rather than wasted weight.
 
-### 11.7 The wing's ties are partly uncoupled
+### 11.7 ~~The wing's ties are partly uncoupled~~ — **disproved; the warning was
+miscounted**
 
-Solving the wing through the cost tool writes
-`WingPipelineCost_FEMMesh_WarnNodeMissTiedContact.nam`, listing tie **slave**
-nodes in **duplicated pairs** (`35388` twice, `35415` twice, …). That is the
-Stage 7 silent-uncoupling symptom, and nothing reads the file back. The deck
-carries the two `*TIE`s, ccx completes, and the 50 mm bound is met, so the
-example cannot tell a partial tie from a whole one. It is unexplained, and it is
-the one defect here that can make a mixed answer quietly wrong, which is why it
-is not filed with the rest: read that file before trusting a mixed result that
-has not been compared with an all-solid rebuild.
+Solving the wing writes a `.nam` file listing tie slave nodes in duplicated pairs
+(`35388` twice, `35415` twice, …), which was read here as the Stage 7
+silent-uncoupling symptom. It is not one.
+
+CalculiX's `gentiedmpc.f` writes `<job>_WarnNodeMissTiedContact.nam` for **two
+unrelated reasons**, and only stdout tells them apart:
+
+- **no opposite master face found**, or one found beyond the position tolerance:
+  no MPC is generated and the node is genuinely not coupled — the defect, and a
+  silent one;
+- **the DOF already has an SPC or another MPC**, so no tie MPC is needed: the DOF
+  is eliminated either way, which is bookkeeping, not a coupling failure.
+
+Both write the node number to the same file. The wing's is entirely the second:
+its run has **165 entries**, and its log has **165 x "DOF is not active"** and
+**0 x "no tied MPC"** — not one slave node failed the face search. The
+multiplicity is the DOF count rather than a repeated node (measured: 70 nodes with
+DOFs 1-2, 7 with 1-3, 2 with 2-3), because a node is listed once per inactive DOF.
+
+**The two causes are separable, measured on the 14-node plate deck that
+`inspect_mixed_cantilever` builds** — the same probe whose numbers §11.3 quotes:
+
+| deck | `no tied MPC` | warnings | `.nam` |
+|---|---|---|---|
+| as built | 0 | 4 DOFs already constrained | 17, 17, 20, 20 |
+| skin-edge `*BOUNDARY` deleted | 0 | 0 | **no file written at all** |
+| master covers half the tied face | 1 | 2 already constrained | 17, 20, 20 |
+| shell 16 mm thick, not 1.6 | **4** | 0 | 17, 20, 23, 26 |
+
+So the entries are slave nodes that are *also* prescribed by the fixed
+constraint — delete that constraint and the file vanishes — while an over-thick
+shell, whose expansion nodes fall outside the in-face tolerance, produces the
+other message. The wing has the first case.
+
+**What this changes.** The `.nam` alone is not evidence of uncoupling, which is
+the trap that produced this entry. The probe now refuses a run that reports
+`no tied MPC` and prints the benign count instead (`_check_tie_warnings`), so
+every solve the numerical test performs also asserts that the tie coupled every
+slave node it was handed. What is still missing is the loud half: nothing in Fem
+reads ccx's stdout, so a user's own model that genuinely generates no MPC still
+loads and shows a result.
+
+One residual, recorded so the search is not repeated: the ids in the `.nam` are
+ccx's internal expansion-node numbering and do **not** match the frd's — measured
+0 of 79 present in either the `OUTPUT=2d` or the `OUTPUT=3d` frd — so a `.nam` id
+cannot be located by coordinates.
 
 ### 11.8 Coverage the plan does not reach
 
