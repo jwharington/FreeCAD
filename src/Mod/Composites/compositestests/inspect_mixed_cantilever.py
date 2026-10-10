@@ -480,33 +480,24 @@ def _report_result_visibility(mesh_obj, result, displacements):
 def _check_tie_warnings(output, base):
     """Refuse a run where a *TIE coupled fewer nodes than it was given.
 
-    CalculiX writes ``<job>_WarnNodeMissTiedContact.nam`` for two unrelated
-    reasons, and only stdout tells them apart:
-
-    * a slave node found no opposite master face, or found one beyond the
-      position tolerance. The MPC is not generated and the node is not
-      coupled - a real defect, and a silent one, because the job still
-      converges and writes a number;
-    * the DOF already carries a boundary condition or another MPC, so no tie
-      MPC is needed. Benign: the DOF is eliminated either way.
-
-    Both write the node number to the same file, so **the .nam alone is not
-    evidence of uncoupling** - the wing's own is entirely the second case
-    (measured: 165 entries, every one "DOF is not active", none "no tied
-    MPC"). Only the first is a defect, and it is the one checked here.
+    CalculiX writes the node numbers for two unrelated reasons to the same
+    ``.nam`` file, and only stdout tells them apart, so the classification lives
+    in ``ccxtools.tied_mpc_warning_counts``. Only the first kind is a defect.
+    A user's own model may contain the benign kind and still be fine; this probe
+    checks a model whose whole point is to be compared with an all-solid
+    rebuild, so it must not pass a solve that has the other kind.
     """
-    missed = output.count("no tied MPC")
-    if missed:
+    not_coupled, already_constrained = ccxtools.tied_mpc_warning_counts(output)
+    if not_coupled:
         raise RuntimeError(
-            f"{missed} slave node(s) found no opposite master face, so the "
+            f"{not_coupled} slave node(s) found no opposite master face, so the "
             f"*TIE does not couple them - see stdout for the distances and "
             f"{base}_WarnNodeMissTiedContact.nam for the node numbers"
         )
-    inactive = output.count("is not active")
-    if inactive:
+    if already_constrained:
         print(
-            f"    tie: {inactive} DOF(s) were already constrained, so no tie "
-            f"MPC was needed (benign; not an uncoupling)"
+            f"    tie: {already_constrained} DOF(s) were already constrained, "
+            f"so no tie MPC was needed (benign; not an uncoupling)"
         )
 
 

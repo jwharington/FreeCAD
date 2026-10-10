@@ -1696,12 +1696,19 @@ shell, whose expansion nodes fall outside the in-face tolerance, produces the
 other message. The wing has the first case.
 
 **What this changes.** The `.nam` alone is not evidence of uncoupling, which is
-the trap that produced this entry. The probe now refuses a run that reports
-`no tied MPC` and prints the benign count instead (`_check_tie_warnings`), so
-every solve the numerical test performs also asserts that the tie coupled every
-slave node it was handed. What is still missing is the loud half: nothing in Fem
-reads ccx's stdout, so a user's own model that genuinely generates no MPC still
-loads and shows a result.
+the trap that produced this entry, and the classification now lives where ccx's
+stdout is already owned — `femtools/ccxtools.py`, beside the existing
+`has_no_material_assigned` and `has_nonpositive_jacobians`:
+
+- `tied_mpc_warning_counts(ccx_stdout)` returns the two counts;
+- `FemToolsCcx.has_missed_ties()` reports the uncoupled one in the report view,
+  on the success path as well as the failure path, because a missed tie does not
+  make the job fail. A user's own model is therefore no longer silent either.
+
+The probe keeps only the policy: `_check_tie_warnings` reuses that
+classification and refuses a run that has an uncoupled node, so every solve the
+numerical test performs also asserts that the tie coupled every slave node it was
+handed.
 
 One residual, recorded so the search is not repeated: the ids in the `.nam` are
 ccx's internal expansion-node numbering and do **not** match the frd's — measured

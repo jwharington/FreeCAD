@@ -48,6 +48,35 @@ if FreeCAD.GuiUp:
     from PySide import QtGui
 
 
+# CalculiX's gentiedmpc writes <job>_WarnNodeMissTiedContact.nam for two
+# unrelated reasons, and only stdout tells them apart, so the file on its own is
+# not evidence that a *TIE failed to couple anything.
+TIE_WARNING_NOT_COUPLED = "no tied MPC"
+TIE_WARNING_ALREADY_CONSTRAINED = "is not active"
+
+
+def tied_mpc_warning_counts(ccx_stdout):
+    """Count each kind of ``gentiedmpc`` warning in a CalculiX stdout.
+
+    Returns ``(not_coupled, already_constrained)``.
+
+    ``not_coupled`` counts slave nodes for which no tie MPC was generated,
+    because no opposite master face was found or the one found was further away
+    than the position tolerance. Those nodes are genuinely not tied, and the job
+    still converges and still writes results, so the failure is silent.
+
+    ``already_constrained`` counts DOFs that already carried a boundary
+    condition or another MPC, so no tie MPC was needed. That is bookkeeping, not
+    a coupling failure - CalculiX writes those node numbers to the same ``.nam``
+    file as the first kind, which is why the file cannot be read as evidence on
+    its own.
+    """
+    return (
+        ccx_stdout.count(TIE_WARNING_NOT_COUPLED),
+        ccx_stdout.count(TIE_WARNING_ALREADY_CONSTRAINED),
+    )
+
+
 class FemToolsCcx(QtCore.QRunnable, QtCore.QObject):
     """
 
@@ -587,6 +616,7 @@ class FemToolsCcx(QtCore.QRunnable, QtCore.QObject):
                 FreeCAD.Console.PrintMessage("--------start problems---------\n")
                 self.has_no_material_assigned()
                 self.has_nonpositive_jacobians()
+                self.has_missed_ties()
                 FreeCAD.Console.PrintMessage("\n--------end problems---------\n")
         else:
             # remove highlighted nodes, if any
@@ -594,6 +624,9 @@ class FemToolsCcx(QtCore.QRunnable, QtCore.QObject):
                 self.mesh.ViewObject.HighlightedNodes = []
 
             FreeCAD.Console.PrintMessage("CalculiX finished without error.\n")
+            # A tie that found no master face does not fail the job, so it has
+            # to be reported on this path as well as on the failure path above.
+            self.has_missed_ties()
         return ret_code
 
     def run(self):
@@ -637,6 +670,31 @@ class FemToolsCcx(QtCore.QRunnable, QtCore.QObject):
                     FreeCAD.Console.PrintLog("Try to read result files\n")
                     self.load_results()
                     # TODO: output an error message if there where problems reading the results
+        return True
+
+    def has_missed_ties(self):
+        """Report a *TIE that generated no MPC for some of its slave nodes.
+
+        The job finishes and writes results either way, so without this the
+        uncoupled nodes are silent. The nodes that were already constrained are
+        named in the same ``.nam`` file but are not a problem, so they are only
+        logged; see ``tied_mpc_warning_counts``.
+        """
+        not_coupled, already_constrained = tied_mpc_warning_counts(self.ccx_stdout)
+        if already_constrained:
+            FreeCAD.Console.PrintLog(
+                "CalculiX needed no tied MPC for "
+                f"{already_constrained} DOF(s) because they were already "
+                "constrained.\n"
+            )
+        if not not_coupled:
+            return False
+        FreeCAD.Console.PrintError(
+            "\n\nCalculiX found no opposite master face for "
+            f"{not_coupled} tied node(s), so the *TIE does not couple them "
+            "and the results are not trustworthy. The node numbers are in "
+            f"{self.base_name}_WarnNodeMissTiedContact.nam\n"
+        )
         return True
 
     def has_no_material_assigned(self):
