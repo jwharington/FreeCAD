@@ -2131,9 +2131,11 @@ conflict to resolve. Fem installs Python by an explicit source list
   property of the section, not of where the helper is defined.
 
 **Verified** at `0592ba787a` for the lookup move: the flag-off deck invariant
-reads *no deck changed and no example moved*. The second commit's call sites
-compile; its suites (`test_mixed_coupling_numerical`, the Fem mixed suite, and
-the wing + plate solves) are run before it is committed.
+reads *no deck changed and no example moved*. At `f571464c21` for the second
+commit: the Fem mixed suite passes **31**, `test_mixed_coupling_numerical`
+passes **6**, the wing + plate solves pass **2** (546 s), and the flag-off deck
+snapshot again reports *no deck changed and no example moved* — the promotion
+is a move, so the decks are unchanged, not merely accepted as close.
 
 ---
 
