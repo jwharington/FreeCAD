@@ -21,9 +21,11 @@ PDFs, generated result trees), and the wider Composites backlog in
 `df8a50d`), with both gates re-run clean on 2026-10-11 (geometry build exit 0;
 `propeller/test` 130 passed / 0 failed); mixed-plan **Stages 1–9** (the
 mixed path is on by default, the motivating laminate wing solves, §11.1, §11.2,
-§11.5, §11.6, §11.7, §11.12, §11.13 are closed); and **B9.1 / B9.1b** — the
-compound-of-solids crash and the stale edge-read cache, both nextdrape fixes
-taken into FreeCAD by `bf5129fc5b`.
+§11.5, §11.6, §11.7, §11.12, §11.13 are closed); and **B9.1 / B9.1b / B9.4** —
+the compound-of-solids use-after-free, the stale edge-read cache, and the
+refusal of a support whose bodies do not touch, all nextdrape fixes taken into
+FreeCAD by `bf5129fc5b` / `<bump>`.  **B9.5 is open: the drape suite has two
+RED acceptance canaries** (see below) — pre-existing, and to be fixed.
 
 ---
 
@@ -227,17 +229,34 @@ it.  "§" refers to `plan-mixed-shell-solid-fem.md`.
         key rather than a memory error.  Fixed by holding the edge in the entry
         and clearing the cache per solve (nextdrape `964dfcf`).  The suite is
         now **stable at 194 ok / 2 failed** across repeated runs.
-  - [ ] **B9.4 — what should a compound of solids' coverage mean?**  With the
-        crash fixed, `drape_cli --all` reports `boxes_compound status=ok
-        coverage=0.0864 quads=909 diagnostics=0` — the status is right and the
-        acceptance canaries are clean (zero off-grid, red-link and off-trim
-        defects), but the coverage number is far below every single-body
-        shape (0.99+).  A lattice cannot cross between bodies that share no
-        edge, so a multi-body support is not the same problem as one connected
-        surface.  Decide whether coverage should be reported per body, whether
-        a multi-body support should be accepted at all, and what the two-solid
-        fixture should therefore assert.  *Blocks:* nothing; the crash is
-        fixed and pinned either way.
+  - [x] **B9.4 — DONE (2026-10-11).** The question was settled by the owner as a
+        rule: a compound whose bodies are apart, or touch only at a point, is
+        not a drape support and must be refused with an error code.  The check
+        reuses the connectivity code that already exists —
+        `SplitIntoConnectedFaceGroups` for the components and
+        `seam::SharedEdges` (whole edges matched by endpoint, so a shared
+        corner is not a joint) for the link — and the drape returns
+        `DrapeStatus::InvalidInput` with a `shape-disconnected` diagnostic.
+        Bodies joined along an edge or a face still merge as before, so the
+        two-island panel remainder is unaffected.  nextdrape `e708584`,
+        FreeCAD `<bump>`.  `boxes_compound` is no longer a baseline shape (it
+        is refused by design); `drape_cli --all` is 17/17 `status=ok`.
+  - [ ] **B9.5 — the acceptance canaries are RED, and that is a defect.**  The
+        drape suite is **197 passed / 2 failed** in this tree, and both
+        failures reproduce unchanged on pristine `aba05cc` with none of the
+        B9.1 work applied — they are pre-existing, not caused by it:
+        `CoverageGeometry.BentPlateDiagnosticsPopulate`
+        (`test_coverage_geometry.cpp:235`: `gapFraction` **0.5** against a
+        required < 0.05, on `MakeBentPlate(90, 100, 90, 30)`) and
+        `TexturePlan.BoundaryLinksLieOnTheDevelopedTrim`
+        (`boundaryLinksOffTrim` non-empty: **cyl-closed 23, cubic 2,
+        web_band 52**).  Both are the documented `BOUNDARY-LINK-BORN-OFF-EDGE`
+        defect firing: boundary links are born 15-28 mm long against a 5 mm
+        pitch (`QuadBuilder.cpp:769`), the far cell is refused, the fabric
+        stops short of the part edge, and the uncovered strip is the gap.
+        **A failing test is a defect, not a steady state** — the fix is the
+        birth law, not the assertions or the thresholds.  *Blocks:* nothing;
+        independent of B9.1-B9.4.
   - [ ] **B9.2 — delete the flag getter and its branches** —
         `femsolver/settings.py::get_allow_mixed_elements` and its call sites —
         **after one release has shipped** with the default on.  Deliberate, not
