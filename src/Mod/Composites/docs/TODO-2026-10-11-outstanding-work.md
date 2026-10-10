@@ -19,9 +19,11 @@ PDFs, generated result trees), and the wider Composites backlog in
 **Already done and verified (do not re-open):** the `FuselageV2.py` split
 (study `2ad176e`) and the run-report move (FreeCAD `cdb123827a`, study
 `df8a50d`), with both gates re-run clean on 2026-10-11 (geometry build exit 0;
-`propeller/test` 130 passed / 0 failed); and mixed-plan **Stages 1–9** (the
+`propeller/test` 130 passed / 0 failed); mixed-plan **Stages 1–9** (the
 mixed path is on by default, the motivating laminate wing solves, §11.1, §11.2,
-§11.5, §11.6, §11.7, §11.12, §11.13 are closed).
+§11.5, §11.6, §11.7, §11.12, §11.13 are closed); and **B9.1 / B9.1b** — the
+compound-of-solids crash and the stale edge-read cache, both nextdrape fixes
+taken into FreeCAD by `bf5129fc5b`.
 
 ---
 
@@ -199,21 +201,43 @@ it.  "§" refers to `plan-mixed-shell-solid-fem.md`.
       if it comes out softer, the sign is wrong.
 
 - [ ] **B9 — §11.10, housekeeping and deliberate leftovers.**
-  - [ ] **B9.1 — `test_rosette_scenarios` SIGSEGV on a compound of solids.**
-        Measured 2026-10-11: `test_rosette_save_load_complex` crashes the C++
-        solver, and it is **not** the fixture's overlapping boxes — a compound
-        of two *disjoint, convex, planar-faced* boxes crashes too, so **any**
-        compound of solids does.  The degenerate face reaches
-        `SurfaceNavigator::FaceGeometryCache::For` through the seam path
-        (`LatticeNodePlacer::SeamCrossingTarget` → `SurfaceProjection::
-        TraceStepToExit` → `PointToUV`), and the crash is in the **nextdrape
-        submodule** (`src/3rdParty/nextdrape`), not in Composites.
-        **Not the fix:** widening `_require_drapable_shape` to reject a compound
-        that holds solids.  A compound of solids is a legitimate drape support
-        — its faces are the surface — so refusing it removes a capability
-        rather than repairing the crash.  *Exit:* nextdrape drapes a compound
-        of solids, with a nextdrape regression test for it, and the FreeCAD
-        side keeps a fixture that drapes (rather than being refused).
+  - [x] **B9.1 — DONE (2026-10-11).** The `test_rosette_scenarios` SIGSEGV was a
+        **use-after-free in nextdrape**, not the guard.  Measured on a synced
+        tree: a compound of two *disjoint, convex, planar-faced* boxes crashed
+        too, so the fixture's overlap was never the trigger and any compound of
+        solids did.  `SweepSlot` took a raw `Node*` from the placer,
+        `MaterialiseSlotRecord` then grew the node array and freed the buffer
+        that pointer referred to, and the fold law read the freed node — its
+        face handle came out null and reached `FaceGeometryCache::For`.  GDB
+        showed the pointer outside the live array.  Fixed by re-fetching the
+        source and target after materialising (nextdrape `274341e`), with
+        `boxes_compound` as the regression fixture; it now drapes and joins
+        `BaselineShapeNames`.  FreeCAD `bf5129fc5b`.
+        **Not the fix:** widening `_require_drapable_shape` — a compound of
+        solids is a legitimate drape support, so refusing it removes a
+        capability instead of repairing the crash.
+  - [x] **B9.1b — DONE (2026-10-11).** The investigation turned up a second,
+        systemic defect: `DiscretisedEdge` cached polylines in a never-cleared
+        static keyed by a raw `TShape` pointer while holding only the polyline,
+        so a later edge allocated at the same address read another edge's
+        polyline.  The drape suite was order-dependent and nondeterministic —
+        6-9 failures with a different set every run, and a five-test prefix
+        that failed repeatedly then stopped failing under valgrind (whose
+        allocator makes the aliasing benign), which is what identified a stale
+        key rather than a memory error.  Fixed by holding the edge in the entry
+        and clearing the cache per solve (nextdrape `964dfcf`).  The suite is
+        now **stable at 194 ok / 2 failed** across repeated runs.
+  - [ ] **B9.4 — what should a compound of solids' coverage mean?**  With the
+        crash fixed, `drape_cli --all` reports `boxes_compound status=ok
+        coverage=0.0864 quads=909 diagnostics=0` — the status is right and the
+        acceptance canaries are clean (zero off-grid, red-link and off-trim
+        defects), but the coverage number is far below every single-body
+        shape (0.99+).  A lattice cannot cross between bodies that share no
+        edge, so a multi-body support is not the same problem as one connected
+        surface.  Decide whether coverage should be reported per body, whether
+        a multi-body support should be accepted at all, and what the two-solid
+        fixture should therefore assert.  *Blocks:* nothing; the crash is
+        fixed and pinned either way.
   - [ ] **B9.2 — delete the flag getter and its branches** —
         `femsolver/settings.py::get_allow_mixed_elements` and its call sites —
         **after one release has shipped** with the default on.  Deliberate, not
