@@ -204,6 +204,8 @@ SET(FemMesh_SRCS
     femmesh/meshsetsgetter.py
     femmesh/meshtools.py
     femmesh/meshderived.py
+    femmesh/meshcache.py
+    femmesh/meshsignature.py
     femmesh/netgentools.py
     femmesh/transfinitetools.py
     femmesh/adaptivetools.py
