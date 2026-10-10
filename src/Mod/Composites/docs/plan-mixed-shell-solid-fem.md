@@ -13,15 +13,15 @@ surface — meshes, writes and **solves** in one deck, coupled by two `*TIE`s
 which was visible until the one in front of it was fixed; they are written up
 with their numbers in [`fem-mesh-query-cost.md`](fem-mesh-query-cost.md).
 **Remaining:** the full list is **§11**. Fixed since the last revision: §11.1 (the
-silent wrong deck on an edge-shaped connection), §11.3's F1 solve, §11.5's
-motivating laminate, §11.6's GUI freeze — traced to the layered `COMPOSITE`
-section expanding the frd to **8x** the mesh (289,241 nodes against 35,385) and
-fixed in the frd reader — and §11.7, which turned out not to be a defect at all:
-the wing's tie warnings are ccx reporting DOFs that are already constrained, and
-the run has **zero** of the ones that mean an uncoupled node. Open: the S8R/S6
-guard a composite section needs (§11.2), the fact that only the F1 family has ever
-been solved (§11.3), the results-viewer toggle (§11.4), and the coverage and
-cleanup tail (§11.8, §11.9).
+silent wrong deck on an edge-shaped connection), §11.2 (a composite section on a
+linear shell, now refused by the writer), §11.3's F1 solve, §11.5's motivating
+laminate, §11.6's GUI freeze — traced to the layered `COMPOSITE` section expanding
+the frd to **8x** the mesh (289,241 nodes against 35,385) and fixed in the frd
+reader — and §11.7, which turned out not to be a defect at all: the wing's tie
+warnings are ccx reporting DOFs that are already constrained, and the run has
+**zero** of the ones that mean an uncoupled node. Open: the fact that only the F1
+family has ever been solved (§11.3), the results-viewer toggle (§11.4), and the
+coverage and cleanup tail (§11.8, §11.9).
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
 shells wants to coexist with locally solid features in the *same*
 analysis. Today it cannot: FreeCAD's FEM pipeline is built around
@@ -656,7 +656,7 @@ Close them before anyone proposes the single-pass Gmsh route.
 | ~~Whether `*TIE` carries a shell slave node's rotational DOF~~ — **resolved, and it does** | Probes D1/D2/D3 ran before any production code existed; results in §9.8. A tied shell root is within **1.7 %** of a clamped root, and Stage 7 shows a tied **flange** within **0.09 %** of an all-solid rebuild. G13 remains the regression guard. |
 | **A tie with the wrong shell side fails silently.** The writer must pick the side of the expanded shell that meets the master (`write_constraint_tie._shell_slave_face`). Stage 7 measured the failure: the joint was one thickness out, ccx printed `WARNING in gentiedmpc: no tied MPC` to stdout only, the job finished, and the deflection was exactly the uncoupled one — the deck text was indistinguishable from a working one | Fixed and regression-tested (`test_tie_slave_side_follows_the_shell_offset`). G13's numerical check is the guard that makes a silent uncoupling impossible to ship, which is why a text-only deck test is not enough |
 | **A hinged mixed model fails silently, not loudly.** D2's hinge variant returned a ~2.5e12 deflection magnification with **no `*ERROR` and no warning** from ccx | The "loud error, not a silent hinge" requirement stands, and G13's numerical check is **load-bearing** — a hinge will not announce itself and cannot be caught by a deck-text test |
-| **Composite `*SHELL SECTION` accepts only S8R and S6.** Measured in D3: an `S4` shell with a composite section is rejected outright — `Element 2 is not a S8R nor a S6 shell element.` | Stage 2/5 must emit S8R or S6 for the shell side of a mixed model when the section is composite; asserted in §8.5 via `getElementType`, never assumed. This is not optional for the plan's motivating Composites case. |
+| ~~**Composite `*SHELL SECTION` accepts only S8R and S6.**~~ — **fixed, §11.2.** Measured in D3: an `S4` shell with a composite section is rejected outright — `Element 2 is not a S8R nor a S6 shell element.` | The writer now refuses a composite section whose elements are not 6- or 8-node shells, naming the offender, instead of writing a deck CalculiX will reject. Asserted in `test_mixed_shell_solid.py` on a linear quad4 and on the same quad with mid-side nodes. |
 | **A mixed result is written but cannot be displayed.** The panel gate is exact node-count equality, and `OUTPUT=3d` moves shell results to expanded nodes whose numbering differs from the mesh's. The failure is an error dialog at best, wrong colours at worst | **Closed by Stage 8.** `Output3d` defaults True, which is the failing case; `write_step_output.py` now writes `OUTPUT=2d` on both `*NODE FILE` and `*EL FILE` for a mixed mesh and ignores that flag there, so the gate passes on node count. V1, V2 and V3 pass (§3, Stage 8). The cost is through-thickness shell stresses in the frd, documented rather than hidden |
 | Node-count inference lurking in code paths not yet read (Stage 4 is the wide one) | Stage 1 ships dimension-tagged tables and Stage 4 asserts on element **types**, not counts |
 | A mixed model silently double-sections elements | Stage 5's explicit no-element-in-two-sections assertion |
@@ -1415,19 +1415,32 @@ suite is **29/29**, both new tests failing before the change and passing after,
 and `test_ccxtools` shows no tie-related failure. The E-family examples now
 refuse to write a deck, which is what `G10`/`G11` required.
 
-### 11.2 A composite section on a linear mixed shell is not guarded
+### 11.2 ~~A composite section on a linear mixed shell is not guarded~~ — **fixed**
 
 D3 (§9.8) measured that a composite `*SHELL SECTION` is accepted only for **S8R
-and S6**, and §8.5 requires the assertion via `getElementType`, calling it *"not
-optional for the plan's motivating case"*. Nothing in `src/Mod/Fem` asserts it:
-`write_femelement_geometry.py` writes whatever element the mesh produced.
+and S6**. The Composites path happened to be safe — `_shell_example_common.py`
+sets `ElementOrder = "2nd"` for composite examples — but that is a Composites
+convenience protecting a FEM invariant, and it did not cover a user who builds a
+mixed model by hand with a linear shell mesh. That case produced a deck CalculiX
+refuses (`Element 2 is not a S8R nor a S6 shell element`) after FreeCAD had
+already written it.
 
-The Composites path happens to be safe — `_shell_example_common.py:688` sets
-`ElementOrder = "2nd"` for composite examples — but that is a Composites
-convenience protecting a FEM invariant, and it does not cover a user who builds
-a mixed model by hand with a linear shell mesh. That case yields a deck ccx
-rejects (`Element 2 is not a S8R nor a S6 shell element`): loud, so less severe
-than §11.1, but planned and absent.
+**The writer now refuses it.** `write_femelement_geometry.py` asks
+`_is_composite_section` — a section provider replaces the whole MATERIAL chunk of
+the card, so the card is layered exactly when that chunk's first field is
+COMPOSITE — and, when it is, that the elements the section covers have 6 or 8
+nodes: S6 triangles and S8R quads. Node count is the only shape test available
+from Python, because `FemMesh.getElementType` reports an element's *dimension*
+("Face"), not its shape, and the CalculiX names are chosen in C++ where the
+`*Element` cards are written. The error names the ShellThickness, how many of the
+elements it sections are linear, the first offender and the remedy.
+
+Asserted in `femtest/app/test_mixed_shell_solid.py`, on that module's own fixture
+— which is a linear quad4, so it is already the failing case: a stub provider
+naming COMPOSITE makes the section layered without the test needing Composites,
+the write raises, and the same model with the quad's mid-side nodes writes a
+`COMPOSITE` section. The deck snapshot reports *no deck changed and no example
+moved* across all **55** examples, so nothing was relying on the gap.
 
 ### 11.3 F1 is solved in CI now; the other families are not
 

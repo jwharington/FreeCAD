@@ -39,6 +39,14 @@ from femtools import fem_extension_registry
 MAX_NAME_LENGTH = 80
 HASHED_PREFIX_LENGTH = 20
 
+# A composite *SHELL SECTION is accepted only for quadratic shells, S6 and S8R.
+# With a linear one CalculiX refuses the whole deck - "Element 2 is not a S8R nor
+# a S6 shell element" - after FreeCAD has already written it, so the model is
+# refused here instead. Node count is the only shape test available from Python:
+# FemMesh.getElementType reports an element's dimension ("Face"), not its shape,
+# and the CalculiX names are chosen in C++ where the *Element cards are written.
+COMPOSITE_SHELL_ELEMENT_NODES = (6, 8)
+
 
 def _hashed_prefix(text):
     """A 20-character stand-in for ``text`` that is stable across runs.
@@ -53,6 +61,25 @@ def _hashed_prefix(text):
 def _bounded_name(text):
     """``text`` when CalculiX will accept it, otherwise a hashed one."""
     return text if len(text) <= MAX_NAME_LENGTH else _hashed_prefix(text)
+
+
+def _is_composite_section(material):
+    """Whether a *SHELL SECTION header names COMPOSITE rather than a material.
+
+    A section provider replaces the whole MATERIAL chunk of the card, so the card
+    is layered exactly when that chunk's first field is COMPOSITE - with or
+    without an ORIENTATION.
+    """
+    return material.split(",", 1)[0].strip() == "COMPOSITE"
+
+
+def _shell_elements_that_are_not_quadratic(elements, femmesh):
+    """Which of ``elements`` a composite shell section cannot be written for."""
+    return [
+        element_id
+        for element_id in elements
+        if len(femmesh.getElementNodes(element_id)) not in COMPOSITE_SHELL_ELEMENT_NODES
+    ]
 
 
 def write_femelement_geometry(f, ccxwriter):
@@ -171,6 +198,23 @@ def write_femelement_geometry(f, ccxwriter):
             )
             if section_override and section_override.get("material"):
                 material = section_override["material"]
+            if _is_composite_section(material):
+                elements = matgeoset["ccx_elset"]
+                if isinstance(elements, str):
+                    # The name of a set holding every element: a shell section
+                    # applies to the mesh's face elements.
+                    elements = ccxwriter.mesh_object.FemMesh.FacesOnly
+                linear = _shell_elements_that_are_not_quadratic(
+                    elements, ccxwriter.mesh_object.FemMesh
+                )
+                if linear:
+                    raise ValueError(
+                        f"{shellth_obj.Name}: a composite *SHELL SECTION is accepted "
+                        f"only for quadratic shells (S6 or S8R), but {len(linear)} of "
+                        f"the {len(elements)} elements it sections are linear "
+                        f"(first: {linear[0]}). CalculiX would refuse the deck. "
+                        f"Mesh the laminate second order."
+                    )
             if ccxwriter.solver_obj.ModelSpace == "3D":
                 offset = shellth_obj.Offset
                 if ccxwriter.solver_obj.ExcludeBendingStiffness:

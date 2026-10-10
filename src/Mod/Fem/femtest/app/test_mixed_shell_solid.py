@@ -26,6 +26,7 @@ import Fem
 import ObjectsFem
 
 from femtools import ccxtools
+from femtools import fem_extension_registry
 from femtools import membertools
 from femtools.checksanalysis import check_member_for_solver_calculix
 from femmesh import meshsetsgetter
@@ -57,12 +58,16 @@ def mixed_shell_solid_flag(enabled):
         group.SetBool(MIXED_FLAG_NAME, previous)
 
 
-def node_disjoint_brick_and_shell():
+def node_disjoint_brick_and_shell(quadratic=False):
     """A C3D8 brick plus a quad on one of its faces, on node ids of its own.
 
     The quad sits at the brick's bottom-face coordinates but shares no node with
     it, which is the merge route the mixed plan takes. A node-merged quad is the
     volume's own skin and getFacesOnly drops it - Trap A.
+
+    ``quadratic`` adds the quad's mid-side nodes. A composite *SHELL SECTION is
+    accepted only for S6 and S8R, so a laminate needs it and the plain linear
+    quad is the case a composite section has to be refused for.
     """
     mesh = Fem.FemMesh()
     corners = [
@@ -73,7 +78,13 @@ def node_disjoint_brick_and_shell():
     mesh.addVolume([1, 2, 3, 4, 5, 6, 7, 8])
     for node_id, (x, y, z) in enumerate(corners[:4], start=9):
         mesh.addNode(x, y, z, node_id)
-    mesh.addFace([9, 10, 11, 12])
+    if not quadratic:
+        mesh.addFace([9, 10, 11, 12])
+        return mesh
+    mid_side = ((0.5, 0.0, 0.0), (1.0, 0.5, 0.0), (0.5, 1.0, 0.0), (0.0, 0.5, 0.0))
+    for node_id, (x, y, z) in enumerate(mid_side, start=13):
+        mesh.addNode(x, y, z, node_id)
+    mesh.addFace([9, 10, 11, 12, 13, 14, 15, 16])
     return mesh
 
 
@@ -713,6 +724,54 @@ class TestMixedShellSolid(unittest.TestCase):
         self.assertIn("ELSET=Evolumes", deck)
         self.assertIn("ELSET=Efaces", deck)
 
+    def _stub_composite_section(self):
+        """Register a stand-in laminate section for the guard's own tests.
+
+        The guard is Fem's, so its test must not need Composites: any provider
+        that names COMPOSITE makes the card layered.
+        """
+
+        def composite_section(shellth_obj, matgeoset, orientation_name):
+            return {"material": "COMPOSITE", "section_geo": "1.0\n"}
+
+        fem_extension_registry.register_shell_section_provider(
+            "test.composite_section", composite_section
+        )
+        self.addCleanup(
+            fem_extension_registry.unregister_shell_section_provider, "test.composite_section"
+        )
+
+    # ********************************************************************************************
+    def test_composite_section_on_a_linear_shell_is_refused(self):
+        # The fixture's shell is a linear quad4 and a composite *SHELL SECTION is
+        # accepted only for S6 and S8R, so CalculiX would refuse the deck after
+        # FreeCAD had written it. The refusal has to happen here instead.
+        self._stub_composite_section()
+        doc, analysis, solver, mesh_obj = self._mixed_analysis_document()
+        fea = ccxtools.FemToolsCcx(analysis, solver, test_mode=True)
+        fea.update_objects()
+        fea.setup_working_dir(str(self._temp_dir("linear_shell")))
+        with mixed_shell_solid_flag(True):
+            self.assertFalse(fea.check_prerequisites(), "the gate must be open")
+            with self.assertRaises(ValueError) as raised:
+                fea.write_inp_file()
+        self.assertIn("S6 or S8R", str(raised.exception))
+
+    def test_composite_section_is_written_for_a_quadratic_shell(self):
+        # The same model with the quad's mid-side nodes: the guard must let the
+        # deck through, or it would refuse every laminate.
+        self._stub_composite_section()
+        doc, analysis, solver, mesh_obj = self._mixed_analysis_document(quadratic_shell=True)
+        fea = ccxtools.FemToolsCcx(analysis, solver, test_mode=True)
+        fea.update_objects()
+        workdir = self._temp_dir("quadratic_shell")
+        fea.setup_working_dir(str(workdir))
+        with mixed_shell_solid_flag(True):
+            self.assertFalse(fea.write_inp_file(), "the deck must be written")
+        deck = (workdir / "Mesh.inp").read_text(encoding="utf-8")
+        self.assertIn("*SHELL SECTION", deck)
+        self.assertIn("COMPOSITE", deck)
+
     # ********************************************************************************************
     def test_two_materials_section_their_own_dimension(self):
         # Stage 5, multiple materials. The solid material must section the
@@ -832,7 +891,7 @@ class TestMixedShellSolid(unittest.TestCase):
         self.assertIn("*SOLID SECTION", deck)
         self.assertIn("*SHELL SECTION", deck)
 
-    def _mixed_analysis_document(self, with_beam_section=False):
+    def _mixed_analysis_document(self, with_beam_section=False, quadratic_shell=False):
         doc = FreeCAD.newDocument(f"{self._testMethodName}_analysis")
         self.addCleanup(FreeCAD.closeDocument, doc.Name)
         analysis = ObjectsFem.makeAnalysis(doc, "Analysis")
@@ -853,7 +912,7 @@ class TestMixedShellSolid(unittest.TestCase):
             analysis.addObject(ObjectsFem.makeElementGeometry1D(doc, name="BeamSection"))
 
         mesh_obj = analysis.addObject(ObjectsFem.makeMeshGmsh(doc, "Mesh"))[0]
-        mesh_obj.FemMesh = node_disjoint_brick_and_shell()
+        mesh_obj.FemMesh = node_disjoint_brick_and_shell(quadratic=quadratic_shell)
 
         # The fixture mesh has no geometry of its own; a unit box on the same
         # coordinates gives the constraints something to reference and the
