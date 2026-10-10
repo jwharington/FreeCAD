@@ -321,6 +321,11 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         flag_group.SetBool(MIXED_FLAG_NAME, previous_flag)
     snapshot_path = _snapshot_path(args)
+    # Say which baseline this run is measured against. The default is beside
+    # this module, so running an installed copy compares against an installed
+    # snapshot - which reported a moved snapshot once, from a stale install,
+    # with nothing in the output to show which file had been read.
+    print(f"snapshot: {snapshot_path}")
     if args.write:
         save_snapshot(current, skipped, snapshot_path)
         print(f"wrote {snapshot_path} with {len(current)} decks")
