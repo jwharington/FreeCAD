@@ -1859,22 +1859,51 @@ expansion MPC a point load created" (an uncoupled node), and
 them apart, because it wrote both the tie's slave surface and the `*CLOAD`.
 Closing action: a write-time check that reports a tie whose shell slave carries
 a `*CLOAD` node, naming the nodes and the remedy (swap master and slave, or load
-the master side). Not yet written.
+the master side). Not yet written — and now without a fixture that shows it, so
+one would have to be built as Dhondt's arrangement rather than found in ours.
 
-One thing to settle before treating this as someone else's problem: the f1-f4
-fixtures apply their 100 N force to the **shell**
-(`constraint_mixed_face_coupling.setup` —
-`add_force(..., extreme_face_reference(shell_obj, ...))`) while the tie's slave
-is also the shell, and in `_covered_solid` the shell wraps the solid, so the
-loaded face is a tied face. Whether the two collide there depends on which
-expanded node the slave face names against the one the load made dependent, so
-"0 untied slave nodes" in `test_mixed_coupling_numerical` does not by itself
-settle it. The check is ccx's two warning counts for f1-f4 split by cause, with
-and without the force.
+**Our own fixtures are not exposed to it, measured rather than assumed.** f1-f4
+apply their 100 N force to the **shell** (`constraint_mixed_face_coupling.setup`
+— `add_force(..., extreme_face_reference(shell_obj, ...))`), the tie's slave is
+also the shell, and in `_covered_solid` the shell wraps the solid, so the loaded
+face is a tied face. Whether the two collide was left open here, and it is now
+settled: each family's own deck was run twice — as FreeCAD wrote it, and with the
+`*CLOAD` block deleted and nothing else changed (`diff` shows that block and its
+comment banner are the only difference) — and ccx was asked what it says about
+the ties.
+
+| variant | `POSITION TOLERANCE` | `no tied MPC` | `DOF … is not active` |
+|---|---|---|---|
+| f1 | 5 | 0 / 0 | 74 / 74 |
+| f2 | 5 | 0 / 0 | 4 / 4 |
+| f3 | 55 | 0 / 0 | 0 / 0 |
+| f4 | 55 | 0 / 0 | 72 / 72 |
+
+(with the load / without it). The counts are identical, the `.nam` files are
+byte-identical, and ccx's own bookkeeping does not move either: `multiple point
+constraints` is 2881 for f1 and f4 and 481 for f2 and f3 in both runs, `number of
+equations` is unchanged at 74, 36, 33 and 101, while `concentrated loads` falls
+from 40, 32, 20 and 20 to 0. So in these four models the force adds **loads and
+no constraint at all**, and cannot take a DOF from the tie. f3 is the
+discriminating case: its shell carries no SPC, so a collision could only have
+appeared as a warning, and it has none either way.
+
+That is also the order the source requires, which is what makes the null result
+mean something: `gen3dforc` runs at input reading (`calinput.f:1327`) and
+`gentiedmpc` in the pre-run (`CalculiX.c:720`), so a collision would be reported
+rather than passed over.
+
+What this does **not** do is disprove Dhondt's case. His tie was between two
+**shell layers** with the load on the slave layer; ours is a shell slave against
+a **solid** master face. The hazard above stands as written — it is simply not
+reproduced by the coupling this plan builds, so the write-time check has no
+failing fixture in the mixed face family to be developed against.
 
 *Exit criterion:* a fixture that puts a `*CLOAD` on a shell tie slave and asserts
 the writer reports it with the nodes named, and shows the same model with the
-load on the master side (or as a `*DLOAD`) still writes and solves.
+load on the master side (or as a `*DLOAD`) still writes and solves. It has to be
+the two-shell-layer arrangement Dhondt describes: the mixed face families do not
+exhibit the hazard, so there is nothing in them to fail first.
 
 ### 11.10 Deliberate leftovers, and small bugs
 
