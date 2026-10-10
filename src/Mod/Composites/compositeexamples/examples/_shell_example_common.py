@@ -16,6 +16,7 @@ from Composites.objects import (
     SymmetryType,
     WeaveType,
 )
+from Composites.util.geometry_util import largest_face  # noqa: F401
 
 
 def _carbon_material():
@@ -162,15 +163,6 @@ def import_geometry_modules():
         return None, None
 
     return FreeCAD, Part
-
-
-def largest_face(shape):
-    """Return the largest-area face for a shell-like generated shape."""
-
-    faces = getattr(shape, "Faces", None)
-    if not faces:
-        return shape
-    return max(faces, key=lambda face: getattr(face, "Area", 0.0))
 
 
 def create_support_feature(doc, name, shape):

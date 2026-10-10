@@ -31,6 +31,7 @@ import FreeCAD
 import Part
 
 from Composites.tools import stiffener as st
+from Composites.util.geometry_util import split_at_symmetry_plane as _split_halves
 from .test_base import TestFreeCADFP
 from .test_stiffener import lofted_skin_face, standalone_station_plane
 
@@ -49,23 +50,12 @@ FRAME_SECTION = 34.0
 def split_at_symmetry_plane(shape):
     """Cut every face of ``shape`` at the model symmetry plane y = 0.
 
-    The L/R halves the skins drape as: two half-space boxes, one per side,
-    returning the compound of the pieces.  Mirrors the design-side
-    ``FuselageV2._split_at_symmetry_plane``.
+    The L/R halves the skins drape as, as one compound.  The split itself is
+    the same ``geometry_util`` call the design side uses, so this fixture
+    cannot drift from what the model actually does.
     """
-    big = 4.0 * max(shape.BoundBox.DiagonalLength, 1.0)
-    bb = shape.BoundBox
-
-    def half_space(y_min, y_max):
-        return Part.makeBox(
-            big, y_max - y_min, big, FreeCAD.Vector(bb.XMin - 1.0, y_min, bb.ZMin - 1.0)
-        )
-
-    halves = []
-    for face in shape.Faces:
-        halves.extend(face.common(half_space(bb.YMin - 1.0, 0.0)).Faces)
-        halves.extend(face.common(half_space(0.0, bb.YMax + 1.0)).Faces)
-    return Part.makeCompound(halves)
+    left, right = _split_halves(shape)
+    return Part.makeCompound(list(left.Faces) + list(right.Faces))
 
 
 def frame_profile():

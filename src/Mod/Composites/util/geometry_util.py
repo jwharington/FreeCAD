@@ -9,6 +9,9 @@ if TYPE_CHECKING:
 
 import hashlib
 
+import FreeCAD
+import Part
+
 
 def live_support_shape(shell):
     """The shell's live mould-surface geometry (known-issue #6).
@@ -457,3 +460,38 @@ def tex_coord_at_point(node_positions, quads, tex_coords, point, offset_angle_de
         )
 
     return [best_u, best_v]
+
+
+def largest_face(shape):
+    """The face of ``shape`` with the largest area, or the shape if it has none."""
+    faces = getattr(shape, "Faces", None)
+    if not faces:
+        return shape
+    return max(faces, key=lambda face: getattr(face, "Area", 0.0))
+
+
+def split_at_symmetry_plane(shape, plane_size=1400.0):
+    """Cut every face of ``shape`` at the model symmetry plane y = 0.
+
+    The skins drape as L/R halves: a full wrap grows two fronts that meet at
+    the centreline with a flat-pattern mismatch the collision gate refuses, so
+    the centreline becomes a real trim and each half its own drape.  Returns
+    ``(left, right)`` compounds - left is y <= 0, right y >= 0.
+
+    The half-space boxes are sized from the bounding-box diagonal so they cover
+    the shape's real extent; ``plane_size`` is only extra padding, and a span
+    fixed at that padding alone is smaller than a long loft.
+    """
+    bb = shape.BoundBox
+    big = bb.XLength + bb.YLength + bb.ZLength + 2.0 * plane_size
+
+    def half_space(y_min, y_max):
+        return Part.makeBox(
+            big, y_max - y_min, big, FreeCAD.Vector(bb.XMin - 1.0, y_min, bb.ZMin - 1.0)
+        )
+
+    left, right = [], []
+    for face in shape.Faces:
+        left.extend(face.common(half_space(bb.YMin - 1.0, 0.0)).Faces)
+        right.extend(face.common(half_space(0.0, bb.YMax + 1.0)).Faces)
+    return Part.makeCompound(left), Part.makeCompound(right)
