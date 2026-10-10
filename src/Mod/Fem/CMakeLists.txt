@@ -641,6 +641,7 @@ SET(FemTools_SRCS
     femtools/modelmass.py
     femtools/objecttools.py
     femtools/partexposure.py
+    femtools/readback.py
     femtools/tokrules.py
 )
 
