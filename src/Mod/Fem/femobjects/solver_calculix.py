@@ -297,6 +297,17 @@ class SolverCalculiX(base_fempythonobject.BaseFemPythonObject):
         )
         prop.append(
             _PropHelper(
+                type="App::PropertyBool",
+                name="EigenmodeElementOutput",
+                group="Solver",
+                doc="Write element results for eigenvalue steps (buckling and "
+                "frequency). A mode's element stresses are per mode and per ply, "
+                "which is most of the deck's size, and nothing reads them.",
+                value=True,
+            )
+        )
+        prop.append(
+            _PropHelper(
                 type="App::PropertyEnumeration",
                 name="ModelSpace",
                 group="ElementModel",

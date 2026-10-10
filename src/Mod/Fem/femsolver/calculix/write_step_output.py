@@ -38,6 +38,23 @@ def _is_mixed_shell_solid(ccxwriter):
     return settings.get_allow_mixed_elements() and ccxwriter.meshdatagetter.is_mixed
 
 
+EIGENVALUE_ANALYSIS_TYPES = ("buckling", "frequency")
+
+
+def _writes_element_output(ccxwriter):
+    """Whether this step asks CalculiX for element results.
+
+    A buckling or frequency step answers with a factor or a frequency and a mode
+    shape; its element stresses are per mode and per ply, which is most of the
+    deck's size, and nothing reads them.  The solver property turns them off for
+    those steps and defaults to writing them, so an existing analysis is
+    unchanged.
+    """
+    if ccxwriter.analysis_type not in EIGENVALUE_ANALYSIS_TYPES:
+        return True
+    return ccxwriter.solver_obj.EigenmodeElementOutput
+
+
 def _fixed_set_names(ccxwriter, femobj):
     """The node sets a fixed constraint was written under.
 
@@ -90,29 +107,30 @@ def write_step_output(f, ccxwriter):
     else:
         f.write("U\n")
     if not ccxwriter.member.geos_fluidsection:
-        # *EL FILE defaults to expanded nodes just as *NODE FILE does, so a
-        # mixed deck that set only the nodal card to 2d would put element
-        # results on a second, larger node set inside the same frd.
-        if mixed_shell_solid:
-            f.write("*EL FILE, OUTPUT=2d, GLOBAL=NO\n")
-        else:
-            f.write("*EL FILE, GLOBAL=NO\n")
-        variables = "S, E"
-        if ccxwriter.analysis_type == "thermomech":
-            variables += ", HFL"
+        if _writes_element_output(ccxwriter):
+            # *EL FILE defaults to expanded nodes just as *NODE FILE does, so a
+            # mixed deck that set only the nodal card to 2d would put element
+            # results on a second, larger node set inside the same frd.
+            if mixed_shell_solid:
+                f.write("*EL FILE, OUTPUT=2d, GLOBAL=NO\n")
+            else:
+                f.write("*EL FILE, GLOBAL=NO\n")
+            variables = "S, E"
+            if ccxwriter.analysis_type == "thermomech":
+                variables += ", HFL"
 
-        # plastic strain only if some material has nonlinear properties
-        if ccxwriter.solver_obj.MaterialNonlinearity:
-            for mat in ccxwriter.member.mats_linear:
-                mat_nonlin = mat["Object"].Nonlinear
-                if mat_nonlin and not mat_nonlin.Suppressed:
-                    variables += ", PEEQ"
-                    break
+            # plastic strain only if some material has nonlinear properties
+            if ccxwriter.solver_obj.MaterialNonlinearity:
+                for mat in ccxwriter.member.mats_linear:
+                    mat_nonlin = mat["Object"].Nonlinear
+                    if mat_nonlin and not mat_nonlin.Suppressed:
+                        variables += ", PEEQ"
+                        break
 
-        if ccxwriter.analysis_type == "electromagnetic":
-            variables = "HFL"
+            if ccxwriter.analysis_type == "electromagnetic":
+                variables = "HFL"
 
-        f.write(variables + "\n")
+            f.write(variables + "\n")
 
         # dat file
         if ccxwriter.member.cons_fixed or ccxwriter.member.cons_displacement:
