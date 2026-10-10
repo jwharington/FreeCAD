@@ -47,6 +47,20 @@ from ._mixed_coupling_common import (
 SOLID_NAME = "Solid"
 SHELL_NAME = "Shell"
 SHELL_THICKNESS = 10.0
+# A *TIE ties only the slave nodes within its position tolerance, and CalculiX
+# expands a shell slave first: its through-thickness nodes sit within half the
+# section thickness of the reference surface. These two variants put that surface
+# *on* the interface, so the root node is on the master face and the furthest
+# node ccx can offer is exactly SHELL_THICKNESS / 2 away - the tolerance is that
+# and nothing more, derived from the section rather than picked. At 1.0, f1 left
+# 30 slave nodes untied and f2 left 5, silently: the job converges and the deck
+# looks right.
+TIE_TOLERANCE_MM = SHELL_THICKNESS / 2
+# f3 and f4 stand their shell clear of the solid instead, so the root node is
+# COUPLING_GAP_MM from the master face and the furthest expanded node is one
+# half-thickness beyond it.
+COUPLING_GAP_MM = 50.0
+OFFSET_TIE_TOLERANCE_MM = COUPLING_GAP_MM + TIE_TOLERANCE_MM
 
 
 def get_information():
@@ -134,25 +148,25 @@ def setup(doc=None, solvertype="ccxtools", variant="f1", test_mode=False):
 def _covered_solid():
     solid = Part.makeBox(1000, 1000, 1000)
     shell = Part.makeBox(1000, 1000, 1000).Shells[0]
-    return {"solid": solid, "shell": shell, "tolerance": 1.0}
+    return {"solid": solid, "shell": shell, "tolerance": TIE_TOLERANCE_MM}
 
 
 def _patch_on_face():
     solid = Part.makeBox(2000, 1000, 1000)
     shell = planar_face([(0, 0, 1000), (1000, 0, 1000), (1000, 1000, 1000), (0, 1000, 1000)])
-    return {"solid": solid, "shell": shell, "tolerance": 1.0}
+    return {"solid": solid, "shell": shell, "tolerance": TIE_TOLERANCE_MM}
 
 
 def _offset_shell():
     solid = Part.makeBox(1000, 1000, 200)
     shell = planar_face([(0, 0, 250), (1000, 0, 250), (1000, 1000, 250), (0, 1000, 250)])
-    return {"solid": solid, "shell": shell, "tolerance": 60.0}
+    return {"solid": solid, "shell": shell, "tolerance": OFFSET_TIE_TOLERANCE_MM}
 
 
 def _closed_bag():
     solid = Part.makeBox(1000, 1000, 1000)
     bag = Part.makeBox(1100, 1100, 1100, FreeCAD.Vector(-50, -50, -50))
-    return {"solid": solid, "shell": bag.Shells[0], "tolerance": 60.0}
+    return {"solid": solid, "shell": bag.Shells[0], "tolerance": OFFSET_TIE_TOLERANCE_MM}
 
 
 _VARIANTS = {

@@ -1455,17 +1455,45 @@ because this section quotes that probe's numbers and a second copy would be
 free to drift from them. The tolerances (5 %, 1.2x) are stated in the test and
 are not tuning knobs.
 
+**All four face families are solved too.** f1, f2, f3 and f4 are built from
+Fem's own fixtures (`constraint_mixed_face_coupling`), and each solve asserts
+what CalculiX says about its tie: a slave node with no opposite master face is an
+uncoupled model, which no deck-text test can see. That assertion found a defect
+at once — f1 and f2 tied with `POSITION TOLERANCE=1.0` while the shell section is
+10.0 thick, and CalculiX has by then expanded the shell into through-thickness
+nodes half a thickness either side of the reference surface, so **30 and 5 slave
+nodes** were never tied, with no failure at all: the job converges and the deck
+looks right. The tolerance is now derived from the geometry instead of picked —
+`SHELL_THICKNESS / 2` for the two variants whose reference surface *is* the
+interface, and `COUPLING_GAP_MM + SHELL_THICKNESS / 2` for the offset and bag
+variants — and all four report zero untied nodes. (f3 and f4 had been using 60.0
+where 55.0 is the geometry.)
+
+**Why the tolerance has to be that size, and the route that is not open.** `*TIE`
+is 3D-only, so CalculiX expands the shell and hands the *expanded* nodes to the
+master-face search; `S1`/`S2` name the two extreme faces of that expansion, half
+a thickness either side of the reference surface, which is why the tolerance has
+to reach that far. Tying the *reference* nodes instead — a `TYPE=NODE` slave,
+which the manual permits — was implemented and measured: ccx accepts it and
+reports **no** untied node, but the joint is no longer rigid, **7.722483e-02 mm**
+against the all-solid rebuild's **6.416312e-02 mm** (+20 %), where the
+element-face slave gives **6.422333e-02 mm** (+0.09 %). CalculiX links an MPC on
+a reference node to the nodes of its expansion through its own expansion MPCs
+(`gen3dmpc.f`), and that link leaves a rotational freedom a rigid bond does not
+have. So a tolerance as fine as the geometric gap needs the *expanded* node at the
+reference location to be the one tied, which is a change inside CalculiX's
+expansion and tie code, not in the deck.
+
 What remains open, stated exactly:
 
-- **The 27-test FEM mixed suite still never runs CalculiX.** Every call is
+- **The 31-test FEM mixed suite still never runs CalculiX.** Every call is
   `FemToolsCcx(..., test_mode=True)`, and `femtools/ccxtools.py:551` refuses
   outright: *"CalculiX can not be run if test_mode is True."* That suite asserts
   deck text and mesh structure; solving lives in the Composites suite above.
-- **f2, f3, f4 and e1-e3 are still never solved.** Only the F1-shaped model —
-  a skin whose footprint equals the solid's top face — has a displacement
-  number. `constraint_mixed_face_coupling.py` (f1-f4) and
-  `constraint_mixed_edge_coupling.py` (e1-e3) build real geometry, but their
-  tests assert geometry and deck text only.
+- **e1-e3 are refused, not unsolved.** The edge family cannot be generated at
+  all: §5 puts edge-connected coupling out of scope and §11.1 makes it a loud
+  error, so those three have no displacement number by design rather than by
+  omission. Give them one only if ADR 0004 selects an edge mechanism.
 - **The Composites example test can still skip.**
   `test_mixed_shell_solid_plate_solves` `skipTest`s when the FEM stack is
   unavailable, so it is weaker than the new numerical test, which skips only
