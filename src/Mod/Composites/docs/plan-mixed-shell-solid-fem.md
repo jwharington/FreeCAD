@@ -1475,8 +1475,13 @@ stay off the drape backend — so it was never the motivating case. The motivati
 case is `mixed_shell_solid_wing.py`, and it now solves end to end:
 **`test_mixed_shell_solid_wing_solves`** (`test_compositeexamples`) meshes,
 writes and runs a CalculiX job on it, and asserts the deck holds one
-`*SOLID SECTION`, `COMPOSITE,ORIENTATION=` shell sections, `S8R` shells and
-exactly **two** `*TIE`s — one per skin.
+`*SOLID SECTION`, `COMPOSITE,ORIENTATION=` shell sections, quadratic shells
+(either `S8R` or `S6`) and exactly **two** `*TIE`s — one per skin. It is green,
+measured at **375 s**, which is the first time it has passed: it was re-armed in
+commit `7fedad03b4` with a note that the end-to-end run had not finished, and it
+had never been run to green since. What it failed on was its own assertion rather
+than the model — it demanded `S8R` when the mesher produces `S6` triangles and
+CalculiX accepts both (see §11.2), and the assertion's own message said so.
 
 What it is: a NACA 2412 wing, 1000 mm span, 200 mm chord, a solid Rohacell 51 WF
 core and a 160 gsm biaxial carbon-epoxy `Composite::Shell` on each lateral

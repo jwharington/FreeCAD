@@ -7,6 +7,7 @@ testing philosophy.
 """
 
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -517,7 +518,17 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
             2,
             "one tie per skin",
         )
-        self.assertIn("S8R", solver_input, "a composite section needs S8R or S6")
+        # A composite *SHELL SECTION is accepted only for quadratic shells, and
+        # both are quadratic: S8R quads and S6 triangles. Which one the mesher
+        # produces is not the point, so accept either - the example's own mesh
+        # comes out S6 (measured on its deck, 6824 shells, all S6).
+        element_types = set(
+            re.findall(r"^\*Element,\s*TYPE=(\w+)", solver_input, re.MULTILINE)
+        )
+        self.assertTrue(
+            element_types & {"S8R", "S6"},
+            f"a composite section needs S8R or S6 shells; the deck has {sorted(element_types)}",
+        )
 
         # A real solve, and a tip deflection in the sandwich range: the bound
         # and its derivation are in the example module (`TIP_DEFLECTION_BOUND_MM`).
