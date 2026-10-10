@@ -627,6 +627,7 @@ SET(FemTools_SRCS
     femtools/ccxtools.py
     femtools/checksanalysis.py
     femtools/checksmaterials.py
+    femtools/deckcheck.py
     femtools/fem_extension_registry.py
     femtools/constants.py
     femtools/distributions.py
