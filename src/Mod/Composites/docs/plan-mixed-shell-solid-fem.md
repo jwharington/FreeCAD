@@ -18,8 +18,8 @@ motivating laminate, and §11.6's GUI freeze — traced to the layered `COMPOSIT
 section expanding the frd to **8x** the mesh (289,241 nodes against 35,385) and
 fixed in the frd reader. Open: the S8R/S6 guard a composite section needs
 (§11.2), the fact that only the F1 family has ever been solved (§11.3), the
-results-viewer toggle (§11.4), the wing's partly-uncoupled ties and the rest of
-§11.6.
+results-viewer toggle (§11.4), the wing's partly-uncoupled ties (§11.7), and what is
+left of the coverage and cleanup tail (§11.8, §11.9).
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
 shells wants to coexist with locally solid features in the *same*
 analysis. Today it cannot: FreeCAD's FEM pipeline is built around
@@ -683,7 +683,7 @@ GUI. A case that passes only in one of the two modes is not finished.
 `femtest/gui/test_mixed_shell_solid.py` does not exist and nothing mixed is
 registered in `TestFemGui.py` — so the matrix is **headless-only** at present.
 That is an open decision, not an oversight to be glossed: either write the GUI
-half, or amend this rule deliberately. Recorded in §11.6. The rule is left
+half, or amend this rule deliberately. Recorded in §11.8. The rule is left
 standing here because it is the right rule, and the tree is what falls short of
 it.
 
@@ -935,7 +935,7 @@ for a physics result.
 | File | Purpose | Built? |
 |---|---|---|
 | `femtest/app/test_mixed_shell_solid.py` | headless matrix, 27 tests, registered as `FemTest17` | **yes** |
-| `femtest/gui/test_mixed_shell_solid.py` | GUI half of G0-G12 | **no — not built** (§11.6) |
+| `femtest/gui/test_mixed_shell_solid.py` | GUI half of G0-G12 | **no — not built** (§11.8) |
 | `femexamples/constraint_mixed_face_coupling.py` | F-family geometry + analysis; `setup(doc, variant="f1"|"f2"|"f3"|"f4")`, default `f1` | yes |
 | `femexamples/constraint_mixed_edge_coupling.py` | E-family geometry + analysis; `setup(doc, variant="e1"|"e2"|"e3")`, default `e2` | yes |
 | `femexamples/meshes/mesh_mixed_face_coupling_f*.py` | frozen merged meshes for G4-G7, G12, G13 | **no.** R1's frozen half was met differently: `femexamples/meshes/merged_mesh.py` holds the merge routine, and one fixture golden covers the byte-compare. Structural assertions read the live mesh the examples build |
@@ -1513,15 +1513,15 @@ measurable, and the drapes are now ~54 % cheaper than when first measured
 (nextdrape submodule `5ccc7fd`, `aba05cc`).
 
 What is still open on this case: per-layer results are averaged away on the
-displayed mesh (§11.6's trade), the ties are partly uncoupled (§11.6), and the
+displayed mesh (§11.6's trade), the ties are partly uncoupled (§11.7), and the
 S8R/S6 requirement is asserted by this example but not by Fem (§11.2).
 
-### 11.6 Smaller, and open
+### 11.6 ~~A solved mixed model makes the GUI unresponsive, and its result is
+~8x the mesh~~ — fixed
 
-- **~~A solved mixed model makes the GUI unresponsive, and its result is ~8x the
-  mesh.~~ — fixed** (see the end of this entry for the root cause and the numbers).
-  Opening the saved mixed wing (`/tmp/wing.FCStd`, 78 MB) in the GUI and
-  viewing `CCX_Results` is very slow, and the GUI process was later found gone.
+- **What it was.** Opening the saved mixed wing (`/tmp/wing.FCStd`, 78 MB) in the
+  GUI and viewing `CCX_Results` is very slow, and the GUI process was later found
+  gone.
   Measured on that deck and its frd: the deck defines **35,385 nodes** (ids
   1..35,385, all distinct and contiguous, and no element references beyond
   them), while the frd declares **289,241** — the mesh's own nodes plus
@@ -1654,25 +1654,38 @@ S8R/S6 requirement is asserted by this example but not by Fem (§11.2).
   for the expanded mesh, so it is not what makes the GUI usable any more - but it
   still nearly halves the pick (0.073 -> 0.040 s), which makes it a cheap
   optimisation rather than wasted weight.
-- **`Stiffener` / `Bulkhead` mixed coverage** — none. `quasi_iso_stiffener_panel`
-  is all shells; Bulkhead has no FEM example at all.
-- **The wing's ties are partly uncoupled, and nothing reads the warning.** Solving
-  the wing through the cost tool writes
-  `WingPipelineCost_FEMMesh_WarnNodeMissTiedContact.nam`, listing tie **slave**
-  nodes in **duplicated pairs** (`35388` twice, `35415` twice, …) — the Stage 7
-  silent-uncoupling symptom, which no test asserts against. It is unexplained:
-  the deck carries the two `*TIE`s, ccx completes, and the 50 mm bound is met.
-  Read that file before trusting a mixed result that has not been compared with
-  an all-solid rebuild.
+
+### 11.7 The wing's ties are partly uncoupled
+
+Solving the wing through the cost tool writes
+`WingPipelineCost_FEMMesh_WarnNodeMissTiedContact.nam`, listing tie **slave**
+nodes in **duplicated pairs** (`35388` twice, `35415` twice, …). That is the
+Stage 7 silent-uncoupling symptom, and nothing reads the file back. The deck
+carries the two `*TIE`s, ccx completes, and the 50 mm bound is met, so the
+example cannot tell a partial tie from a whole one. It is unexplained, and it is
+the one defect here that can make a mixed answer quietly wrong, which is why it
+is not filed with the rest: read that file before trusting a mixed result that
+has not been compared with an all-solid rebuild.
+
+### 11.8 Coverage the plan does not reach
+
+Two gaps in what the tests exercise, as opposed to what the code can do:
+
+- **`Stiffener` / `Bulkhead`** — no mixed coverage at all.
+  `quasi_iso_stiffener_panel` is all shells; Bulkhead has no FEM example at all.
 - **The GUI half of §8** — `femtest/gui/test_mixed_shell_solid.py` does not
   exist, so §8's admission rule (*a case passes in both modes*) is unmet and the
   matrix is headless-only. Amend the rule or write the test; do not leave the
   rule standing against a tree that does not satisfy it.
+
+### 11.9 Deliberate leftovers, and small bugs
+
 - **`test_rosette_scenarios` SIGSEGV** on a compound of boxes — the guard covers
-  top-level solids only.
+  top-level solids only. Unrelated to the flag.
 - **Flag deletion** — the getter and branches remain, by design, until a release
   has shipped with the default on.
-- **Nothing here is merged.** It is all commits on `fem-mixmesh` off
-  `fem-unified`, unreviewed and unupstreamed.
+- **The branch is unmerged.** It is all commits on `fem-mixmesh` off
+  `fem-unified`, unreviewed and unupstreamed, and **no PR is planned**: the
+  branch is the working record.
 
 
