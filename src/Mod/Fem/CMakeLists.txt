@@ -427,6 +427,7 @@ SET(FemTestsApp_SRCS
     femtest/app/test_reaction_multistep_delivery.py
     femtest/app/test_reaction_wrench_shift.py
     femtest/app/test_result.py
+    femtest/app/test_section_mesh_reference.py
     femtest/app/test_solver_elmer.py
     femtest/app/test_solver_mystran.py
     femtest/app/test_solver_z88.py

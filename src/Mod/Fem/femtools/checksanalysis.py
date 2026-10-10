@@ -382,4 +382,54 @@ def check_member_for_solver_calculix(analysis, solver, mesh, member):
     return message
 
 
+# Element-geometry objects carrying a section: the objects whose references
+# name the faces, edges or vertices the section is written for.
+_SECTION_TYPES = (
+    "Fem::ElementGeometry2D",
+    "Fem::ElementGeometry1D",
+    "Fem::ElementFluid1D",
+)
+
+_NODES_BY_SHAPE_TYPE = {
+    "Face": meshtools.get_nodes_by_face_with_fallback,
+    "Edge": meshtools.get_nodes_by_edge_with_fallback,
+    "Vertex": meshtools.get_nodes_by_vertex_with_fallback,
+}
+
+
+def check_sections_reference_the_mesh(analysis, mesh):
+    """Message when a section references geometry the mesh does not cover.
+
+    A section whose reference names a face, edge or vertex the mesh does not
+    hold writes an elset that no element joins; CalculiX then reads a deck
+    describing an article that is not the one that was meshed.  The test is
+    whether the reference shares a node with the mesh, so it does not depend on
+    how the caller named its objects, and a section with no references (the
+    implicit "everything else") is left alone.
+
+    This is not part of check_member_for_solver_calculix: it is asked for by a
+    caller that has both a mesh and the structure it was made from, and it must
+    not add a failure to analyses that never made that comparison.
+    """
+    if not mesh:
+        return ""
+    offenders = []
+    for obj in analysis.Group:
+        if not any(femutils.is_of_type(obj, section_type) for section_type in _SECTION_TYPES):
+            continue
+        for ref_obj, sub_refs in getattr(obj, "References", None) or []:
+            for sub_ref in sub_refs:
+                if not sub_ref:
+                    continue
+                shape = meshtools.sub_shape_at_global_placement(ref_obj, sub_ref)
+                nodes_for = _NODES_BY_SHAPE_TYPE.get(shape.ShapeType)
+                if nodes_for is None:
+                    continue
+                if not nodes_for(mesh.FemMesh, shape):
+                    offenders.append(f"{obj.Name}: {ref_obj.Name}.{sub_ref}")
+    if offenders:
+        return "Sections reference geometry outside the mesh: %s\n" % ", ".join(offenders)
+    return ""
+
+
 ##  @}
