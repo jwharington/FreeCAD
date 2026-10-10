@@ -38,6 +38,75 @@ import FreeCAD
 from FreeCAD import Console
 from builtins import open as pyopen
 
+
+def _result_mesh_names(analysis):
+    """Names of meshes owned by a result object, which are never the model."""
+    names = set()
+    for obj in analysis.Document.Objects:
+        if not obj.isDerivedFrom("Fem::FemResultObject"):
+            continue
+        mesh = getattr(obj, "Mesh", None)
+        if mesh is not None:
+            names.add(mesh.Name)
+    return names
+
+
+def _model_femmesh(analysis, frd_nodes):
+    """The analysis's own mesh, when the frd's nodes are a strict superset.
+
+    A layered COMPOSITE *SHELL SECTION makes CalculiX expand every shell into
+    solids in the .frd, whatever OUTPUT is set to (CalculiX manual: "In the .frd
+    file ... each layer is expanded independently").  The expanded node set can
+    be several times the model, and building the result mesh from it makes every
+    ray pick in the GUI cost what that geometry costs.  When the analysis still
+    holds the mesh the results were solved on, and every one of its nodes also
+    appears in the frd, that mesh can be the result mesh, keeping the expansion
+    out of the display without touching how the result rows are read.
+    """
+    if analysis is None:
+        return None
+    result_meshes = _result_mesh_names(analysis)
+    candidates = []
+    for obj in analysis.Group:
+        if obj.Name in result_meshes:
+            continue
+        if not obj.isDerivedFrom("Fem::FemMeshObject"):
+            continue
+        mesh = getattr(obj, "FemMesh", None)
+        if mesh is None or mesh.NodeCount == 0:
+            continue
+        if mesh.NodeCount >= len(frd_nodes):
+            continue
+        if not set(mesh.Nodes.keys()).issubset(frd_nodes):
+            continue
+        candidates.append(mesh)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda mesh: mesh.NodeCount)
+
+
+def _results_cover_nodes(results, node_ids):
+    """Whether every result row dict spans the whole display mesh.
+
+    Filtering a result set down to a mesh whose nodes the frd did not fill
+    would leave the row lists shorter than the mesh, so only switch to the
+    model mesh when the frd actually carries every node of it.
+    """
+    for result_set in results:
+        for key, value in result_set.items():
+            if isinstance(value, dict) and not node_ids.issubset(value.keys()):
+                return False
+    return True
+
+
+def _restrict_results_to_mesh(results, node_ids):
+    """Drop the result rows for nodes the display mesh does not hold."""
+    for result_set in results:
+        for key, value in list(result_set.items()):
+            if isinstance(value, dict):
+                result_set[key] = {i: v for i, v in value.items() if i in node_ids}
+
+
 # ********* generic FreeCAD import and export methods *********
 
 
@@ -126,7 +195,22 @@ def importFrd(filename, analysis=None, result_name_prefix="", result_analysis_ty
     res_obj = None
 
     if len(m["Nodes"]) > 0:
-        mesh = importToolsFem.make_femmesh(m)
+        display_mesh = _model_femmesh(analysis, set(m["Nodes"].keys()))
+        if display_mesh is not None and not _results_cover_nodes(
+            m["Results"], set(display_mesh.Nodes.keys())
+        ):
+            display_mesh = None
+        if display_mesh is not None:
+            _restrict_results_to_mesh(m["Results"], set(display_mesh.Nodes.keys()))
+            Console.PrintLog(
+                "Using the analysis mesh ({} nodes) for the result mesh instead of "
+                "the expanded frd mesh ({} nodes)\n".format(
+                    display_mesh.NodeCount, len(m["Nodes"])
+                )
+            )
+            mesh = display_mesh
+        else:
+            mesh = importToolsFem.make_femmesh(m)
         # the compacted mesh and its node map, worked out once the first result
         # set proves there is result data to compact
         compact_femmesh = None
