@@ -19,10 +19,13 @@ laminate, §11.6's GUI freeze — traced to the layered `COMPOSITE` section expa
 the frd to **8x** the mesh (289,241 nodes against 35,385) and fixed in the frd
 reader — and §11.7, which turned out not to be a defect at all: the wing's tie
 warnings are ccx reporting DOFs that are already constrained, and the run has
-**zero** of the ones that mean an uncoupled node. Open: the fact that only the F1
-family has ever been solved (§11.3), the results-viewer toggle (§11.4), the
-coverage and cleanup tail (§11.8, §11.10), and a tie hazard the tolerance
-research turned up (§11.9).
+**zero** of the ones that mean an uncoupled node. Open: the results-viewer toggle
+(§11.4), the coverage and cleanup tail (§11.8, §11.10), a tie hazard the
+tolerance research turned up (§11.9), and the question of landing a shell's
+expansion node on the contact plane (§11.11), which is written up and
+deliberately **parked**. All four face families are solved as of `6fc22a9334`;
+what only F1 has is a compared-pair displacement check, because the offset and
+bag families have no natural all-solid equivalent (§11.3).
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
 shells wants to coexist with locally solid features in the *same*
 analysis. Today it cannot: FreeCAD's FEM pipeline is built around
@@ -1882,5 +1885,107 @@ load on the master side (or as a `*DLOAD`) still writes and solves.
 - **The branch is unmerged.** It is all commits on `fem-mixmesh` off
   `fem-unified`, unreviewed and unupstreamed, and **no PR is planned**: the
   branch is the working record.
+
+### 11.11 Parked: landing a shell's expansion node on the tie's contact plane
+
+**Parked, not scheduled.** The question was whether FreeCAD should always
+arrange the shell's section offset so that an expansion node lies exactly on the
+contact plane — correcting it, or warning when it does not. The research below
+was done and is recorded so it is not repeated; **nothing here is being
+changed**, and the entry is the record rather than a plan.
+
+**What ccx does, in order.** The two halves of the proposal both exist already,
+and the order between them is what matters:
+
+- **Selection gate, first.** `gentiedmpc.f:283-288` compares the perpendicular
+  distance from the slave node to the master triangle (`dist`) with the tie's
+  position tolerance (`tietol(1,i)`), and sets `isol=0` — dropping the node, with
+  *"opposite master face found but too far away; distance: …; tolerance: …"*.
+  This is the only place a tie node is lost.
+- **Correction, second.** `gentiedmpc.f:380-386` (and `:636`) moves the slave
+  node onto the master face (`co(k,node)=p(k)`), gated by `tietol(2,i).gt.0`.
+  That flag is `*TIE, ADJUST`: default `1.d0` (`ties.f:56`), set to `-1.d0` only
+  by `ADJUST=NO` (`ties.f:82`). So **ccx's own default is to correct**, and
+  FreeCAD switches it off — `Adjust` defaults to `False` and
+  `write_constraint_tie.py:111` emits `ADJUST=NO` — which is why no FreeCAD deck
+  gets the correction today.
+
+Two things follow, and both were the reason the question was not simple:
+
+- **Correction cannot rescue selection.** The gate runs first, so `ADJUST` only
+  moves nodes that were already accepted. Landing exactly is therefore not a
+  substitute for a correct tolerance; it makes a *small* tolerance sufficient.
+- **On a shell, `ADJUST` moves an *expansion* node**, deforming the element's
+  through-thickness geometry. Turning it on by default is a model change across
+  every deck, not a bug fix.
+
+**And `Tolerance = 0.0` is not zero.** It is FreeCAD's default
+(`femobjects/constraint_tie.py`), and `gentiedmpc.f:162` replaces anything below
+`1e-10` with ccx's own `tolloc`, computed at `:98-105` as
+`0.025 ×` the mean over master triangles of `|n·cg + d|`. Whatever that
+evaluates to for a given model, it is smaller than the `1.0` that already failed
+the f1/f2 fixtures at `t = 10` (§11.3) — so the *default* is the weakest of the
+three settings, and the examples' `1.0` is a workaround that holds only while
+`t` stays under ~2 mm.
+
+**Where the offset fits.** The expansion faces sit at `ref − t·(0.5+o)` and
+`ref + t·(0.5−o)` (`gen3dfrom2d.f:152,159`; the composite/layer block at
+`:238-293` uses the same `o`, scaled by the accumulated ply thickness). With the
+master plane at signed distance `g` from the reference surface, a node lands on
+it exactly when `o = g/t − 0.5`, and the tolerance the writer's chosen face needs
+is
+
+| offset | slave face | required tolerance |
+|---|---|---|
+| `o < 0` | `S1` | `abs(g − t·(0.5+o))` |
+| `o ≥ 0` | `S2` | `g + t·(0.5−o)` |
+
+The two constants `6fc22a9334` derived by hand come straight out of that:
+`o = 0, g = 0 → t/2`, and `o = 0, g = 50 → 50 + t/2`. At `o = ∓0.5` the same
+table gives `g`, which is §11.3's third reading as arithmetic rather than prose.
+
+**Why it is parked rather than scheduled.**
+
+- **The requirement is per tie pair, not per shell.** A skin tied to the core
+  and to a stiffener has two distances; no single offset lands both, so the
+  offset cannot become a shell-wide invariant, and at most can be *reported*.
+- **It moves material through the thickness**, silently if applied
+  automatically. §10 puts the offset where the skin physically is, per skin and
+  in opposite directions for a sandwich; deriving it from the tie inverts that
+  dependency, and its sign is load-bearing and invisible in a fringe plot.
+- **The offset-0 case is not a defect.** Both mixed examples tie at offset 0 on
+  purpose (`mixed_shell_solid_wing.py:40`: a 0.33 mm skin eccentricity against a
+  24 mm core, under 1.5 %), and `t/2` is the honest tolerance for that
+  idealisation. A warning keyed to *"not exact"* would fire on every correct
+  mixed model. The defect is only `tolerance < required`, which is the silent
+  uncoupling §11.3 found in the fixtures.
+
+**A latent bug found while reading this — recorded, not fixed.**
+`_shell_slave_face` (`write_constraint_tie.py:60-77`) takes `S1`/`S2` from the
+**first non-suppressed** `geos_shellthickness` offset in the whole analysis, and
+never consults where the master is. §10 requires a sandwich's two skins to offset
+in *opposite* directions, so once real offsets are in use one of the two ties
+will name the far face — a distance of `t` instead of 0 — which ccx reports only
+as *"too far away"* and which the function's own docstring already calls silent.
+It cannot bite today: every fixture and both examples use offset 0, where `S1`
+and `S2` are symmetric about the reference surface and the choice cannot matter.
+
+*If this is ever picked up, in this order:*
+
+1. Derive the requirement before the write, in `checksanalysis`, from geometry
+   only — §11.1 already requires both references to be faces, so `g` is a
+   plane-to-plane distance, and `t` and `o` come from the section. Warn when
+   `tolerance < required`, naming the two faces, both numbers and the remedy
+   (`o = g/t − 0.5`, or raise the tolerance). No mesh query, so none of §11.6's
+   view cost.
+2. Choose the slave face from the master's side rather than from the offset
+   sign, which is the latent bug above.
+3. Only then set an offset in a fixture, as §11.3's demonstration that the
+   required tolerance collapses from `t/2` to `g`.
+
+*Exit criterion:* a fixture whose shell offset leaves its expansion face `t/2`
+from the master and whose write fails with the distance and the offset that would
+remove it, while the same model with that offset writes and solves with zero
+uncoupled nodes.
 
 
