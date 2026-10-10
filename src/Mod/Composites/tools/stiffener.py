@@ -551,9 +551,18 @@ def _profile_edges(profile):
 
 def get_xsect(profile):
     """The profile's edges, with repeated vertices merged."""
+    profile_edges = _profile_edges(profile)
+    if not profile_edges:
+        # A profile this cannot read used to sweep into an empty shell that
+        # only failed much later, as "the ring produced no web faces".  Say
+        # what was passed instead.
+        raise ValueError(
+            "the profile has no edges to sweep - pass a sketch, a shape or a "
+            "wire, not a %s" % type(profile).__name__
+        )
     points = {}
     links = []
-    for edge in _profile_edges(profile):
+    for edge in profile_edges:
 
         def add_vertex(v):
             p = v.Point

@@ -103,8 +103,13 @@ class TestRingOnHalvedSkin(TestFreeCADFP, unittest.TestCase):
         """
         support = self._halved_skin()
         plane = standalone_station_plane(2.0 * 400.0, STATION_X)
+        # The profile has to be a shape: a bare list of edges has no .Edges,
+        # so _profile_edges found nothing and the sweep built an empty shell,
+        # which is why this test reported no web faces while its sibling, which
+        # never passes a profile, passed.
+        profile = Part.Wire(frame_profile())
         sweep = st.make_stiffener(
-            support, plane, frame_profile(), st.ProfileMirror(flip_y=True)
+            support, plane, profile, st.ProfileMirror(flip_y=True)
         )
         self.assertFalse(
             sweep.shell.isNull(), "the ring produced no swept geometry"
@@ -112,6 +117,16 @@ class TestRingOnHalvedSkin(TestFreeCADFP, unittest.TestCase):
         self.assertGreater(
             len(sweep.web_faces), 0, "the ring produced no web faces"
         )
+
+    def test_a_profile_with_no_edges_is_refused(self):
+        """A profile the sweep cannot read must fail, not build an empty shell.
+
+        This is what hid the fixture mistake above: an empty shell is not null,
+        so the sweep looked like it had built something and only the face count
+        disagreed.
+        """
+        with self.assertRaises(ValueError):
+            st.get_xsect([])
 
 
 if __name__ == "__main__":
