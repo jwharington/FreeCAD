@@ -6,12 +6,20 @@ merge routine is published, and a mixed result now displays without freezing the
 GUI. Stage 7's coupling check passes at **0.09 %** against an all-solid rebuild;
 Stage 8 makes a mixed result displayable; Stage 9 promotes the path and hardens
 the checks the promotion would have weakened.
+**The motivating case now runs.** `mixed_shell_solid_wing.py` — a NACA 2412 wing
+with a solid Rohacell core and a real `[+/-45]s` carbon laminate on each lateral
+surface — meshes, writes and **solves** in one deck, coupled by two `*TIE`s
+(§11.5). Getting it to run took three FEM defects and a mesh-sizing bug, none of
+which was visible until the one in front of it was fixed; they are written up
+with their numbers in [`fem-mesh-query-cost.md`](fem-mesh-query-cost.md).
 **Remaining:** the full list is **§11**. Fixed since the last revision: §11.1 (the
-silent wrong deck on an edge-shaped connection), §11.3's F1 solve, and §11.6's GUI
-freeze — traced to the layered `COMPOSITE` section expanding the frd to **8x** the
-mesh (289,241 nodes against 35,385) and fixed in the frd reader. Open: the S8R/S6
-guard a composite section needs (§11.2), the fact that only the F1 family has ever
-been solved (§11.3), the results-viewer toggle (§11.4), and the rest of §11.6.
+silent wrong deck on an edge-shaped connection), §11.3's F1 solve, §11.5's
+motivating laminate, and §11.6's GUI freeze — traced to the layered `COMPOSITE`
+section expanding the frd to **8x** the mesh (289,241 nodes against 35,385) and
+fixed in the frd reader. Open: the S8R/S6 guard a composite section needs
+(§11.2), the fact that only the F1 family has ever been solved (§11.3), the
+results-viewer toggle (§11.4), the wing's partly-uncoupled ties and the rest of
+§11.6.
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
 shells wants to coexist with locally solid features in the *same*
 analysis. Today it cannot: FreeCAD's FEM pipeline is built around
@@ -385,7 +393,10 @@ matches the headless golden". Decide this before Stage 4, not after.
   volumes *and* its own shell elements, and that the deck carries a
   `*SOLID SECTION`, a `*SHELL SECTION` and a `*TIE`. The skin is
   `IsotropicEquivalent`, deliberately, so the example stays off the drape
-  backend. **`Stiffener` and `Bulkhead` still have no mixed coverage.**
+  backend. A second, `mixed_shell_solid_wing.py`, carries a **real** per-ply
+  laminate over a solid foam core — the motivating case of §11.5, and the one
+  that exposed the cost defects listed there. **`Stiffener` and `Bulkhead`
+  still have no mixed coverage.**
 - Delete the getter and the flag branches after one release.
 
 **Fixes that came after the stages, from *using* the path rather than building
@@ -1455,12 +1466,55 @@ existing knobs — `ColorMode`, `ShowInner`, `MaxFacesShowInner` — none of the
 separates shells from solids. A toggle needs a C++ view-provider change and a
 rebuild, which is why it is the one outstanding item with a build cost.
 
-### 11.5 The motivating case is not demonstrated with a real laminate
+### 11.5 ~~The motivating case is not demonstrated with a real laminate~~ — **demonstrated**
 
-`mixed_shell_solid_plate.py` uses `IsotropicEquivalent` — deliberately, to stay
-off the drape backend — so *"a laminated composite skin over a solid core"*,
-the LS8e case this plan exists for, has no end-to-end example. §10's per-skin
-`Offset` is built and routed into `ShellThickness.Offset`.
+`mixed_shell_solid_plate.py` still uses `IsotropicEquivalent` — deliberately, to
+stay off the drape backend — so it was never the motivating case. The motivating
+case is `mixed_shell_solid_wing.py`, and it now solves end to end:
+**`test_mixed_shell_solid_wing_solves`** (`test_compositeexamples`) meshes,
+writes and runs a CalculiX job on it, and asserts the deck holds one
+`*SOLID SECTION`, `COMPOSITE,ORIENTATION=` shell sections, `S8R` shells and
+exactly **two** `*TIE`s — one per skin.
+
+What it is: a NACA 2412 wing, 1000 mm span, 200 mm chord, a solid Rohacell 51 WF
+core and a 160 gsm biaxial carbon-epoxy `Composite::Shell` on each lateral
+surface — a real per-ply `[+/-45]s` laminate with a fibre orientation, not a
+smeared equivalent. The skins are meshed apart from the core and merged
+node-disjoint (§8.3), then tied. The load case is a cantilever, so the tip
+deflection is interpretable, and the test's bound is **50 mm** — between the
+~6 mm a skin-stiffened sandwich estimate gives and the ~3000 mm the bare foam
+core gives — so it proves the skins are carrying the bending rather than merely
+that the job finished. (It is a bound, not a compared pair; the compared-pair
+check lives in §11.3's numerical test, on a smaller model.)
+
+**It could not run until three FEM defects and a mesh-sizing bug in front of it
+were fixed**, which is why it is recorded here and not only in the example:
+
+* `FemMesh::getFacesOnly` / `getEdgesOnly` rebuilt every volume's node set once
+  per face — quadratic, and **83 % of all samples** on this mesh. The deck write
+  was 286.6 s against a solve of 26.6 s (10.8x the solve).
+* `write_mesh` and `write_step_output` each asked `is_mixed_femmesh` about the
+  same unchanged mesh: **26 % of the run** answering a yes/no question twice.
+* Generated per-element `*ELSET` names reached **82 characters** against
+  CalculiX's limit of **80**, so the wing had **never been solved once** and
+  nothing said so. FreeCAD checked the base name; the writer then appended the
+  element id to it, which is how a name that passed the check still arrived over
+  the limit. The prefix is now hashed to 20 characters — **md5**, not `hash()`,
+  which is salted per process and would make decks irreproducible.
+* `MeshSizeFromCurvature` (12 elements per 2π) refines independently of
+  `max_size`, and the NACA 2412 nose radius is only 3.2 mm, so the core meshed to
+  **294,917** points instead of **21,332** — 11x finer than intended.
+
+The full cost study — the measurements, the change that bought nothing and is
+recorded anyway, and the set-name defect — is
+[`fem-mesh-query-cost.md`](fem-mesh-query-cost.md). The same tool that found
+those (`inspect_wing_pipeline_cost.py`) also made the two drape changes
+measurable, and the drapes are now ~54 % cheaper than when first measured
+(nextdrape submodule `5ccc7fd`, `aba05cc`).
+
+What is still open on this case: per-layer results are averaged away on the
+displayed mesh (§11.6's trade), the ties are partly uncoupled (§11.6), and the
+S8R/S6 requirement is asserted by this example but not by Fem (§11.2).
 
 ### 11.6 Smaller, and open
 
@@ -1602,6 +1656,14 @@ the LS8e case this plan exists for, has no end-to-end example. §10's per-skin
   optimisation rather than wasted weight.
 - **`Stiffener` / `Bulkhead` mixed coverage** — none. `quasi_iso_stiffener_panel`
   is all shells; Bulkhead has no FEM example at all.
+- **The wing's ties are partly uncoupled, and nothing reads the warning.** Solving
+  the wing through the cost tool writes
+  `WingPipelineCost_FEMMesh_WarnNodeMissTiedContact.nam`, listing tie **slave**
+  nodes in **duplicated pairs** (`35388` twice, `35415` twice, …) — the Stage 7
+  silent-uncoupling symptom, which no test asserts against. It is unexplained:
+  the deck carries the two `*TIE`s, ccx completes, and the 50 mm bound is met.
+  Read that file before trusting a mixed result that has not been compared with
+  an all-solid rebuild.
 - **The GUI half of §8** — `femtest/gui/test_mixed_shell_solid.py` does not
   exist, so §8's admission rule (*a case passes in both modes*) is unmet and the
   matrix is headless-only. Amend the rule or write the test; do not leave the
