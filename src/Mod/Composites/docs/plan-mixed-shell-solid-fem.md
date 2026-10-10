@@ -1,16 +1,17 @@
 # Plan: Mixed shell + solid elements in one FEM analysis
 
-**Date:** 2026-10-02 (revision 2026-10-09) · **Status:** Stages 1–9 done and verified. The
-mixed path is **on by default**, a Composites example drives it end to end, and the
-merge routine is published. Stage 7's coupling check passes at **0.09 %** against an
-all-solid rebuild; Stage 8 makes a mixed result displayable (`OUTPUT=2d` on both file
-cards); Stage 9 promotes the path, hardens the checks the promotion would have
-weakened, and publishes the merge routine.
-**Remaining:** the full list is **§11**. §11.1 — the silent wrong deck on an
-edge-shaped connection — and §11.3's F1 solve are **fixed**; the open entries are
-the S8R/S6 guard a composite section needs (§11.2), the fact that only the F1
-family has ever been solved (§11.3), the results-viewer toggle (§11.4), and the
-rest of §11.6.
+**Date:** 2026-10-02 (revision 2026-10-10) · **Status:** Stages 1–9 done and verified. The
+mixed path is **on by default**, a Composites example drives it end to end, the
+merge routine is published, and a mixed result now displays without freezing the
+GUI. Stage 7's coupling check passes at **0.09 %** against an all-solid rebuild;
+Stage 8 makes a mixed result displayable; Stage 9 promotes the path and hardens
+the checks the promotion would have weakened.
+**Remaining:** the full list is **§11**. Fixed since the last revision: §11.1 (the
+silent wrong deck on an edge-shaped connection), §11.3's F1 solve, and §11.6's GUI
+freeze — traced to the layered `COMPOSITE` section expanding the frd to **8x** the
+mesh (289,241 nodes against 35,385) and fixed in the frd reader. Open: the S8R/S6
+guard a composite section needs (§11.2), the fact that only the F1 family has ever
+been solved (§11.3), the results-viewer toggle (§11.4), and the rest of §11.6.
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
 shells wants to coexist with locally solid features in the *same*
 analysis. Today it cannot: FreeCAD's FEM pipeline is built around
@@ -432,6 +433,11 @@ answer that is wrong — and each has a regression test:
 # The mixed-mesh matrix of §8 plus the post-stage fixes
 ~/.pixi/envs/default/bin/FreeCADCmd -t femtest.app.test_mixed_shell_solid
 
+# The result-size fix of §11.6: the frd reader maps expanded results onto the
+# model mesh, so a composite model's result is not 8x the mesh
+~/.pi/agent/skills/freecad-dev/scripts/run-fem-tests.sh test_result_mesh_mapping.py
+~/.pi/agent/skills/freecad-dev/scripts/run-fem-tests.sh test_reaction_multistep_delivery.py
+
 # The flag-off deck invariant (this tool sets the flag off itself)
 ~/.pi/agent/skills/freecad-dev/scripts/run-script.sh \
     src/Mod/Composites/compositestests/run_inspect_deck_snapshot.py \
@@ -440,6 +446,23 @@ answer that is wrong — and each has a regression test:
 # The GUI half of §8 (needs a display; see §8.8)
 build/debug/bin/FreeCAD --run-test TestFemGui
 ```
+
+**The diagnostics behind §11.6** — how the GUI freeze was measured, and where it
+went. All four are committed tools, not ad-hoc loops, because each answers a
+question that had already been guessed wrong once:
+
+- `inspect_document_load_cost.py <file.FCStd> ...` — opens documents and reports
+  the two numbers that answer different questions (time to create the objects,
+  and whether the load left anything to recompute), plus a marker tap counting
+  drape solves, so "something re-executed" is measured rather than inferred.
+- `inspect_wing_pipeline_cost.py [--stop-after geometry|drape|mesh|deck|solve]
+  [--save <file.FCStd>] [--drape-pitch <mm>]` — the wing's per-stage wall time;
+  `--stop-after` and `--save` together produce a document per stage.
+- `inspect_result_mesh_mapping.py --document <file> --frd <file> --analysis <name>`
+  — re-imports an frd into a model analysis and reports the result mesh size,
+  row count and max |u| against the expanded import.
+- `inspect_shell_section_expansion.py` — isolates the frd expansion trigger by
+  re-running the same deck with a homogeneous shell section.
 
 A trap worth keeping: the Composites harness **truncates stdout on success**
 (it prints a `tail` of the log) and only prints everything on failure. `exit 0`
@@ -1441,8 +1464,9 @@ the LS8e case this plan exists for, has no end-to-end example. §10's per-skin
 
 ### 11.6 Smaller, and open
 
-- **A solved mixed model makes the GUI unresponsive, and its result is ~8x the
-  mesh.** Opening the saved mixed wing (`/tmp/wing.FCStd`, 78 MB) in the GUI and
+- **~~A solved mixed model makes the GUI unresponsive, and its result is ~8x the
+  mesh.~~ — fixed** (see the end of this entry for the root cause and the numbers).
+  Opening the saved mixed wing (`/tmp/wing.FCStd`, 78 MB) in the GUI and
   viewing `CCX_Results` is very slow, and the GUI process was later found gone.
   Measured on that deck and its frd: the deck defines **35,385 nodes** (ids
   1..35,385, all distinct and contiguous, and no element references beyond
