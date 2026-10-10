@@ -66,6 +66,7 @@ from ._shell_example_common import (
     _create_fem_base,
     _run_ccx,
     _set_constraint_refs,
+    add_load_direction,
     ensure_document,
     make_biaxial_laminate,
 )
@@ -89,13 +90,19 @@ MESH_SIZE_MM = 12.0
 DRAPE_PITCH_MM = 5.0
 
 FORCE_N = 100.0
-# The tip deflection has to look like a sandwich, not like bare foam. An
-# Euler-Bernoulli estimate of the skin-stiffened cantilever,
-# F L^3 / (3 E_skin I_skin) with I_skin = 2 c t (d/2)^2 ~ 3.8e4 mm^4 and
-# E_skin = 135 GPa, gives ~6 mm; the foam core alone (E = 75 MPa,
-# I ~ 1.5e5 mm^4) gives ~3000 mm. A bound of 50 mm is proof the skins are
-# bonded and carrying the bending, with a wide margin on both sides.
-TIP_DEFLECTION_BOUND_MM = 50.0
+# The tip deflection has to look like a sandwich, not like bare foam. The
+# reference is computed from this model, not quoted: the skins' in-plane axial
+# stiffness comes from the laminate's own layers and the section integrals come
+# from the same outline the core is built from (see
+# `_undistorted_sandwich_tip_deflection_mm`), which gives ~46 mm, and the foam
+# core alone (E = 75 MPa, I ~ 1.4e5 mm^4) gives ~3000 mm.
+#
+# That estimate idealises the section as undistorted, so it is a lower bound:
+# the solve lands at ~2.0x it, the difference being the ovalising and shear lag
+# an ideal sandwich beam does not have. The bound is therefore a factor on the
+# estimate rather than a length - 4x still separates a bonded skin (~2.0x) from
+# a bare core (~65x) - and the factor is stated here, where the estimate is.
+TIP_DEFLECTION_BOUND_FACTOR = 4.0
 
 # 160 gsm biaxial carbon-epoxy skin, from the areal weight.
 FABRIC_AREAL_WEIGHT_KG_M2 = 0.160
@@ -161,6 +168,71 @@ def naca4_ordinates(camber, camber_position, thickness, chord, intervals):
             )
         )
     return upper, lower
+
+
+def _skin_axial_stiffness_n_per_mm(laminate):
+    """In-plane axial stiffness ``A11`` of a skin, per mm of width.
+
+    ``A11 = sum(C11_k * t_k)`` over the layers the deck will carry, read from
+    the laminate's own ``FEMLayers`` - the merged layers ``util/fem_util``
+    hands the writer - so the reference deflection comes from the section the
+    solve uses and not from the ply's fibre-direction modulus.
+    """
+    return sum(
+        layer.stiffness[0, 0] * layer.thickness for layer in laminate.Proxy.FEMLayers
+    )
+
+
+def _section_integrals_mm():
+    """Section integrals of the core outline: ``(I_skin, A_core, I_core)``.
+
+    Trapezoidal over the cosine-spaced NACA ordinates. ``I_skin`` is
+    ``integral(z_upper^2 + z_lower^2) dx``, the lever arm the two skins work at;
+    ``A_core`` is the outline's area, which carries the shear; ``I_core`` is the
+    solid's own second moment.
+    """
+    upper, lower = naca4_ordinates(
+        NACA_CAMBER,
+        NACA_CAMBER_POSITION,
+        NACA_THICKNESS,
+        CHORD_MM,
+        SURFACE_INTERVALS,
+    )
+    i_skin = 0.0
+    a_core = 0.0
+    i_core = 0.0
+    for index in range(len(upper) - 1):
+        dx = upper[index + 1][0] - upper[index][0]
+        z_upper = 0.5 * (upper[index][1] + upper[index + 1][1])
+        z_lower = 0.5 * (lower[index][1] + lower[index + 1][1])
+        i_skin += (z_upper**2 + z_lower**2) * dx
+        a_core += (z_upper - z_lower) * dx
+        i_core += (z_upper**3 - z_lower**3) / 3.0 * dx
+    return i_skin, a_core, i_core
+
+
+def _undistorted_sandwich_tip_deflection_mm(laminate):
+    """Tip deflection of this wing as an ideal sandwich beam, in mm.
+
+    Euler-Bernoulli over the skins plus the core's shear,
+    ``F L^3 / (3 E I) + F L / (G A)``, with ``E I`` from the skins' ``A11`` at
+    the outline's lever arm plus the core's own bending, and ``G`` the isotropic
+    core's shear modulus. It assumes the section stays undistorted, so it is a
+    lower bound on the solve rather than an answer.
+    """
+    core_youngs = float(
+        FreeCAD.Units.Quantity(ROHACELL_51_WF["YoungsModulus"]).getValueAs("MPa")
+    )
+    core_poisson = float(ROHACELL_51_WF["PoissonRatio"])
+    core_shear = core_youngs / (2.0 * (1.0 + core_poisson))
+
+    i_skin, a_core, i_core = _section_integrals_mm()
+    bending_stiffness = _skin_axial_stiffness_n_per_mm(laminate) * i_skin
+    bending_stiffness += core_youngs * i_core
+
+    bending = FORCE_N * SPAN_MM**3 / (3.0 * bending_stiffness)
+    shear = FORCE_N * SPAN_MM / (core_shear * a_core)
+    return bending + shear
 
 
 def _spline_edge(points):
@@ -288,7 +360,12 @@ def _add_load_case(doc, analysis, core, tag):
     force = ObjectsFem.makeConstraintForce(doc, f"{tag}_Force")
     _set_constraint_refs(force, [(core, _planar_face_name(core, "y", SPAN_MM))])
     force.Force = f"{FORCE_N} N"
-    force.DirectionVector = FreeCAD.Vector(0.0, 0.0, -1.0)
+    # The tip load is a cantilever load in global -Z. The core is a curved
+    # profile extrusion, so it has no linear Z edge and no planar Z face to take
+    # the direction from, and the axis has to come from an element: a vector in
+    # DirectionVector is recomputed away as the tip face's +Y normal.
+    direction = add_load_direction(doc, f"{tag}_LoadDirection", (0.0, 0.0, -1.0))
+    force.Direction = (direction, [])
     _add_analysis_member(analysis, force)
 
 
@@ -341,6 +418,9 @@ def build(doc=None, run_solver=False):
         "lower_laminate": lower_laminate,
         "texture_plans": plans,
     }
+    result["tip_deflection_estimate_mm"] = _undistorted_sandwich_tip_deflection_mm(
+        upper_laminate
+    )
     if not run_solver:
         return result
 

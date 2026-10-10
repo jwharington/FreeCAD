@@ -31,6 +31,7 @@ from Composites.compositeexamples.examples import (  # noqa: E402
     closed_ring_composite_shell,
     conical_panel_segment,
     cyl_sphere_seam,
+    mixed_shell_solid_plate,
     mixed_shell_solid_wing,
     tubular_shell,
 )
@@ -235,6 +236,42 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
                 self.assertNotIn(
                     "Invalid", obj.State, msg=f"{obj.Name} is invalid"
                 )
+
+    def _assert_loads_point_along_minus_z(self, solver_input, force_n):
+        """The load's axis comes from Direction, not from DirectionVector.
+
+        Fem recomputes ``DirectionVector`` from the referenced face's normal on
+        the next recompute, so a load written from that property follows the face
+        rather than the axis asked for. Both mixed examples load along -Z, which
+        is the axis their assertions are about.
+
+        The total rather than every line is checked for the sign: a face's node
+        table lists nodes it gives no share of the load, and those are written as
+        ``-0`` (measured: 50 of the wing's 162 lines).
+        """
+        lines = solver_input.splitlines()
+        start = next(
+            index for index, line in enumerate(lines) if line.startswith("*CLOAD")
+        )
+        loads = []
+        for line in lines[start + 1 :]:
+            if line.startswith("*") and not line.startswith("**"):
+                break
+            if line.strip() and not line.strip().startswith("**"):
+                loads.append(line.strip())
+        self.assertTrue(loads, "the load case must write nodal loads")
+        total = 0.0
+        for line in loads:
+            _, dof, value = line.split(",")
+            self.assertEqual(dof, "3", "the load must be written along Z")
+            total += float(value)
+        self.assertLess(total, 0.0, "the load must point along -Z")
+        self.assertAlmostEqual(
+            total,
+            -force_n,
+            delta=0.05 * force_n,
+            msg="the nodal loads must add up to the applied force",
+        )
 
     def test_quasi_iso_stiffener_panel_fully_orientation_free(self):
         result = runner.run(
@@ -457,6 +494,9 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
         self.assertIn("*SOLID SECTION", solver_input, "the spar must be sectioned")
         self.assertIn("*SHELL SECTION", solver_input, "the skin must be sectioned")
         self.assertIn("*TIE", solver_input, "the skin must be coupled to the spar")
+        self._assert_loads_point_along_minus_z(
+            solver_input, mixed_shell_solid_plate.FORCE_N
+        )
         self.assertIsNotNone(result["max_displacement"])
         self.assertGreater(result["max_displacement"], 0.0)
 
@@ -530,11 +570,20 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
             f"a composite section needs S8R or S6 shells; the deck has {sorted(element_types)}",
         )
 
-        # A real solve, and a tip deflection in the sandwich range: the bound
-        # and its derivation are in the example module (`TIP_DEFLECTION_BOUND_MM`).
+        # The tip load is the cantilever load in -Z the deflection below is about.
+        self._assert_loads_point_along_minus_z(
+            solver_input, mixed_shell_solid_wing.FORCE_N
+        )
+
+        # A real solve, and a tip deflection in the sandwich range. The estimate
+        # is computed from this model's own laminate and outline; the factor on
+        # it, and why an ideal sandwich beam is a lower bound, are in the example
+        # module.
         displacement = result["max_displacement"]
+        estimate = result["tip_deflection_estimate_mm"]
         FreeCAD.Console.PrintMessage(
             f"\n[mixed wing] max_displacement: {displacement:.6e} mm; "
+            f"ideal sandwich estimate: {estimate:.6e} mm; "
             f"nodes: {mesh.NodeCount}, volumes: {len(mesh.Volumes)}, "
             f"shell elements: {len(mesh.FacesOnly)}\n"
         )
@@ -542,9 +591,10 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
         self.assertGreater(displacement, 0.0)
         self.assertLess(
             displacement,
-            mixed_shell_solid_wing.TIP_DEFLECTION_BOUND_MM,
-            "a tip deflection above the bound means the skins are not bonded: "
-            "the bare foam core alone deflects ~3000 mm",
+            estimate * mixed_shell_solid_wing.TIP_DEFLECTION_BOUND_FACTOR,
+            "a tip deflection above the bound means the skins are not carrying "
+            f"the bending: the ideal sandwich estimate is {estimate:.1f} mm "
+            "and the bare foam core alone deflects ~3000 mm",
         )
 
 

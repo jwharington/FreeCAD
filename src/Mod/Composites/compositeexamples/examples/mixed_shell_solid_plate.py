@@ -38,6 +38,7 @@ from ._shell_example_common import (
     _create_fem_base,
     _run_ccx,
     _set_constraint_refs,
+    add_load_direction,
     ensure_document,
     make_qi_laminate,
 )
@@ -123,7 +124,10 @@ def _add_load_case(doc, analysis, spar, tag):
     force = ObjectsFem.makeConstraintForce(doc, f"{tag}_Force")
     _set_constraint_refs(force, [(spar, _edge_name(spar, x=SPAR_LENGTH, z=0.0))])
     force.Force = f"{FORCE_N} N"
-    force.DirectionVector = FreeCAD.Vector(0.0, 0.0, -1.0)
+    # The load is global -Z, and the loaded edge runs along Y, so the axis has to
+    # come from its own element rather than from the reference.
+    direction = add_load_direction(doc, f"{tag}_LoadDirection", (0.0, 0.0, -1.0))
+    force.Direction = (direction, [])
     _add_analysis_member(analysis, force)
 
 

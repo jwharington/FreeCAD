@@ -7,6 +7,8 @@ import sys
 import time
 import types
 
+import FreeCAD
+
 from Composites.objects import (
     CompositeLaminate,
     FibreCompositeLamina,
@@ -631,6 +633,24 @@ def _set_constraint_refs(constraint, refs):
         return
     if hasattr(constraint, "References"):
         constraint.References = refs
+
+
+def add_load_direction(doc, name, direction):
+    """Return an element giving a force the axis ``direction``.
+
+    A force's axis reaches the deck through ``Direction``. ``DirectionVector``
+    cannot carry it: Fem treats that property as an output and recomputes it from
+    the referenced face's normal whenever the constraint is recomputed, which
+    leaves the load along the face normal instead of the axis asked for. Fem
+    reads a datum element's local Z axis as a direction, so this returns an
+    ``App::Line`` rotated to point along ``direction``.
+    """
+    obj = doc.addObject("App::Line", name)
+    obj.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(0.0, 0.0, 0.0),
+        FreeCAD.Rotation(FreeCAD.Vector(0.0, 0.0, 1.0), FreeCAD.Vector(*direction)),
+    )
+    return obj
 
 
 def _add_shell_section_and_material(doc, analysis, support, tag, shell_obj=None):

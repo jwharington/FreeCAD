@@ -201,11 +201,25 @@ def add_fixed(doc, analysis, reference):
 
 
 def add_force(doc, analysis, reference, magnitude, direction):
-    """Return a force of ``magnitude`` on ``reference`` along ``direction``."""
+    """Return a force of ``magnitude`` on ``reference`` along ``direction``.
+
+    The axis reaches the deck through ``Direction``, the element that gives the
+    force its direction. ``DirectionVector`` cannot carry it: Fem treats that
+    property as an output and recomputes it from the referenced face's normal
+    whenever the constraint is recomputed, so a vector written there becomes the
+    face normal rather than the load axis. Fem reads a datum element's local Z as
+    the direction, so this supplies one ``App::Line`` rotated to point along
+    ``direction``.
+    """
     force = ObjectsFem.makeConstraintForce(doc, "Force")
     force.References = [reference]
     force.Force = f"{magnitude:.1f} N"
-    force.DirectionVector = FreeCAD.Vector(*direction)
+    direction_obj = doc.addObject("App::Line", "ForceDirection")
+    direction_obj.Placement = FreeCAD.Placement(
+        FreeCAD.Vector(0.0, 0.0, 0.0),
+        FreeCAD.Rotation(FreeCAD.Vector(0.0, 0.0, 1.0), FreeCAD.Vector(*direction)),
+    )
+    force.Direction = (direction_obj, [])
     analysis.addObject(force)
     return force
 
