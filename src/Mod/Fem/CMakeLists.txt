@@ -625,6 +625,7 @@ SET(FemTestsZ88Ccxcantinl_SRCS
 SET(FemTools_SRCS
     femtools/__init__.py
     femtools/ccxtools.py
+    femtools/ccxnames.py
     femtools/checksanalysis.py
     femtools/checksmaterials.py
     femtools/deckcheck.py

@@ -28,6 +28,7 @@ __url__ = "https://www.freecad.org"
 import hashlib
 
 from FreeCAD import Vector
+from femtools import ccxnames
 from femtools import fem_extension_registry
 
 # CalculiX allows 80 characters for a user-defined name (manual, *NSET/ELSET)
@@ -37,7 +38,6 @@ from femtools import fem_extension_registry
 # element id to one, and CalculiX answered "*ERROR reading *NSET/ELSET: set
 # name too long".
 MAX_NAME_LENGTH = 80
-HASHED_PREFIX_LENGTH = 20
 
 # A composite *SHELL SECTION is accepted only for quadratic shells, S6 and S8R.
 # With a linear one CalculiX refuses the whole deck - "Element 2 is not a S8R nor
@@ -48,19 +48,9 @@ HASHED_PREFIX_LENGTH = 20
 COMPOSITE_SHELL_ELEMENT_NODES = (6, 8)
 
 
-def _hashed_prefix(text):
-    """A 20-character stand-in for ``text`` that is stable across runs.
-
-    md5 rather than ``hash()``: the built-in is salted per process, so a deck
-    built in one run would not match the same deck built in another, and the
-    deck snapshots that prove nothing else moved would be meaningless.
-    """
-    return hashlib.md5(text.encode()).hexdigest()[:HASHED_PREFIX_LENGTH]
-
-
 def _bounded_name(text):
     """``text`` when CalculiX will accept it, otherwise a hashed one."""
-    return text if len(text) <= MAX_NAME_LENGTH else _hashed_prefix(text)
+    return text if len(text) <= MAX_NAME_LENGTH else ccxnames.hashed_prefix(text)
 
 
 def _is_composite_section(material):
@@ -264,7 +254,7 @@ def write_femelement_geometry(f, ccxwriter):
                 # whole material/shell/thickness concatenation once per element,
                 # which is how an 82-character name reached CalculiX. The id is
                 # kept because it is the part a person reads.
-                elset_i_name = f"{_hashed_prefix(elset_name)}_{i}"
+                elset_i_name = f"{ccxnames.hashed_prefix(elset_name)}_{i}"
                 f.write(f"*ELSET,ELSET={elset_i_name}\n{i}\n")
                 elem_matgeoset = matgeoset | {"ccx_elset_name": elset_i_name}
                 if not orthotropic:
