@@ -743,6 +743,24 @@ def get_beam_main_axis_m(beam_direction: FreeCAD.Vector, defined_angle: int) -> 
 
 
 # ************************************************************************************************
+def _group_name_candidates(obj):
+    """The names a mesh group may carry for this object, most specific first.
+
+    A material, section or constraint is named for what it *is*
+    (``BladeCoreMaterial``), while the mesh group is named for the geometry it
+    references (``BladeCore``) - mesh_parts_separately names each part's group
+    after the part.  Matching only the object's own name therefore misses the
+    group and drops the resolver into the node-search path (the trap in
+    femexamples.meshes.merged_mesh); the referenced objects are candidates too.
+    """
+    names = [obj.Name]
+    for reference in getattr(obj, "References", None) or ():
+        referenced = reference[0]
+        if referenced is not None and referenced.Name not in names:
+            names.append(referenced.Name)
+    return names
+
+
 def get_femmesh_groupdata_sets_by_name(femmesh, fem_object, group_data_type):
     # get ids from femmesh groupdata for reference shapes of each obj.References
     # we assume the mesh group data fits with the reference shapes
@@ -751,17 +769,19 @@ def get_femmesh_groupdata_sets_by_name(femmesh, fem_object, group_data_type):
     # what happens if a reference shape was changed
     # but the mesh and the mesh groups were not created new !?!
     obj = fem_object["Object"]
+    candidates = _group_name_candidates(obj)
     if femmesh.GroupCount:
         for g in femmesh.Groups:
             grp_name = femmesh.getGroupName(g)
-            if grp_name.startswith(obj.Name + "_"):
-                if femmesh.getGroupElementType(g) == group_data_type:
-                    FreeCAD.Console.PrintMessage(
-                        "  found mesh group for the IDs: {}, Type: {}\n".format(
-                            grp_name, group_data_type
-                        )
+            if not any(grp_name.startswith(name + "_") for name in candidates):
+                continue
+            if femmesh.getGroupElementType(g) == group_data_type:
+                FreeCAD.Console.PrintMessage(
+                    "  found mesh group for the IDs: {}, Type: {}\n".format(
+                        grp_name, group_data_type
                     )
-                    return femmesh.getGroupElements(g)  # == ref_shape_femelements
+                )
+                return femmesh.getGroupElements(g)  # == ref_shape_femelements
     return ()  # an empty tuple is returned if no group data IDs where found
 
 
