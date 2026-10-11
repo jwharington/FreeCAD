@@ -266,9 +266,12 @@ this is the only open track).
       `test_edge_tie_slave_is_the_shells_edge_face` and
       `test_edge_load_on_a_shell_reaches_the_deck`.
 
-- [ ] **B7 — §12, assign the ties from the references the model already
-      carries.**  **Status: proposal — review before any code.**  A pass that
-      (1) collects solids from dimension-3 material references, (2) collects the
+- [x] **B7 — §12, assign the ties from the references the model already
+      carries.**  **Status: DONE (2026-10-11)** — implemented as the headless
+      helper `Composites.fem.auto_tie.auto_tie`.  The proposal below is kept as
+      the reasoning; the outcome, the decisions and two findings follow it.
+      The original proposal: a pass that (1) collects solids from dimension-3
+      material references, (2) collects the
       composite shells that declare one of those solids — as `SupportReference`
       or `Support` — and (3) creates one `Fem::ConstraintTie` per shell, shell
       reference first, with a **derived** tolerance.  It must be an explicit
@@ -299,11 +302,63 @@ this is the only open track).
         Verified: `test_composite_shell.py` `TestCompositeShellSupportReference`
         **4 passed** (whole-object support unchanged; the named face resolves;
         the reference wins over `Support`; the shell's own shape follows it).
-      **Refreshed 2026-10-11 for review:** the pairing rule is **object
-      identity**, not a geometric search, and the face-naming question is
-      answered by B7.1.  B4.1 landed, the tolerance derivation exists, and edge
-      interfaces resolve (B6) though they stay out of the first cut.  Six open
-      questions remain at the end of §12; **no code until they are answered**.
+      **Outcome (2026-10-11).**  `Composites.fem.auto_tie.auto_tie(analysis)`
+      collects the bonded solids from the analysis' dimension-3 material
+      references, collects the `Composite::Shell` objects whose
+      `SupportReference[0]` is one of them, and creates one
+      `Fem::ConstraintTie` per shell through `femtools.mixedcoupling.add_tie` —
+      slave first, tolerance derived, nothing invented by the writer or
+      `meshsetsgetter`.  Pairing is **object identity**
+      (`support_object(shell) is solid`); no geometry, no picked tolerance.
+      - **Decisions taken** (from the six open questions): a headless helper
+        only, in Composites — no command yet; the opt-out is a per-shell
+        `AutoCouple` bool (default True) on `Composite::Shell`; a new small
+        convention-following example plus tests is the exit model; an empty
+        pass returns `[]`.
+      - **Mesh rule checked and refused** before anything is created: the pass
+        requires a mesh, refuses a non-mixed one, and refuses one whose shell
+        shares a solid's nodes (`FacesOnly` empty, or overlapping node sets) —
+        Trap A, and why it runs after meshing.
+      - **Exit met.**
+        `compositeexamples/examples/mixed_shell_solid_auto_tie.py` declares the
+        skin on the spar's own face; the pass creates the tie and the model
+        solves with no uncoupled node, and a second run creates nothing
+        (`test_auto_tie.py`, **4 passed**).  The wing and the plate keep their
+        hand-written ties and are not touched.
+      - **Finding 1 — the slave reference is the shell, not the solid.**  A face
+        whose object is a solid resolves to a *volume* sub-element
+        (`meshtools.get_elements_by_reference_dimension`,
+        `_reference_object_is_solid`), so `(solid, "FaceN")` as the slave would
+        name the same surface as the master and couple nothing.  The slave is
+        `(shell, "Face1")`, which is also the reference the section carries, so
+        `member_for_reference` finds the section.  The examples pass a separate
+        support object as the slave and so never exercised B4.1's per-shell
+        lookup.
+      - **Finding 2 — the expansion thickness is the laminate's total, not the
+        FEM section's `Thickness`.**  `_add_shell_section_and_material` makes a
+        0.8 mm placeholder; the composite provider replaces the `*SHELL SECTION`
+        geometry with the laminate's merged `FEMLayers` (1.6 mm for the QI
+        example) at write time.  Deriving from the placeholder wrote 0.4 mm
+        where CalculiX expands at ±0.8 mm, leaving the four corner nodes
+        uncoupled (the plate's hand-picked 1.0 hid it).  The pass reads the
+        laminate total and writes `required * (1 + 1e-3)`, because CalculiX's
+        gate drops a node whose distance *reaches* the tolerance.
+      - **Follow-up, not fixed here.**  `checksanalysis._tie_tolerance_message`
+        and `write_constraint_tie._shell_slave_face` still read
+        `section.Thickness` (and a not-yet-routed `section.Offset`) for a
+        composite shell, so B4.1's guard under-estimates the required distance
+        for laminate sections.  The face *choice* is thickness-independent, so
+        the writer is safe; the refusal is weaker than intended.  Route the
+        laminate total into the section (or a shared helper) before relying on
+        it.
+      - **Limit of the first cut:** one face per shell.  A `SupportReference`
+        naming several faces raises rather than guess a slave face per master.
+
+      Verified: `test_auto_tie.py` 4 passed; `test_mixed_coupling_numerical.py`
+      7 passed; `test_mixed_shell_solid_stiffener.py` 1 passed; Fem
+      `test_mixed_shell_solid.py` 44 passed; `test_constraint_tie_shell.py`
+      2 passed; `test_composite_shell.py` green except the pre-existing B9.6
+      errors.
 
 - [x] **B8 — DONE (2026-10-11).**  The feature had already landed
       (`0542b6ba22`, 2026-10-09): `CompositeShell.Offset` is the per-skin

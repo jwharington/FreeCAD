@@ -3,7 +3,7 @@
 > **Updated 2026-10-11, end of the Track B session that took the tracker's
 > fixtures list.**  Track A is closed (LS8e A2: FreeCAD `c396c90ea8`, study
 > `5692de7`; `propeller/test` 130 passed, lc03 disp 22.399093 mm).  Since the
-> first handover, **B6, B4.1, B8, B5.1, B7.1, B3 and B2.1 all landed**, so this
+> first handover, **B6, B4.1, B8, B5.1, B7.1, B7, B3 and B2.1 all landed**, so this
 > document now describes what is *left*, not what was next then.  The old
 > per-item reasoning for B6/B4.1 is in the git history and in
 > `plan-mixed-shell-solid-fem.md`; it is not repeated here.
@@ -25,7 +25,7 @@ its exit.  The reasoning lives in `plan-mixed-shell-solid-fem.md` and
 1. [What is already done — do not re-open](#1-what-is-already-done--do-not-reopen)
 2. [What is left, in order](#2-what-is-left-in-order)
 3. [B1 — the results-viewer toggle (the one rebuild item)](#3-b1--the-results-viewer-toggle-the-one-rebuild-item)
-4. [B7 — the tie-assignment proposal (review before any code)](#4-b7--the-tie-assignment-proposal-review-before-any-code)
+4. [B7 — the tie-assignment pass (implemented)](#4-b7--the-tie-assignment-pass-implemented)
 5. [B9.6 — a pre-existing RED test module](#5-b96--a-pre-existing-red-test-module)
 6. [Deferred to the bottom by the owner](#6-deferred-to-the-bottom-by-the-owner)
 7. [How to run and gate it](#7-how-to-run-and-gate-it)
@@ -79,6 +79,13 @@ This session (2026-10-11), each with its own tracker note:
   resolvers (`support_object`, `support_shape`, `support_placement`) in
   `CompositeShell.py`; `TexturePlan` uses them.  `getSubObject(list)` returns a
   **list** of shapes — the resolver unwraps it.
+- **B7 — the tie-assignment pass.**  `Composites.fem.auto_tie.auto_tie`
+  creates the ties a model declares (solid/`SupportReference` identity, derived
+  tolerance, `AutoCouple` opt-out, empty pass returns `[]`).  New example
+  `mixed_shell_solid_auto_tie` is the exit model; the wing and the plate keep
+  their hand-written ties.  Two findings (the slave is the *shell*; the
+  tolerance comes from the laminate total, not the section placeholder) and the
+  follow-up are in §4 below.
 - **B3 — the `*CLOAD`-on-a-tie-slave hazard.**  Reproduced in Dhondt's
   two-shell-layer fixture (`femtest/app/test_constraint_tie_shell.py`), then
   refused: `write_constraint_tie.write_meshdata_constraint` reports a tie whose
@@ -97,8 +104,10 @@ This session (2026-10-11), each with its own tracker note:
 The tracker's ordering, minus the closed items:
 
 1. **B1** — the C++ view-provider change; the only item with a **rebuild**.
-2. **B7** — the tie-assignment proposal: **review before any code** (B7.1, its
-   precondition, has landed; B7 itself has six open questions).
+2. **B7's follow-up** — `checksanalysis._tie_tolerance_message` and
+   `_shell_slave_face` still read the placeholder section thickness for a
+   composite shell, so B4.1's refusal under-estimates the requirement for
+   laminates (plan §12.1).
 3. **B9.2** delete `femsolver/settings.py::get_allow_mixed_elements` and its
    call sites **after one release has shipped** with the default on.
 4. **B9.3** decide the branch's fate (keep it the explicit working record, or
@@ -116,20 +125,31 @@ is a **read-only computed getter** with no dimension filter; `ColorMode` /
 toggle that hides one dimension, with the mixed wing and plate still
 displaying.  It is the only item that needs a C++ build.
 
-## 4. B7 — the tie-assignment proposal (review before any code)
+## 4. B7 — the tie-assignment pass (implemented)
 
-Full text at plan §12.  The rule is **object identity**, not geometry: a
-composite shell pairs with a solid only when `shell.Support` (or
-`SupportReference[0]`) **is** that solid.  No parallel normals, no
-`COINCIDENT_TOLERANCE`.  It must be an explicit command/helper that creates the
-tie objects — never the writer or `meshsetsgetter`.  **The wing and the plate
-declare their skins on separate supports, so the pass does not apply to them and
-they keep their hand-written ties** — they cannot be the exit's subject; a
-convention-following model has to exist.
+**DONE 2026-10-11.**  `Composites.fem.auto_tie.auto_tie(analysis)` creates the
+ties a model declares: it collects the bonded solids from the dimension-3
+material references, collects the `Composite::Shell` objects whose
+`SupportReference[0]` is one of them, and ties `(shell, "Face1")` to
+`(solid, "FaceN")` with a derived tolerance.  Pairing is **object identity**;
+the writer and `meshsetsgetter` are untouched.  Decisions: a headless helper
+only (no command), a per-shell `AutoCouple` opt-out, the new
+`mixed_shell_solid_auto_tie` example as the exit model, and an empty pass
+returning `[]`.  The wing and the plate keep their hand-written ties.
 
-Six open questions await the reviewer (§12): first-cut scope (helper only, or a
-command too); opt-out mechanism; tie naming; which faces a `SupportReference`
-ties; migrating an example to the convention; and the empty-pass behaviour.
+Two findings, both load-bearing — full text in plan §12.1:
+
+- the exported **slave** must name the *shell*, not the solid: a face whose
+  object is a solid resolves to a volume sub-element and would reproduce the
+  master surface;
+- the tolerance must come from the **laminate's total thickness**, not the FEM
+  section's placeholder `Thickness` (1.6 mm against 0.8 mm), and must *exceed*
+  the face's distance because CalculiX's gate is strict.
+
+**Follow-up (open):** `checksanalysis._tie_tolerance_message` and
+`_shell_slave_face` still read the placeholder for a composite shell, so B4.1's
+refusal under-estimates the requirement for laminates.  One face per shell in
+this cut.
 
 ## 5. B9.6 — a pre-existing RED test module
 

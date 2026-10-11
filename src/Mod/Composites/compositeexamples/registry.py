@@ -133,6 +133,13 @@ EXAMPLES = {
         "module": ".examples.mixed_shell_solid_stiffener",
         "name": "Mixed shell and solid stiffener (composite stiffener on a solid spar)",
     },
+    "mixed_shell_solid_auto_tie": {
+        "module": ".examples.mixed_shell_solid_auto_tie",
+        "name": (
+            "Mixed shell and solid auto-tie (skin declared on the solid's own "
+            "face, tied by the pass)"
+        ),
+    },
     "quasi_iso_cylindrical_panel": {
         "module": ".examples.quasi_iso_cylindrical_panel",
         "name": "Quasi-isotropic cylindrical panel (curvature needs no drape)",

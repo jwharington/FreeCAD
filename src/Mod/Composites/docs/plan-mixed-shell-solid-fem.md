@@ -2206,13 +2206,13 @@ is a move, so the decks are unchanged, not merely accepted as close.
 
 ---
 
-## 12. Proposed: assign the ties from the references the model already carries
+## 12. Assign the ties from the references the model already carries
 
-**Status: proposal, to be reviewed before any code.** Nothing here is
-implemented.  Refreshed 2026-10-11 after **B4.1** (the per-shell slave-side
-lookup and the derived-tolerance refusal) and **B6** (edge interfaces) landed:
-both change what this pass can lean on.  Open questions for the reviewer are at
-the end.
+**Status: implemented (2026-10-11) as `Composites.fem.auto_tie.auto_tie`.**
+Refreshed 2026-10-11 after **B4.1** (the per-shell slave-side lookup and the
+derived-tolerance refusal) and **B6** (edge interfaces) landed: both change
+what this pass can lean on.  The reasoning below is kept; the decisions taken,
+the two findings and the limit of the first cut are at the end.
 
 **Today's cost.** Coupling a skin to a core means writing the tie by hand —
 `ObjectsFem.makeConstraintTie`, two face references (the shell first, because
@@ -2353,3 +2353,52 @@ the convention has to exist for the exit to run against.
    convention-following case, or test the pass with fixtures only?
 7. **Empty pass.** Silent, a report line, or an error — a shell-only model has
    nothing to tie.
+
+### 12.1 Implemented (2026-10-11)
+
+`Composites.fem.auto_tie.auto_tie(analysis)` collects the bonded solids from
+the analysis' dimension-3 material references, collects the `Composite::Shell`
+objects whose `SupportReference[0]` is one of them, and creates one
+`Fem::ConstraintTie` per shell via `femtools.mixedcoupling.add_tie` — slave
+first, tolerance derived, writer and `meshsetsgetter` untouched.
+
+**Decisions on the seven questions.**
+
+1. *Scope* — a headless helper in Composites only; no command yet.
+2. *Declaration* — landed as B7.1 (`SupportReference`).
+3. *Faces tied* — the **slave is `(shell, "Face1")`**, the **master is
+   `(solid, "FaceN")`** taken from `SupportReference`. One face per shell in
+   this cut; several raises rather than guess.
+4. *Opt-out* — a per-shell `AutoCouple` bool (default True) on
+   `Composite::Shell`, plus idempotency that leaves an already-created (even
+   suppressed) tie alone.
+5. *Naming* — `AutoTie_{solid}_{shell}`; idempotency matches on references, not
+   the name.
+6. *Examples* — a new convention-following example
+   (`mixed_shell_solid_auto_tie.py`); the wing and the plate keep their
+   hand-written ties.
+7. *Empty pass* — returns `[]`; never an error.
+
+**Two findings, both load-bearing.**
+
+- The exported **slave** must name the *shell*, because a face whose object is
+  a solid resolves to a volume sub-element
+  (`meshtools.get_elements_by_reference_dimension`, `_reference_object_is_solid`),
+  giving the master's own surface and coupling nothing. The shell reference also
+  matches the section, so `member_for_reference` finds it — the examples'
+  separate-support slave never exercised B4.1's lookup.
+- The **tolerance must be derived from the laminate's total**, not the FEM
+  section's `Thickness`: the composite provider replaces the `*SHELL SECTION`
+  geometry with the merged `FEMLayers` at write time (1.6 mm against a 0.8 mm
+  placeholder in the QI example). The pass writes `required * (1 + 1e-3)`,
+  because CalculiX's gate drops a node whose distance reaches the tolerance.
+
+**Follow-up.** `checksanalysis._tie_tolerance_message` and
+`write_constraint_tie._shell_slave_face` still read the section's placeholder
+`Thickness` (and an `Offset` not yet routed at check time) for a composite
+shell, so B4.1's refusal under-estimates the requirement for laminates. The face
+choice is thickness-independent, so the writer is correct; the guard is weaker
+than intended.
+
+**Exit:** `test_auto_tie.py` (4 passed) creates the tie, solves with no
+uncoupled node, and a second run creates nothing.

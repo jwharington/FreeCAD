@@ -94,6 +94,16 @@ def support_object(fp):
     return obj if obj is not None else getattr(fp, "Support", None)
 
 
+def support_faces(fp):
+    """The subelement names of a shell's ``SupportReference``, or ``[]``.
+
+    These are the faces of the shared solid the shell declares its interface
+    on, and they are what the tie pass names as the master of each bond.
+    """
+    _obj, subelements = _support_reference(fp)
+    return subelements
+
+
 def support_shape(fp):
     """The surface shape a composite shell is draped on, or ``None``."""
     obj, subelements = _support_reference(fp)
@@ -134,6 +144,24 @@ def add_shell_offset_property(obj):
         doc=_SHELL_OFFSET_DOC,
     )
     obj.Offset = 0.0
+
+
+_AUTO_COUPLE_DOC = (
+    "Let the tie pass bond this shell to the solid its SupportReference "
+    "names. Clear it for a shell declared on a solid that is deliberately "
+    "not bonded."
+)
+
+
+def add_auto_couple_property(obj):
+    """Add the per-shell switch the tie pass reads to opt an interface out."""
+    obj.addProperty(
+        type="App::PropertyBool",
+        name="AutoCouple",
+        group="Coupling",
+        doc=_AUTO_COUPLE_DOC,
+    )
+    obj.AutoCouple = True
 
 
 def is_isotropic_shell(obj):
@@ -190,6 +218,7 @@ class CompositeShellFP(CompositeBaseFP):
         # section could be composite laminate, or homogeneous lamina
 
         add_shell_offset_property(obj)
+        add_auto_couple_property(obj)
 
         obj.addProperty(
             type="App::PropertyFloat",
@@ -323,6 +352,8 @@ class CompositeShellFP(CompositeBaseFP):
         """Restore ViewProvider and initialise tracking fields."""
         if not hasattr(fp, "Offset"):
             add_shell_offset_property(fp)
+        if not hasattr(fp, "AutoCouple"):
+            add_auto_couple_property(fp)
         for attr, value in (
             ("_cached_shape_fingerprint", ""),
             ("_cached_rosette_angle", None),
