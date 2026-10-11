@@ -14,6 +14,12 @@ import Part
 from .example_materials import make_glass
 from .test_base import TestFreeCADFP
 
+from Composites.features.CompositeShell import (
+    support_object,
+    support_placement,
+    support_shape,
+)
+
 # The FEM deck writer is an optional dependency of this Composites test
 # module: without the FEM stack the shell-section assertions are skipped.
 try:
@@ -381,3 +387,67 @@ class TestCompositeShellOffset(TestFreeCADFP):
         )
         self.assertEqual(thickness_by_shell["TopSkin"].Offset, -0.5)
         self.assertEqual(thickness_by_shell["BottomSkin"].Offset, 0.5)
+
+
+class TestCompositeShellSupportReference(TestFreeCADFP):
+    """A shell's surface declared as faces of another object (B7.1).
+
+    ``Composite::Shell.Support`` is a whole-object link, so a skin on one face
+    of a solid had to declare a separate face object.  ``SupportReference`` is an
+    optional ``(object, [faces])`` alternative, and the three resolvers prefer
+    it when set; a shell that sets it declares its interface on the solid's own
+    object, which is what the tie pass pairs on.
+    """
+
+    def _shell_on_a_face(self):
+        from Composites.features.CompositeShell import CompositeShellFP
+
+        solid = self.doc.addObject("Part::Box", "Solid")
+        solid.Length = solid.Width = solid.Height = 10.0
+        shell = self.doc.addObject("Part::FeaturePython", "Skin")
+        CompositeShellFP(shell, support=None)
+        shell.SupportReference = (solid, ["Face6"])
+        self.doc.recompute()
+        return shell, solid
+
+    def test_whole_object_support_is_unchanged(self):
+        # The original form must behave exactly as before: no reference, and
+        # the resolvers read the Support object and its shape.
+        shell = self._create_shell()
+        self.assertIsNone(shell.SupportReference)
+        self.assertIs(shell.Support, support_object(shell))
+        self.assertTrue(support_shape(shell).isSame(shell.Support.Shape))
+        self.assertEqual(
+            shell.Support.Placement.Base, support_placement(shell).Base
+        )
+
+    def test_reference_resolves_the_named_face(self):
+        shell, solid = self._shell_on_a_face()
+        self.assertIs(solid, support_object(shell))
+        resolved = support_shape(shell)
+        self.assertEqual(1, len(resolved.Faces))
+        face = solid.Shape.Faces[5]
+        self.assertTrue(resolved.Faces[0].isSame(face))
+
+    def test_reference_takes_precedence_over_support(self):
+        # A shell may carry both while a model is migrated; the declaration of
+        # faces is the interface and wins.
+        shell, solid = self._shell_on_a_face()
+        cylinder = self.doc.addObject("Part::Feature", "Cylinder")
+        cylinder.Shape = Part.makeCylinder(5.0, 10.0)
+        shell.Support = cylinder
+        self.doc.recompute()
+        self.assertIs(solid, support_object(shell))
+        self.assertTrue(support_shape(shell).Faces[0].isSame(solid.Shape.Faces[5]))
+
+    def test_reference_moves_the_shell_shape(self):
+        # The no-laminate branch mirrors the support onto the shell, so the
+        # referenced face is what the shell becomes - the surface a later drape
+        # and the FEM section are built from.
+        shell, solid = self._shell_on_a_face()
+        self.assertFalse(shell.Shape.isNull())
+        self.assertAlmostEqual(
+            solid.Shape.Faces[5].CenterOfMass.z,
+            shell.Shape.CenterOfMass.z,
+            places=6,
+        )

@@ -4,6 +4,7 @@
 from ast import literal_eval
 
 import FreeCAD
+import Part
 
 import hashlib
 import json
@@ -67,6 +68,53 @@ def is_composite_shell(obj):
     )
 
 
+def _support_reference(fp):
+    """``(object, [subelements])`` of a shell's ``SupportReference``, or ``(None, [])``.
+
+    A ``PropertyLinkSub`` evaluates to a tuple even when it points nowhere, so
+    the object is what says whether the reference is set.
+    """
+    reference = getattr(fp, "SupportReference", None)
+    if reference is None:
+        return None, []
+    obj, subelements = reference
+    return obj, list(subelements)
+
+
+def support_object(fp):
+    """The object a composite shell is draped on.
+
+    A shell declares its surface either as a whole object (``Support``, the
+    original form) or as a reference to a set of faces on one
+    (``SupportReference``). The reference wins when set, so a skin can be
+    declared on a solid's own faces and the shared object then identifies the
+    interface for the tie pass.
+    """
+    obj, _subelements = _support_reference(fp)
+    return obj if obj is not None else getattr(fp, "Support", None)
+
+
+def support_shape(fp):
+    """The surface shape a composite shell is draped on, or ``None``."""
+    obj, subelements = _support_reference(fp)
+    if obj is not None:
+        # getSubObject takes the list and returns the shapes it resolves to, so
+        # one face comes back as the single-element list and several as a
+        # compound - which is what the drape backend already accepts.
+        shapes = obj.getSubObject(subelements)
+        if not shapes:
+            return None
+        return shapes[0] if len(shapes) == 1 else Part.makeCompound(list(shapes))
+    support = getattr(fp, "Support", None)
+    return support.Shape if support else None
+
+
+def support_placement(fp):
+    """The placement of the object a composite shell is draped on."""
+    support = support_object(fp)
+    return support.Placement if support else None
+
+
 _SHELL_OFFSET_DOC = (
     "Signed position of the shell reference surface relative to the layup "
     "mid-surface, in units of shell thickness (CalculiX *SHELL SECTION "
@@ -114,6 +162,17 @@ class CompositeShellFP(CompositeBaseFP):
 
         obj.setPropertyStatus("Support", "LockDynamic")
         obj.setPropertyStatus("Support", "ReadOnly")
+
+        obj.addProperty(
+            type="App::PropertyLinkSubGlobal",
+            name="SupportReference",
+            group="References",
+            doc=(
+                "Optional: the support as a reference to a set of faces on an "
+                "object, for a skin declared on a solid's own faces. Takes "
+                "precedence over Support when set."
+            ),
+        )
 
         obj.addProperty(
             type="App::PropertyLinkGlobal",
@@ -349,7 +408,8 @@ class CompositeShellFP(CompositeBaseFP):
         if getattr(fp.Proxy, "_needs_recompute", False):
             fp.Proxy._needs_recompute = False
 
-        if not fp.Support:
+        support = support_shape(fp)
+        if support is None:
             return
         # A null support shape means restore is still in flight (the
         # restore-touched recompute can run before the linked object's
@@ -357,7 +417,7 @@ class CompositeShellFP(CompositeBaseFP):
         # shape" and mark a healthy shell failed).  Bail out; the object
         # stays touched and the post-restore recompute settles it once
         # every shape is present.
-        if fp.Support.Shape is None or fp.Support.Shape.isNull():
+        if support.isNull():
             return
         if not fp.Laminate:
             # No laminate — fall back to the support shape.  The Placement
@@ -365,8 +425,8 @@ class CompositeShellFP(CompositeBaseFP):
             # geometry in its own coordinates but reads back with the
             # shell's own (identity) placement, silently dropping the
             # support's placement move (known-issue #6).
-            fp.Shape = fp.Support.Shape
-            fp.Placement = fp.Support.Placement
+            fp.Shape = support
+            fp.Placement = support_placement(fp)
             return
 
         # Borrowed weave: a shell whose drape coordinates come from another
@@ -395,7 +455,7 @@ class CompositeShellFP(CompositeBaseFP):
                 lcs = getattr(rosette, "LocalCoordinateSystem", None)
                 if lcs:
                     return lcs
-            return fp.Support
+            return support_object(fp)
 
         # During document restore the rosette FeaturePython may not have its
         # properties registered yet (proxy __init__ hasn't run). Fall back to
@@ -412,8 +472,8 @@ class CompositeShellFP(CompositeBaseFP):
         self._diag(fp, "running drape solve")
         # Mirror the support (shape + placement — see the no-laminate
         # branch above for why the placement sync matters).
-        fp.Shape = fp.Support.Shape
-        fp.Placement = fp.Support.Placement
+        fp.Shape = support_shape(fp)
+        fp.Placement = support_placement(fp)
         result = self._run_drape_sync(fp, get_lcs())
         _profiler('drape_solve')
         print("[drape] %s: solve done in %.1fs" % (fp.Name, _time.perf_counter() - _t0), flush=True)
@@ -443,8 +503,8 @@ class CompositeShellFP(CompositeBaseFP):
             )
         # Mirror the support (shape + placement — see the no-laminate
         # branch above for why the placement sync matters).
-        fp.Shape = fp.Support.Shape
-        fp.Placement = fp.Support.Placement
+        fp.Shape = support_shape(fp)
+        fp.Placement = support_placement(fp)
         self._backend = None
         self._cached_shape_fingerprint = ""
         self._cached_rosette_angle = None
@@ -468,7 +528,7 @@ class CompositeShellFP(CompositeBaseFP):
         return run_drape_task(
             fp,
             lcs,
-            fp.Support.Shape,
+            support_shape(fp),
         )
 
     def _inject_drape_geometry(self, fp, drapecd_coin, cut_edges=None) -> None:
@@ -527,10 +587,11 @@ class CompositeShellFP(CompositeBaseFP):
         # the failure is visible instead of masked.
         try:
             remove_existing_coin_geometry(drape_host)
-            if fp.Support and hasattr(fp.Support, "Shape"):
+            support = support_shape(fp)
+            if support is not None:
                 from .coin_geometry import build_support_surface_coin
                 support_coin = build_support_surface_coin(
-                    fp.Support.Shape,
+                    support,
                     deflection=1.0,
                     draper=self,
                 )
@@ -605,7 +666,7 @@ class CompositeShellFP(CompositeBaseFP):
         _t0 = _time.perf_counter()
         print("[drape] %s: borrowing from %s over the support region" % (fp.Name, source.Name), flush=True)
         filtered, _old_to_new = drape_result_over_region(
-            raw, fp.Support.Shape
+            raw, support_shape(fp)
         )
         print("[drape] %s: borrow done in %.2fs (%d nodes, %d quads)" % (
             fp.Name, _time.perf_counter() - _t0,
@@ -622,8 +683,8 @@ class CompositeShellFP(CompositeBaseFP):
 
         # Mirror the no-laminate sync: the borrowed weave rides the
         # support's geometry and placement.
-        fp.Shape = fp.Support.Shape
-        fp.Placement = fp.Support.Placement
+        fp.Shape = support_shape(fp)
+        fp.Placement = support_placement(fp)
         borrowed = BorrowedDrapeBackend(backend, filtered)
         drapecd_mesh = build_drapecd_coin(
             filtered["node_positions"], filtered["quads"], wireframe=False
@@ -740,10 +801,11 @@ class CompositeShellFP(CompositeBaseFP):
         backend = getattr(self, "_backend", None)
         if backend is None or not backend.is_valid():
             return False
-        if not hasattr(fp, "Support") or not fp.Support:
+        support = support_shape(fp)
+        if support is None:
             return False
         try:
-            current_shape_fp = self._shape_fingerprint(fp.Support.Shape)
+            current_shape_fp = self._shape_fingerprint(support)
         except Exception:
             return False
         if current_shape_fp != getattr(self, "_cached_shape_fingerprint", ""):
@@ -792,7 +854,7 @@ class CompositeShellFP(CompositeBaseFP):
     def _store_cache_state(self, fp) -> None:
         """Store the live backend cache state on the proxy and in the
         document (the persisted copy is what a restored session reads)."""
-        self._cached_shape_fingerprint = self._shape_fingerprint(fp.Support.Shape)
+        self._cached_shape_fingerprint = self._shape_fingerprint(support_shape(fp))
         self._cached_rosette_angle = float(fp.Rosette.Angle) if fp.Rosette else 0.0
         self._cached_rosette_key = self._rosette_cache_key(fp)
         self._cached_drape_pitch = float(fp.DrapePitch)
