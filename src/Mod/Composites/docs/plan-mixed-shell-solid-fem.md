@@ -1431,6 +1431,16 @@ offsetted model measurably stiffer than the un-offsetted one. If the offsetted
 model comes out softer, the sign is wrong — and that is the check, not a
 review of the code.
 
+**Met 2026-10-11.**  `CompositeShell.Offset` and its routing into
+`ShellThickness.Offset` had already landed (`0542b6ba22`, 2026-10-09) with
+routing tests in `test_composite_shell.py`.  What was missing was this exit:
+the cantilever probe (`inspect_mixed_cantilever.py`) now also builds the same
+mixed model with the section on its mid-surface, and
+`test_mixed_coupling_numerical.py::test_the_section_offset_stiffens_the_skin`
+asserts the offsetted one is stiffer.  Measured: offsetted **6.422333e-02 mm**,
+mid-surface **9.179597e-02 mm** (**1.43x** softer), all-solid **6.416312e-02 mm**
+(**0.09 %**, inside the stated 5 %).  A reversed sign fails the assertion.
+
 ---
 
 ## 11. What is still missing

@@ -258,17 +258,21 @@ this is the only open track).
       snapshot still reports *no deck changed*, and a second run creates nothing
       new.
 
-- [ ] **B8 — §10, a per-skin laminate OFFSET.**  Adjacent to the plan and
-      adoptable **out of order**: give the Composites laminate a per-skin offset
-      and route it into FEM's `ShellThickness.Offset` (the writer already emits
-      `OFFSET=`; a grep finds no offset in `src/Mod/Composites/objects/` or
-      `util/fem_util.py`, so the leaf is missing).  Two design points: the
-      offset must be **per skin, not per analysis**, and the **sign is
-      load-bearing** (reversed signs make a sandwich *softer than no offset at
-      all*, with nothing in a fringe plot to say so).  *Exit:* a shell-only
-      sandwich matches an equivalent solid model within a tolerance stated
-      before the run, and is measurably **stiffer** than the un-offsetted one —
-      if it comes out softer, the sign is wrong.
+- [x] **B8 — DONE (2026-10-11).**  The feature had already landed
+      (`0542b6ba22`, 2026-10-09): `CompositeShell.Offset` is the per-skin
+      property and `drape_laminate_provider.route_shell_offset` writes it into
+      `ShellThickness.Offset` before the section card is built, with unit tests
+      for the default, the deck routing and two skins taking opposite signs.
+      The note here had gone stale — its grep looked in `objects/` and
+      `util/fem_util.py`, and the code is in `features/` and `fem/`.  **What was
+      actually missing is the exit criterion**, the stiffness check that pins
+      the sign: the cantilever probe now also builds the same mixed model with
+      the section on its **mid-surface** (`offset = 0`) and
+      `test_the_section_offset_stiffens_the_skin` asserts the offsetted one is
+      stiffer.  Measured: offsetted **6.422333e-02 mm**, mid-surface
+      **9.179597e-02 mm** (1.43x softer), all-solid **6.416312e-02 mm**
+      (0.09 %, inside the stated 5 %).  A reversed sign would come out softer
+      than the mid-surface model, and that is the assertion.
 
 - [ ] **B9 — §11.10, housekeeping and deliberate leftovers.**
   - [x] **B9.1 — DONE (2026-10-11).** The `test_rosette_scenarios` SIGSEGV was a
@@ -326,11 +330,11 @@ this is the only open track).
 | item | blocked by | blocks |
 |---|---|---|
 | ~~A2.1–A2.8~~ done | — | — |
-| B1, B2.1, B3, B5.1, B8, B9.2, B9.3 | — | — |
+| B1, B2.1, B3, B5.1, B9.2, B9.3 | — | — |
 | B7 | review | — |
 
 **Closed 2026-10-11, blocking nothing now:** `A1`, `A2`, `B9.1`, `B9.1b`,
-`B9.4`, `B5.2`, `B5.3`, `B2.2`, `B6`, `B4.1`.  `B9.5` is deferred to the
+`B9.4`, `B5.2`, `B5.3`, `B2.2`, `B6`, `B4.1`, `B8`.  `B9.5` is deferred to the
 bottom of this list, and `B2` / `B5` / `B4` / `B9` stay unticked only because a
 sibling inside them is open.
 
@@ -344,7 +348,8 @@ shared file.
    and `B9.4`, which the B9.1 investigation turned up.
 2. ~~**B6** (the E family)~~ and ~~**B4.1**~~ **both done 2026-10-11** — the
    two real defects reachable without a rebuild.
-3. **B3**, **B2.1**, **B5.1**, **B8** — the ones needing a fixture.
+3. ~~**B3**, **B2.1**, **B5.1**, **B8**~~ — the ones needing a fixture:
+   **B8 done 2026-10-11**; B3, B2.1 and B5.1 remain.
 4. **B1** — the C++ change, last because it needs a rebuild.
 5. ~~**A2** — the study-side donation tail, whose gate is the lc03
    reproduction.~~ **Done 2026-10-11** (FreeCAD `c396c90ea8`, study `5692de7`).
