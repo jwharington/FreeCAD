@@ -118,10 +118,18 @@ this is the only open track).
       *Exit:* a toggle that hides one dimension, with the mixed wing and plate
       still displaying.
 
-- [ ] **B2 — §11.8, coverage the plan does not reach.**  Two gaps:
-  - [ ] **B2.1 — Stiffener / Bulkhead mixed coverage.**  `quasi_iso_stiffener_panel`
-        is all shells; Bulkhead has no FEM example at all.  *Exit:* a mixed
-        case that puts a shell stiffener or bulkhead on a solid feature.
+- [x] **B2 — §11.8, coverage the plan does not reach.**  Both gaps closed:
+  - [x] **B2.1 — DONE (2026-10-11).**  A mixed **bulkhead**: a shell plate
+        spanning a hollow solid hull's cavity, tied round its perimeter — four
+        edge interfaces, one per cavity wall, which is the E family B6 made
+        solvable.  `test_mixed_shell_solid.py::test_a_mixed_bulkhead_couples_and_solves`
+        meshes the hull and plate apart, ties all four edges, solves, and
+        asserts no untied node and a non-zero displacement (`test_mixed_shell_solid.py`
+        **44 passed**).  The stiffener half was already covered geometrically —
+        e2 is "a shell web on a solid plate, the stiffener-to-skin case" and
+        solves since B6.  What was **not** built is the Composites
+        `Stiffener`/`Bulkhead` *feature* (draped panel + foot transfer) on a
+        solid; B2.1 asked for the mixed case, and it now exists.
   - [x] **B2.2 — DONE (2026-10-11), by amending the rule.**  The plan's §8
         admission rule demanded that each case "pass in both modes" and
         `femtest/gui/test_mixed_shell_solid.py` was never written, so the rule
@@ -374,13 +382,13 @@ this is the only open track).
 | item | blocked by | blocks |
 |---|---|---|
 | ~~A2.1–A2.8~~ done | — | — |
-| B1, B2.1, B9.2, B9.3 | — | — |
+| B1, B9.2, B9.3 | — | — |
 | B7 | review | — |
 
 **Closed 2026-10-11, blocking nothing now:** `A1`, `A2`, `B9.1`, `B9.1b`,
-`B9.4`, `B5.1`, `B5.2`, `B5.3`, `B2.2`, `B3`, `B6`, `B4.1`, `B7.1`, `B8`.  `B9.5`
-is deferred to the bottom of this list, and `B2` / `B5` / `B4` / `B9` stay
-unticked only because a sibling inside them is open.
+`B9.4`, `B5.1`, `B5.2`, `B5.3`, `B2.1`, `B2.2`, `B3`, `B6`, `B4.1`, `B7.1`,
+`B8`.  `B9.5` is deferred to the bottom of this list, and `B5` / `B4` / `B9`
+stay unticked only because a sibling inside them is open.
 
 Tracks A and B do not touch each other: different repos, different branches, no
 shared file.
@@ -393,7 +401,7 @@ shared file.
 2. ~~**B6** (the E family)~~ and ~~**B4.1**~~ **both done 2026-10-11** — the
    two real defects reachable without a rebuild.
 3. ~~**B3**, **B2.1**, **B5.1**, **B8**~~ — the ones needing a fixture:
-   **B3, B5.1 and B8 done 2026-10-11**; B2.1 remains.
+   **all four done 2026-10-11**.
 4. **B1** — the C++ change, last because it needs a rebuild.
 5. ~~**A2** — the study-side donation tail, whose gate is the lc03
    reproduction.~~ **Done 2026-10-11** (FreeCAD `c396c90ea8`, study `5692de7`).

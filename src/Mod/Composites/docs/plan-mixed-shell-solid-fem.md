@@ -26,8 +26,7 @@ Also fixed: §11.13, where the mixed-coupling shape lookups and tie/load
 helpers existed in a separate copy per mixed file; they now live in one Fem
 module (`femtools/mixedcoupling.py`).
 Open: the results-viewer toggle
-(§11.4), `Stiffener` / `Bulkhead` mixed coverage and the cleanup tail (§11.8,
-§11.10), a tie hazard the
+(§11.4), the cleanup tail (§11.10), a tie hazard the
 tolerance research turned up (§11.9), and the question of landing a shell's
 expansion node on the contact plane (§11.11), which is written up and
 deliberately **parked**. All four face families are solved as of `6fc22a9334`,
@@ -411,7 +410,8 @@ matches the headless golden". Decide this before Stage 4, not after.
   backend. A second, `mixed_shell_solid_wing.py`, carries a **real** per-ply
   laminate over a solid foam core — the motivating case of §11.5, and the one
   that exposed the cost defects listed there. **`Stiffener` and `Bulkhead`
-  still have no mixed coverage.**
+  mixed coverage landed 2026-10-11 (B2.1)**: a shell bulkhead spanning a hollow
+  solid hull, tied round its perimeter.
 - Delete the getter and the flag branches after one release.
 
 **Fixes that came after the stages, from *using* the path rather than building
@@ -1882,14 +1882,18 @@ point load on the tie's shell slave — is §11.9.
 
 Two gaps in what the tests exercise, as opposed to what the code can do:
 
-- **`Stiffener` / `Bulkhead`** — no mixed coverage at all.
-  `quasi_iso_stiffener_panel` is all shells; Bulkhead has no FEM example at all.
+- ~~**`Stiffener` / `Bulkhead`** — no mixed coverage at all.~~ **Done
+  2026-10-11 (B2.1).**  A shell bulkhead spans a hollow solid hull's cavity and
+  is tied round its perimeter (four edge interfaces); `test_mixed_shell_solid.py`
+  meshes the parts apart, ties all four edges and solves with no untied node.
+  The stiffener half was already covered geometrically by e2.
 - ~~**The GUI half of §8.**~~ **Resolved 2026-10-11 by amending the rule**
   (§8): the deck has one builder, and every `GuiUp` branch in a mixed example is
   ViewObject-only, so the deck cannot differ between entry points.  The
   GUI-mode assertion is deferred until `TestFemGui` is back in `__unit_test__`,
   where a GUI-only test would at least be run.  The other half of this section
-  — `Stiffener` / `Bulkhead` coverage — is still open (B2.1).
+  — `Stiffener` / `Bulkhead` coverage — closed 2026-10-11 as B2.1 (a mixed
+  bulkhead case; the Composites *feature* on a solid is still unexercised).
 
 ### 11.9 A point load on a tie's shell slave can drop the tie, under a warning we
 call benign
