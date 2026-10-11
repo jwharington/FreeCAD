@@ -18,6 +18,21 @@ a hinge, and ``FemMesh.getFacesOnly`` classifies a face as a shell only when its
 node ids are *not* a subset of a volume's, so the shell stops being a shell at
 all. Both are silent. Meshing each part on its own keeps the node ids apart, and
 ``*TIE`` then does the coupling.
+
+The mesh groups are part of the contract, and the trap is worth stating once.
+``meshsetsgetter.get_solid_element_sets`` takes its group path whenever a mesh
+has any group at all, and matches a group name against the *document object* a
+material or section references (``grp_name.startswith(obj.Name + "_")``).  If
+that match fails it does not stop - it falls through to
+``meshtools.get_femelement_sets`` and resolves the whole mesh by node search
+instead.  On a mixed model of a few thousand elements that is seconds; on a
+real article it is minutes, and it reads as a hang rather than as a wrong
+name.  gmsh names a lone part's groups for its sub-shapes, which are not
+document objects and match nothing, so this function drops those groups and
+writes one ``"<part>_Volumes"`` group per part, named for the object a
+material can actually reference.  A caller that meshes a ``Part::Compound`` as
+one part therefore gets a group named for the compound - if the materials
+reference its sub-solids instead, mesh those solids as their own parts.
 """
 
 import ObjectsFem
@@ -46,33 +61,44 @@ def mesh_parts_separately(doc, parts, max_size=None, element_order=None, curvatu
         for index, part in enumerate(parts)
     ]
     merged = generated[0][1]
+    part_volumes = [_volume_ids(merged)]
     for _, extra in generated[1:]:
-        merged, _, _ = meshtools.merge_femmeshes(merged, extra)
+        merged, _, elem_map = meshtools.merge_femmeshes(merged, extra)
+        part_volumes.append([elem_map[elem] for elem in _volume_ids(extra)])
     # Before the source objects go: for one part ``merged`` *is* the temporary
-    # object's mesh, and stripping it after the object is removed leaves the
+    # object's mesh, and touching it after the object is removed leaves the
     # caller with an empty mesh.
     _strip_groups(merged)
+    _name_part_groups(merged, parts, part_volumes)
     for mesh_obj, _ in generated:
         doc.removeObject(mesh_obj.Name)
     return merged
 
 
-def _strip_groups(femmesh):
-    """Drop the mesh groups a part carries, so the result is the same for one
-    part as for several.
+def _volume_ids(femmesh):
+    """The volume element ids of a mesh, in order."""
+    return list(femmesh.Volumes)
 
-    One part returns gmsh's own mesh; two or more are merged, and
-    ``merge_femmeshes`` copies nodes and elements but no groups.  That
-    difference is invisible until the element-set resolver runs
-    (``meshsetsgetter.get_solid_element_sets``): it takes the group path
-    whenever ``GroupCount`` is non-zero, and matches a group name against the
-    *document object's* name (``grp_name.startswith(obj.Name + "_")``).  A part
-    meshed alone carries gmsh's groups for its sub-shapes - named for the
-    solid, not for any document object a material can reference - so the lookup
-    finds nothing, the element count check fails, and the deck write resolves
-    the whole mesh a second time down the search path.  That second pass is the
-    only one the several-part mesh ever runs; making it the only one here keeps
-    the returned mesh's contract independent of the part count.
+
+def _name_part_groups(femmesh, parts, part_volumes):
+    """One ``"<part>_Volumes"`` group per part, for the element-set resolver.
+
+    Named for the document object, so ``get_solid_element_sets`` can match it
+    against a material or section reference and take its group path instead of
+    searching the whole mesh - see the module docstring for the trap.
+    """
+    for part, element_ids in zip(parts, part_volumes):
+        if not element_ids:
+            continue
+        group_id = femmesh.addGroup(f"{part.Name}_Volumes", "Volume")
+        femmesh.addGroupElements(group_id, sorted(element_ids))
+
+
+def _strip_groups(femmesh):
+    """Drop the groups gmsh wrote, so only the part groups this module names
+    remain.  A lone part carries gmsh's groups for its sub-shapes, which are
+    not document objects and can never match a reference; left in place they
+    send the resolver down the group path that cannot succeed.
     """
     for group_id in list(femmesh.Groups):
         femmesh.removeGroup(group_id)

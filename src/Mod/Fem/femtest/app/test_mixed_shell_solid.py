@@ -1205,16 +1205,20 @@ def test_a_mixed_face_deck_solves_through_the_fem_solver(tmp_path):
         FreeCAD.closeDocument(doc.Name)
 
 
-def test_mesh_parts_separately_returns_no_groups_for_one_part():
-    """One part and several parts must return a mesh of the same shape.
+def _groups_by_name(femmesh):
+    return {femmesh.getGroupName(group): group for group in femmesh.Groups}
 
-    ``mesh_parts_separately`` meshes each part alone.  A part meshed alone
-    keeps gmsh's groups for its own sub-shapes, and those carry no document
-    object's name, so ``get_solid_element_sets`` takes its group path, matches
-    nothing, fails the element count check, and resolves the mesh again down
-    the search path.  Two or more parts are merged, and ``merge_femmeshes``
-    copies no groups, so the several-part route only ever runs the search path.
-    The single-part route has to agree, group count zero included.
+
+def test_mesh_parts_separately_names_a_volume_group_per_part():
+    """The mesh carries one ``"<part>_Volumes"`` group per part.
+
+    ``get_solid_element_sets`` takes its group path whenever the mesh has any
+    group at all and matches the group name against the document object a
+    material references.  A part meshed alone keeps gmsh's groups for its own
+    sub-shapes, which carry no document name, so the match fails and the deck
+    is resolved again by node search over the whole mesh - minutes on a real
+    article.  The returned mesh must therefore carry exactly the part groups,
+    named for the part, each covering that part's volumes.
     """
     doc = FreeCAD.newDocument("mesh_part_groups")
     try:
@@ -1229,12 +1233,19 @@ def test_mesh_parts_separately_returns_no_groups_for_one_part():
         several = mesh_parts_separately(doc, [box, other], max_size=5.0)
 
         assert single.VolumeCount > 0
-        assert single.GroupCount == 0, (
-            "a part meshed alone kept its gmsh groups; the element-set resolver "
-            "will take the group path and find nothing"
-        )
-        assert several.GroupCount == 0
         assert single.VolumeCount == several.VolumeCount
+
+        single_groups = _groups_by_name(single)
+        assert set(single_groups) == {"Assembly_Volumes"}, single_groups
+        assert len(single.getGroupElements(single_groups["Assembly_Volumes"])) == single.VolumeCount
+
+        several_groups = _groups_by_name(several)
+        assert set(several_groups) == {"Box_Volumes", "Other_Volumes"}, several_groups
+        assert (
+            len(several.getGroupElements(several_groups["Box_Volumes"]))
+            == len(several.getGroupElements(several_groups["Other_Volumes"]))
+            > 0
+        )
     finally:
         FreeCAD.closeDocument(doc.Name)
 
