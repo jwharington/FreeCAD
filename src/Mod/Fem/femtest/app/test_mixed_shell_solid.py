@@ -1205,6 +1205,40 @@ def test_a_mixed_face_deck_solves_through_the_fem_solver(tmp_path):
         FreeCAD.closeDocument(doc.Name)
 
 
+def test_mesh_parts_separately_returns_no_groups_for_one_part():
+    """One part and several parts must return a mesh of the same shape.
+
+    ``mesh_parts_separately`` meshes each part alone.  A part meshed alone
+    keeps gmsh's groups for its own sub-shapes, and those carry no document
+    object's name, so ``get_solid_element_sets`` takes its group path, matches
+    nothing, fails the element count check, and resolves the mesh again down
+    the search path.  Two or more parts are merged, and ``merge_femmeshes``
+    copies no groups, so the several-part route only ever runs the search path.
+    The single-part route has to agree, group count zero included.
+    """
+    doc = FreeCAD.newDocument("mesh_part_groups")
+    try:
+        box = add_shape(doc, "Box", Part.makeBox(20.0, 10.0, 10.0))
+        other = add_shape(
+            doc, "Other", Part.makeBox(20.0, 10.0, 10.0, FreeCAD.Vector(30.0, 0.0, 0.0))
+        )
+        assembly = make_compound(doc, "Assembly", [box, other])
+        doc.recompute()
+
+        single = mesh_parts_separately(doc, [assembly], max_size=5.0)
+        several = mesh_parts_separately(doc, [box, other], max_size=5.0)
+
+        assert single.VolumeCount > 0
+        assert single.GroupCount == 0, (
+            "a part meshed alone kept its gmsh groups; the element-set resolver "
+            "will take the group path and find nothing"
+        )
+        assert several.GroupCount == 0
+        assert single.VolumeCount == several.VolumeCount
+    finally:
+        FreeCAD.closeDocument(doc.Name)
+
+
 def _bulkhead_document(shell_thickness=5.0):
     """A shell bulkhead spanning a hollow solid hull, tied round its perimeter.
 

@@ -50,7 +50,29 @@ def mesh_parts_separately(doc, parts, max_size=None, element_order=None, curvatu
         merged, _, _ = meshtools.merge_femmeshes(merged, extra)
     for mesh_obj, _ in generated:
         doc.removeObject(mesh_obj.Name)
+    _strip_groups(merged)
     return merged
+
+
+def _strip_groups(femmesh):
+    """Drop the mesh groups a part carries, so the result is the same for one
+    part as for several.
+
+    One part returns gmsh's own mesh; two or more are merged, and
+    ``merge_femmeshes`` copies nodes and elements but no groups.  That
+    difference is invisible until the element-set resolver runs
+    (``meshsetsgetter.get_solid_element_sets``): it takes the group path
+    whenever ``GroupCount`` is non-zero, and matches a group name against the
+    *document object's* name (``grp_name.startswith(obj.Name + "_")``).  A part
+    meshed alone carries gmsh's groups for its sub-shapes - named for the
+    solid, not for any document object a material can reference - so the lookup
+    finds nothing, the element count check fails, and the deck write resolves
+    the whole mesh a second time down the search path.  That second pass is the
+    only one the several-part mesh ever runs; making it the only one here keeps
+    the returned mesh's contract independent of the part count.
+    """
+    for group_id in list(femmesh.Groups):
+        femmesh.removeGroup(group_id)
 
 
 def _meshed_part(doc, index, part, max_size=None, element_order=None, curvature_size=None):
