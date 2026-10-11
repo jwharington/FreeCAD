@@ -104,7 +104,9 @@ and A2 are done and committed.
 # Track B — mixed shell+solid, what plan §11 leaves open
 
 Repo: FreeCAD, branch `fem-mixmesh`.  Ordered by severity, as the plan orders
-it.  "§" refers to `plan-mixed-shell-solid-fem.md`.
+it.  "§" refers to `plan-mixed-shell-solid-fem.md`.  **New-session entry
+point:** `handoff-2026-10-11-mixed-shell-solid-next.md` (Track A is closed, so
+this is the only open track).
 
 - [ ] **B1 — §11.4, the results-viewer toggle.**  Make a mixed result
       *distinguishable*: today a skin coincident with a solid face z-fights, and
