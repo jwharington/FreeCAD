@@ -152,11 +152,12 @@ moves material through the thickness, and it can at most be *reported*.
   open the PR).
 - **B7** assign ties from the references the model already carries — a
   **proposal: review before any code**; it depended on B4.1 (per-shell slave
-  lookup), now satisfied, and needs per-interface opt-out, a derived
-  tolerance, and a checked (not assumed) mesh-disjointness rule.  Refreshed
-  2026-10-11: the rule is object identity (`shell.Support is the solid`), not a
-  geometric pairing, so the wing and the plate keep their hand-written ties;
-  seven open questions for review, **no code yet**.
+  lookup), now satisfied, and adds **B7.1**, an optional `SupportReference`
+  (`App::PropertyLinkSubGlobal`) on `Composite::Shell` so a single-face skin can
+  declare `(solid, faces)`.  The rule is **object identity**
+  (`shell.Support`/`SupportReference` object), not a geometric pairing, so the
+  wing and the plate keep their hand-written ties.  Six open questions for
+  review, **no code yet**.
 
 ## 6. Deferred to the bottom by the owner
 

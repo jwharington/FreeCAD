@@ -250,32 +250,39 @@ this is the only open track).
 
 - [ ] **B7 — §12, assign the ties from the references the model already
       carries.**  **Status: proposal — review before any code.**  A pass that
-      (1) collects solids from dimension-3 material references, (2) collects
-      shell faces from shell-thickness references, (3) pairs them (parallel
-      normals, planes within a tolerance), (4) creates one `Fem::ConstraintTie`
-      per pair, shell reference first, with a **derived** tolerance.  It must be
-      an explicit command/helper that creates tie objects — **not** something
-      the writer or `meshsetsgetter` invents, which would be coupling no object
-      records.  *Four preconditions:* over-coupling is the default failure
-      (per-interface opt-out, a report, `COINCIDENT_TOLERANCE = 1e-6`); the
-      tolerance must be derived, not typed; it **depends on B4.1** (per-shell
-      slave lookup); and the mesh-disjointness rule (`mesh_parts_separately`,
-      Trap A) must be **checked and refused**, not assumed.  *Out of scope for a
-      first cut:* edge interfaces, multi-stage/contact ties, the task panel.
-      *Exit:* on the wing and the plate, replacing their hand-written
-      `add_tie` calls produces the same `*TIE` set up to names, the deck
-      snapshot still reports *no deck changed*, and a second run creates nothing
-      new.
+      (1) collects solids from dimension-3 material references, (2) collects the
+      composite shells that declare one of those solids — as `SupportReference`
+      or `Support` — and (3) creates one `Fem::ConstraintTie` per shell, shell
+      reference first, with a **derived** tolerance.  It must be an explicit
+      command/helper that creates tie objects — **not** something the writer or
+      `meshsetsgetter` invents, which would be coupling no object records.
+      **Pairing is object identity, not geometry:** no parallel normals, no
+      planes, no coincidence tolerance.
+      *Preconditions:* an opt-out and a report (a shell declared on a solid that
+      is deliberately not bonded); a derived tolerance; B4.1 (per-shell slave
+      lookup) — **landed**; the mesh-disjointness rule (`mesh_parts_separately`,
+      Trap A) **checked and refused**, not assumed; and **B7.1** below, which
+      carries the face names.
+      *Exit:* on a model that follows the convention, the pass produces the same
+      `*TIE` set as the hand-written `add_tie`, up to names, and a second run
+      creates nothing new.  **The wing and the plate do not follow it** (they
+      declare separate support objects), so they keep their hand-written ties
+      and are not the exit's subject.
+  - [ ] **B7.1 — the `SupportReference` property (B7's precondition).**  Add an
+        optional `App::PropertyLinkSubGlobal` to `Composite::Shell` holding
+        `(solid, ["FaceN", ...])`; `Support` is untouched so existing documents
+        load unchanged.  Readers go through one `support_shape(fp)` resolver
+        (~14 `fp.Support.Shape`/`.Placement` sites in `CompositeShell`, plus
+        `TexturePlan.py:68` and `Stiffener.py:136`); `StiffenerCompositeShell`
+        re-points `Support` as an object and is the file to audit.  The drape
+        backend already accepts a sub-shape or compound support.  *Exit:* a
+        single-face skin declares `SupportReference = (solid, ["Face1"])` and
+        the resolver gives the shape the whole-object support gave before.
       **Refreshed 2026-10-11 for review:** the pairing rule is **object
-      identity** — a shell whose `Support` *is the solid object* — not a
-      parallel-normal/plane search; the rule's face-naming for a single-face
-      skin is open question 3.  B4.1 landed (precondition 3 satisfied), the
-      tolerance derivation exists, and edge interfaces resolve (B6) though they
-      stay out of the first cut.  **The wing and the plate declare their skins
-      on separate support objects, so the pass does not apply to them and they
-      keep their hand-written ties** — they can no longer be the exit's subject.
-      Seven open questions await the reviewer at the end of §12; **no code until
-      they are answered**.
+      identity**, not a geometric search, and the face-naming question is
+      answered by B7.1.  B4.1 landed, the tolerance derivation exists, and edge
+      interfaces resolve (B6) though they stay out of the first cut.  Six open
+      questions remain at the end of §12; **no code until they are answered**.
 
 - [x] **B8 — DONE (2026-10-11).**  The feature had already landed
       (`0542b6ba22`, 2026-10-09): `CompositeShell.Offset` is the per-skin
@@ -350,7 +357,8 @@ this is the only open track).
 |---|---|---|
 | ~~A2.1–A2.8~~ done | — | — |
 | B1, B2.1, B3, B9.2, B9.3 | — | — |
-| B7 | review | — |
+| B7.1 | — | B7 |
+| B7 | review; B7.1 | — |
 
 **Closed 2026-10-11, blocking nothing now:** `A1`, `A2`, `B9.1`, `B9.1b`,
 `B9.4`, `B5.1`, `B5.2`, `B5.3`, `B2.2`, `B6`, `B4.1`, `B8`.  `B9.5` is

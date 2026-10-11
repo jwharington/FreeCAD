@@ -2222,9 +2222,11 @@ analysis through its material. Pairing is then an object-identity check —
   `meshsetsgetter.get_material_elements`, with
   `meshtools.get_shape_dimension` judging dimension by contents so a
   compound is not mistaken for a solid;
-- the **shell** — a `Composite::Shell` whose `Support` is that same
-  `Part::Feature`; the shell-thickness object carries the section that
-  reaches the FEM side.
+- the **shell** — a `Composite::Shell` that declares the same `Part::Feature`,
+  either directly as its `Support` (a bag shell on the whole solid) or through a
+  new optional **`SupportReference`** (`App::PropertyLinkSubGlobal`) naming
+  `(solid, ["FaceN", ...])` for a single-face skin.  The shell-thickness
+  object carries the section that reaches the FEM side.
 
 So the interface set is the set of composite shells declared on a solid the
 analysis bonds.  Nothing is inferred from coincident planes or parallel
@@ -2232,10 +2234,11 @@ normals, and there is no tolerance to pick.
 
 **The proposal, stated plainly.** A pass over the analysis that (1) collects the
 solids from the dimension-3 material references, (2) collects the composite
-shells whose `Support` is one of those solids, and (3) creates one
-`Fem::ConstraintTie` per shell, shell reference first, with a derived
-tolerance.  There is no pairing search and no geometry: the shared
-`Part::Feature` *is* the declaration.
+shells that declare one of those solids — as `SupportReference[0]`, or as
+`Support` — and (3) creates one `Fem::ConstraintTie` per shell, shell reference
+first, with a derived tolerance.  There is no pairing search and no geometry:
+the shared `Part::Feature` *is* the declaration, and the subelement names the
+tied faces.
 
 **Review.**
 
@@ -2307,16 +2310,22 @@ the convention has to exist for the exit to run against.
 1. **Scope of the first cut.** A headless helper that creates the tie objects
    only, or the helper *and* a command that exposes it? The writer is untouched
    either way.
-2. **How the model declares it.** `Composite::Shell.Support` must be the solid
-   object itself. Is that read directly (`shell.Support`), or does the pass also
-   require the shell-thickness reference to name the solid? The shell's own
-   faces and the solid's are meshed apart, so the slave face has to be named on
-   the shell side, not copied from the solid.
-3. **Which faces are tied.** A shell whose `Support` *is the solid* covers the
-   solid's whole boundary — the bag case. A single-face skin's support is a
-   face, not the solid. Does the convention therefore cover only bag shells, or
-   does a one-face skin declare its support some other way? This is the
-   question the rule has to answer before it is implementable.
+2. **How the model declares it — decided 2026-10-11, becomes B7.1.**  Add an
+   optional `App::PropertyLinkSubGlobal` to `Composite::Shell` (working name
+   `SupportReference`) holding `(solid, ["FaceN", ...])`.  `Support` itself is
+   untouched, so every existing document loads unchanged; readers go through one
+   `support_shape(fp)` resolver that prefers `SupportReference` when set.  The
+   pass pairs on `SupportReference[0]` (or `Support`) being a solid the analysis
+   bonds, and the subelements name the tied faces, so a single-face skin is
+   covered as well as a whole-solid bag.  Cost and audit: ~14
+   `fp.Support.Shape` / `.Placement` sites in `CompositeShell`, plus
+   `TexturePlan.py:68` and `Stiffener.py:136`; `StiffenerCompositeShell`
+   re-points `Support` as an object (`panel.Support = backup`, `SupportBase`) and
+   is the file to audit.  The drape backend already accepts a sub-shape or
+   compound support, so no backend change is expected.  **This is a feature in
+   its own right and a precondition of the pass.**
+3. **Which faces are tied — fixed by the same decision.**  The subelements name
+   them; a whole-solid `Support` (the bag) ties every face the shell covers.
 4. **Opt-out.** Per-tie `Suppressed` after creation, an allow-list, or a dry-run
    report? A shell on a solid that is not bonded has to be expressible.
 5. **Naming.** What convention for the created ties, so a later snapshot test is
