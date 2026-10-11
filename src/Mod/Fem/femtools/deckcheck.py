@@ -62,6 +62,11 @@ def parse_inp(text):
     a property of the deck.
     """
     elements, elsets, nodes, sections, section_elsets = {}, {}, {}, [], set()
+    # An ``*ELSET`` may name other sets instead of listing element numbers
+    # (ccx expands them), which is how a section covering every element is
+    # written.  Those names are collected here and resolved after the whole
+    # file is read, because the set a name refers to may be defined later.
+    aliases = {}
     mode, open_elset, open_element, expected_nodes = None, None, None, None
     section = None
     for raw in text.splitlines():
@@ -130,8 +135,11 @@ def parse_inp(text):
             if expected_nodes is None:
                 open_element = None  # unknown type: one line per element
         elif mode == "elset":
-            for value in _numbers(tokens):
-                elsets[open_elset].add(int(value))
+            for token in tokens:
+                try:
+                    elsets[open_elset].add(int(float(token)))
+                except ValueError:
+                    aliases.setdefault(open_elset, []).append(token)
         elif mode == "section":
             fields = [field.strip() for field in line.split(",")]
             try:
@@ -141,6 +149,16 @@ def parse_inp(text):
                 continue
             if len(fields) > 2 and fields[2]:
                 section["cards"].append(fields[2])
+    def expand(name, seen):
+        for reference in aliases.get(name, ()):
+            if reference in seen:
+                continue
+            seen.add(reference)
+            expand(reference, seen)
+            elsets[name].update(elsets.get(reference, ()))
+
+    for name in list(aliases):
+        expand(name, {name})
     return {"elements": elements, "elsets": elsets, "nodes": nodes,
             "sections": sections, "section_elsets": section_elsets}
 
