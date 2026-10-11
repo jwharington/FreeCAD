@@ -48,9 +48,12 @@ def mesh_parts_separately(doc, parts, max_size=None, element_order=None, curvatu
     merged = generated[0][1]
     for _, extra in generated[1:]:
         merged, _, _ = meshtools.merge_femmeshes(merged, extra)
+    # Before the source objects go: for one part ``merged`` *is* the temporary
+    # object's mesh, and stripping it after the object is removed leaves the
+    # caller with an empty mesh.
+    _strip_groups(merged)
     for mesh_obj, _ in generated:
         doc.removeObject(mesh_obj.Name)
-    _strip_groups(merged)
     return merged
 
 
