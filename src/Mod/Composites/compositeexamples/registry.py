@@ -129,6 +129,10 @@ EXAMPLES = {
             "Mixed shell and solid wing (biaxial carbon skins over a foam core)"
         ),
     },
+    "mixed_shell_solid_stiffener": {
+        "module": ".examples.mixed_shell_solid_stiffener",
+        "name": "Mixed shell and solid stiffener (composite stiffener on a solid spar)",
+    },
     "quasi_iso_cylindrical_panel": {
         "module": ".examples.quasi_iso_cylindrical_panel",
         "name": "Quasi-isotropic cylindrical panel (curvature needs no drape)",
