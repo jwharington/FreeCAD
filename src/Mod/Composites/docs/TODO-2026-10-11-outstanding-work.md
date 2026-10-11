@@ -138,18 +138,22 @@ this is the only open track).
         with the trigger to revisit (when `TestFemGui` returns to
         `__unit_test__`); its `Stiffener`/`Bulkhead` half stays open as B2.1.
 
-- [ ] **B3 — §11.9, the `*CLOAD`-on-a-tie-slave hazard.**  A point force in a
-      shell node is applied to an *expansion* node (`gen3dforc` writes the
-      expansion MPC with the expanded node dependent), so a tied node can no
-      longer be dependent and `gentiedmpc` drops the tie under a warning
-      FreeCAD classifies as benign ("already constrained").  *Closing action:*
-      a **write-time check** that reports a tie whose shell slave carries a
-      `*CLOAD` node, naming the nodes and the remedy (swap master/slave, or load
-      the master side).  *Blocker on the test:* the mixed face families f1–f4
-      are **not** exposed (load/no-load runs are identical, `.nam` byte-identical),
-      so the fixture must be built as **Dhondt's two-shell-layer arrangement**,
-      not found in ours.  *Exit:* that fixture fails the check before it is
-      written and asserts the remedy afterwards.
+- [x] **B3 — DONE (2026-10-11).**  An explicit write-time check in
+      `write_constraint_tie.write_meshdata_constraint`: a tie whose two surfaces
+      are **both shell faces** and whose loaded slave nodes are shared with a
+      `*CLOAD` is refused before its `*SURFACE` is written, naming the nodes and
+      the remedy (load the master side, use a `*DLOAD`, or swap master and
+      slave).  It is scoped to shell-to-shell ties because a shell slave against
+      a **solid** master was measured not to collide (plan §11.9), so refusing
+      those would stop decks that couple correctly.  The fixture is
+      `femtest/app/test_constraint_tie_shell.py` — Dhondt's two-shell-layer
+      arrangement built as a hand-made `FemMesh` (lower z=0, upper z=1, t=1, so
+      the upper's S1 meets the lower's S2) — and it **reproduces the hazard**:
+      ccx reports the loaded nodes "already constrained".  Verified:
+      `test_a_load_on_the_shell_slave_is_refused` (the check names nodes 5-8 and
+      the remedy) and `test_a_load_on_the_master_side_writes_and_solves` —
+      **2 passed**; `test_mixed_shell_solid.py` 43 passed and the Composites
+      numerical 7 passed, so the f-family is untouched.
 
 - [ ] **B4 — §11.11, the parked offset question and its latent bug.**  Parked,
       **not scheduled** — the research is recorded so it is not repeated.
@@ -370,13 +374,13 @@ this is the only open track).
 | item | blocked by | blocks |
 |---|---|---|
 | ~~A2.1–A2.8~~ done | — | — |
-| B1, B2.1, B3, B9.2, B9.3 | — | — |
+| B1, B2.1, B9.2, B9.3 | — | — |
 | B7 | review | — |
 
 **Closed 2026-10-11, blocking nothing now:** `A1`, `A2`, `B9.1`, `B9.1b`,
-`B9.4`, `B5.1`, `B5.2`, `B5.3`, `B2.2`, `B6`, `B4.1`, `B7.1`, `B8`.  `B9.5` is
-deferred to the bottom of this list, and `B2` / `B5` / `B4` / `B9` stay unticked
-only because a sibling inside them is open.
+`B9.4`, `B5.1`, `B5.2`, `B5.3`, `B2.2`, `B3`, `B6`, `B4.1`, `B7.1`, `B8`.  `B9.5`
+is deferred to the bottom of this list, and `B2` / `B5` / `B4` / `B9` stay
+unticked only because a sibling inside them is open.
 
 Tracks A and B do not touch each other: different repos, different branches, no
 shared file.
@@ -389,7 +393,7 @@ shared file.
 2. ~~**B6** (the E family)~~ and ~~**B4.1**~~ **both done 2026-10-11** — the
    two real defects reachable without a rebuild.
 3. ~~**B3**, **B2.1**, **B5.1**, **B8**~~ — the ones needing a fixture:
-   **B8 and B5.1 done 2026-10-11**; B3 and B2.1 remain.
+   **B3, B5.1 and B8 done 2026-10-11**; B2.1 remains.
 4. **B1** — the C++ change, last because it needs a rebuild.
 5. ~~**A2** — the study-side donation tail, whose gate is the lc03
    reproduction.~~ **Done 2026-10-11** (FreeCAD `c396c90ea8`, study `5692de7`).

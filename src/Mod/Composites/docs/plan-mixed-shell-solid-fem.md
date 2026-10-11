@@ -1923,8 +1923,14 @@ expansion MPC a point load created" (an uncoupled node), and
 them apart, because it wrote both the tie's slave surface and the `*CLOAD`.
 Closing action: a write-time check that reports a tie whose shell slave carries
 a `*CLOAD` node, naming the nodes and the remedy (swap master and slave, or load
-the master side). Not yet written — and now without a fixture that shows it, so
-one would have to be built as Dhondt's arrangement rather than found in ours.
+the master side). **Landed 2026-10-11 (B3).**  The check is in
+`write_constraint_tie.write_meshdata_constraint`, scoped to a tie whose two
+surfaces are **both shell faces** — a shell slave against a *solid* master was
+measured not to collide, so refusing those would stop decks that couple
+correctly.  The fixture is `femtest/app/test_constraint_tie_shell.py`, Dhondt's
+two layers as a hand-made `FemMesh`, and it reproduces the hazard: ccx reports
+the loaded nodes "already constrained".  One test asserts the refusal names the
+nodes and the remedy; the other loads the master side and solves.
 
 **Our own fixtures are not exposed to it, measured rather than assumed.** f1-f4
 apply their 100 N force to the **shell** (`constraint_mixed_face_coupling.setup`
@@ -1969,7 +1975,8 @@ failing fixture in the mixed face family to be developed against.
 the writer reports it with the nodes named, and shows the same model with the
 load on the master side (or as a `*DLOAD`) still writes and solves. It has to be
 the two-shell-layer arrangement Dhondt describes: the mixed face families do not
-exhibit the hazard, so there is nothing in them to fail first.
+exhibit the hazard, so there is nothing in them to fail first.  **Met
+2026-10-11** by `test_constraint_tie_shell.py` (2 passed).
 
 ### 11.10 Deliberate leftovers, and small bugs
 

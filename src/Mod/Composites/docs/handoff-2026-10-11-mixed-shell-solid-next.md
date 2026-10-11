@@ -139,7 +139,9 @@ moves material through the thickness, and it can at most be *reported*.
 
 ## 5. Then — fixtures, a rebuild, and a proposal
 
-- **B3** `*CLOAD`-on-a-tie-slave hazard; **B2.1** stiffener/bulkhead mixed
+- ~~**B3** `*CLOAD`-on-a-tie-slave hazard~~ — **done 2026-10-11** (write-time
+  check, scoped to shell-to-shell ties; fixture `test_constraint_tie_shell.py`);
+  **B2.1** stiffener/bulkhead mixed
   coverage.  ~~**B5.1** compared-pair coverage~~ — **done 2026-10-11** (decided
   and recorded: no compared pair for the stand-off families, plus a
   non-zero-displacement assertion for all four).  ~~**B8** per-skin laminate
