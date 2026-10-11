@@ -154,10 +154,10 @@ moves material through the thickness, and it can at most be *reported*.
   **proposal: review before any code**; it depended on B4.1 (per-shell slave
   lookup), now satisfied, and adds **B7.1**, an optional `SupportReference`
   (`App::PropertyLinkSubGlobal`) on `Composite::Shell` so a single-face skin can
-  declare `(solid, faces)`.  The rule is **object identity**
-  (`shell.Support`/`SupportReference` object), not a geometric pairing, so the
-  wing and the plate keep their hand-written ties.  Six open questions for
-  review, **no code yet**.
+  declare `(solid, faces)` — **landed 2026-10-11**.  The rule is **object
+  identity** (`shell.Support`/`SupportReference` object), not a geometric
+  pairing, so the wing and the plate keep their hand-written ties.  Six open
+  questions for review, **no code for B7 itself yet**.
 
 ## 6. Deferred to the bottom by the owner
 

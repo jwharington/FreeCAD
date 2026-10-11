@@ -2310,7 +2310,7 @@ the convention has to exist for the exit to run against.
 1. **Scope of the first cut.** A headless helper that creates the tie objects
    only, or the helper *and* a command that exposes it? The writer is untouched
    either way.
-2. **How the model declares it — decided 2026-10-11, becomes B7.1.**  Add an
+2. **How the model declares it — landed 2026-10-11 (B7.1).**  Add an
    optional `App::PropertyLinkSubGlobal` to `Composite::Shell` (working name
    `SupportReference`) holding `(solid, ["FaceN", ...])`.  `Support` itself is
    untouched, so every existing document loads unchanged; readers go through one
@@ -2324,6 +2324,12 @@ the convention has to exist for the exit to run against.
    is the file to audit.  The drape backend already accepts a sub-shape or
    compound support, so no backend change is expected.  **This is a feature in
    its own right and a precondition of the pass.**
+   **Landed:** `Composite::Shell` gains `SupportReference` and the resolvers
+   `support_object` / `support_shape` / `support_placement`; the CompositeShell
+   read sites and `TexturePlan` go through them.  `StiffenerCompositeShell`
+   needed no change — it re-points the panel *object*, and the panel's own
+   `.Shape` is already the resolved surface.  Covered by
+   `TestCompositeShellSupportReference` (4 tests).
 3. **Which faces are tied — fixed by the same decision.**  The subelements name
    them; a whole-solid `Support` (the bag) ties every face the shell covers.
 4. **Opt-out.** Per-tie `Suppressed` after creation, an allow-list, or a dry-run

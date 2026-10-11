@@ -268,16 +268,19 @@ this is the only open track).
       creates nothing new.  **The wing and the plate do not follow it** (they
       declare separate support objects), so they keep their hand-written ties
       and are not the exit's subject.
-  - [ ] **B7.1 — the `SupportReference` property (B7's precondition).**  Add an
-        optional `App::PropertyLinkSubGlobal` to `Composite::Shell` holding
-        `(solid, ["FaceN", ...])`; `Support` is untouched so existing documents
-        load unchanged.  Readers go through one `support_shape(fp)` resolver
-        (~14 `fp.Support.Shape`/`.Placement` sites in `CompositeShell`, plus
-        `TexturePlan.py:68` and `Stiffener.py:136`); `StiffenerCompositeShell`
-        re-points `Support` as an object and is the file to audit.  The drape
-        backend already accepts a sub-shape or compound support.  *Exit:* a
-        single-face skin declares `SupportReference = (solid, ["Face1"])` and
-        the resolver gives the shape the whole-object support gave before.
+  - [x] **B7.1 — DONE (2026-10-11).**  `Composite::Shell` gains an optional
+        `App::PropertyLinkSubGlobal` `SupportReference` holding
+        `(solid, ["FaceN", ...])`; `Support` is untouched, so existing documents
+        load unchanged.  Three resolvers — `support_object`, `support_shape`,
+        `support_placement` — prefer the reference when set; the ~14 CompositeShell
+        read sites and `TexturePlan` go through them.  `StiffenerCompositeShell`
+        needed no change: it re-points the panel *object*, and the panel's own
+        `.Shape` is already the resolved surface.  `getSubObject` returns a
+        *list* of shapes, which the resolver unwraps (a compound for several
+        faces) — recorded here because it is not obvious from the API.
+        Verified: `test_composite_shell.py` `TestCompositeShellSupportReference`
+        **4 passed** (whole-object support unchanged; the named face resolves;
+        the reference wins over `Support`; the shell's own shape follows it).
       **Refreshed 2026-10-11 for review:** the pairing rule is **object
       identity**, not a geometric search, and the face-naming question is
       answered by B7.1.  B4.1 landed, the tolerance derivation exists, and edge
@@ -348,6 +351,17 @@ this is the only open track).
         off `fem-unified`, unmerged, unreviewed, unupstreamed, and **no PR is
         planned** — it is the working record.  *Exit:* keep that decision
         explicit (this line), or open the PR.
+  - [ ] **B9.6 — `test_composite_shell` has 3 pre-existing errors (found
+        2026-10-11).**  `TestCompositeShellOffset`'s three deck tests error in
+        `write_femelement_geometry.py:198`, which reads
+        `ccxwriter.mesh_object.FemMesh` for a composite section, while the test's
+        `_StubCcxWriter` never had a `mesh_object`.  The guard was added by
+        `a601dde52a` (2026-10-10), after the tests were written (`0542b6ba22`,
+        2026-10-09), so it is **not** caused by the B6/B4.1/B8/B5.1/B7.1 work.
+        *Exit:* either the stub grows a `mesh_object` with a `FemMesh` and a
+        real `ccx_elset`, or the guard stops reading the writer when `elements`
+        is not a set name.  The choice is which side is wrong, so it is left
+        for review rather than guessed.
 
 ---
 
@@ -357,11 +371,10 @@ this is the only open track).
 |---|---|---|
 | ~~A2.1–A2.8~~ done | — | — |
 | B1, B2.1, B3, B9.2, B9.3 | — | — |
-| B7.1 | — | B7 |
-| B7 | review; B7.1 | — |
+| B7 | review | — |
 
 **Closed 2026-10-11, blocking nothing now:** `A1`, `A2`, `B9.1`, `B9.1b`,
-`B9.4`, `B5.1`, `B5.2`, `B5.3`, `B2.2`, `B6`, `B4.1`, `B8`.  `B9.5` is
+`B9.4`, `B5.1`, `B5.2`, `B5.3`, `B2.2`, `B6`, `B4.1`, `B7.1`, `B8`.  `B9.5` is
 deferred to the bottom of this list, and `B2` / `B5` / `B4` / `B9` stay unticked
 only because a sibling inside them is open.
 
