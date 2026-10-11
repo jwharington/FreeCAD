@@ -14,9 +14,9 @@
 The E family is every arrangement in which a shell and a solid share only an
 edge, so the interface has the measure of a line and carries a moment a surface
 tie cannot express. CalculiX couples such an interface with a ``*TIE`` from the
-shell's edge face to the solid's face, but FreeCAD's reference resolution has
-no path from a selected Edge on a shell to that edge face yet, so these
-examples build the geometry and pin the gap rather than pretend to couple it.
+shell's edge face to the solid's face, and FreeCAD resolves a selected Edge on
+a shell to that edge face (the shell's expanded side face, CalculiX S3-S6), so
+these examples write that tie and solve.
 
 Variants:
     e1  shell plate continuing a solid block from one of its edges
@@ -80,10 +80,11 @@ A shell meeting a solid along an edge. setup() takes a variant:
     e2  shell web meeting a solid plate at 90 degrees along an edge
     e3  shell bridging two separate solids, edge-connected at both ends
 
-The default is e2. The interface has the measure of a line, so a *TIE must run
-from the shell's edge face to the solid's face. FreeCAD cannot resolve an Edge
-selection on a shell to that face yet: the example builds the interface and
-leaves the coupling gap visible instead of hinging it by shared nodes.
+The default is e2. The interface has the measure of a line, so a *TIE runs
+from the shell's edge face to the solid's face. An Edge selection on a shell
+resolves to that edge face (the shell's expanded side face, S3-S6); where the
+edge face straddles the solid's plane, the tie's position tolerance spans half
+the shell thickness so the expansion nodes reach it.
 
 """
     )
@@ -153,7 +154,10 @@ def _plate_continuing_block():
                 "offset": 1000,
             },
         ],
-        "tolerance": 1.0,
+        # The shell's midsurface continues the block's top, so its edge face is
+        # a strip straddling that plane: its nodes sit half a thickness either
+        # side of it, and the position tolerance has to span that.
+        "tolerance": SHELL_THICKNESS,
     }
 
 
@@ -196,7 +200,9 @@ def _bridge_two_solids():
                 "offset": 1000,
             },
         ],
-        "tolerance": 1.0,
+        # As e1: each edge face straddles the bridged solids' top plane by half
+        # the shell thickness.
+        "tolerance": SHELL_THICKNESS,
     }
 
 

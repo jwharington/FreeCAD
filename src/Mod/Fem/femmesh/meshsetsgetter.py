@@ -566,12 +566,30 @@ class MeshSetsGetter:
                 )
             elif femobj["RefShapeType"] == "Edge":  # line load on edges
                 femobj["NodeLoadTable"] = meshtools.get_force_obj_edge_nodeload_table(
-                    self.femmesh, self.femelement_table, self.femnodes_mesh, frc_obj
+                    self.femmesh,
+                    self._edge_load_element_table(frc_obj),
+                    self.femnodes_mesh,
+                    frc_obj,
                 )
             elif femobj["RefShapeType"] == "Face":  # area load on faces
                 femobj["NodeLoadTable"] = meshtools.get_force_obj_face_nodeload_table(
                     self.femmesh, self.femelement_table, self.femnodes_mesh, frc_obj
                 )
+
+    def _edge_load_element_table(self, frc_obj):
+        """The element table a line load on an edge belongs to.
+
+        A line load on a shell edge is carried by the shell elements, and in a
+        mixed mesh the shared element table holds only the highest dimension -
+        the volumes - so the load would find no element and reach the deck as
+        an empty ``*CLOAD``. A load on an edge that bounds a volume stays with
+        the shared table.
+        """
+        for ref_obj, _ in frc_obj.References:
+            if meshtools.get_shape_dimension(getattr(ref_obj, "Shape", None)) == 2:
+                elements, _ = meshtools.get_dimension_tables(self, 2)
+                return elements
+        return self.femelement_table
 
     # ********************************************************************************************
     # ********************************************************************************************

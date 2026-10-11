@@ -1710,7 +1710,8 @@ def get_elements_by_reference_dimension(sets_getter, ref_pair, geom_type, face_m
     A reference that matches no element of its own dimension falls back to the
     sub-element search: a face bounding a solid rather than a shell, or an edge
     bounding a solid rather than a beam, is found as a face or edge of a volume
-    element that way.
+    element that way. An edge on a shell is instead searched in the shell table,
+    where it resolves to the shell's edge face (CalculiX S3-S6).
     """
     ref_obj, sub_ref = ref_pair
     sub = (ref_obj, (sub_ref,))
@@ -1742,9 +1743,20 @@ def get_elements_by_reference_dimension(sets_getter, ref_pair, geom_type, face_m
         case 1:
             sub, elem = get_elements_by_references_of_dimension(sets_getter, ref_pair, 1)
             if not elem:
-                sub, elem = get_subelements_by_references(
-                    sets_getter, ref_pair, face_masks, edge_masks
-                )
+                if get_shape_dimension(getattr(ref_obj, "Shape", None)) == 2:
+                    # An edge on a shell is a side face of the shell's 3D
+                    # expansion (CalculiX S3-S6), so it resolves against the
+                    # shell element table with the edge masks. The volume-only
+                    # table the plain sub-element search uses holds no shell,
+                    # so that search finds nothing there.
+                    elements, node_table = get_dimension_tables(sets_getter, 2)
+                    sub, elem = get_subelements_by_references(
+                        sets_getter, ref_pair, face_masks, edge_masks, elements, node_table
+                    )
+                else:
+                    sub, elem = get_subelements_by_references(
+                        sets_getter, ref_pair, face_masks, edge_masks
+                    )
                 is_sub_element = True
         case _:
             sub, elem = get_subelements_by_references(sets_getter, ref_pair, face_masks, edge_masks)
@@ -1763,8 +1775,8 @@ def get_elements_by_reference_dimension(sets_getter, ref_pair, geom_type, face_m
     return (sub, elem, is_sub_element)
 
 
-def get_elements_by_references_of_dimension(sets_getter, femobj_ref, dimension):
-    """Resolve a reference against the element table of one dimension.
+def get_dimension_tables(sets_getter, dimension):
+    """The element and node-to-element tables for one dimension.
 
     The dimension-tagged tables come from the mesh's own ``Volumes``,
     ``FacesOnly`` and ``EdgesOnly`` sets and never from a node count. They are
@@ -1785,12 +1797,13 @@ def get_elements_by_references_of_dimension(sets_getter, femobj_ref, dimension):
         sets_getter.femnodes_ele_tables_by_dim[dimension] = get_femnodes_ele_table(
             sets_getter.femnodes_mesh, elements
         )
-    return get_elements_by_references(
-        sets_getter,
-        femobj_ref,
-        elements,
-        sets_getter.femnodes_ele_tables_by_dim[dimension],
-    )
+    return elements, sets_getter.femnodes_ele_tables_by_dim[dimension]
+
+
+def get_elements_by_references_of_dimension(sets_getter, femobj_ref, dimension):
+    """Resolve a reference against the element table of one dimension."""
+    elements, node_table = get_dimension_tables(sets_getter, dimension)
+    return get_elements_by_references(sets_getter, femobj_ref, elements, node_table)
 
 
 def get_elements_by_references(
@@ -1841,7 +1854,25 @@ def get_elements_by_references(
     return result
 
 
-def get_subelements_by_references(sets_getter, femobj_ref, face_masks, edge_masks):
+def get_subelements_by_references(
+    sets_getter,
+    femobj_ref,
+    face_masks,
+    edge_masks,
+    femelement_table=None,
+    femnodes_ele_table=None,
+):
+    """Resolve a reference to the faces or edges of the elements it bounds.
+
+    ``femelement_table`` selects which elements are searched. It defaults to the
+    mesh's highest dimension, which is right for a volume or a beam; a shell
+    edge must instead be searched in the dimension-2 table (see
+    :func:`get_elements_by_reference_dimension`).
+    """
+    if femelement_table is None:
+        femelement_table = sets_getter.femelement_table
+    if femnodes_ele_table is None:
+        femnodes_ele_table = sets_getter.femnodes_ele_table
     node_set = []
     result = []
     # TODO get elements from mesh groups
@@ -1865,7 +1896,7 @@ def get_subelements_by_references(sets_getter, femobj_ref, face_masks, edge_mask
         charged_face_node_set = sorted(set(node_set))
 
         bit_pattern_dict = get_bit_pattern_dict(
-            sets_getter.femelement_table, sets_getter.femnodes_ele_table, charged_face_node_set
+            femelement_table, femnodes_ele_table, charged_face_node_set
         )
         sh = feat.getSubObject(sub_ref)
         if sh.ShapeType == "Face":

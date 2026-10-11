@@ -45,18 +45,22 @@ def _tie_references_that_are_not_faces(tie_obj):
     """Sub-references of a tie that cannot form a surface.
 
     A ``*TIE`` couples two surfaces, so a reference that resolves to an edge, a
-    vertex or a solid cannot be expressed as one. Without this the writer goes
-    on to build a ``*SURFACE`` whose face index came from an edge mask: a deck
-    that means nothing, with no error from FreeCAD and none from CalculiX.
+    vertex or a solid cannot be expressed as one. The exception is an Edge on a
+    *shell*: a shell's edge is a side face of CalculiX's 3D expansion (S3-S6),
+    which is exactly the surface an edge interface ties, so it is a valid tie
+    reference. An Edge on a solid has no such face and stays an offender.
 
     The dimension is taken from what the referenced shape holds rather than
     from its ``ShapeType``, so a compound of faces stays a valid reference.
     """
     offenders = []
     for obj, sub_refs in tie_obj.References:
+        object_is_a_shell = meshtools.get_shape_dimension(getattr(obj, "Shape", None)) == 2
         for sub_ref in sub_refs:
-            if meshtools.get_shape_dimension(get_element(obj, sub_ref)) != 2:
-                offenders.append(sub_ref or obj.Name)
+            dimension = meshtools.get_shape_dimension(get_element(obj, sub_ref))
+            if dimension == 2 or (dimension == 1 and object_is_a_shell):
+                continue
+            offenders.append(sub_ref or obj.Name)
     return offenders
 
 

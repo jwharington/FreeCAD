@@ -300,6 +300,68 @@ class TestMixedShellSolid(unittest.TestCase):
             )
 
     # ********************************************************************************************
+    def test_edge_tie_slave_is_the_shells_edge_face(self):
+        # An Edge on a shell is a side face of the shell's 3D expansion, which
+        # CalculiX numbers S3-S6 - exactly the surface an edge interface ties.
+        # Resolution must search the shell element table: the plain sub-element
+        # search uses the mesh's highest dimension, which holds no shell in a
+        # mixed mesh, so it finds nothing and the *SURFACE comes out empty.
+        for variant in EDGE_VARIANTS:
+            doc = self._build_meshed(edge_coupling, variant)
+            shell_ids = set(doc.getObject("Mesh").FemMesh.FacesOnly)
+            self.assertTrue(shell_ids, variant)
+
+            fea = ccxtools.FemToolsCcx(doc.Analysis, doc.CalculiXCcxTools, test_mode=True)
+            fea.update_objects()
+            workdir = self._temp_dir(f"edge_face_{variant}")
+            fea.setup_working_dir(str(workdir))
+            with mixed_shell_solid_flag(True):
+                self.assertFalse(fea.check_prerequisites(), f"{variant} must be accepted")
+                self.assertFalse(fea.write_inp_file(), f"{variant} must write a deck")
+            deck = (workdir / "Mesh.inp").read_text(encoding="utf-8")
+
+            for tie in self._ties(doc):
+                entries = self._surface_entries(deck, f"TIE_DEP{tie.Name}")
+                self.assertTrue(entries, f"{variant}/{tie.Name} slave surface is empty")
+                for entry in entries:
+                    element, _, side = entry.partition(",")
+                    self.assertIn(int(element), shell_ids, entry)
+                    self.assertIn(side, ("S3", "S4", "S5", "S6"), entry)
+
+    # ********************************************************************************************
+    def test_edge_load_on_a_shell_reaches_the_deck(self):
+        # A line load on a shell edge is carried by the shell elements. In a
+        # mixed mesh the shared element table holds only the highest dimension -
+        # the volumes - so without the dimension-2 table the *CLOAD is written
+        # empty: the model solves to exactly zero with no error from FreeCAD or
+        # CalculiX.
+        for variant in EDGE_VARIANTS:
+            doc = self._build_meshed(edge_coupling, variant)
+            fea = ccxtools.FemToolsCcx(doc.Analysis, doc.CalculiXCcxTools, test_mode=True)
+            fea.update_objects()
+            workdir = self._temp_dir(f"edge_load_{variant}")
+            fea.setup_working_dir(str(workdir))
+            with mixed_shell_solid_flag(True):
+                self.assertFalse(fea.check_prerequisites(), f"{variant} must be accepted")
+                self.assertFalse(fea.write_inp_file(), f"{variant} must write a deck")
+            deck = (workdir / "Mesh.inp").read_text(encoding="utf-8")
+            self.assertTrue(self._cload_entries(deck), f"{variant} line load is empty")
+
+    # ********************************************************************************************
+    def test_tie_on_a_shell_edge_is_accepted(self):
+        # ADR 0004 obligation 3, narrowed: an Edge on a shell resolves to the
+        # shell's edge face, so it is a surface the tie can use. Only an Edge
+        # on a solid - which has no such face - stays refused.
+        doc = self._build(edge_coupling, "e2")
+        analysis = doc.Analysis
+        member = membertools.AnalysisMember(analysis)
+        with mixed_shell_solid_flag(True):
+            message = check_member_for_solver_calculix(
+                analysis, doc.CalculiXCcxTools, doc.getObject("Mesh"), member
+            )
+        self.assertNotIn("not a face", message, message)
+
+    # ********************************************************************************************
     def test_shape_dimension_follows_a_compound_contents(self):
         # A Compound is whatever it holds, and its ShapeType says only that it is
         # a compound. Calling a compound of faces a solid would send that
@@ -956,6 +1018,13 @@ class TestMixedShellSolid(unittest.TestCase):
         module.setup(doc=doc, variant=variant, test_mode=True)
         return doc
 
+    def _build_meshed(self, module, variant):
+        """Build and mesh a variant, for tests that need a real mixed mesh."""
+        doc = FreeCAD.newDocument(f"{self.__class__.__name__}_{variant}_meshed")
+        self.addCleanup(FreeCAD.closeDocument, doc.Name)
+        module.setup(doc=doc, variant=variant)
+        return doc
+
     def _solids(self, doc):
         return [obj for obj in doc.Objects if obj.Name.startswith("Solid")]
 
@@ -983,6 +1052,21 @@ class TestMixedShellSolid(unittest.TestCase):
         for line in deck.splitlines():
             if line.startswith("*SURFACE"):
                 collecting = f"NAME={name}" in line
+                continue
+            if line.startswith("*"):
+                collecting = False
+                continue
+            if collecting and line.strip():
+                entries.append(line.strip())
+        return entries
+
+    def _cload_entries(self, deck):
+        entries, collecting = [], False
+        for line in deck.splitlines():
+            if line.startswith("**"):
+                continue
+            if line.startswith("*CLOAD"):
+                collecting = True
                 continue
             if line.startswith("*"):
                 collecting = False
@@ -1025,5 +1109,41 @@ def test_a_mixed_face_deck_solves_through_the_fem_solver(tmp_path):
         displacements = [float(v) for v in results[0].DisplacementLengths]
         assert displacements, "the result carries no displacement"
         assert max(displacements) > 0.0, "the mixed deck solved to zero displacement"
+    finally:
+        FreeCAD.closeDocument(doc.Name)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("variant", EDGE_VARIANTS)
+def test_a_mixed_edge_deck_solves_through_the_fem_solver(tmp_path, variant):
+    """ccx accepts a mixed edge-interface deck and a result comes back.
+
+    The E family couples a shell's edge face (S3-S6) to a solid face, and its
+    line load rides on the shell edge.  With no tie the shell is a disconnected
+    part and the deck is singular, so a solve that reaches a result with the tie
+    uncoupled-refusal clear is the Fem-layer evidence that the edge face
+    coupled.  What the result *means* - a moment carried at the tied edge
+    against a clamped root - belongs to the Composites suite, as it does for
+    the face family.
+    """
+    doc = edge_coupling.setup(variant=variant)
+    try:
+        fea = ccxtools.FemToolsCcx(analysis=doc.Analysis, solver=doc.CalculiXCcxTools)
+        with mixed_shell_solid_flag(True):
+            fea.setup_working_dir(str(tmp_path))
+            solved = fea.run()
+        assert solved, f"ccx refused the mixed {variant} edge deck; see the log above"
+        assert not fea.has_missed_ties(), (
+            f"{variant}: the *TIE generated no MPC for slave nodes that found "
+            "no master face; the edge face did not couple"
+        )
+        results = [
+            o for o in doc.Analysis.Group
+            if o.isDerivedFrom("Fem::FemResultObject")
+        ]
+        assert results, "the mixed edge deck solved but no result was read back"
+        displacements = [float(v) for v in results[0].DisplacementLengths]
+        assert displacements, "the result carries no displacement"
+        assert max(displacements) > 0.0, "the mixed edge deck solved to zero displacement"
     finally:
         FreeCAD.closeDocument(doc.Name)
