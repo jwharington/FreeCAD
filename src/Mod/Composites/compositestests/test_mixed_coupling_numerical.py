@@ -22,11 +22,23 @@ pass. Measured when this was written: mixed 6.4223e-02 mm against all-solid
 The other in-scope face families (f1-f4 of the plan's section 8) are solved too,
 from Fem's own fixtures, and asserted on what CalculiX says about the tie rather
 than on a second reference model: a run that reports a slave node with no
-opposite master face is not coupled, and that is the detector no deck-text test
-has. That check is what exposed f1 and f2, whose tie tolerance was below the
-half-thickness CalculiX expands a shell by, so 30 and 5 of their slave nodes were
-never tied. The e1-e3 edge family is refused by the writer by design (section 5)
-and so has no solve here.
+opposite master face is not coupled, and a solve that moves nothing never
+carried the load. That is the detector no deck-text test has, and the check
+that exposed f1 and f2, whose tie tolerance was below the half-thickness
+CalculiX expands a shell by, so 30 and 5 of their slave nodes were never tied.
+
+Only F1 gets the compared pair, and deliberately (B5.1).  Its interface is a
+coincident bond, so the all-solid rebuild - a slab resting on the spar - is an
+independent structure to measure against.  The offset (f3) and bag (f4)
+interfaces are 50 mm stand-offs; an all-solid "equivalent" would have to span
+the same deliberate gap with the same ``*TIE``, so it would validate the shell
+formulation against a model that hangs on the comparison's own tie rather than
+on an independent bond.  Those two families are therefore asserted coupled and
+moving, and no second model is fabricated for them.
+
+The e1-e3 edge family solves in the Fem mixed suite
+(``femtest/app/test_mixed_shell_solid.py``), which owns its interface; it is not
+repeated here.
 """
 
 import os
@@ -125,7 +137,10 @@ def face_family_runs(tmp_path_factory):
     model, and one with an untouched shell does not converge at all, because the
     load sits on the shell and the fixed end on the solid. Neither needs a second
     reference model, which is what the F1 comparison above needs and what the
-    offset and bag families have no natural equivalent of.
+    offset and bag families deliberately do not get: their interface is a
+    stand-off, so an all-solid rebuild would have to span the same deliberate gap
+    with the same *TIE, hanging on the comparison's own tie rather than an
+    independent bond. See the module docstring's B5.1 note.
     """
     if not os.path.exists(probe.DEFAULT_CCX):
         pytest.skip(f"no CalculiX binary at {probe.DEFAULT_CCX}; nothing can be solved")
@@ -148,10 +163,21 @@ def face_family_runs(tmp_path_factory):
                 fea.setup_working_dir(str(workdir))
                 ran = fea.run()
                 not_coupled, already_constrained = tied_mpc_warning_counts(fea.ccx_stdout)
+                results = [
+                    o
+                    for o in doc.Analysis.Group
+                    if o.isDerivedFrom("Fem::FemResultObject")
+                ]
+                displacements = [
+                    float(value)
+                    for result in results
+                    for value in result.DisplacementLengths
+                ]
                 runs[variant] = {
                     "ran": ran,
                     "not_coupled": not_coupled,
                     "already_constrained": already_constrained,
+                    "max_displacement": max(displacements) if displacements else 0.0,
                     # Bounded, and only for the failure message: a family that
                     # does not solve has to say how, and ccx's own last words
                     # are the only place that is visible.
@@ -171,4 +197,8 @@ def test_each_face_family_couples_its_shell(face_family_runs, variant):
     assert run["not_coupled"] == 0, (
         f"{variant}: {run['not_coupled']} slave node(s) found no opposite master "
         f"face, so the *TIE does not couple the shell; ccx ended with:\n{run['ccx_tail']}"
+    )
+    assert run["max_displacement"] > 0.0, (
+        f"{variant}: the deck solved but moved nothing, so the load never "
+        f"reached the mesh; ccx ended with:\n{run['ccx_tail']}"
     )
