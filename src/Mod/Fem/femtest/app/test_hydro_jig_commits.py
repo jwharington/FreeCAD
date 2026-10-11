@@ -585,6 +585,63 @@ class TestHydroJigCommits(unittest.TestCase):
         self.assertIn("1,P1,1", out)
 
     # ********************************************************************************************
+    def test_is_reaction_constraint_keys_on_type_not_field_hook(self):
+        # The hydrostatic and reaction constraints both define
+        # get_pressure_field, so the delivery path cannot key on that hook: a
+        # field pressure object would be sent down the reaction coupling path
+        # and fail on the Origin property it does not have.
+        hydro = ObjectsFem.makeConstraintHydrostaticPressure(self.document, "HydroProbe")
+        reaction = ObjectsFem.makeConstraintReaction(self.document, "ReactionProbe")
+
+        self.assertTrue(write_constraint_pressure.has_pressure_field(hydro))
+        self.assertTrue(write_constraint_pressure.has_pressure_field(reaction))
+        self.assertFalse(write_constraint_pressure.is_reaction_constraint(hydro))
+        self.assertTrue(write_constraint_pressure.is_reaction_constraint(reaction))
+
+    # ********************************************************************************************
+    def test_hydrostatic_pressure_writes_dload_not_a_coupling(self):
+        # Regression: has_pressure_field() alone used to classify the
+        # hydrostatic object as a reaction, and the coupling path then read
+        # prs_obj.Origin, which a hydrostatic object does not have.
+        class _FakeFemMesh:
+            Faces = (1,)
+            Nodes = {
+                10: Vector(0, 0, 500),
+                11: Vector(1, 0, 500),
+                12: Vector(0, 1, 500),
+            }
+
+            def getElementNodes(self, _elem_id):
+                return (10, 11, 12)
+
+        hydro = ObjectsFem.makeConstraintHydrostaticPressure(self.document, "HydroLoad")
+        hydro.ModelType = "Hydrostatic"
+        # The routine execute() state, set without a document recompute so the
+        # writer sees a usable field for a face at z = 500 mm.
+        proxy = hydro.Proxy
+        proxy.scale, proxy.interp = proxy.get_interpolator(hydro)
+        proxy.map_coord = 1
+
+        femobj = {
+            "PressureFaces": [((None, ("Face1",)), [[1, 1]], True)],
+            "PressureFaceInfo": {},
+            "PressureNodeInfo": {},
+        }
+        ccxwriter = SimpleNamespace(
+            mesh_object=SimpleNamespace(FemMesh=_FakeFemMesh()),
+            member=SimpleNamespace(cons_jig321=[]),
+            analysis=SimpleNamespace(Group=[hydro]),
+        )
+
+        buf = StringIO()
+        write_constraint_pressure.write_meshdata_constraint(buf, femobj, hydro, ccxwriter)
+        out = buf.getvalue()
+
+        self.assertIn("*DLOAD", out)
+        self.assertIn("1,P1,", out)
+        self.assertNotIn("DISTRIBUTING COUPLING", out)
+
+    # ********************************************************************************************
     def test_meshsetsgetter_pressure_info_keys_cover_all_surface_entries(self):
         getter = meshsetsgetter.MeshSetsGetter.__new__(meshsetsgetter.MeshSetsGetter)
 

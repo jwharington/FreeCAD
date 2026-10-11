@@ -78,10 +78,23 @@ def has_pressure_field(prs_obj):
     return False
 
 
+def is_reaction_constraint(prs_obj):
+    """Whether this pressure object delivers a resultant as a distributing
+    coupling rather than a face pressure.
+
+    The field hook ``get_pressure_field`` is shared: a hydrostatic (or any
+    field) pressure constraint also defines it, to fill
+    ``elem_info["pressure"]`` for the *DLOAD path.  So the delivery path keys
+    on the object's own Fem type, not on the mere presence of the hook.
+    """
+    proxy = getattr(prs_obj, "Proxy", None)
+    return getattr(proxy, "Type", "") == "Fem::ConstraintReaction"
+
+
 def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter, op_new=False):
     # floats read from ccx should use {:.13G}, see comment in writer module
 
-    is_reaction = has_pressure_field(prs_obj)
+    is_reaction = is_reaction_constraint(prs_obj)
     use_coupling = is_reaction
     if not use_coupling:
         if prs_obj.EnableAmplitude:
@@ -152,7 +165,7 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter, op_new=False):
 
         raise KeyError(key)
 
-    if is_reaction:
+    if has_pressure_field(prs_obj):
         get_pressure = get_pressure_field
     else:
         get_pressure = get_pressure_uniform
