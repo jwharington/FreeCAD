@@ -37,9 +37,24 @@ from femsolver.calculix import write_mesh as write_mesh_module
 from femexamples import constraint_mixed_edge_coupling as edge_coupling
 from femexamples import constraint_mixed_face_coupling as face_coupling
 from femtools.mixedcoupling import (
+    add_tie,
+    extreme_face_reference,
+    face_reference_on_axis,
+    find_edge_reference,
     paired_faces_by_plane,
     shell_expansion_faces,
     tie_slave_side_and_tolerance,
+)
+from femexamples._mixed_coupling_common import (
+    add_analysis,
+    add_fixed,
+    add_force,
+    add_mesh,
+    add_shape,
+    add_shell_thickness,
+    make_compound,
+    mesh_parts_separately,
+    planar_face,
 )
 from . import support_utils as testtools
 from .support_utils import fcc_print
@@ -1186,6 +1201,85 @@ def test_a_mixed_face_deck_solves_through_the_fem_solver(tmp_path):
         displacements = [float(v) for v in results[0].DisplacementLengths]
         assert displacements, "the result carries no displacement"
         assert max(displacements) > 0.0, "the mixed deck solved to zero displacement"
+    finally:
+        FreeCAD.closeDocument(doc.Name)
+
+
+def _bulkhead_document(shell_thickness=5.0):
+    """A shell bulkhead spanning a hollow solid hull, tied round its perimeter.
+
+    B2.1: the stiffener half of the mixed coverage exists geometrically (the
+    e2 web on a plate), but a *bulkhead* is defined by being bonded all round —
+    here four edge interfaces, one per cavity wall, which is the E family B6
+    made solvable.
+    """
+    doc = FreeCAD.newDocument("mixed_bulkhead")
+    hull = add_shape(
+        doc,
+        "Hull",
+        Part.makeBox(100.0, 50.0, 50.0).cut(
+            Part.makeBox(90.0, 40.0, 40.0, FreeCAD.Vector(5.0, 5.0, 5.0))
+        ),
+    )
+    bulkhead = add_shape(
+        doc,
+        "Bulkhead",
+        planar_face([(5.0, 25.0, 5.0), (95.0, 25.0, 5.0), (95.0, 25.0, 45.0), (5.0, 25.0, 45.0)]),
+    )
+    make_compound(doc, "MixedGeometry", [hull, bulkhead])
+
+    analysis = add_analysis(doc, "ccxtools")
+    add_shell_thickness(doc, analysis, shell_thickness)
+    add_fixed(doc, analysis, extreme_face_reference(hull, axis=0, sign=-1))
+    add_force(doc, analysis, (bulkhead, "Face1"), magnitude=100.0, direction=(0, 0, -1))
+
+    # One tie per cavity wall the perimeter meets: floor, ceiling, and both
+    # side walls. The slave edge is on the shell, the master is the solid face.
+    for name, edge, master_axis, master_value in (
+        ("TieFloor", ((5.0, 25.0, 5.0), (95.0, 25.0, 5.0)), "z", 5.0),
+        ("TieCeiling", ((5.0, 25.0, 45.0), (95.0, 25.0, 45.0)), "z", 45.0),
+        ("TieLeft", ((5.0, 25.0, 5.0), (5.0, 25.0, 45.0)), "x", 5.0),
+        ("TieRight", ((95.0, 25.0, 5.0), (95.0, 25.0, 45.0)), "x", 95.0),
+    ):
+        add_tie(
+            doc,
+            analysis,
+            name,
+            find_edge_reference(bulkhead, *edge),
+            face_reference_on_axis(hull, master_axis, master_value, planar_only=True),
+            shell_thickness,
+        )
+
+    mesh_obj = add_mesh(doc, analysis, doc.getObject("MixedGeometry"))
+    mesh_obj.FemMesh = mesh_parts_separately(doc, [hull, bulkhead])
+    doc.recompute()
+    return doc
+
+
+@pytest.mark.slow
+def test_a_mixed_bulkhead_couples_and_solves(tmp_path):
+    """A shell bulkhead tied round its perimeter into a solid hull.
+
+    B2.1's exit: a mixed case that puts a shell bulkhead on a solid feature.
+    Every perimeter edge is an E-family interface, so this also exercises what
+    B6 made solvable, and a solve that converges with no untied node is the
+    evidence the four ties couple.
+    """
+    doc = _bulkhead_document()
+    try:
+        fea = ccxtools.FemToolsCcx(analysis=doc.Analysis, solver=doc.CalculiXCcxTools)
+        with mixed_shell_solid_flag(True):
+            fea.setup_working_dir(str(tmp_path))
+            solved = fea.run()
+        assert solved, "ccx refused the mixed bulkhead deck; see the log above"
+        assert not fea.has_missed_ties(), (
+            "a perimeter tie generated no MPC for slave nodes that found no "
+            "master face"
+        )
+        results = [o for o in doc.Analysis.Group if o.isDerivedFrom("Fem::FemResultObject")]
+        assert results, "the mixed bulkhead deck solved but no result was read back"
+        displacements = [float(v) for v in results[0].DisplacementLengths]
+        assert max(displacements) > 0.0, "the mixed bulkhead deck solved to zero displacement"
     finally:
         FreeCAD.closeDocument(doc.Name)
 
