@@ -119,17 +119,23 @@ this is the only open track).
       still displaying.
 
 - [x] **B2 — §11.8, coverage the plan does not reach.**  Both gaps closed:
-  - [x] **B2.1 — DONE (2026-10-11).**  A mixed **bulkhead**: a shell plate
-        spanning a hollow solid hull's cavity, tied round its perimeter — four
-        edge interfaces, one per cavity wall, which is the E family B6 made
-        solvable.  `test_mixed_shell_solid.py::test_a_mixed_bulkhead_couples_and_solves`
-        meshes the hull and plate apart, ties all four edges, solves, and
-        asserts no untied node and a non-zero displacement (`test_mixed_shell_solid.py`
-        **44 passed**).  The stiffener half was already covered geometrically —
-        e2 is "a shell web on a solid plate, the stiffener-to-skin case" and
-        solves since B6.  What was **not** built is the Composites
-        `Stiffener`/`Bulkhead` *feature* (draped panel + foot transfer) on a
-        solid; B2.1 asked for the mixed case, and it now exists.
+  - [x] **B2.1 — DONE (2026-10-11).**  The real case: the Composites
+        **`StiffenerFP` feature on a solid spar**.  `mixed_shell_solid_stiffener`
+        (registered in `compositeexamples/registry.py`) puts a QI panel
+        `Composite::Shell` on a `Part::Feature` face at the spar's top, a
+        `StiffenerFP` on that panel (its own QI laminate), and couples the panel
+        to the solid with a `*TIE`.  The stiffener's `<name>_Web` and
+        `<name>_Foot` shells are `Composite::Shell` (via `SeamGeometryFP`), so
+        the FEM section provider accepts them; each is given its own shell
+        section over **every** face of its shape.  The shell assembly is meshed
+        as one compound (folds stay conforming) and the solid on its own, then
+        merged node-disjoint and tied.  Verified:
+        `test_mixed_shell_solid_stiffener.py` **1 passed** — solves, non-zero
+        displacement, deck carries `*TIE`, `*SHELL SECTION` and `*SOLID SECTION`.
+        A plain-geometry mixed **bulkhead** (a shell plate in a hollow hull, four
+        perimeter edge ties) is also committed as
+        `test_mixed_shell_solid.py::test_a_mixed_bulkhead_couples_and_solves`, so
+        the geometry-only half has a regression too (**44 passed**).
   - [x] **B2.2 — DONE (2026-10-11), by amending the rule.**  The plan's §8
         admission rule demanded that each case "pass in both modes" and
         `femtest/gui/test_mixed_shell_solid.py` was never written, so the rule

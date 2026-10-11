@@ -409,9 +409,9 @@ matches the headless golden". Decide this before Stage 4, not after.
   `IsotropicEquivalent`, deliberately, so the example stays off the drape
   backend. A second, `mixed_shell_solid_wing.py`, carries a **real** per-ply
   laminate over a solid foam core — the motivating case of §11.5, and the one
-  that exposed the cost defects listed there. **`Stiffener` and `Bulkhead`
-  mixed coverage landed 2026-10-11 (B2.1)**: a shell bulkhead spanning a hollow
-  solid hull, tied round its perimeter.
+  that exposed the cost defects listed there. **`Stiffener` / `Bulkhead` mixed
+  coverage landed 2026-10-11 (B2.1)**: the Composites `StiffenerFP` feature on a
+  solid spar, in `mixed_shell_solid_stiffener`, tied and solved.
 - Delete the getter and the flag branches after one release.
 
 **Fixes that came after the stages, from *using* the path rather than building
@@ -1883,10 +1883,11 @@ point load on the tie's shell slave — is §11.9.
 Two gaps in what the tests exercise, as opposed to what the code can do:
 
 - ~~**`Stiffener` / `Bulkhead`** — no mixed coverage at all.~~ **Done
-  2026-10-11 (B2.1).**  A shell bulkhead spans a hollow solid hull's cavity and
-  is tied round its perimeter (four edge interfaces); `test_mixed_shell_solid.py`
-  meshes the parts apart, ties all four edges and solves with no untied node.
-  The stiffener half was already covered geometrically by e2.
+  2026-10-11 (B2.1).**  `mixed_shell_solid_stiffener` puts a real `StiffenerFP`
+  on a `Composite::Shell` panel declared on a solid spar, ties the panel to the
+  solid, sections the panel/web/foot shells and solves; a plain-geometry
+  bulkhead (a plate in a hollow hull, four perimeter edge ties) is a second
+  regression.
 - ~~**The GUI half of §8.**~~ **Resolved 2026-10-11 by amending the rule**
   (§8): the deck has one builder, and every `GuiUp` branch in a mixed example is
   ViewObject-only, so the deck cannot differ between entry points.  The

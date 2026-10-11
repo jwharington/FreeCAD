@@ -141,8 +141,9 @@ moves material through the thickness, and it can at most be *reported*.
 
 - ~~**B3** `*CLOAD`-on-a-tie-slave hazard~~ — **done 2026-10-11** (write-time
   check, scoped to shell-to-shell ties; fixture `test_constraint_tie_shell.py`);
-  ~~**B2.1** stiffener/bulkhead mixed coverage~~ — **done 2026-10-11** (a mixed
-  bulkhead in a hollow hull, tied round its perimeter).  ~~**B5.1** compared-pair coverage~~ — **done 2026-10-11** (decided
+  ~~**B2.1** stiffener/bulkhead mixed coverage~~ — **done 2026-10-11** (the
+  Composites `StiffenerFP` on a solid spar: `mixed_shell_solid_stiffener`, tied
+  and solved; plus a plain-geometry bulkhead case in `test_mixed_shell_solid`).  ~~**B5.1** compared-pair coverage~~ — **done 2026-10-11** (decided
   and recorded: no compared pair for the stand-off families, plus a
   non-zero-displacement assertion for all four).  ~~**B8** per-skin laminate
   offset~~ — **done 2026-10-11** (the feature had already landed; the
