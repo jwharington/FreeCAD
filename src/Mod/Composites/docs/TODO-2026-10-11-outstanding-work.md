@@ -117,6 +117,28 @@ this is the only open track).
       rebuild** — the only item here with a build cost.
       *Exit:* a toggle that hides one dimension, with the mixed wing and plate
       still displaying.
+      **Implemented 2026-10-11, awaiting the owner's visual check** (the Gui
+      module cannot load headlessly, so the render has no headless test).
+      - **Root cause.**  `ViewProviderFemMesh.cpp` computed
+        `bool ShowFaces = (numFaces > 0 && numVolu == 0)`, so a **mixed** mesh
+        took the volume-faces-only branch and the shell faces
+        (`FemMesh::getFacesOnly()`, the faces belonging to no volume) were never
+        emitted at all — the skin was invisible, with no knob to bring it back.
+      - **Fix.**  A new `FemGui::ViewProviderFemMesh.ShowDimensions` enum
+        (`All` / `Shells` / `Solids`, default `All`, group *Display Options*,
+        settable from Python like any property).  `createMesh` takes it and, on
+        a mixed mesh, sizes the face helper for the shells plus/only the
+        volumes per the mode, runs the face loop (keeping only ids in
+        `getFacesOnly()` so the solid's skin is not drawn twice) and/or the
+        volume loop.  A non-mixed mesh has one possible answer and ignores the
+        mode.  Changing the property rebuilds, like `ShowInner`.
+      - **Premise guarded headlessly:**
+        `test_mixed_shell_solid.py::test_every_variant_meshes_to_a_mixed_femmesh`
+        asserts `FacesOnly` and `Volumes` are both non-empty for every face and
+        edge variant, which is the split the toggle acts on.
+      - **To eyeball:** open the mixed plate (or wing), select the result mesh,
+        and switch *ShowDimensions* through All / Shells / Solids; Shells shows
+        the skin alone, Solids the spar alone, All both.
 
 - [x] **B2 — §11.8, coverage the plan does not reach.**  Both gaps closed:
   - [x] **B2.1 — DONE (2026-10-11).**  The real case: the Composites

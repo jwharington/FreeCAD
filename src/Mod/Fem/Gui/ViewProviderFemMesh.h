@@ -53,7 +53,8 @@ public:
         std::vector<unsigned long>&,
         bool& edgeOnly,
         bool ShowInner,
-        int MaxFacesShowInner
+        int MaxFacesShowInner,
+        const char* showDimensions = "All"
     ) const;
 };
 
@@ -76,6 +77,8 @@ public:
     App::PropertyBool ShowInner;
     App::PropertyInteger MaxFacesShowInner;
     App::PropertyEnumeration ColorMode;
+    /// which element dimensions a mixed result draws: All, Shells or Solids
+    App::PropertyEnumeration ShowDimensions;
     App::PropertyColorList NodeColorArray;
     App::PropertyColorList ElementColorArray;
 
@@ -152,7 +155,11 @@ public:
 private:
     static App::PropertyFloatConstraint::Constraints floatRange;
     static const char* colorModeEnum[];
+    static const char* showDimensionsEnum[];
     Gui::ViewProviderSuppressibleExtension suppressibleExt;
+
+    /// rebuild the visual mesh with the current display options
+    void rebuildMesh();
 
 protected:
     /// get called by the container whenever a property has been changed

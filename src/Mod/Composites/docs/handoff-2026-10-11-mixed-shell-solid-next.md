@@ -103,7 +103,7 @@ This session (2026-10-11), each with its own tracker note:
 
 The tracker's ordering, minus the closed items:
 
-1. **B1** — the C++ view-provider change; the only item with a **rebuild**.
+1. **B1** — done pending the owner's visual check (below).
 2. **B9.2** delete `femsolver/settings.py::get_allow_mixed_elements` and its
    call sites **after one release has shipped** with the default on.
 3. **B9.3** decide the branch's fate (keep it the explicit working record, or
@@ -112,15 +112,19 @@ The tracker's ordering, minus the closed items:
 
 `B9.6` was the other open cleanup; it is resolved (below).
 
-## 3. B1 — the results-viewer toggle (the one rebuild item)
+## 3. B1 — the results-viewer toggle (implemented, awaiting the visual check)
 
-A mixed result displays, but the skin and the solid cannot be told apart: a skin
-coincident with a solid face z-fights, and
-`ViewProviderFemMesh.VisibleElementFaces` (`src/Mod/Fem/Gui/ViewProviderFemMeshPyImp.cpp`)
-is a **read-only computed getter** with no dimension filter; `ColorMode` /
-`ShowInner` / `MaxFacesShowInner` do not separate shells from solids.  *Exit:* a
-toggle that hides one dimension, with the mixed wing and plate still
-displaying.  It is the only item that needs a C++ build.
+A mixed result displays, but the skin and the solid could not be told apart: the
+view provider computed `ShowFaces = (numFaces > 0 && numVolu == 0)`, so a mixed
+mesh took the volume-faces-only branch and the shell faces were never emitted.
+A new `FemGui::ViewProviderFemMesh.ShowDimensions` enum (`All` / `Shells` /
+`Solids`, default `All`, *Display Options*) now picks the dimension:
+`createMesh` builds the shells (only ids in `FemMesh::getFacesOnly()`) and/or
+the volumes per the mode, and a non-mixed mesh ignores it.  It is the only item
+with a C++ build, and the Gui module cannot load headlessly, so the render has
+no headless test — the owner is to open the mixed plate/wing and switch the
+property through the three modes.  The split it acts on is already asserted in
+`test_mixed_shell_solid.py::test_every_variant_meshes_to_a_mixed_femmesh`.
 
 ## 4. B7 — the tie-assignment pass (implemented)
 

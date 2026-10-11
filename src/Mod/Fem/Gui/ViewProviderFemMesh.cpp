@@ -37,7 +37,9 @@
 #include <Inventor/nodes/SoSeparator.h>
 #include <Inventor/nodes/SoShapeHints.h>
 
+#include <set>
 #include <sstream>
+#include <string>
 
 #include <SMESHDS_Mesh.hxx>
 #include <SMESH_Mesh.hxx>
@@ -188,6 +190,8 @@ App::PropertyFloatConstraint::Constraints ViewProviderFemMesh::floatRange = {1.0
 
 const char* ViewProviderFemMesh::colorModeEnum[] = {"Overall", "ByElement", "ByNode", nullptr};
 
+const char* ViewProviderFemMesh::showDimensionsEnum[] = {"All", "Shells", "Solids", nullptr};
+
 ViewProviderFemMesh::ViewProviderFemMesh()
 {
     sPixmap = "fem-femmesh-from-shape";
@@ -206,6 +210,13 @@ ViewProviderFemMesh::ViewProviderFemMesh()
 
     ADD_PROPERTY_TYPE(ColorMode, ("Overall"), "Display Options", App::Prop_None, "Set the color mode");
     ADD_PROPERTY_TYPE(
+        ShowDimensions,
+        ("All"),
+        "Display Options",
+        App::Prop_None,
+        "Which element dimensions a mixed result draws"
+    );
+    ADD_PROPERTY_TYPE(
         NodeColorArray,
         (PointColor.getValue()),
         "Object Style",
@@ -223,6 +234,7 @@ ViewProviderFemMesh::ViewProviderFemMesh()
     suppressibleExt.initExtension(this);
 
     ColorMode.setEnums(colorModeEnum);
+    ShowDimensions.setEnums(showDimensionsEnum);
     onlyEdges = false;
 
     pcDrawStyle = new SoDrawStyle();
@@ -392,10 +404,32 @@ void ViewProviderFemMesh::updateData(const App::Property* prop)
             vNodeElementIdx,
             onlyEdges,
             ShowInner.getValue(),
-            MaxFacesShowInner.getValue()
+            MaxFacesShowInner.getValue(),
+            ShowDimensions.getValueAsString()
         );
     }
     Gui::ViewProviderGeometryObject::updateData(prop);
+}
+
+void ViewProviderFemMesh::rebuildMesh()
+{
+    if (!this->pcObject) {
+        // a property change during document restore can arrive before attach()
+        return;
+    }
+    ViewProviderFEMMeshBuilder builder;
+    builder.createMesh(
+        &(static_cast<Fem::FemMeshObject*>(this->pcObject)->FemMesh),
+        pcCoords,
+        pcFaces,
+        pcLines,
+        vFaceElementIdx,
+        vNodeElementIdx,
+        onlyEdges,
+        ShowInner.getValue(),
+        MaxFacesShowInner.getValue(),
+        ShowDimensions.getValueAsString()
+    );
 }
 
 void ViewProviderFemMesh::onChanged(const App::Property* prop)
@@ -427,20 +461,9 @@ void ViewProviderFemMesh::onChanged(const App::Property* prop)
             // pShapeHints->vertexOrdering = SoShapeHints::CLOCKWISE;
         }
     }
-    else if (prop == &ShowInner) {
+    else if (prop == &ShowInner || prop == &ShowDimensions) {
         // recalc mesh with new settings
-        ViewProviderFEMMeshBuilder builder;
-        builder.createMesh(
-            &(static_cast<Fem::FemMeshObject*>(this->pcObject)->FemMesh),
-            pcCoords,
-            pcFaces,
-            pcLines,
-            vFaceElementIdx,
-            vNodeElementIdx,
-            onlyEdges,
-            ShowInner.getValue(),
-            MaxFacesShowInner.getValue()
-        );
+        rebuildMesh();
     }
     else if (prop == &LineWidth) {
         pcDrawStyle->lineWidth = LineWidth.getValue();
@@ -942,7 +965,8 @@ void ViewProviderFEMMeshBuilder::createMesh(
     std::vector<unsigned long>& vNodeElementIdx,
     bool& onlyEdges,
     bool ShowInner,
-    int MaxFacesShowInner
+    int MaxFacesShowInner,
+    const char* showDimensions
 ) const
 {
 
@@ -976,15 +1000,27 @@ void ViewProviderFEMMeshBuilder::createMesh(
     int numPris = info.NbPrisms();
 
 
-    bool ShowFaces = (numFaces > 0 && numVolu == 0);
-
-    int numTries;
-    if (ShowFaces) {
-        numTries = numTria + numQuad /*+numPoly*/ + numTetr * 4 + numHexa * 6 + numPyrd * 5
-            + numPris * 5;
+    // A mixed mesh holds shell faces (faces that belong to no volume) beside
+    // its volumes; ShowDimensions picks which of the two is drawn, and a
+    // non-mixed mesh has only one possible answer, so the property is ignored
+    // there. The face iterator yields the volume boundary faces as well, so a
+    // mixed mesh keeps only the ones in getFacesOnly() - otherwise the solid's
+    // skin would be drawn twice.
+    const int volumeFaces = numTetr * 4 + numHexa * 6 + numPyrd * 5 + numPris * 5;
+    std::set<int> facesOnly;
+    if (numVolu > 0 && std::string(showDimensions) != "Solids") {
+        facesOnly = mesh->getValue().getFacesOnly();
     }
-    else {
-        numTries = numTetr * 4 + numHexa * 6 + numPyrd * 5 + numPris * 5;
+    const bool isMixed = !facesOnly.empty();
+    const bool ShowFaces = isMixed || numVolu == 0;
+    const bool ShowVolumes = isMixed ? std::string(showDimensions) != "Shells" : numVolu > 0;
+
+    int numTries = 0;
+    if (ShowFaces) {
+        numTries += isMixed ? static_cast<int>(facesOnly.size()) : numTria + numQuad /*+numPoly*/;
+    }
+    if (ShowVolumes) {
+        numTries += volumeFaces;
     }
     // It is not 100% sure that a prism in smesh is a pentahedron in any case, but it will be in
     // most cases! See https://forum.freecad.org/viewtopic.php?f=18&t=13583#p109707
@@ -1011,6 +1047,10 @@ void ViewProviderFEMMeshBuilder::createMesh(
         SMDS_FaceIteratorPtr aFaceIter = data->facesIterator();
         for (; aFaceIter->more();) {
             const SMDS_MeshFace* aFace = aFaceIter->next();
+            if (isMixed && facesOnly.find(aFace->GetID()) == facesOnly.end()) {
+                // a face of the solid's skin, drawn by the volume pass
+                continue;
+            }
 
             int num = aFace->NbNodes();
             switch (num) {
@@ -1087,7 +1127,8 @@ void ViewProviderFEMMeshBuilder::createMesh(
             }
         }
     }
-    else {
+
+    if (ShowVolumes) {
 
         // iterate all volumes
         SMDS_VolumeIteratorPtr aVolIter = data->volumesIterator();
