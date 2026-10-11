@@ -146,7 +146,7 @@ def _material(doc, analysis, name, references):
     return material
 
 
-def _add_material(analysis, doc, with_shell_thickness):
+def _add_material(analysis, doc, with_shell_thickness, offset=-0.5):
     material = ObjectsFem.makeMaterialSolid(doc, "MechanicalMaterial")
     steel = material.Material
     steel["Name"] = "CalculiX-Steel"
@@ -160,8 +160,11 @@ def _add_material(analysis, doc, with_shell_thickness):
         # The manual: "OFFSET=0.5 means that the reference surface is the top
         # surface of the shell". The skin must sit *on* the spar, so it goes the
         # other way: -0.5 makes the reference surface the bottom and the section
-        # occupies z=20..25, where the reference model's skin slab is.
-        thickness.Offset = -0.5
+        # occupies z=20..25, where the reference model's skin slab is. 0.0 is
+        # the mid-surface idealisation, with the section centred on the
+        # reference surface and half of it inside the spar - deliberately
+        # softer, to pin the offset's sign and size.
+        thickness.Offset = offset
         analysis.addObject(thickness)
 
 
@@ -195,7 +198,7 @@ def _meshed_part(doc, name, shape):
     return part, mesh_obj
 
 
-def _build_mixed(doc):
+def _build_mixed(doc, offset=-0.5, tolerance=1.0):
     spar, spar_mesh = _meshed_part(doc, "Spar", _spar_shape())
     skin, skin_mesh = _meshed_part(doc, "Skin", _skin_shape())
     merged, _, _ = meshtools.merge_femmeshes(spar_mesh.FemMesh, skin_mesh.FemMesh)
@@ -207,7 +210,7 @@ def _build_mixed(doc):
 
     analysis = ObjectsFem.makeAnalysis(doc, "Analysis")
     solver = _add_solver(analysis, doc)
-    _add_material(analysis, doc, with_shell_thickness=True)
+    _add_material(analysis, doc, with_shell_thickness=True, offset=offset)
 
     fixed = ObjectsFem.makeConstraintFixed(doc, "Fixed")
     fixed.References = [face_reference_on_axis(spar, "x", 0.0)]
@@ -225,8 +228,11 @@ def _build_mixed(doc):
         face_reference_on_axis(spar, "z", SPAR_HEIGHT),
     ]
     # A zero position tolerance makes CalculiX cascade over an under-determined
-    # constraint set and never converge; the examples use 1.0 mm here too.
-    tie.Tolerance = 1.0
+    # constraint set and never converge; the examples use 1.0 mm here too. The
+    # mid-surface variant needs half a thickness, because its chosen expansion
+    # face sits that far from the master and a smaller tolerance would couple
+    # nothing.
+    tie.Tolerance = tolerance
     analysis.addObject(tie)
 
     mesh_obj = analysis.addObject(ObjectsFem.makeMeshGmsh(doc, "Mesh"))[0]
@@ -537,6 +543,11 @@ def _measure(builder, name, args):
 
 BUILDERS = {
     "mixed": _build_mixed,
+    # The same model with the section on its mid-surface instead of the core
+    # face: the offset's own reference for whether its sign is right.
+    "mixed_mid_surface": lambda doc: _build_mixed(
+        doc, offset=0.0, tolerance=SKIN_THICKNESS / 2.0
+    ),
     "solid": _build_all_solid,
     "bare": _build_bare,
     "tied_solid": _build_tied_solid,
@@ -574,7 +585,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--model",
-        choices=["mixed", "solid", "bare", "tied_solid", "compound", "all"],
+        choices=[
+            "mixed",
+            "mixed_mid_surface",
+            "solid",
+            "bare",
+            "tied_solid",
+            "compound",
+            "all",
+        ],
         default="all",
         help="which model(s) to build",
     )

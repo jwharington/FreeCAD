@@ -69,7 +69,7 @@ def tip_deflections(tmp_path_factory):
     try:
         return {
             name: probe.measure(probe.BUILDERS[name], name, workdir)
-            for name in ("mixed", "solid", "bare")
+            for name in ("mixed", "mixed_mid_surface", "solid", "bare")
         }
     finally:
         group.SetBool(FLAG_NAME, previous)
@@ -96,6 +96,21 @@ def test_a_tied_skin_is_stiffer_than_a_bare_spar(tip_deflections):
     assert mixed * MIN_STIFFENING_RATIO < bare, (
         "the tied skin must carry load, not just be written: "
         f"mixed {mixed:.6e} mm against bare {bare:.6e} mm"
+    )
+
+
+def test_the_section_offset_stiffens_the_skin(tip_deflections):
+    # The offset moves the skin onto the core face, away from the reference
+    # surface the tie names, so the sandwich bends stiffer. It is load-bearing:
+    # a reversed sign puts the skin inboard and makes it *softer* than the
+    # mid-surface idealisation, which still looks plausible in a fringe plot.
+    # This is the check that catches a wrong sign, not a reading of the code.
+    offsetted = tip_deflections["mixed"]
+    mid_surface = tip_deflections["mixed_mid_surface"]
+    assert offsetted < mid_surface, (
+        "the skin offset onto the core face must be stiffer than the same skin "
+        f"at its mid-surface: offsetted {offsetted:.6e} mm against mid-surface "
+        f"{mid_surface:.6e} mm"
     )
 
 
