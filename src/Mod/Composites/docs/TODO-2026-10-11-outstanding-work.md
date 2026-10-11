@@ -156,6 +156,15 @@ it.  "§" refers to `plan-mixed-shell-solid-fem.md`.
         master's side; (2) derive the required tolerance in `checksanalysis`
         from geometry and **warn** when `tolerance < required`, naming faces,
         both numbers and the remedy; (3) only then set an offset in a fixture.
+        **Traced 2026-10-11:** the function takes only `ccxwriter`, so it cannot
+        see which shell the tie's slave is, even though its caller
+        `write_meshdata_constraint(f, femobj, tie_obj, ccxwriter)`
+        (`write_constraint_tie.py:79`) holds the tie's resolved faces and the tie
+        object.  Choosing by the master needs the signed distance from the slave
+        shell's reference surface to the master plane along the shell normal —
+        §11.11's `o`/`g` table — a geometry query the writer does not make
+        today; today's rule (`1 if Offset < 0 else 2`) is correct only for a
+        master sitting **on** the reference surface (`g = 0`).
   - *Not scheduled:* making the offset land an expansion node on the contact
       plane (`o = g/t − 0.5`).  The requirement is **per tie pair, not per
       shell**, and it moves material through the thickness — it can at most be
@@ -199,6 +208,24 @@ it.  "§" refers to `plan-mixed-shell-solid-fem.md`.
       `*EQUATION` stays the fallback.  *Exit:* `e1`–`e3` write and solve, and
       the loud refusal in `checksanalysis._tie_references_that_are_not_faces`
       narrows to genuinely inexpressible connections.
+      **Path, traced 2026-10-11** (so the next session starts from code, not
+      from this summary): `get_constraints_tie_faces`
+      (`meshsetsgetter.py:910`) calls `_get_elements` per reference and stores
+      `(refs, surf, is_sub_el)` triples; `write_constraint_tie.py:81-100` writes
+      `elem,S{fno}` when `is_sub_el` is true (a solid's face, resolved per
+      element) and `elem,S{shell_side}` when it is false (a shell face, one side
+      for every element).  An **edge** reference reaches `_get_elements`, is
+      resolved through the face table regardless, and yields a face index that
+      came from an edge mask — which is why
+      `_tie_references_that_are_not_faces` refuses it
+      (`get_shape_dimension(...) != 2`).
+      **What is missing** is the mapping OCC edge → element edge index →
+      `S(3 + index)` per element along that edge: CalculiX expands a shell into
+      a solid whose faces 3–6 are its side faces, which is exactly the surface an
+      E-shaped joint needs.  Its home is beside the existing shape lookups in
+      `femtools/mixedcoupling.py` (§11.13 moved them there), so the getter and
+      the writer share one definition; the refusal then narrows to a reference
+      with no expressible surface.
 
 - [ ] **B7 — §12, assign the ties from the references the model already
       carries.**  **Status: proposal — review before any code.**  A pass that
