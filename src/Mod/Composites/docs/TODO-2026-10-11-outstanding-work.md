@@ -207,33 +207,36 @@ this is the only open track).
         `test_mixed_shell_solid_plate_solves` and `_wing_solves` solver tests
         still pass.
 
-- [ ] **B6 — the E (edge-interface) family.**  `e1`–`e3` are **refused loudly,
-      not solved**.  ADR 0004 puts the family **in scope** and selects the same
-      mechanism (`*TIE`, shell edge face S3–S6 → solid face); the blocker is
-      FreeCAD's reference→surface mapping —
-      `meshsetsgetter.get_constraints_tie_faces` supplies faces only.
-      *First-choice fix:* let an Edge selection on a shell yield its edge face.
-      `*EQUATION` stays the fallback.  *Exit:* `e1`–`e3` write and solve, and
-      the loud refusal in `checksanalysis._tie_references_that_are_not_faces`
-      narrows to genuinely inexpressible connections.
-      **Path, traced 2026-10-11** (so the next session starts from code, not
-      from this summary): `get_constraints_tie_faces`
-      (`meshsetsgetter.py:910`) calls `_get_elements` per reference and stores
-      `(refs, surf, is_sub_el)` triples; `write_constraint_tie.py:81-100` writes
-      `elem,S{fno}` when `is_sub_el` is true (a solid's face, resolved per
-      element) and `elem,S{shell_side}` when it is false (a shell face, one side
-      for every element).  An **edge** reference reaches `_get_elements`, is
-      resolved through the face table regardless, and yields a face index that
-      came from an edge mask — which is why
-      `_tie_references_that_are_not_faces` refuses it
-      (`get_shape_dimension(...) != 2`).
-      **What is missing** is the mapping OCC edge → element edge index →
-      `S(3 + index)` per element along that edge: CalculiX expands a shell into
-      a solid whose faces 3–6 are its side faces, which is exactly the surface an
-      E-shaped joint needs.  Its home is beside the existing shape lookups in
-      `femtools/mixedcoupling.py` (§11.13 moved them there), so the getter and
-      the writer share one definition; the refusal then narrows to a reference
-      with no expressible surface.
+- [x] **B6 — DONE (2026-10-11).**  `e1`–`e3` write and **solve**.  The
+      handover's "what is missing" was wrong on the code: the mapping OCC edge →
+      element edge index → `S(3 + index)` already exists —
+      `calculixutils.define_masks` sets `offset = 2` in 3D, so the edge masks
+      are exactly `{edge → S3-S6}` — and `write_constraint_tie.py` already
+      wrote `elem,S{fno}` for a sub-element surface.  What was broken is the
+      **table the edge was resolved against**: `get_subelements_by_references`
+      searched `sets_getter.femelement_table`, and `get_femelement_table`
+      fills that with the highest dimension only — the volumes in a mixed
+      mesh — so a shell Edge matched no element and `TieSlaveFaces` came back
+      empty (the loud refusal then hid the resolution bug).  Fixed in
+      `femmesh/meshtools.py`: `get_elements_by_reference_dimension` case 1
+      resolves an Edge whose object is a shell against the dimension-2 table
+      with the edge masks (`get_dimension_tables`, factored out of
+      `get_elements_by_references_of_dimension`), and
+      `get_subelements_by_references` takes the table to search.
+      `checksanalysis._tie_references_that_are_not_faces` narrowed to accept
+      that Edge — a shell edge face *is* a surface — while an Edge on a solid,
+      a Vertex and a Solid stay refused.
+      **A second defect the solve exposed:** a line load on a shell edge in a
+      mixed mesh wrote an empty `*CLOAD` for the same reason;
+      `MeshSetsGetter.get_constraints_force_nodeloads` now selects the
+      dimension-2 table for an Edge on a shell (`_edge_load_element_table`).
+      e1/e3's edge faces straddle the solid's plane, so their tie tolerance is
+      the shell thickness — half a thickness is what reaches the expansion
+      nodes.  Verified: `test_mixed_shell_solid.py` **38 passed**, including
+      `test_a_mixed_edge_deck_solves_through_the_fem_solver` for e1/e2/e3
+      (`has_missed_ties()` false, non-zero displacement),
+      `test_edge_tie_slave_is_the_shells_edge_face` and
+      `test_edge_load_on_a_shell_reaches_the_deck`.
 
 - [ ] **B7 — §12, assign the ties from the references the model already
       carries.**  **Status: proposal — review before any code.**  A pass that
@@ -322,7 +325,7 @@ this is the only open track).
 | item | blocked by | blocks |
 |---|---|---|
 | ~~A2.1–A2.8~~ done | — | — |
-| B1, B2.1, B3, B5.1, B6, B8, B9.2, B9.3 | — | — |
+| B1, B2.1, B3, B5.1, B8, B9.2, B9.3 | — | — |
 | B4.1 | — | B7 |
 | B7 | review; B4.1 | — |
 
@@ -339,8 +342,8 @@ shared file.
 1. ~~**A1** (commit the docs), then **B9.1**, **B5.2**, **B5.3**, **B2.2** — the
    small, self-contained cleanups.~~ **Done 2026-10-11**, together with `B9.1b`
    and `B9.4`, which the B9.1 investigation turned up.
-2. **B6** (the E family) and **B4.1** — the two real defects that are reachable
-   without a rebuild.
+2. ~~**B6** (the E family)~~ **done 2026-10-11**; **B4.1** — the remaining real
+   defect reachable without a rebuild.
 3. **B3**, **B2.1**, **B5.1**, **B8** — the ones needing a fixture.
 4. **B1** — the C++ change, last because it needs a rebuild.
 5. ~~**A2** — the study-side donation tail, whose gate is the lc03

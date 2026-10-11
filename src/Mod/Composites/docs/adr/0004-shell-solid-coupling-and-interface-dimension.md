@@ -83,6 +83,15 @@ resolution to yield a shell edge face (S3-S6) for `*TIE`. That is strictly less
 work than adding an `*EQUATION` writer, and it is the option to attempt first.
 Until it lands, an E-shaped connection must fail **loudly** — see below.
 
+> **Landed 2026-10-11 (B6).**  An Edge on a shell now resolves to its edge
+> face: `meshtools.get_elements_by_reference_dimension` resolves such an Edge
+> against the dimension-2 element table with the edge masks (which already
+> number a shell's side faces S3-S6), and `checksanalysis` accepts the
+> reference.  It needed no new mapping code and no `*EQUATION` writer; the
+> blocker was that the sub-element search looked in the highest-dimension
+> table, which holds only volumes in a mixed mesh.  Obligation 3 is unchanged
+> but narrower: an Edge on a *solid*, a Vertex and a Solid still raise.
+
 ## Considered alternatives
 
 - **Conformal shared-node coupling.** Rejected. It hides the shell from

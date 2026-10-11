@@ -890,6 +890,18 @@ edge, so the connection carries a moment that a surface tie cannot express.
 > retained because the writer-side limits it cites are still real and still
 > the reason the E family is unavailable *from FreeCAD*.
 
+> **Resolved 2026-10-11 (B6).**  The reference→surface mapping now exists, and
+> it needed no new mapping code: the edge masks already number a shell's edge
+> faces S3-S6 (`define_masks` sets `offset = 2` in 3D), and the writer already
+> emitted `elem,S{fno}` for a sub-element surface.  The defect was the element
+> table the edge was resolved against — `get_subelements_by_references` searched
+> the highest-dimension table, which holds only volumes in a mixed mesh, so a
+> shell Edge matched nothing and `TieSlaveFaces` came back empty.
+> `meshtools.get_elements_by_reference_dimension` now resolves a shell Edge
+> against the dimension-2 table with the edge masks, `checksanalysis` accepts
+> that reference, and e1-e3 write and solve.  A line load on a shell edge had
+> the same defect in the force path and is fixed with it.  See the tracker's B6.
+
 `*TIE` cannot be *generated* for an edge interface. Verified, not assumed:
 
 - `write_constraint_tie.py:63-77` writes `*SURFACE, NAME=…` entries of the
@@ -1566,10 +1578,11 @@ What remains open, stated exactly:
   `FemToolsCcx(..., test_mode=True)`, and `femtools/ccxtools.py:551` refuses
   outright: *"CalculiX can not be run if test_mode is True."* That suite asserts
   deck text and mesh structure; solving lives in the Composites suite above.
-- **e1-e3 are refused, not unsolved.** The edge family cannot be generated at
-  all: §5 puts edge-connected coupling out of scope and §11.1 makes it a loud
-  error, so those three have no displacement number by design rather than by
-  omission. Give them one only if ADR 0004 selects an edge mechanism.
+- **~~e1-e3 are refused, not unsolved.~~ — solved (B6, 2026-10-11).** ADR 0004
+  selected the edge mechanism and it is now implemented: an Edge on a shell
+  resolves to the shell's edge face (S3-S6), the tie writes it, and all three
+  variants write and solve. The refusal narrows to a reference with no
+  expressible surface (an Edge on a solid, a Vertex, a Solid).
 - **The Composites example test can still skip.**
   `test_mixed_shell_solid_plate_solves` `skipTest`s when the FEM stack is
   unavailable, so it is weaker than the new numerical test, which skips only

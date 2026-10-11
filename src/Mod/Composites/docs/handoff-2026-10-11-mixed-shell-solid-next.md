@@ -70,6 +70,11 @@ read-only computed getter with no dimension filter).  Details in the tracker.
 
 ## 3. B6 — the E (edge-interface) family
 
+> **DONE 2026-10-11 — see the tracker's B6.**  `e1`–`e3` write and solve.  The
+> "what is missing" below was wrong on the code: the OCC edge → `S(3 + index)`
+> mapping already existed in the edge masks, and the resolution was searching
+> the wrong element table.  The text is retained as the original reasoning.
+
 `e1`–`e3` are **refused loudly, not solved**.  ADR 0004 puts the family **in
 scope** and selects the same mechanism as the face families (`*TIE`; a shell's
 edge face S3–S6 against a solid face).  The blocker is FreeCAD's
