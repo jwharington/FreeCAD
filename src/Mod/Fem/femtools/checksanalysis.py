@@ -39,6 +39,7 @@ from femmesh import meshtools
 from . import femutils
 from .checksmaterials import check_linear_material
 from .geomtools import get_element
+from .mixedcoupling import planar_face, tie_slave_side_and_tolerance
 
 
 def _tie_references_that_are_not_faces(tie_obj):
@@ -62,6 +63,52 @@ def _tie_references_that_are_not_faces(tie_obj):
                 continue
             offenders.append(sub_ref or obj.Name)
     return offenders
+
+
+def _tie_tolerance_message(tie_obj, member):
+    """A message when a tie's tolerance cannot reach the face it has to tie.
+
+    CalculiX expands a shell and searches for a master for the *expanded* nodes,
+    half a section thickness either side of the reference surface. A tolerance
+    below the chosen face's distance from the master therefore uncouples the
+    joint silently - the job converges and the deck looks right - so the write
+    is refused, naming both faces, both numbers, and the offset that removes the
+    distance.
+    """
+    if len(tie_obj.References) < 2:
+        return None
+    slave_obj, slave_sub_refs = tie_obj.References[0]
+    master_obj, master_sub_refs = tie_obj.References[-1]
+    if not slave_sub_refs or not master_sub_refs:
+        return None
+    if meshtools.get_shape_dimension(getattr(slave_obj, "Shape", None)) != 2:
+        # Only a shell's face is expanded; a solid's face slave is tied as a
+        # sub-element and never asks the section for its side.
+        return None
+    slave_face = planar_face(get_element(slave_obj, slave_sub_refs[0]))
+    master_face = planar_face(get_element(master_obj, master_sub_refs[0]))
+    if slave_face is None or master_face is None:
+        return None
+    section = femutils.member_for_reference(
+        member.geos_shellthickness, (slave_obj, slave_sub_refs[0])
+    )
+    if section is None:
+        return None
+    thickness = section.Thickness.getValueAs("mm").Value
+    side, required, gap = tie_slave_side_and_tolerance(
+        slave_face, master_face, thickness, section.Offset
+    )
+    tolerance = tie_obj.Tolerance.getValueAs("mm").Value
+    if tolerance >= required:
+        return None
+    landing_offset = (0.5 if side == 2 else -0.5) - gap / thickness
+    return (
+        f"{tie_obj.Name}: position tolerance {tolerance:.6G} mm is below the "
+        f"{required:.6G} mm its slave face {slave_sub_refs[0]} sits from master "
+        f"{master_sub_refs[0]} (the tie names the expanded face S{side}), so it "
+        f"would couple no nodes. Set the shell section offset to "
+        f"{landing_offset:.6G}, or raise the tolerance to {required:.6G} mm.\n"
+    )
 
 
 def check_member_for_solver_calculix(analysis, solver, mesh, member):
@@ -271,6 +318,9 @@ def check_member_for_solver_calculix(analysis, solver, mesh, member):
                 message += "{} references {}, which is not a face; a tie couples two surfaces.\n".format(
                     tie.Name, sub_ref
                 )
+            tolerance_message = _tie_tolerance_message(tie, member)
+            if tolerance_message:
+                message += tolerance_message
     # sectionprint
     if member.cons_sectionprint:
         for c in member.cons_sectionprint:

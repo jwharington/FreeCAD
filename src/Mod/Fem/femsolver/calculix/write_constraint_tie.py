@@ -28,6 +28,9 @@ __url__ = "https://www.freecad.org"
 
 from FreeCAD import Units, Vector
 
+from femtools.femutils import member_for_reference
+from femtools.mixedcoupling import planar_face, tie_slave_side_and_tolerance
+
 
 def get_analysis_types():
     return "all"  # write for all analysis types
@@ -57,28 +60,63 @@ def get_after_write_constraint():
     return ""
 
 
-def _shell_slave_face(ccxwriter):
+def _tie_reference(surfaces):
+    """The ``(object, subobject)`` a tie's slave or master surface names."""
+    reference = surfaces[0][0]
+    return reference[0], reference[1][0]
+
+
+def _referenced_face(reference):
+    """The sub-shape a reference names, when it is a single planar face."""
+    obj, subobject = reference
+    return planar_face(obj.getSubObject(subobject))
+
+
+def _shell_slave_face(femobj, ccxwriter):
     """The expanded shell side that faces the master surface.
 
     CalculiX numbers a shell's faces 1 and 2 as the negative and positive
-    normal sides of the shell's 3D expansion (*SURFACE, manual). The section
-    offset decides which of those two coincides with the reference surface the
-    master is tied to: with a negative offset the reference surface is the
-    shell's bottom, so the section lies on the positive side and a master on
-    the reference surface meets face 1; a positive offset is the mirror case.
-    Writing the wrong one leaves the joint one thickness away, inside no
-    tolerance, and CalculiX then generates no tied MPC at all - silently.
+    normal sides of the shell's 3D expansion, and the section offset decides
+    where those two sit about the reference surface (``*SHELL SECTION``; the
+    manual, and ``gen3dfrom2d.f`` places them at ``ref - t*(0.5+offset)`` and
+    ``ref + t*(0.5-offset)``). The face to tie is the one nearest the master,
+    so a sandwich's two opposite-offset skins each name their own near face.
+
+    Choosing by the offset sign alone named the *first* section in the analysis
+    and could pick the far face - a whole thickness out, with no error from
+    FreeCAD and none from CalculiX.
     """
-    for femobj in ccxwriter.member.geos_shellthickness:
-        thickness = femobj["Object"]
-        if getattr(thickness, "Suppressed", False):
-            continue
-        return 1 if thickness.Offset < 0.0 else 2
-    return 2
+    slave_reference = _tie_reference(femobj["TieSlaveFaces"]) if femobj["TieSlaveFaces"] else None
+    master_reference = (
+        _tie_reference(femobj["TieMasterFaces"]) if femobj["TieMasterFaces"] else None
+    )
+    if slave_reference is None or master_reference is None:
+        return 2
+    section = member_for_reference(
+        [
+            member
+            for member in ccxwriter.member.geos_shellthickness
+            if not getattr(member["Object"], "Suppressed", False)
+        ],
+        slave_reference,
+    )
+    if section is None:
+        return 2
+    slave_face = _referenced_face(slave_reference)
+    master_face = _referenced_face(master_reference)
+    if slave_face is None or master_face is None:
+        return 1 if section.Offset < 0.0 else 2
+    side, _required, _gap = tie_slave_side_and_tolerance(
+        slave_face,
+        master_face,
+        section.Thickness.getValueAs("mm").Value,
+        section.Offset,
+    )
+    return side
 
 
 def write_meshdata_constraint(f, femobj, tie_obj, ccxwriter):
-    shell_side = _shell_slave_face(ccxwriter)
+    shell_side = _shell_slave_face(femobj, ccxwriter)
     # slave DEP
     f.write(f"*SURFACE, NAME=TIE_DEP{tie_obj.Name}\n")
     for refs, surf, is_sub_el in femobj["TieSlaveFaces"]:

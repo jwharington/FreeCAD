@@ -28,6 +28,8 @@ __url__ = "https://www.freecad.org"
 import FreeCAD
 import itertools
 
+from femtools.femutils import search_member_property
+
 
 def get_analysis_types():
     return ["thermomech"]
@@ -83,7 +85,7 @@ def write_constraint(f, femobj, bodyheatsource_obj, ccxwriter):
     for index, (ref_feat, ref_sub_obj) in enumerate(ref_iter):
 
         # search referenced material
-        mat = _search_member_property(
+        mat = search_member_property(
             ccxwriter.member.mats_linear, (ref_feat, ref_sub_obj), "Material"
         )
         density = FreeCAD.Units.Quantity(mat["Density"])
@@ -96,7 +98,7 @@ def write_constraint(f, femobj, bodyheatsource_obj, ccxwriter):
             volume = sh.Mass
             # if shape is face, get thickness
             if sh.ShapeType == "Face":
-                thick = _search_member_property(
+                thick = search_member_property(
                     ccxwriter.member.geos_shellthickness, (ref_feat, ref_sub_obj), "Thickness"
                 )
                 volume *= thick.getValueAs("mm")
@@ -110,25 +112,3 @@ def write_constraint(f, femobj, bodyheatsource_obj, ccxwriter):
         elset_name = f"{bodyheatsource_obj.Name}_{index}"
         f.write("{},BF,{:.13G}\n".format(elset_name, heat.getValueAs("t/(mm*s^3)").Value))
         f.write("\n")
-
-
-def _search_member_property(it, ref, prop_name):
-    value = None
-    for member in it:
-        member_ref = [
-            *itertools.chain(
-                *[itertools.product([i[0]], i[1]) for i in member["Object"].References]
-            )
-        ]
-        if ref in member_ref:
-            value = member["Object"].getPropertyByName(prop_name)
-            break
-
-    if not value:
-        # search membererial without references
-        for member in it:
-            if not member["Object"].References:
-                value = member["Object"].getPropertyByName(prop_name)
-                break
-
-    return value

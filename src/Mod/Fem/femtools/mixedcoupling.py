@@ -32,9 +32,54 @@ def face_normal(face):
     return face.normalAt(0.5 * (u0 + u1), 0.5 * (v0 + v1))
 
 
+def planar_face(shape):
+    """``shape`` when it is a single planar face, else ``None``.
+
+    A tie couples two surfaces, and the geometry that places a shell's expansion
+    against its master needs one plane and one normal to work with. A compound
+    of faces (a skin meshed as several faces), a curved face, an edge and a
+    solid have neither, so the caller falls back to the section's own
+    convention.
+    """
+    if shape is None or getattr(shape, "ShapeType", "") != "Face":
+        return None
+    if shape.Surface.TypeId != "Part::GeomPlane":
+        return None
+    return shape
+
+
 def plane_offset(face):
     """Return the signed distance of a planar face's plane from the origin."""
     return face.CenterOfMass.dot(face_normal(face))
+
+
+def shell_expansion_faces(thickness, offset):
+    """Signed positions of CalculiX's ``S1`` and ``S2`` about a shell's reference surface.
+
+    CalculiX places the two outer nodes of a shell's 3D expansion at
+    ``ref - t*(0.5 + offset)`` and ``ref + t*(0.5 - offset)`` (``gen3dfrom2d.f``),
+    so ``S1`` is the negative-normal face and ``S2`` the positive one.
+    """
+    return (-thickness * (0.5 + offset), thickness * (0.5 - offset))
+
+
+def tie_slave_side_and_tolerance(slave_face, master_face, thickness, offset):
+    """The expanded shell face nearest the master, the tolerance it needs, and the gap.
+
+    The master plane sits at signed distance ``gap`` from the shell's reference
+    surface, measured along the shell's normal; the face to tie is the one
+    nearest it, and the tolerance has to span that distance. Choosing by the
+    master rather than by the offset sign is what keeps a sandwich's two
+    opposite-offset skins each tied to their own near face; at ``gap = 0`` the
+    two faces are equidistant for offset 0 and this reduces to the section's own
+    convention (``S1`` when the offset is negative, ``S2`` otherwise).
+    """
+    normal = face_normal(slave_face)
+    gap = (master_face.CenterOfMass - slave_face.CenterOfMass).dot(normal)
+    negative_side, positive_side = shell_expansion_faces(thickness, offset)
+    if abs(gap - negative_side) < abs(gap - positive_side):
+        return 1, abs(gap - negative_side), gap
+    return 2, abs(gap - positive_side), gap
 
 
 def find_face_reference(obj, normal, offset, tolerance=COINCIDENT_TOLERANCE):

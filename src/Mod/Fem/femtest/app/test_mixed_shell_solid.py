@@ -30,12 +30,17 @@ from femtools import ccxtools
 from femtools import fem_extension_registry
 from femtools import membertools
 from femtools.checksanalysis import check_member_for_solver_calculix
+from femtools.femutils import member_for_reference
 from femmesh import meshsetsgetter
 from femsolver.calculix import writer as ccx_writer
 from femsolver.calculix import write_mesh as write_mesh_module
 from femexamples import constraint_mixed_edge_coupling as edge_coupling
 from femexamples import constraint_mixed_face_coupling as face_coupling
-from femtools.mixedcoupling import paired_faces_by_plane
+from femtools.mixedcoupling import (
+    paired_faces_by_plane,
+    shell_expansion_faces,
+    tie_slave_side_and_tolerance,
+)
 from . import support_utils as testtools
 from .support_utils import fcc_print
 
@@ -298,6 +303,78 @@ class TestMixedShellSolid(unittest.TestCase):
                 all(entry.endswith("," + expected) for entry in entries),
                 (offset, entries[:3]),
             )
+
+    # ********************************************************************************************
+    def test_shell_expansion_faces_land_on_the_reference_surface(self):
+        # gen3dfrom2d.f places the two outer nodes at ref - t*(0.5+offset) and
+        # ref + t*(0.5-offset), so the offset decides which of S1/S2 is the
+        # reference surface: -0.5 lands S1, +0.5 lands S2.
+        self.assertEqual((0.0, 10.0), shell_expansion_faces(10.0, -0.5))
+        self.assertEqual((-10.0, 0.0), shell_expansion_faces(10.0, 0.5))
+        self.assertEqual((-5.0, 5.0), shell_expansion_faces(10.0, 0.0))
+
+    # ********************************************************************************************
+    def test_tie_side_follows_the_master_and_the_section(self):
+        # The face to tie is the expanded face nearest the master, and the
+        # tolerance has to reach it. At gap 0 the section's own offset decides;
+        # once the master is away from the reference surface, the master side
+        # does. Choosing by the offset sign alone named the far face whenever
+        # the master was beyond the near one.
+        slave = Part.makePlane(10.0, 10.0)
+        for gap, offset, expected_side, expected_required in (
+            (0.0, 0.0, 2, 5.0),
+            (0.0, -0.5, 1, 0.0),
+            (0.0, 0.5, 2, 0.0),
+            (5.0, 0.0, 2, 0.0),
+            (-5.0, 0.0, 1, 0.0),
+            (50.0, 0.0, 2, 45.0),
+            (-50.0, 0.0, 1, 45.0),
+        ):
+            master = Part.makePlane(10.0, 10.0).translated(FreeCAD.Vector(0.0, 0.0, gap))
+            side, required, measured_gap = tie_slave_side_and_tolerance(
+                slave, master, 10.0, offset
+            )
+            self.assertEqual(expected_side, side, (gap, offset))
+            self.assertAlmostEqual(expected_required, required, places=9, msg=(gap, offset))
+            self.assertAlmostEqual(gap, measured_gap, places=9, msg=(gap, offset))
+
+    # ********************************************************************************************
+    def test_member_for_reference_prefers_the_sections_own_reference(self):
+        # A sandwich has one section per skin, offset in opposite directions.
+        # Matching the slave's own reference must win over the catch-all: taking
+        # the first section in the analysis names the far face, a whole
+        # thickness out, and ccx reports it only as "too far away".
+        doc = FreeCAD.newDocument("member_for_reference")
+        self.addCleanup(FreeCAD.closeDocument, doc.Name)
+        analysis = ObjectsFem.makeAnalysis(doc, "Analysis")
+        catch_all = analysis.addObject(ObjectsFem.makeElementGeometry2D(doc, 10, "CatchAll"))[0]
+        shell = doc.addObject("Part::Feature", "Skin")
+        shell.Shape = _square_face()
+        own = analysis.addObject(ObjectsFem.makeElementGeometry2D(doc, 10, "OwnSection"))[0]
+        own.Offset = -0.5
+        own.References = [(shell, "Face1")]
+        doc.recompute()
+
+        members = membertools.AnalysisMember(analysis).geos_shellthickness
+        self.assertIs(own, member_for_reference(members, (shell, "Face1")))
+        self.assertIs(catch_all, member_for_reference(members, (shell, "Face2")))
+
+    # ********************************************************************************************
+    def test_tie_tolerance_below_the_geometry_is_refused(self):
+        # A tolerance below the chosen face's distance from the master ties no
+        # node, with no error from FreeCAD or CalculiX. The write must fail
+        # naming both numbers and the offset that removes the distance.
+        doc = self._build_meshed(face_coupling, "f2")
+        doc.getObject("Tie1").Tolerance = 1.0
+        doc.recompute()
+
+        fea = ccxtools.FemToolsCcx(doc.Analysis, doc.CalculiXCcxTools, test_mode=True)
+        fea.update_objects()
+        with mixed_shell_solid_flag(True):
+            message = fea.check_prerequisites()
+        self.assertIn("Tie1", message)
+        self.assertIn("raise the tolerance to 5 mm", message)
+        self.assertIn("Set the shell section offset to 0.5", message)
 
     # ********************************************************************************************
     def test_edge_tie_slave_is_the_shells_edge_face(self):
@@ -1145,5 +1222,38 @@ def test_a_mixed_edge_deck_solves_through_the_fem_solver(tmp_path, variant):
         displacements = [float(v) for v in results[0].DisplacementLengths]
         assert displacements, "the result carries no displacement"
         assert max(displacements) > 0.0, "the mixed edge deck solved to zero displacement"
+    finally:
+        FreeCAD.closeDocument(doc.Name)
+
+
+@pytest.mark.slow
+def test_a_mixed_deck_with_the_landing_offset_solves_with_no_untied_node(tmp_path):
+    """The offset that lands the expanded face on the master rescues a small tolerance.
+
+    The partner of the refusal test: the same under-toleranced model, with the
+    section offset set so the tie's chosen face coincides with the master. The
+    write passes and CalculiX reports no untied node, which is the evidence that
+    the face the writer named is the one that reaches.
+    """
+    doc = face_coupling.setup(variant="f2")
+    try:
+        doc.getObject("ShellThickness").Offset = -0.5
+        doc.getObject("Tie1").Tolerance = 1.0
+        doc.recompute()
+        fea = ccxtools.FemToolsCcx(analysis=doc.Analysis, solver=doc.CalculiXCcxTools)
+        with mixed_shell_solid_flag(True):
+            fea.setup_working_dir(str(tmp_path))
+            solved = fea.run()
+        assert solved, "ccx refused the landing-offset deck; see the log above"
+        assert not fea.has_missed_ties(), (
+            "the *TIE generated no MPC for slave nodes that found no master face"
+        )
+        results = [
+            o for o in doc.Analysis.Group
+            if o.isDerivedFrom("Fem::FemResultObject")
+        ]
+        assert results, "the deck solved but no result was read back"
+        displacements = [float(v) for v in results[0].DisplacementLengths]
+        assert max(displacements) > 0.0, "the deck solved to zero displacement"
     finally:
         FreeCAD.closeDocument(doc.Name)

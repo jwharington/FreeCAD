@@ -32,6 +32,7 @@ __title__ = "FEM Utilities"
 __author__ = "Markus Hovorka, Bernd Hahnebach, Uwe Stöhr"
 __url__ = "https://www.freecad.org"
 
+import itertools
 import os
 import subprocess
 from platform import system
@@ -346,6 +347,35 @@ def get_refshape_type(fem_doc_object):
             f"References: empty in {fem_doc_object.Name}, {fem_doc_object.Label}\n"
         )
         return ""
+
+
+def member_for_reference(members, reference):
+    """The analysis member that sections the shape a reference names.
+
+    ``members`` is a list of analysis-member dicts, each carrying its
+    ``"Object"``; ``reference`` is a ``(feature, subobject)`` pair. The member
+    whose references include that pair wins; failing that, the first member with
+    no references at all - a section that applies to every shell. ``None`` when
+    neither exists.
+    """
+    for member in members:
+        member_references = [
+            *itertools.chain(
+                *[itertools.product([i[0]], i[1]) for i in member["Object"].References]
+            )
+        ]
+        if reference in member_references:
+            return member["Object"]
+    for member in members:
+        if not member["Object"].References:
+            return member["Object"]
+    return None
+
+
+def search_member_property(members, reference, property_name):
+    """The property of the member that sections the shape a reference names."""
+    member = member_for_reference(members, reference)
+    return None if member is None else member.getPropertyByName(property_name)
 
 
 def pydecode(bytestring):
