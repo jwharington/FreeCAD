@@ -26,7 +26,8 @@ Also fixed: §11.13, where the mixed-coupling shape lookups and tie/load
 helpers existed in a separate copy per mixed file; they now live in one Fem
 module (`femtools/mixedcoupling.py`).
 Open: the results-viewer toggle
-(§11.4), the coverage and cleanup tail (§11.8, §11.10), a tie hazard the
+(§11.4), `Stiffener` / `Bulkhead` mixed coverage and the cleanup tail (§11.8,
+§11.10), a tie hazard the
 tolerance research turned up (§11.9), and the question of landing a shell's
 expansion node on the contact plane (§11.11), which is written up and
 deliberately **parked**. All four face families are solved as of `6fc22a9334`;
@@ -679,7 +680,8 @@ Close them before anyone proposes the single-pass Gmsh route.
 
 ---
 
-## 8. Geometry test cases (headless + GUI)
+## 8. Geometry test cases (headless; the GUI half is deferred — see the amended
+admission rule below)
 
 The stages in §3 say *what to change*; this section says *how we prove it
 on real geometry*, through both entry points, before anything is
@@ -688,16 +690,31 @@ user-visible. Every case here is geometry-driven: real `Part` shapes in a
 
 **Admission rule for any case in this matrix.** A case enters the matrix
 only when (i) it declares the stage that first makes it pass, and (ii) the
-same `femexamples` module produces the *same deck* headless and in the
-GUI. A case that passes only in one of the two modes is not finished.
+deck it produces does not depend on which entry point built the analysis.
+A case whose deck differs between the two modes is not finished.
 
-**This rule is not met as built.** The GUI half was never written —
+**Amended 2026-10-11: the deck is entry-point independent by construction, and
+that is now the rule.** The GUI half was never written —
 `femtest/gui/test_mixed_shell_solid.py` does not exist and nothing mixed is
-registered in `TestFemGui.py` — so the matrix is **headless-only** at present.
-That is an open decision, not an oversight to be glossed: either write the GUI
-half, or amend this rule deliberately. Recorded in §11.8. The rule is left
-standing here because it is the right rule, and the tree is what falls short of
-it.
+registered in `TestFemGui.py`. Writing it was the wrong fix for the risk this
+rule exists to catch, for two reasons:
+
+- **There is only one builder.** The deck comes from `FemToolsCcx` over the
+  analysis objects, and every mixed case's analysis is built by the single
+  `setup()` that both the GUI Examples browser and the headless tests call.
+  The GUI adds `ViewObject`s; it does not build a second analysis.
+- **The `GuiUp` branches cannot reach the deck.** Each mixed example has
+  exactly one, and it is view-only — `constraint_mixed_face_coupling.py:114`
+  and `constraint_mixed_edge_coupling.py:107` call
+  `activeView().viewAxonometric()` and `fitAll()`, the same ViewObject-only
+  precedent as `constraint_tie.py:124-127` that R2 requires. Neither module
+  branches on `GuiUp` around geometry, mesh, analysis or the deck.
+
+A GUI-mode assertion is deferred rather than dropped, and the trigger to write
+it is concrete: `TestFemGui` is **not in `__unit_test__`** (`InitGui.py:59`,
+commented out 2025-10-30 for unexplained CI failures), so a GUI-only test would
+be run by nothing. When it is re-enabled and the mixed cases are registered
+there, the deck-equality assertion goes in beside them. Recorded in §11.8.
 
 ### 8.1 What already exists to build on
 
@@ -947,7 +964,7 @@ for a physics result.
 | File | Purpose | Built? |
 |---|---|---|
 | `femtest/app/test_mixed_shell_solid.py` | headless matrix, 27 tests, registered as `FemTest17` | **yes** |
-| `femtest/gui/test_mixed_shell_solid.py` | GUI half of G0-G12 | **no — not built** (§11.8) |
+| `femtest/gui/test_mixed_shell_solid.py` | GUI half of G0-G12 | **not built, by decision** — the deck has one builder and the `GuiUp` branches are view-only, so there is no second entry point to compare (§8, §11.8) |
 | `femexamples/constraint_mixed_face_coupling.py` | F-family geometry + analysis; `setup(doc, variant="f1"|"f2"|"f3"|"f4")`, default `f1` | yes |
 | `femexamples/constraint_mixed_edge_coupling.py` | E-family geometry + analysis; `setup(doc, variant="e1"|"e2"|"e3")`, default `e2` | yes |
 | `femexamples/meshes/mesh_mixed_face_coupling_f*.py` | frozen merged meshes for G4-G7, G12, G13 | **no.** R1's frozen half was met differently: `femexamples/meshes/merged_mesh.py` holds the merge routine, and one fixture golden covers the byte-compare. Structural assertions read the live mesh the examples build |
@@ -1023,8 +1040,9 @@ stage is part of Stage 9.
 ~/.pixi/envs/default/bin/FreeCADCmd -t \
   femtest.app.test_mixed_shell_solid.TestMixedShellSolid.test_G13_bending_deflection
 
-# GUI — needs a display, and TestFemGui is not in __unit_test__
-# (`InitGui.py:59` keeps it commented out), so it is invoked explicitly
+# GUI — needs a display.  TestFemGui is not in __unit_test__ (`InitGui.py:59`
+# keeps it commented out) and holds no mixed case; §8 records why the deck
+# needs no second-mode comparison and when to add one
 build/debug/bin/FreeCAD --run-test TestFemGui
 ```
 
@@ -1841,10 +1859,12 @@ Two gaps in what the tests exercise, as opposed to what the code can do:
 
 - **`Stiffener` / `Bulkhead`** — no mixed coverage at all.
   `quasi_iso_stiffener_panel` is all shells; Bulkhead has no FEM example at all.
-- **The GUI half of §8** — `femtest/gui/test_mixed_shell_solid.py` does not
-  exist, so §8's admission rule (*a case passes in both modes*) is unmet and the
-  matrix is headless-only. Amend the rule or write the test; do not leave the
-  rule standing against a tree that does not satisfy it.
+- ~~**The GUI half of §8.**~~ **Resolved 2026-10-11 by amending the rule**
+  (§8): the deck has one builder, and every `GuiUp` branch in a mixed example is
+  ViewObject-only, so the deck cannot differ between entry points.  The
+  GUI-mode assertion is deferred until `TestFemGui` is back in `__unit_test__`,
+  where a GUI-only test would at least be run.  The other half of this section
+  — `Stiffener` / `Bulkhead` coverage — is still open (B2.1).
 
 ### 11.9 A point load on a tie's shell slave can drop the tie, under a warning we
 call benign

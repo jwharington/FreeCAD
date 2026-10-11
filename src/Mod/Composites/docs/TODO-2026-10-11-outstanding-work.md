@@ -114,11 +114,21 @@ it.  "§" refers to `plan-mixed-shell-solid-fem.md`.
   - [ ] **B2.1 — Stiffener / Bulkhead mixed coverage.**  `quasi_iso_stiffener_panel`
         is all shells; Bulkhead has no FEM example at all.  *Exit:* a mixed
         case that puts a shell stiffener or bulkhead on a solid feature.
-  - [ ] **B2.2 — the GUI half of §8.**  `femtest/gui/test_mixed_shell_solid.py`
-        does not exist, so §8's rule (*a case passes in both modes*) is unmet
-        and the matrix is headless-only.  *Exit:* write the test **or** amend
-        the rule — do not leave the rule standing against a tree that does not
-        satisfy it.
+  - [x] **B2.2 — DONE (2026-10-11), by amending the rule.**  The plan's §8
+        admission rule demanded that each case "pass in both modes" and
+        `femtest/gui/test_mixed_shell_solid.py` was never written, so the rule
+        stood against a tree that could not satisfy it.  Writing the GUI test
+        was the wrong fix: `TestFemGui` is **not in `__unit_test__`**
+        (`InitGui.py:59`, commented out 2025-10-30 for unexplained CI
+        failures), so a GUI-only assertion would be run by nothing.
+        The rule now names the risk instead of the mode — the deck must not
+        depend on which entry point built the analysis — and §8 records why
+        that holds by construction: one `setup()` builds every mixed case's
+        analysis for both entry points, and each mixed example's single
+        `GuiUp` branch is view-only (`constraint_mixed_face_coupling.py:114`,
+        `constraint_mixed_edge_coupling.py:107`).  §11.8's GUI bullet is closed
+        with the trigger to revisit (when `TestFemGui` returns to
+        `__unit_test__`); its `Stiffener`/`Bulkhead` half stays open as B2.1.
 
 - [ ] **B3 — §11.9, the `*CLOAD`-on-a-tie-slave hazard.**  A point force in a
       shell node is applied to an *expansion* node (`gen3dforc` writes the
