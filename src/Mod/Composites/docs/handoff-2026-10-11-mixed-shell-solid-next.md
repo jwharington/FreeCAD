@@ -140,7 +140,9 @@ moves material through the thickness, and it can at most be *reported*.
 ## 5. Then — fixtures, a rebuild, and a proposal
 
 - **B3** `*CLOAD`-on-a-tie-slave hazard; **B2.1** stiffener/bulkhead mixed
-  coverage; **B5.1** compared-pair coverage.  ~~**B8** per-skin laminate
+  coverage.  ~~**B5.1** compared-pair coverage~~ — **done 2026-10-11** (decided
+  and recorded: no compared pair for the stand-off families, plus a
+  non-zero-displacement assertion for all four).  ~~**B8** per-skin laminate
   offset~~ — **done 2026-10-11** (the feature had already landed; the
   stiffness check that pins the sign was added).
 - **B1** the results-viewer dimension toggle (C++ + rebuild).

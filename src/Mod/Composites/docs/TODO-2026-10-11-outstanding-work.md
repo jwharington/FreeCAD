@@ -181,9 +181,18 @@ this is the only open track).
 
 - [ ] **B5 — §11.3 residual.**  All four face families solve with zero untied
       nodes, but:
-  - [ ] **B5.1 — only F1 has a compared-pair displacement check.**  The offset
-        and bag families have no natural all-solid equivalent; decide whether to
-        build one for each, or state why the check cannot exist per family.
+  - [x] **B5.1 — DONE (2026-10-11).**  Decided: the offset and bag families get
+        **no** compared pair, and the reason is recorded.  A compared pair needs
+        an *independent* reference, and only F1/F2 have one — their interface is
+        a coincident bond, so the all-solid rebuild (a slab resting on the spar)
+        is a separate structure.  F3/F4 are 50 mm stand-offs; an all-solid
+        "equivalent" would have to span the same deliberate gap with the same
+        `*TIE`, so it would hang on the comparison's own tie rather than on an
+        independent bond.  Their detector stays the coupling count
+        (`not_coupled == 0`) plus a new non-zero-displacement assertion — a
+        coupled-but-degenerate solve (load never reached the mesh) is now caught
+        for all four families.  Recorded in
+        `test_mixed_coupling_numerical.py`'s docstring and the fixture's.
   - [x] **B5.2 — DONE (2026-10-11).**  The mixed suite now solves once:
         `test_a_mixed_face_deck_solves_through_the_fem_solver` (a
         `@pytest.mark.slow` function) runs the f1 face-coupling example
@@ -330,13 +339,13 @@ this is the only open track).
 | item | blocked by | blocks |
 |---|---|---|
 | ~~A2.1–A2.8~~ done | — | — |
-| B1, B2.1, B3, B5.1, B9.2, B9.3 | — | — |
+| B1, B2.1, B3, B9.2, B9.3 | — | — |
 | B7 | review | — |
 
 **Closed 2026-10-11, blocking nothing now:** `A1`, `A2`, `B9.1`, `B9.1b`,
-`B9.4`, `B5.2`, `B5.3`, `B2.2`, `B6`, `B4.1`, `B8`.  `B9.5` is deferred to the
-bottom of this list, and `B2` / `B5` / `B4` / `B9` stay unticked only because a
-sibling inside them is open.
+`B9.4`, `B5.1`, `B5.2`, `B5.3`, `B2.2`, `B6`, `B4.1`, `B8`.  `B9.5` is
+deferred to the bottom of this list, and `B2` / `B5` / `B4` / `B9` stay unticked
+only because a sibling inside them is open.
 
 Tracks A and B do not touch each other: different repos, different branches, no
 shared file.
@@ -349,7 +358,7 @@ shared file.
 2. ~~**B6** (the E family)~~ and ~~**B4.1**~~ **both done 2026-10-11** — the
    two real defects reachable without a rebuild.
 3. ~~**B3**, **B2.1**, **B5.1**, **B8**~~ — the ones needing a fixture:
-   **B8 done 2026-10-11**; B3, B2.1 and B5.1 remain.
+   **B8 and B5.1 done 2026-10-11**; B3 and B2.1 remain.
 4. **B1** — the C++ change, last because it needs a rebuild.
 5. ~~**A2** — the study-side donation tail, whose gate is the lc03
    reproduction.~~ **Done 2026-10-11** (FreeCAD `c396c90ea8`, study `5692de7`).

@@ -30,9 +30,11 @@ Open: the results-viewer toggle
 §11.10), a tie hazard the
 tolerance research turned up (§11.9), and the question of landing a shell's
 expansion node on the contact plane (§11.11), which is written up and
-deliberately **parked**. All four face families are solved as of `6fc22a9334`;
-what only F1 has is a compared-pair displacement check, because the offset and
-bag families have no natural all-solid equivalent (§11.3).
+deliberately **parked**. All four face families are solved as of `6fc22a9334`,
+and each now asserts it stayed coupled *and* moved; only F1 (with F2) has a
+compared-pair displacement check, because the offset and bag families have no
+*independent* all-solid equivalent — they are stand-offs, so any solid rebuild
+would hang on the comparison's own tie (§11.3, B5.1).
 **Owner context:** LS8e fuselage FEM work — a composite skin modelled as
 shells wants to coexist with locally solid features in the *same*
 analysis. Today it cannot: FreeCAD's FEM pipeline is built around
