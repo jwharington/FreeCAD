@@ -108,17 +108,12 @@ it.  "§" refers to `plan-mixed-shell-solid-fem.md`.  **New-session entry
 point:** `handoff-2026-10-11-mixed-shell-solid-next.md` (Track A is closed, so
 this is the only open track).
 
-- [ ] **B1 — §11.4, the results-viewer toggle.**  Make a mixed result
-      *distinguishable*: today a skin coincident with a solid face z-fights, and
-      `ViewProviderFemMesh.VisibleElementFaces` is a **read-only computed
-      getter** (`src/Mod/Fem/Gui/ViewProviderFemMeshPyImp.cpp`) with no
-      dimension filter; `ColorMode` / `ShowInner` / `MaxFacesShowInner` do not
-      separate shells from solids.  *Cost:* a C++ view-provider change **and a
-      rebuild** — the only item here with a build cost.
-      *Exit:* a toggle that hides one dimension, with the mixed wing and plate
-      still displaying.
-      **Implemented 2026-10-11, awaiting the owner's visual check** (the Gui
-      module cannot load headlessly, so the render has no headless test).
+- [x] **B1 — §11.4, the results-viewer toggle (DONE 2026-10-11, re-scoped to
+      the mesh view).**  Make a mixed result *distinguishable*: a skin
+      coincident with a solid face z-fights, and none of `ColorMode` /
+      `ShowInner` / `MaxFacesShowInner` separates shells from solids.
+      *Cost:* a C++ view-provider change **and a rebuild** — the only item here
+      with a build cost.
       - **Root cause.**  `ViewProviderFemMesh.cpp` computed
         `bool ShowFaces = (numFaces > 0 && numVolu == 0)`, so a **mixed** mesh
         took the volume-faces-only branch and the shell faces
@@ -127,18 +122,30 @@ this is the only open track).
       - **Fix.**  A new `FemGui::ViewProviderFemMesh.ShowDimensions` enum
         (`All` / `Shells` / `Solids`, default `All`, group *Display Options*,
         settable from Python like any property).  `createMesh` takes it and, on
-        a mixed mesh, sizes the face helper for the shells plus/only the
-        volumes per the mode, runs the face loop (keeping only ids in
-        `getFacesOnly()` so the solid's skin is not drawn twice) and/or the
-        volume loop.  A non-mixed mesh has one possible answer and ignores the
-        mode.  Changing the property rebuilds, like `ShowInner`.
+        a mixed mesh, sizes the face helper for the shells and/or the volumes
+        per the mode, runs the face loop (keeping only ids in `getFacesOnly()`
+        so the solid's skin is not drawn twice) and/or the volume loop; a
+        non-mixed mesh has one answer and ignores the mode.  Changing the
+        property rebuilds, like `ShowInner`.
+      - **Re-scoped, and why.**  The plan named `ViewProviderFemMesh`, but a
+        solved model is drawn by a `Fem::FemPostPipeline`
+        (`Pipeline_CCX_Results`): `importCcxFrdResults.py` makes the result
+        *mesh* invisible and VTK (`vtkGeometryFilter`) draws the result, emitting
+        the 2-D shell cells beside the solid's boundary faces.  That view is
+        **B1.1** below; B1's exit is met on the mesh object's view — show
+        `..._FEMMesh` (or `CCX_Results_Mesh`), hide the pipeline, switch
+        `ShowDimensions`.
       - **Premise guarded headlessly:**
         `test_mixed_shell_solid.py::test_every_variant_meshes_to_a_mixed_femmesh`
         asserts `FacesOnly` and `Volumes` are both non-empty for every face and
         edge variant, which is the split the toggle acts on.
-      - **To eyeball:** open the mixed plate (or wing), select the result mesh,
-        and switch *ShowDimensions* through All / Shells / Solids; Shells shows
-        the skin alone, Solids the spar alone, All both.
+  - [ ] **B1.1 — the VTK pipeline result view.**  The default result display is
+        `Fem::FemPostPipeline`; hiding a dimension there means a property on
+        `ViewProviderFemPostObject` and a VTK cell filter by dimension *before*
+        `vtkGeometryFilter` (the original cell types — triangle/quad vs
+        tetra/hexa — are only distinguishable before it).  Post-processing is
+        generic, not mixed-specific, so this is its own item.  *Exit:* the
+        pipeline hides shells or solids like B1 does on the mesh.
 
 - [x] **B2 — §11.8, coverage the plan does not reach.**  Both gaps closed:
   - [x] **B2.1 — DONE (2026-10-11).**  The real case: the Composites
@@ -472,12 +479,13 @@ this is the only open track).
 | item | blocked by | blocks |
 |---|---|---|
 | ~~A2.1–A2.8~~ done | — | — |
-| B1, B9.2, B9.3 | — | — |
+| B1.1, B9.2, B9.3 | — | — |
 
-**Closed 2026-10-11, blocking nothing now:** `A1`, `A2`, `B9.1`, `B9.1b`,
-`B9.4`, `B9.6`, `B5.1`, `B5.2`, `B5.3`, `B2.1`, `B2.2`, `B3`, `B6`, `B4.1`,
-`B7`, `B7.1`, `B8`.  `B9.5` is deferred to the bottom of this list, and
-`B5` / `B4` / `B9` stay unticked only because a sibling inside them is open.
+**Closed 2026-10-11, blocking nothing now:** `A1`, `A2`, `B1`, `B9.1`,
+`B9.1b`, `B9.4`, `B9.6`, `B5.1`, `B5.2`, `B5.3`, `B2.1`, `B2.2`, `B3`,
+`B6`, `B4.1`, `B7`, `B7.1`, `B8`.  `B9.5` is deferred to the bottom of this
+list, and `B5` / `B4` / `B9` stay unticked only because a sibling inside them is
+open.
 
 Tracks A and B do not touch each other: different repos, different branches, no
 shared file.
@@ -491,7 +499,8 @@ shared file.
    two real defects reachable without a rebuild.
 3. ~~**B3**, **B2.1**, **B5.1**, **B8**~~ — the ones needing a fixture:
    **all four done 2026-10-11**.
-4. **B1** — the C++ change, last because it needs a rebuild.
+4. ~~**B1** — the C++ change, last because it needs a rebuild.~~ **Done
+   2026-10-11** on the mesh view; the VTK pipeline result view is `B1.1`.
 5. ~~**A2** — the study-side donation tail, whose gate is the lc03
    reproduction.~~ **Done 2026-10-11** (FreeCAD `c396c90ea8`, study `5692de7`).
 6. ~~**B7** — the tie pass, implemented as the headless `auto_tie` helper with

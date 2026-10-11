@@ -24,7 +24,7 @@ its exit.  The reasoning lives in `plan-mixed-shell-solid-fem.md` and
 
 1. [What is already done — do not re-open](#1-what-is-already-done--do-not-reopen)
 2. [What is left, in order](#2-what-is-left-in-order)
-3. [B1 — the results-viewer toggle (the one rebuild item)](#3-b1--the-results-viewer-toggle-the-one-rebuild-item)
+3. [B1 — the mesh-view toggle (done); the VTK pipeline is B1.1](#3-b1--the-mesh-view-toggle-done-the-vtk-pipeline-is-b11)
 4. [B7 — the tie-assignment pass (implemented)](#4-b7--the-tie-assignment-pass-implemented)
 5. [B9.6 — the red module was the stub's fault (resolved)](#5-b96--the-red-module-was-the-stubs-fault-resolved)
 6. [Deferred to the bottom by the owner](#6-deferred-to-the-bottom-by-the-owner)
@@ -103,28 +103,38 @@ This session (2026-10-11), each with its own tracker note:
 
 The tracker's ordering, minus the closed items:
 
-1. **B1** — done pending the owner's visual check (below).
+1. **B1.1** — the VTK pipeline result view: a solved model is drawn by
+   `Fem::FemPostPipeline`, so B1's mesh-view toggle does not reach it.
 2. **B9.2** delete `femsolver/settings.py::get_allow_mixed_elements` and its
    call sites **after one release has shipped** with the default on.
 3. **B9.3** decide the branch's fate (keep it the explicit working record, or
    open the PR).
 4. **B9.5** — deferred to the bottom by the owner (below).
 
-`B9.6` was the other open cleanup; it is resolved (below).
+`B9.6` and `B1` were the other open items; both are resolved (below).
 
-## 3. B1 — the results-viewer toggle (implemented, awaiting the visual check)
+## 3. B1 — the mesh-view toggle (done); the VTK pipeline is B1.1
 
-A mixed result displays, but the skin and the solid could not be told apart: the
-view provider computed `ShowFaces = (numFaces > 0 && numVolu == 0)`, so a mixed
-mesh took the volume-faces-only branch and the shell faces were never emitted.
-A new `FemGui::ViewProviderFemMesh.ShowDimensions` enum (`All` / `Shells` /
-`Solids`, default `All`, *Display Options*) now picks the dimension:
-`createMesh` builds the shells (only ids in `FemMesh::getFacesOnly()`) and/or
-the volumes per the mode, and a non-mixed mesh ignores it.  It is the only item
-with a C++ build, and the Gui module cannot load headlessly, so the render has
-no headless test — the owner is to open the mixed plate/wing and switch the
-property through the three modes.  The split it acts on is already asserted in
-`test_mixed_shell_solid.py::test_every_variant_meshes_to_a_mixed_femmesh`.
+A mixed mesh's shell faces were never emitted: the view provider computed
+`ShowFaces = (numFaces > 0 && numVolu == 0)`, so a mixed mesh took the
+volume-faces-only branch.  A new `FemGui::ViewProviderFemMesh.ShowDimensions`
+enum (`All` / `Shells` / `Solids`, default `All`, *Display Options*) now picks
+the dimension: `createMesh` builds the shells (only ids in
+`FemMesh::getFacesOnly()`) and/or the volumes per the mode, and a non-mixed mesh
+ignores it.  It is the only item with a C++ build, and the Gui module cannot
+load headlessly, so the render has no headless test; the split it acts on is
+asserted in `test_mixed_shell_solid.py::test_every_variant_meshes_to_a_mixed_femmesh`.
+
+**Re-scoped, and why.**  The plan named `ViewProviderFemMesh`, but a solved
+model is drawn by a `Fem::FemPostPipeline` (`Pipeline_CCX_Results`):
+`importCcxFrdResults.py` makes the result *mesh* invisible and VTK
+(`vtkGeometryFilter`) draws the result, emitting the 2-D shell cells beside the
+solid's boundary faces.  So B1's exit is met on the **mesh object's** view —
+show `..._FEMMesh` (or `CCX_Results_Mesh`), hide the pipeline, switch
+`ShowDimensions` — and the default pipeline view is **B1.1**: a property on
+`ViewProviderFemPostObject` plus a cell filter by dimension before
+`vtkGeometryFilter` (the original cell types are only distinguishable before
+it).
 
 ## 4. B7 — the tie-assignment pass (implemented)
 
