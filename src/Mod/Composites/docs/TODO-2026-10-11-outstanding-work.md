@@ -71,10 +71,23 @@ Repo: study, branch `fuselage-v2-bulkhead-visibility`.
         `_log_drape_coverage` (`util.py`, `geometry.py`) → a Composites
         document/tree util.  *Blocker:* the fuselage's **name lists** must first
         become a rules argument (they name this airframe's objects).
-  - [ ] **A2.8 — reduce `FuselageFem.py` to the hooks, and delete the dead
-        `propeller/cad`.**  The hooks are `build(arguments)`,
-        `geometry_arguments()`, `parts(doc)`, `constraints(doc, analysis)`,
-        `snapshot(case)`, and optionally `mesh_name`, `laminates(doc)`.
+  - [ ] **A2.8 — reduce `FuselageFem.py` to the hooks, and delete only the
+        `propeller/cad` files that existed solely for the deleted old driver.**
+        The hooks are `build(arguments)`, `geometry_arguments()`, `parts(doc)`,
+        `constraints(doc, analysis)`, `snapshot(case)`, and optionally
+        `mesh_name`, `laminates(doc)`.
+        *Scope — narrow.*  "Dead" means *a file whose only consumer was the old
+        driver*.  That set is **already deleted** (`femstudy.py`,
+        `summarize_fem_runs.py`, `ccxdat.py`), and **no surviving file
+        qualifies**: the old driver's dependencies (`deckaudit`, `decknodes`,
+        `model_mass`, `partexposure`, `runpaths`, `matlib`) are live, because
+        the new driver reaches them through the four study hooks.  `propeller/cad`
+        also holds the propeller/blade design package and the study's own
+        standalone diagnostics (`check_*`, `probe_*`, `bench_*`, `plot_*`,
+        `run_fem_cases.py`, `show_fem_results.py`, …); none of those is in scope.
+        *Deliverable:* an explicit, reviewed file list.  **No file is deleted
+        until a human has approved each entry; anything not listed stays.**
+        Absent that list, this sub-item changes no file.
         *Blocker:* A2.1–A2.7 land first, or the deleted copies are still the
         only copy.
   - **Two constraints on all of A2.**  Load cases stay on the Fem batch
