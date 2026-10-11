@@ -344,10 +344,12 @@ class TestFreeCADIntegration(unittest.TestCase):
             )
         except RuntimeError as exc:
             msg = str(exc)
+            # A missing FEM stack is a reason to skip.  A *meshing failure* is
+            # deliberately not: the stack is present and the mesh did not
+            # build, which is a defect this test exists to catch.
             missing_stack_markers = (
                 "ObjectsFem is required",
                 "Unable to create FEM analysis/solver/mesh objects",
-                "Mesh generation failed",
             )
             if any(marker in msg for marker in missing_stack_markers):
                 self.skipTest(f"FEM stack unavailable in this FreeCAD build: {msg}")

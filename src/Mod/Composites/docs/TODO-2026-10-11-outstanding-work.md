@@ -167,9 +167,18 @@ it.  "§" refers to `plan-mixed-shell-solid-fem.md`.
         constraints and no loads and cannot be solved.  Verified:
         **32 passed** in 2.9 s.  (The `slow` marker is unregistered repo-wide,
         so this test warns exactly as the existing slow Fem tests do.)
-  - [ ] **B5.3 — `test_mixed_shell_solid_plate_solves` can `skipTest`** when the
-        FEM stack is unavailable, so it is weaker than the numerical test
-        (which skips only when no `ccx` binary exists).  Narrow the skip.
+  - [x] **B5.3 — DONE (2026-10-11).**  The skip lists named
+        `"Mesh generation failed"` among the reasons to treat a build as
+        lacking the FEM stack, so a genuine meshing failure was skipped
+        instead of failing — the one thing those examples exist to catch.
+        Removed from all five sites (`test_compositeexamples.py` × 4,
+        `test_integration_freecad.py` × 1), and the four copies in the first
+        file collapsed into one `MISSING_FEM_STACK_MARKERS` constant, which
+        now names only genuine absence: no `ObjectsFem`, no analysis/solver/
+        mesher factories, no `femtools.ccxtools`.  Verified: the two modules
+        are 37 tests / 0 failed (6 skips, all GUI-in-headless).  The
+        `test_mixed_shell_solid_plate_solves` and `_wing_solves` solver tests
+        still pass.
 
 - [ ] **B6 — the E (edge-interface) family.**  `e1`–`e3` are **refused loudly,
       not solved**.  ADR 0004 puts the family **in scope** and selects the same

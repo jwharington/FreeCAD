@@ -116,6 +116,19 @@ def _assert_rosette_switches_visible(self, doc):
         )
 
 
+# A build without the FEM module, without the analysis/solver/mesher factories,
+# or without the ccxtools wrapper cannot run an example's solver, so the solver
+# tests skip instead of failing.  A *meshing failure* is deliberately NOT on
+# this list: the stack is present and the mesh did not build, which is a defect
+# in the model or the mesher, and skipping it would hide the very thing the
+# example exists to catch.
+MISSING_FEM_STACK_MARKERS = (
+    "ObjectsFem is required",
+    "Unable to create FEM analysis/solver/mesh objects",
+    "femtools.ccxtools is required",
+)
+
+
 class TestCompositeExamplesBase(unittest.TestCase):
     """Base class with automatic .FCStd file generation."""
 
@@ -420,13 +433,7 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
             )
         except RuntimeError as exc:
             msg = str(exc)
-            missing_stack_markers = (
-                "ObjectsFem is required",
-                "Unable to create FEM analysis/solver/mesh objects",
-                "Mesh generation failed",
-                "femtools.ccxtools is required",
-            )
-            if any(marker in msg for marker in missing_stack_markers):
+            if any(marker in msg for marker in MISSING_FEM_STACK_MARKERS):
                 self.skipTest(
                     f"FEM stack unavailable in this FreeCAD build: {msg}",
                 )
@@ -468,13 +475,7 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
             result = runner.run("mixed_shell_solid_plate", run_solver=True, doc=None)
         except RuntimeError as exc:
             msg = str(exc)
-            missing_stack_markers = (
-                "ObjectsFem is required",
-                "Unable to create FEM analysis/solver/mesh objects",
-                "Mesh generation failed",
-                "femtools.ccxtools is required",
-            )
-            if any(marker in msg for marker in missing_stack_markers):
+            if any(marker in msg for marker in MISSING_FEM_STACK_MARKERS):
                 self.skipTest(f"FEM stack unavailable in this FreeCAD build: {msg}")
             raise
 
@@ -511,13 +512,7 @@ class TestQuasiIsoExample(TestCompositeExamplesBase):
             result = runner.run("mixed_shell_solid_wing", run_solver=True, doc=None)
         except RuntimeError as exc:
             msg = str(exc)
-            missing_stack_markers = (
-                "ObjectsFem is required",
-                "Unable to create FEM analysis/solver/mesh objects",
-                "Mesh generation failed",
-                "femtools.ccxtools is required",
-            )
-            if any(marker in msg for marker in missing_stack_markers):
+            if any(marker in msg for marker in MISSING_FEM_STACK_MARKERS):
                 self.skipTest(f"FEM stack unavailable in this FreeCAD build: {msg}")
             raise
 
@@ -772,12 +767,7 @@ class TestCompositeExamplesSmoke(TestCompositeExamplesBase):
             )
         except RuntimeError as exc:
             msg = str(exc)
-            missing_stack_markers = (
-                "ObjectsFem is required",
-                "Unable to create FEM analysis/solver/mesh objects",
-                "Mesh generation failed",
-            )
-            if any(marker in msg for marker in missing_stack_markers):
+            if any(marker in msg for marker in MISSING_FEM_STACK_MARKERS):
                 self.skipTest(
                     f"FEM stack unavailable in this FreeCAD build: {msg}",
                 )
