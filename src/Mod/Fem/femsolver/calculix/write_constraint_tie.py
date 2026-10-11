@@ -60,6 +60,40 @@ def get_after_write_constraint():
     return ""
 
 
+def _shell_slave_load_collision(femobj, ccxwriter):
+    """Tie slave nodes a ``*CLOAD`` also loads, for a shell-to-shell tie.
+
+    CalculiX applies a shell point load through the same expansion MPC a
+    surface tie uses, so a loaded node cannot also be the tie's dependent term
+    and ``gentiedmpc`` drops it under a warning FreeCAD reads as benign
+    ("already constrained").  Dhondt's arrangement - two shell layers tied on
+    the lower face of the upper one, load on the upper - is where this
+    reproduces.  A shell slave against a **solid** master was measured not to
+    collide (plan section 11.9), so only a tie whose two surfaces are both
+    shell faces is reported; refusing a shell-to-solid tie would take a deck
+    that couples correctly and stop it.
+    """
+    if not femobj["TieSlaveFaces"] or not femobj["TieMasterFaces"]:
+        return set()
+    _slave_refs, slave_elements, slave_is_sub = femobj["TieSlaveFaces"][0]
+    _master_refs, _master_elements, master_is_sub = femobj["TieMasterFaces"][0]
+    if slave_is_sub or master_is_sub:
+        return set()
+    loaded = {
+        node
+        for force in ccxwriter.member.cons_force
+        for _name, table in force.get("NodeLoadTable", [])
+        for node in table
+    }
+    if not loaded:
+        return set()
+    mesh = ccxwriter.mesh_object.FemMesh
+    slave_nodes = {
+        node for element in slave_elements for node in mesh.getElementNodes(element)
+    }
+    return slave_nodes & loaded
+
+
 def _tie_reference(surfaces):
     """The ``(object, subobject)`` a tie's slave or master surface names."""
     reference = surfaces[0][0]
@@ -116,6 +150,16 @@ def _shell_slave_face(femobj, ccxwriter):
 
 
 def write_meshdata_constraint(f, femobj, tie_obj, ccxwriter):
+    collision = _shell_slave_load_collision(femobj, ccxwriter)
+    if collision:
+        raise ValueError(
+            f"{tie_obj.Name}: a *CLOAD loads tie slave node(s) "
+            f"{sorted(collision)}. CalculiX applies a shell point load through "
+            f"the same expansion MPC the tie uses, so the tie is dropped at "
+            f"those nodes with no error from CalculiX. Load the master side "
+            f"instead, use a *DLOAD (a pressure writes no MPC), or swap master "
+            f"and slave."
+        )
     shell_side = _shell_slave_face(femobj, ccxwriter)
     # slave DEP
     f.write(f"*SURFACE, NAME=TIE_DEP{tie_obj.Name}\n")
