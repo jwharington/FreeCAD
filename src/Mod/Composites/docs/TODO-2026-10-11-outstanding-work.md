@@ -266,6 +266,12 @@ this is the only open track).
       `add_tie` calls produces the same `*TIE` set up to names, the deck
       snapshot still reports *no deck changed*, and a second run creates nothing
       new.
+      **Refreshed 2026-10-11 for review:** B4.1 landed (precondition 3
+      satisfied), the tolerance derivation now exists
+      (`mixedcoupling.tie_slave_side_and_tolerance`), and edge interfaces are
+      no longer a loud error (B6) although they stay out of the first cut.
+      Six open questions await the reviewer at the end of §12; **no code until
+      they are answered**.
 
 - [x] **B8 — DONE (2026-10-11).**  The feature had already landed
       (`0542b6ba22`, 2026-10-09): `CompositeShell.Offset` is the per-skin

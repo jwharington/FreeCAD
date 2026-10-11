@@ -151,9 +151,10 @@ moves material through the thickness, and it can at most be *reported*.
 - **B9.3** decide the branch's fate (keep it the explicit working record, or
   open the PR).
 - **B7** assign ties from the references the model already carries — a
-  **proposal: review before any code**; it depends on B4.1 (per-shell slave
-  lookup) and needs per-interface opt-out, a derived tolerance, and a checked
-  (not assumed) mesh-disjointness rule.
+  **proposal: review before any code**; it depended on B4.1 (per-shell slave
+  lookup), now satisfied, and needs per-interface opt-out, a derived
+  tolerance, and a checked (not assumed) mesh-disjointness rule.  Refreshed
+  2026-10-11: proposal updated, six open questions for review, **no code yet**.
 
 ## 6. Deferred to the bottom by the owner
 

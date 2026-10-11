@@ -2197,13 +2197,16 @@ is a move, so the decks are unchanged, not merely accepted as close.
 ## 12. Proposed: assign the ties from the references the model already carries
 
 **Status: proposal, to be reviewed before any code.** Nothing here is
-implemented, and nothing in §11 was changed to make room for it.
+implemented.  Refreshed 2026-10-11 after **B4.1** (the per-shell slave-side
+lookup and the derived-tolerance refusal) and **B6** (edge interfaces) landed:
+both change what this pass can lean on.  Open questions for the reviewer are at
+the end.
 
 **Today's cost.** Coupling a skin to a core means writing the tie by hand —
 `ObjectsFem.makeConstraintTie`, two face references (the shell first, because
 the first reference is the slave), and a `Tolerance` nothing derives — *and*
 finding the pair to reference. That search is real code: the fixtures use
-`paired_faces_by_plane` (`femtools/mixedcoupling.py:115`, promoted there by
+`paired_faces_by_plane` (`femtools/mixedcoupling.py`, promoted there by
 §11.13), and the
 examples use `_lateral_face_names` / `_planar_face_name` / `_face_name` /
 `extreme_face_reference` to name the same kind of face from the other side. A
@@ -2213,12 +2216,12 @@ user with a skin on a solid has to reproduce that search, per interface.
 of every interface, in objects the pipeline already walks:
 
 - the **solid** — its material's reference, resolved dimension-aware by
-  `meshsetsgetter.get_material_elements` (`:1052`), with
-  `meshtools.get_shape_dimension` (`:1671`) judging dimension by contents so a
+  `meshsetsgetter.get_material_elements`, with
+  `meshtools.get_shape_dimension` judging dimension by contents so a
   compound is not mistaken for a solid;
 - the **shell faces** — the shell-thickness object's references
   (`membertools.py:266` collects `Fem::ElementGeometry2D`), which
-  `meshsetsgetter.get_shell_elements` (`:957`) already resolves to element
+  `meshsetsgetter.get_shell_elements` already resolves to element
   faces. A Composites skin always has one: the provider routes the offset
   through `ShellThickness` (`drape_laminate_provider.route_shell_offset`), and
   the examples create one per skin.
@@ -2263,9 +2266,17 @@ untouched and the coupling visible, which is also the order Stage 8/9 used
    `0.0` is not even zero to ccx, which replaces it with its own `tolloc`
    (§11.11). For a coincident interface the requirement is `t·(0.5−|offset|)`
    (§11.11's table), and this pass is the natural home for that derivation,
-   because it is the same geometry walk that does the pairing.
-3. **It depends on fixing the slave-side lookup.** `_shell_slave_face`
-   (`write_constraint_tie.py:60-77`) takes the offset from the **first**
+   because it is the same geometry walk that does the pairing.  **The
+   derivation now exists:** `mixedcoupling.tie_slave_side_and_tolerance`
+   returns the required distance for a slave face, thickness and offset, and
+   `checksanalysis._tie_tolerance_message` already refuses a tie below it, so
+   the pass should call the same function to set the value it writes and cannot
+   create an under-toleranced tie while writing it.
+3. **~~It depends on fixing the slave-side lookup.~~ — satisfied by B4.1
+   (2026-10-11); the rest of this item is the original reasoning.**
+   `_shell_slave_face` now finds the section that names the slave and names the
+   expansion face nearest the master, instead of taking the offset from the
+   **first**
    non-suppressed shell-thickness object in the analysis. §10 requires a
    sandwich's two skins to offset in opposite directions, so with real offsets
    one of the two ties names the far face — a whole thickness out, inside no
@@ -2278,12 +2289,39 @@ untouched and the coupling visible, which is also the order Stage 8/9 used
    shell — and refuse rather than create a tie that couples nothing, the same
    loud-not-silent rule as §11.1's guard on non-face references.
 
-*Out of scope for a first cut:* edge interfaces (ADR 0004 keeps those a loud
-error until it decides), multi-stage and contact ties, and the task panel.
-Ambiguity — a shell face lying on two solids — should be a refusal with the
-candidates named, not a preference.
+*Out of scope for a first cut:* multi-stage and contact ties, the task panel,
+and the *declared-gap* interfaces (the F3/F4 50 mm families, which the model
+does not state today).  Edge interfaces are no longer a loud error — B6
+resolves an Edge on a shell to its edge face and e1-e3 write and solve — but
+pairing them is a separate shape problem (a line, not a plane) and stays out of
+this cut.  Ambiguity — a shell face lying on two solids — should be a refusal
+with the candidates named, not a preference.
 
 *Exit criterion:* on the wing and the plate, replacing their hand-written
 `add_tie` calls (the local `_add_tie` helpers were already removed by §11.13)
 with the pass produces the same `*TIE` set up to names, the deck snapshot still
 reports *no deck changed*, and a second run creates nothing new.
+
+**Open questions for the reviewer.**
+
+1. **Scope of the first cut.** A headless helper that creates the tie objects
+   only (the proposal), or the helper *and* a command that exposes it? The
+   writer is untouched either way; a GUI command can follow in a second pass.
+2. **Opt-out mechanism.** Per-tie `Suppressed` after creation, an allow-list of
+   interfaces, or a dry run that reports the pairs it would create? The report
+   is required whichever is chosen; the question is what the user edits when
+   the pass over-couples.
+3. **Naming.** What convention for the created ties? The exit criterion
+   compares decks *up to names*, so the names only have to be stable across
+   runs, but a later diff-against-snapshot test will want them predictable.
+4. **Where the pairing rule lives.** The proposal promotes
+   `paired_faces_by_plane` out of `femexamples` into Fem proper, the way Stage 9
+   promoted `mesh_parts_separately`. Confirm that is wanted, and whether the
+   rule should be generalised beyond plane-to-plane (a curved shell on a curved
+   solid face is not a plane pair).
+5. **Coincidence tolerance.** Keep the fixtures' `COINCIDENT_TOLERANCE = 1e-6`
+   as a constant, or expose it as an argument? The declared-gap families need it
+   larger, but they are explicitly out of this cut.
+6. **What the pass does when it finds nothing.** Silent, a report line, or an
+   error? A model that declares a shell thickness but no solid reference has
+   nothing to tie, which is a legitimate shell-only model.
