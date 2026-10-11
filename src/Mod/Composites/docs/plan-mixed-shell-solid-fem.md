@@ -2212,37 +2212,36 @@ examples use `_lateral_face_names` / `_planar_face_name` / `_face_name` /
 `extreme_face_reference` to name the same kind of face from the other side. A
 user with a skin on a solid has to reproduce that search, per interface.
 
-**The observation behind the proposal.** The model already declares both halves
-of every interface, in objects the pipeline already walks:
+**The observation behind the proposal.** An interface is *declared*, not
+searched for: a Composites shell whose `Support` **is the solid object** says so
+in a property the pipeline already walks, and the solid is already in the
+analysis through its material. Pairing is then an object-identity check —
+`shell.Support is solid` — with no geometry involved.
 
 - the **solid** — its material's reference, resolved dimension-aware by
   `meshsetsgetter.get_material_elements`, with
   `meshtools.get_shape_dimension` judging dimension by contents so a
   compound is not mistaken for a solid;
-- the **shell faces** — the shell-thickness object's references
-  (`membertools.py:266` collects `Fem::ElementGeometry2D`), which
-  `meshsetsgetter.get_shell_elements` already resolves to element
-  faces. A Composites skin always has one: the provider routes the offset
-  through `ShellThickness` (`drape_laminate_provider.route_shell_offset`), and
-  the examples create one per skin.
+- the **shell** — a `Composite::Shell` whose `Support` is that same
+  `Part::Feature`; the shell-thickness object carries the section that
+  reaches the FEM side.
 
-So the interface set is derivable: **the shell-thickness references that lie on
-a face of a solid the analysis declares**. The tie is then a *derived* object
-rather than a searched-for one, and the search helper already written for the
-fixtures is the rule to reuse.
+So the interface set is the set of composite shells declared on a solid the
+analysis bonds.  Nothing is inferred from coincident planes or parallel
+normals, and there is no tolerance to pick.
 
 **The proposal, stated plainly.** A pass over the analysis that (1) collects the
-solids from the dimension-3 material references, (2) collects the shell faces
-from the shell-thickness references, (3) pairs them with the fixture's rule —
-parallel normals, planes within a tolerance — and (4) creates one
-`Fem::ConstraintTie` per pair, shell reference first, with a derived tolerance.
+solids from the dimension-3 material references, (2) collects the composite
+shells whose `Support` is one of those solids, and (3) creates one
+`Fem::ConstraintTie` per shell, shell reference first, with a derived
+tolerance.  There is no pairing search and no geometry: the shared
+`Part::Feature` *is* the declaration.
 
 **Review.**
 
-*Where it lives, and when it runs.* The pairing rule has to leave
-`femexamples` for Fem proper — the same promotion Stage 9 did for
-`mesh_parts_separately` — so that a plain shell gets it too, with Composites
-supplying only the shell-thickness objects it already creates. *When* matters
+*Where it lives, and when it runs.* The rule is a few lines over the analysis
+member list, so it can live in Fem proper beside `add_tie`, with Composites
+supplying only the composite shells it already creates. *When* matters
 more than where. Doing it in the writer, or in `meshsetsgetter`, means coupling
 that no object records: invisible in the tree, uneditable, and impossible to
 switch off for one interface. ADR 0004 obliges a connection that cannot be
@@ -2253,20 +2252,19 @@ untouched and the coupling visible, which is also the order Stage 8/9 used
 
 *Four things that have to be settled first.*
 
-1. **Over-coupling is the default failure.** A shell face lying on a solid face
-   is not always a bond: a stiffener web standing on a plate, a patch left free
-   on purpose, two parts that merely touch. Pairing every coincidence would
-   silently stiffen models that are correct today. The pass therefore needs an
-   opt-out per interface, a report of what it created, and a stated coincidence
-   tolerance (`COINCIDENT_TOLERANCE = 1e-6`, the value the fixtures use). A
-   *declared gap* (the F3/F4 50 mm families) should be a later opt-in, because
-   nothing in the model states that gap today.
+1. **Over-coupling is still possible, but only by declaration.**  The identity
+   rule removes the geometric false positives entirely — a stiffener web merely
+   near a plate, a patch left free, two parts that merely touch are no longer
+   candidates at all.  What remains is a shell declared on a solid that is
+   deliberately *not* bonded, and that is what the per-interface opt-out and
+   the report exist for.  `COINCIDENT_TOLERANCE` stops being a pairing knob:
+   identity needs no tolerance.
 2. **The tolerance must be derived, not typed.** §11.3 measured what happens
    when it is picked (30 and 5 untied nodes at `t = 10`), and a *default* of
    `0.0` is not even zero to ccx, which replaces it with its own `tolloc`
    (§11.11). For a coincident interface the requirement is `t·(0.5−|offset|)`
-   (§11.11's table), and this pass is the natural home for that derivation,
-   because it is the same geometry walk that does the pairing.  **The
+   (§11.11's table), and this pass must call that derivation rather than pick
+   a number.  **The
    derivation now exists:** `mixedcoupling.tie_slave_side_and_tolerance`
    returns the required distance for a slave face, thickness and offset, and
    `checksanalysis._tie_tolerance_message` already refuses a tie below it, so
@@ -2294,34 +2292,37 @@ and the *declared-gap* interfaces (the F3/F4 50 mm families, which the model
 does not state today).  Edge interfaces are no longer a loud error — B6
 resolves an Edge on a shell to its edge face and e1-e3 write and solve — but
 pairing them is a separate shape problem (a line, not a plane) and stays out of
-this cut.  Ambiguity — a shell face lying on two solids — should be a refusal
-with the candidates named, not a preference.
+this cut.
 
-*Exit criterion:* on the wing and the plate, replacing their hand-written
-`add_tie` calls (the local `_add_tie` helpers were already removed by §11.13)
-with the pass produces the same `*TIE` set up to names, the deck snapshot still
-reports *no deck changed*, and a second run creates nothing new.
+*Exit criterion:* on a model that declares the convention — a composite shell
+whose `Support` is the solid object — the pass creates the same `*TIE` set the
+hand-written `add_tie` calls produce, up to names, and a second run creates
+nothing new.  **The wing and the plate are not the exit's subject:** both
+declare their skins on separate support objects, so the automatic pass is not
+applied to them and they keep their hand-written ties.  A model that follows
+the convention has to exist for the exit to run against.
 
 **Open questions for the reviewer.**
 
 1. **Scope of the first cut.** A headless helper that creates the tie objects
-   only (the proposal), or the helper *and* a command that exposes it? The
-   writer is untouched either way; a GUI command can follow in a second pass.
-2. **Opt-out mechanism.** Per-tie `Suppressed` after creation, an allow-list of
-   interfaces, or a dry run that reports the pairs it would create? The report
-   is required whichever is chosen; the question is what the user edits when
-   the pass over-couples.
-3. **Naming.** What convention for the created ties? The exit criterion
-   compares decks *up to names*, so the names only have to be stable across
-   runs, but a later diff-against-snapshot test will want them predictable.
-4. **Where the pairing rule lives.** The proposal promotes
-   `paired_faces_by_plane` out of `femexamples` into Fem proper, the way Stage 9
-   promoted `mesh_parts_separately`. Confirm that is wanted, and whether the
-   rule should be generalised beyond plane-to-plane (a curved shell on a curved
-   solid face is not a plane pair).
-5. **Coincidence tolerance.** Keep the fixtures' `COINCIDENT_TOLERANCE = 1e-6`
-   as a constant, or expose it as an argument? The declared-gap families need it
-   larger, but they are explicitly out of this cut.
-6. **What the pass does when it finds nothing.** Silent, a report line, or an
-   error? A model that declares a shell thickness but no solid reference has
-   nothing to tie, which is a legitimate shell-only model.
+   only, or the helper *and* a command that exposes it? The writer is untouched
+   either way.
+2. **How the model declares it.** `Composite::Shell.Support` must be the solid
+   object itself. Is that read directly (`shell.Support`), or does the pass also
+   require the shell-thickness reference to name the solid? The shell's own
+   faces and the solid's are meshed apart, so the slave face has to be named on
+   the shell side, not copied from the solid.
+3. **Which faces are tied.** A shell whose `Support` *is the solid* covers the
+   solid's whole boundary — the bag case. A single-face skin's support is a
+   face, not the solid. Does the convention therefore cover only bag shells, or
+   does a one-face skin declare its support some other way? This is the
+   question the rule has to answer before it is implementable.
+4. **Opt-out.** Per-tie `Suppressed` after creation, an allow-list, or a dry-run
+   report? A shell on a solid that is not bonded has to be expressible.
+5. **Naming.** What convention for the created ties, so a later snapshot test is
+   stable?
+6. **Migrating the examples.** Neither the wing nor the plate follows the
+   convention, so neither exercises the pass. Migrate one, add a small
+   convention-following case, or test the pass with fixtures only?
+7. **Empty pass.** Silent, a report line, or an error — a shell-only model has
+   nothing to tie.

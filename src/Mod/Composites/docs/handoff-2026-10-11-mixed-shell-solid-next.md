@@ -154,7 +154,9 @@ moves material through the thickness, and it can at most be *reported*.
   **proposal: review before any code**; it depended on B4.1 (per-shell slave
   lookup), now satisfied, and needs per-interface opt-out, a derived
   tolerance, and a checked (not assumed) mesh-disjointness rule.  Refreshed
-  2026-10-11: proposal updated, six open questions for review, **no code yet**.
+  2026-10-11: the rule is object identity (`shell.Support is the solid`), not a
+  geometric pairing, so the wing and the plate keep their hand-written ties;
+  seven open questions for review, **no code yet**.
 
 ## 6. Deferred to the bottom by the owner
 
