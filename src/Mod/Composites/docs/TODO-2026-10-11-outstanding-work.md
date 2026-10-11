@@ -17,9 +17,12 @@ PDFs, generated result trees), and the wider Composites backlog in
 `docs/known-issues.md`.
 
 **Already done and verified (do not re-open):** the `FuselageV2.py` split
-(study `2ad176e`) and the run-report move (FreeCAD `cdb123827a`, study
-`df8a50d`), with both gates re-run clean on 2026-10-11 (geometry build exit 0;
-`propeller/test` 130 passed / 0 failed); mixed-plan **Stages 1–9** (the
+(study `2ad176e`), the run-report move (FreeCAD `cdb123827a`, study
+`df8a50d`), and **Track A's A2** — the generic helpers and the study CLI are
+Composites modules and `FuselageFem.py` is the hooks (FreeCAD `c396c90ea8`,
+study `5692de7`), with the gates re-run clean on 2026-10-11 (geometry build
+exit 0; `propeller/test` 130 passed / 0 failed; lc03 disp 22.399093 mm,
+exposure 0.822963, λ₁ 0.7170082, mass 16288.826 g); mixed-plan **Stages 1–9** (the
 mixed path is on by default, the motivating laminate wing solves, §11.1, §11.2,
 §11.5, §11.6, §11.7, §11.12, §11.13 are closed); and **B9.1 / B9.1b / B9.4** —
 the compound-of-solids use-after-free, the stale edge-read cache, and the
@@ -31,9 +34,10 @@ first; it is deferred, not accepted.
 
 ---
 
-# Track A — WP8 step 5, and the doc commit
+# Track A — WP8 step 5 (done)
 
-Repo: study, branch `fuselage-v2-bulkhead-visibility`.
+Repo: study, branch `fuselage-v2-bulkhead-visibility`.  **No open item:** A1
+and A2 are done and committed.
 
 - [x] **A1 — DONE (2026-10-11).**  The four study docs record the commits and
       the 130/0 suite instead of "in flight / uncommitted" (study `ce6cdc8`),
@@ -42,66 +46,58 @@ Repo: study, branch `fuselage-v2-bulkhead-visibility`.
       `c85e941`), so a reader arriving at either document lands on the same
       list.
 
-- [ ] **A2 — WP8 step 5: the mechanics leave the study.**  Lift the generic
-      helpers out of `cad/fuselage/`, reduce `FuselageFem.py` to the hooks, and
-      delete what is left of `propeller/cad` that exists only for the old
-      driver.  Handover §6 measured **267 lines** of unambiguous helper, up to
-      **435** once the laminate builders and tree rules are parameterised.
-      Sub-items, in the order the blockers allow:
+- [x] **A2 — DONE (2026-10-11).**  The mechanics left the study for Composites
+      (FreeCAD `c396c90ea8`, study `5692de7`).  The generic helpers are new
+      modules under `src/Mod/Composites` — `util/build_util.py`,
+      `util/object_util.py`, `util/stack_util.py`, `util/tree_util.py`,
+      `tools/laminate_builder.py`, `fem/study_cli.py` — with `extreme_y_point`,
+      `shape_area` and `edge_names_by_x` added to `util/geometry_util.py`; each
+      has focused tests in `compositestests/`.  `FuselageFem.py` is now the
+      hooks plus this airframe's spec, driven by `study_cli.main` over
+      `add_arguments` / `configure` / `provenance`.  Both gates re-run clean:
+      `propeller/test` 130 passed / 0 failed, and a real lc03 solve on the gate
+      mesh reproduces disp **22.399093** mm, exposure **0.822963**, λ₁
+      **0.7170082**, mass **16288.826 g**.
 
-  - [ ] **A2.1 — `_log`, `_silence_occt_chatter`, `_timed`** (in
-        `cad/fuselage/util.py`) → a Composites **build util**.  *Blocker:* none;
-        they are already neutral.
-  - [ ] **A2.2 — `_attach_vp`, `_shape_object`** (`util.py`) →
-        `Composites.util` (VP attach is generic; `_shape_object` is a
-        `Part::Feature` from a shape).  *Blocker:* none.
-  - [ ] **A2.3 — `_extreme_y_point`** (`cad/fuselage/skin.py`) →
-        `Composites.util.geometry_util`.  *Blocker:* none.
-  - [ ] **A2.4 — `_is_composite_geometry`, `_apply_stack_model`**
-        (`cad/fuselage/fem.py`) → `Composites.util` / `mechanics` (it is
-        `StackModelType` policy).  *Blocker:* none.
-  - [ ] **A2.5 — `_area`** (`cad/fuselage/partition.py`) →
-        `util/geometry_util`.  *Blocker:* none; trivial.
-  - [ ] **A2.6 — the laminate builders** `_make_lamina`,
-        `build_skin_laminate`, `build_frame_laminate`
-        (`cad/fuselage/laminate.py`) → a Composites laminate module.
-        *Blocker:* their stack defaults (`SKIN_PLY_STACK`, `QI_PLY_THICKNESS`)
-        must first become **arguments**.  Depends on A1 only for the doc trail.
-  - [ ] **A2.7 — the tree rules** `_group_top_level`, `_apply_visibility`,
-        `_log_drape_coverage` (`util.py`, `geometry.py`) → a Composites
-        document/tree util.  *Blocker:* the fuselage's **name lists** must first
-        become a rules argument (they name this airframe's objects).
-  - [ ] **A2.8 — reduce `FuselageFem.py` to the hooks, and delete only the
-        `propeller/cad` files that existed solely for the deleted old driver.**
-        The hooks are `build(arguments)`, `geometry_arguments()`, `parts(doc)`,
-        `constraints(doc, analysis)`, `snapshot(case)`, and optionally
-        `mesh_name`, `laminates(doc)`.
-        *Scope — narrow.*  "Dead" means *a file whose only consumer was the old
-        driver*.  That set is **already deleted** (`femstudy.py`,
-        `summarize_fem_runs.py`, `ccxdat.py`), and **no surviving file
-        qualifies**: the old driver's dependencies (`deckaudit`, `decknodes`,
-        `model_mass`, `partexposure`, `runpaths`, `matlib`) are live, because
-        the new driver reaches them through the four study hooks.  `propeller/cad`
-        also holds the propeller/blade design package and the study's own
-        standalone diagnostics (`check_*`, `probe_*`, `bench_*`, `plot_*`,
-        `run_fem_cases.py`, `show_fem_results.py`, …); none of those is in scope.
-        *Deliverable:* an explicit, reviewed file list.  **No file is deleted
-        until a human has approved each entry; anything not listed stays.**
-        Absent that list, this sub-item changes no file.
-        *Blocker:* A2.1–A2.7 land first, or the deleted copies are still the
-        only copy.
-  - **Two constraints on all of A2.**  Load cases stay on the Fem batch
-        contract — `step_count` + `reaction_snapshots = [study.snapshot(case) …]`,
-        never per-case `*CLOAD` blocks or one deck per case — so the same model
-        stays drivable by **FemLink**.  And **no monkeypatching**: a knob
-        arrives as an argument (as `band_ply_stack(base, schedule=None)` now
-        does), never by moving a module global.
-  - **Gate for A2:** `propeller/test` stays **130 passed / 0 failed**, and a
-        real lc03 solve reproduces disp **22.3991 mm**, exposure **0.823**, λ₁
-        **0.717** through the Composites driver.
+  - [x] **A2.1 — DONE.**  `BuildLog` and `silence_occt_chatter` live in
+        `Composites.util.build_util`; the study names its timeline
+        (`fuselage/util.py`) and imports the silencer.
+  - [x] **A2.2 — DONE.**  `shape_object` and `attach_view_provider` live in
+        `Composites.util.object_util`.
+  - [x] **A2.3 — DONE.**  `extreme_y_point` lives in
+        `Composites.util.geometry_util`; the study's copy is deleted.
+  - [x] **A2.4 — DONE.**  `is_composite_geometry`
+        (`util/object_util.py`) and `apply_stack_model` (`util/stack_util.py`,
+        the model type now an argument).
+  - [x] **A2.5 — DONE.**  `shape_area` lives in
+        `Composites.util.geometry_util`.
+  - [x] **A2.6 — DONE.**  `make_lamina`, `build_skin_laminate` and
+        `build_frame_laminate` live in `Composites.tools.laminate_builder`;
+        the stack and the whole material schedule are arguments, and the
+        study's `fuselage/laminate.py` only binds this airframe's resin and
+        angle set.  `build_skin_laminate` declares the laminate's volume
+        fraction separately from the plies' because the study always did, so
+        the gate reproduces bit for bit.
+  - [x] **A2.7 — DONE.**  `apply_visibility`, `apply_review_visibility`,
+        `group_top_level` (the rules an argument) and `log_drape_coverage` (the
+        log callable an argument) live in `Composites.util.tree_util`; the
+        airframe's name lists are `TREE_RULES` in `fuselage/geometry.py`.
+  - [x] **A2.8 — DONE.**  `FuselageFem.py` is the hooks plus the study's data;
+        its command line, case/load selection, refinement parsing and `Run`
+        building are `Composites.fem.study_cli`, and `add_arguments` /
+        `configure` / `provenance` are the seam.  The deletion half is
+        unchanged: the reviewed list is **empty** and no surviving file is
+        deleted (the inventory review, study `98adada`).
+  - **Two constraints on all of A2** — met.  Load cases stay on the Fem batch
+        contract (`step_count` + `reaction_snapshots`; `FuselageStudy.snapshot`
+        is unchanged), and every knob arrives as an argument or a parsed
+        option — the tests no longer monkeypatch `SELECTED_CASE`.
+  - **Gate for A2** — met (see the A2 done note above).
   - **Exit for WP8 (PLAN §WP8):** the fuselage study builds, solves and reports
         through the donated driver and report, and a second part implements
-        **only the hooks** with no copied mechanics.
+        **only the hooks** with no copied mechanics.  The study now also
+        delegates its command line, so a second part supplies
+        `add_arguments`/`configure`/`provenance` and no CLI either.
 
 ---
 
@@ -323,18 +319,15 @@ it.  "§" refers to `plan-mixed-shell-solid-fem.md`.
 
 | item | blocked by | blocks |
 |---|---|---|
-| A2.1–A2.5 | — | A2.8 |
-| A2.6 | stack defaults become arguments | A2.8 |
-| A2.7 | name lists become a rules argument | A2.8 |
-| A2.8 | A2.1–A2.7 | — |
+| ~~A2.1–A2.8~~ done | — | — |
 | B1, B2.1, B3, B5.1, B6, B8, B9.2, B9.3 | — | — |
 | B4.1 | — | B7 |
 | B7 | review; B4.1 | — |
 
-**Closed 2026-10-11, blocking nothing now:** `A1`, `B9.1`, `B9.1b`, `B9.4`,
-`B5.2`, `B5.3`, `B2.2`.  `B9.5` is deferred to the bottom of this list, and
-`B2` / `B5` / `B4` / `B9` stay unticked only because a sibling inside them is
-open.
+**Closed 2026-10-11, blocking nothing now:** `A1`, `A2`, `B9.1`, `B9.1b`,
+`B9.4`, `B5.2`, `B5.3`, `B2.2`.  `B9.5` is deferred to the bottom of this
+list, and `B2` / `B5` / `B4` / `B9` stay unticked only because a sibling
+inside them is open.
 
 Tracks A and B do not touch each other: different repos, different branches, no
 shared file.
@@ -348,7 +341,8 @@ shared file.
    without a rebuild.
 3. **B3**, **B2.1**, **B5.1**, **B8** — the ones needing a fixture.
 4. **B1** — the C++ change, last because it needs a rebuild.
-5. **A2** — the study-side donation tail, whose gate is the lc03 reproduction.
+5. ~~**A2** — the study-side donation tail, whose gate is the lc03
+   reproduction.~~ **Done 2026-10-11** (FreeCAD `c396c90ea8`, study `5692de7`).
 6. **B7** — after **B4.1** lands and the proposal has been reviewed.
 
 ---
