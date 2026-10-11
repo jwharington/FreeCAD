@@ -363,7 +363,7 @@ this is the only open track).
       `test_mixed_shell_solid.py` 44 passed; `test_constraint_tie_shell.py`
       2 passed; `test_fem_extension_registry.py` 5 passed;
       `test_drape_laminate_provider.py` green; `test_composite_shell.py` green
-      except the pre-existing B9.6 errors.
+      (19 passed, the B9.6 errors fixed).
 
 - [x] **B8 — DONE (2026-10-11).**  The feature had already landed
       (`0542b6ba22`, 2026-10-09): `CompositeShell.Offset` is the per-skin
@@ -429,17 +429,19 @@ this is the only open track).
         off `fem-unified`, unmerged, unreviewed, unupstreamed, and **no PR is
         planned** — it is the working record.  *Exit:* keep that decision
         explicit (this line), or open the PR.
-  - [ ] **B9.6 — `test_composite_shell` has 3 pre-existing errors (found
-        2026-10-11).**  `TestCompositeShellOffset`'s three deck tests error in
-        `write_femelement_geometry.py:198`, which reads
-        `ccxwriter.mesh_object.FemMesh` for a composite section, while the test's
-        `_StubCcxWriter` never had a `mesh_object`.  The guard was added by
-        `a601dde52a` (2026-10-10), after the tests were written (`0542b6ba22`,
-        2026-10-09), so it is **not** caused by the B6/B4.1/B8/B5.1/B7.1 work.
-        *Exit:* either the stub grows a `mesh_object` with a `FemMesh` and a
-        real `ccx_elset`, or the guard stops reading the writer when `elements`
-        is not a set name.  The choice is which side is wrong, so it is left
-        for review rather than guessed.
+  - [x] **B9.6 — DONE (2026-10-11).** `TestCompositeShellOffset`'s three deck
+        tests errored in `write_femelement_geometry.py:198`, which reads
+        `ccxwriter.mesh_object.FemMesh` for a composite section, while the
+        test's `_StubCcxWriter` never had a `mesh_object`.  **The stub was
+        wrong, not the guard.**  It also passed `ccx_elset=True`, which the
+        writer never produces — the field is a list of element ids or a set
+        name (`meshsetsgetter`) — and the guard's job, refusing a layered
+        section on a linear shell, is real and needs a mesh to count nodes.  The
+        stub now carries a one-quad8 `FemMesh` (`_quadratic_shell_mesh`) and
+        `ccx_elset=[1]`, so the card the tests assert is written through the
+        same path the writer takes.  The guard is untouched; its refusing
+        branch stays covered in Fem's `test_mixed_shell_solid.py`.  Verified:
+        `test_composite_shell` **19 passed, 0 errors**.
 
 ---
 
@@ -449,12 +451,11 @@ this is the only open track).
 |---|---|---|
 | ~~A2.1–A2.8~~ done | — | — |
 | B1, B9.2, B9.3 | — | — |
-| B7 | review | — |
 
 **Closed 2026-10-11, blocking nothing now:** `A1`, `A2`, `B9.1`, `B9.1b`,
-`B9.4`, `B5.1`, `B5.2`, `B5.3`, `B2.1`, `B2.2`, `B3`, `B6`, `B4.1`, `B7.1`,
-`B8`.  `B9.5` is deferred to the bottom of this list, and `B5` / `B4` / `B9`
-stay unticked only because a sibling inside them is open.
+`B9.4`, `B9.6`, `B5.1`, `B5.2`, `B5.3`, `B2.1`, `B2.2`, `B3`, `B6`, `B4.1`,
+`B7`, `B7.1`, `B8`.  `B9.5` is deferred to the bottom of this list, and
+`B5` / `B4` / `B9` stay unticked only because a sibling inside them is open.
 
 Tracks A and B do not touch each other: different repos, different branches, no
 shared file.
@@ -471,7 +472,9 @@ shared file.
 4. **B1** — the C++ change, last because it needs a rebuild.
 5. ~~**A2** — the study-side donation tail, whose gate is the lc03
    reproduction.~~ **Done 2026-10-11** (FreeCAD `c396c90ea8`, study `5692de7`).
-6. **B7** — the proposal, now that B4.1 has landed; review before any code.
+6. ~~**B7** — the tie pass, implemented as the headless `auto_tie` helper with
+   its own example and tests.~~ **Done 2026-10-11**, with the B4.1 follow-up
+   (the checks read the section the deck writes).
 
 ---
 

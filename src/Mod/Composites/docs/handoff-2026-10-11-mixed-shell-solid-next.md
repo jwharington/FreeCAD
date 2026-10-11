@@ -26,7 +26,7 @@ its exit.  The reasoning lives in `plan-mixed-shell-solid-fem.md` and
 2. [What is left, in order](#2-what-is-left-in-order)
 3. [B1 — the results-viewer toggle (the one rebuild item)](#3-b1--the-results-viewer-toggle-the-one-rebuild-item)
 4. [B7 — the tie-assignment pass (implemented)](#4-b7--the-tie-assignment-pass-implemented)
-5. [B9.6 — a pre-existing RED test module](#5-b96--a-pre-existing-red-test-module)
+5. [B9.6 — the red module was the stub's fault (resolved)](#5-b96--the-red-module-was-the-stubs-fault-resolved)
 6. [Deferred to the bottom by the owner](#6-deferred-to-the-bottom-by-the-owner)
 7. [How to run and gate it](#7-how-to-run-and-gate-it)
 8. [Standing rules](#8-standing-rules)
@@ -108,8 +108,9 @@ The tracker's ordering, minus the closed items:
    call sites **after one release has shipped** with the default on.
 3. **B9.3** decide the branch's fate (keep it the explicit working record, or
    open the PR).
-4. **B9.6** — a pre-existing RED test module, found this session (below).
-5. **B9.5** — deferred to the bottom by the owner (below).
+4. **B9.5** — deferred to the bottom by the owner (below).
+
+`B9.6` was the other open cleanup; it is resolved (below).
 
 ## 3. B1 — the results-viewer toggle (the one rebuild item)
 
@@ -148,16 +149,17 @@ deck's section values through `femtools.mixedcoupling.shell_section_dimensions`
 fills with the laminate total and the shell's offset), so B4.1's refusal sees
 the laminate.  One face per shell in this cut.
 
-## 5. B9.6 — a pre-existing RED test module
+## 5. B9.6 — the red module was the stub's fault (resolved)
 
-`test_composite_shell` has **3 errors** in `TestCompositeShellOffset`, all in
+`test_composite_shell` had **3 errors** in `TestCompositeShellOffset`, all in
 `write_femelement_geometry.py:198`, which reads `ccxwriter.mesh_object.FemMesh`
 for a composite section while the test's `_StubCcxWriter` never had a
-`mesh_object`.  The guard landed in `a601dde52a` (2026-10-10), a day *after*
-those tests (`0542b6ba22`), so it is **not** from this session's work.
-*Exit:* either the stub grows a `mesh_object` + a real `ccx_elset`, or the guard
-stops reading the writer when `elements` is not a set name — which side is wrong
-is the open question.  The new B7.1 tests in the same module pass alongside it.
+`mesh_object`.  **The stub was wrong, not the guard:** it also passed
+`ccx_elset=True`, a value the writer never produces (it is a list of element
+ids or a set name), and the guard — refuse a layered section on a linear shell
+— needs a mesh to count nodes.  It now carries a one-quad8 `FemMesh` and
+`ccx_elset=[1]`, and `test_composite_shell` is **19 passed, 0 errors**.  The
+guard's refusing branch stays covered in Fem's `test_mixed_shell_solid.py`.
 
 ## 6. Deferred to the bottom by the owner
 

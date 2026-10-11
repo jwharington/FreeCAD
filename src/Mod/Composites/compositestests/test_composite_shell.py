@@ -23,11 +23,13 @@ from Composites.features.CompositeShell import (
 # The FEM deck writer is an optional dependency of this Composites test
 # module: without the FEM stack the shell-section assertions are skipped.
 try:
+    import Fem
     import ObjectsFem
     from femsolver.calculix.write_femelement_geometry import (
         write_femelement_geometry,
     )
 except ImportError:
+    Fem = None
     ObjectsFem = None
     write_femelement_geometry = None
 
@@ -37,12 +39,36 @@ class _StubSolver:
     ExcludeBendingStiffness = False
 
 
+class _StubMeshObject:
+    """The one attribute the section writer reads off the mesh object."""
+
+    def __init__(self, femmesh):
+        self.FemMesh = femmesh
+
+
+def _quadratic_shell_mesh():
+    """A one-quad8 FemMesh: the shape a composite ``*SHELL SECTION`` requires.
+
+    The writer refuses a layered section on a linear shell, and tells them
+    apart by node count (``COMPOSITE_SHELL_ELEMENT_NODES``), so the stub writer
+    has to offer a mesh whose elements are quadratic (S8R here).
+    """
+    mesh = Fem.FemMesh()
+    corners = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    mid_sides = ((0.5, 0.0), (1.0, 0.5), (0.5, 1.0), (0.0, 0.5))
+    for node_id, (x, y) in enumerate(corners + mid_sides, start=1):
+        mesh.addNode(x, y, 0.0, node_id)
+    mesh.addFace(list(range(1, 9)), 1)
+    return mesh
+
+
 class _StubCcxWriter:
-    """The two attributes write_femelement_geometry reads."""
+    """The attributes write_femelement_geometry reads."""
 
     def __init__(self, mat_geo_sets):
         self.mat_geo_sets = mat_geo_sets
         self.solver_obj = _StubSolver()
+        self.mesh_object = _StubMeshObject(_quadratic_shell_mesh())
 
 
 class TestCompositeShellFP(TestFreeCADFP):
@@ -332,7 +358,10 @@ class TestCompositeShellOffset(TestFreeCADFP):
             thickness_by_shell[shell.Name] = thickness
             mat_geo_sets.append(
                 {
-                    "ccx_elset": True,
+                    # A composite section's elements are checked for a quadratic
+                    # node count; element 1 of the stub mesh is an S8R.  The
+                    # writer reads only ``ccx_elset_name`` for the card text.
+                    "ccx_elset": [1],
                     "ccx_elset_name": f"E_{shell.Name}",
                     "mat_obj_name": f"MAT_{shell.Name}",
                     "shellthickness_obj": thickness,
