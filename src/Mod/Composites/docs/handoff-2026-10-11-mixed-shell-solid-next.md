@@ -52,11 +52,11 @@ rather than re-deriving anything below.
 
 The tracker's ordering, minus the closed items:
 
-1. **B6** (the E family) and **B4.1** — the two real defects reachable without
-   a rebuild.  Pick either; they do not depend on each other.
+1. ~~**B6** (the E family) and **B4.1**~~ — the two real defects reachable
+   without a rebuild; **both done 2026-10-11**.
 2. **B3, B2.1, B5.1, B8** — the ones that need a fixture.
 3. **B1** — the C++ view-provider change, last because it needs a rebuild.
-4. **B7** — after B4.1 lands and the proposal has been reviewed.
+4. **B7** — the proposal, now that B4.1 has landed; review before any code.
 
 One-line reminders: **B3** is a write-time check for a tie whose shell slave
 carries a `*CLOAD` node (its fixture must be Dhondt's two-shell-layer
@@ -104,6 +104,11 @@ faces only.
 loud refusal narrows to a reference with no expressible surface.
 
 ## 4. B4.1 — `_shell_slave_face` picks the wrong side
+
+> **DONE 2026-10-11 — see the tracker's B4.1.**  The tie names the expanded
+> face nearest the master, from the slave's own section; `checksanalysis`
+> refuses a tolerance below that distance.  The text below is the original
+> reasoning.
 
 `src/Mod/Fem/femsolver/calculix/write_constraint_tie.py:60–77` takes `S1`/`S2`
 from the **first** non-suppressed `geos_shellthickness` offset in the analysis

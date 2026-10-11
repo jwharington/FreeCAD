@@ -2043,28 +2043,38 @@ table gives `g`, which is §11.3's third reading as arithmetic rather than prose
   mixed model. The defect is only `tolerance < required`, which is the silent
   uncoupling §11.3 found in the fixtures.
 
-**A latent bug found while reading this — recorded, not fixed.**
-`_shell_slave_face` (`write_constraint_tie.py:60-77`) takes `S1`/`S2` from the
+**A latent bug found while reading this — fixed 2026-10-11 (B4.1).**
+`_shell_slave_face` (`write_constraint_tie.py:60-77`) took `S1`/`S2` from the
 **first non-suppressed** `geos_shellthickness` offset in the whole analysis, and
-never consults where the master is. §10 requires a sandwich's two skins to offset
-in *opposite* directions, so once real offsets are in use one of the two ties
-will name the far face — a distance of `t` instead of 0 — which ccx reports only
-as *"too far away"* and which the function's own docstring already calls silent.
-It cannot bite today: every fixture and both examples use offset 0, where `S1`
-and `S2` are symmetric about the reference surface and the choice cannot matter.
+never consulted where the master is. §10 requires a sandwich's two skins to
+offset in *opposite* directions, so once real offsets are in use one of the two
+ties would name the far face — a distance of `t` instead of 0 — which ccx reports
+only as *"too far away"* and which the function's own docstring already calls
+silent. It could not bite while every fixture and both examples used offset 0,
+where `S1` and `S2` are symmetric about the reference surface.
 
-*If this is ever picked up, in this order:*
+**What landed:** `_shell_slave_face` takes the tie's resolved references, finds
+the section that names the slave (`femutils.member_for_reference`), measures the
+signed gap from the slave's reference surface to the master plane along the
+shell normal, and names the expanded face nearest the master — which at `g = 0`
+reproduces the old offset rule. The geometry is one shared definition
+(`mixedcoupling.shell_expansion_faces`, `tie_slave_side_and_tolerance`) used by
+the writer and by `checksanalysis`, which now **refuses** a `Tolerance` below
+the chosen face's distance from the master, naming both faces, both numbers and
+the landing offset. Verified by `test_mixed_shell_solid.py` (43 passed) and
+`test_mixed_coupling_numerical.py` (6 passed).
 
-1. Derive the requirement before the write, in `checksanalysis`, from geometry
-   only — §11.1 already requires both references to be faces, so `g` is a
-   plane-to-plane distance, and `t` and `o` come from the section. Warn when
-   `tolerance < required`, naming the two faces, both numbers and the remedy
-   (`o = g/t − 0.5`, or raise the tolerance). No mesh query, so none of §11.6's
-   view cost.
-2. Choose the slave face from the master's side rather than from the offset
-   sign, which is the latent bug above.
-3. Only then set an offset in a fixture, as §11.3's demonstration that the
-   required tolerance collapses from `t/2` to `g`.
+The order below is what was followed:
+
+1. ~~Derive the requirement before the write, in `checksanalysis`~~ — done; it
+   computes `g` from the two references and `t`/`o` from the section, and blocks
+   the write (the handover said "warn") when `tolerance < required`, naming the
+   two faces, both numbers and the remedy.
+2. ~~Choose the slave face from the master's side rather than from the offset
+   sign~~ — done, via the per-section lookup and the near-face rule.
+3. ~~Set an offset in a fixture~~ — done: a slow test sets `OFFSET=−0.5` so the
+   chosen face lands on the master and the same small tolerance now writes and
+   solves with no untied node.
 
 *Exit criterion:* a fixture whose shell offset leaves its expansion face `t/2`
 from the master and whose write fails with the distance and the offset that would

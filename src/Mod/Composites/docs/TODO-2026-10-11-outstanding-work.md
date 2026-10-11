@@ -154,25 +154,26 @@ this is the only open track).
 - [ ] **B4 — §11.11, the parked offset question and its latent bug.**  Parked,
       **not scheduled** — the research is recorded so it is not repeated.
       Extract only the one real defect from it:
-  - [ ] **B4.1 — `_shell_slave_face` picks the wrong side.**
-        `src/Mod/Fem/femsolver/calculix/write_constraint_tie.py:60-77` takes
-        `S1`/`S2` from the **first** non-suppressed `geos_shellthickness` offset
-        in the analysis and never consults the master, so with a sandwich's two
-        opposite offsets one tie names the far face — a whole thickness out,
-        silent, and today only unexposed because every fixture and example uses
-        offset 0.  *Order if picked up:* (1) choose the slave face from the
-        master's side; (2) derive the required tolerance in `checksanalysis`
-        from geometry and **warn** when `tolerance < required`, naming faces,
-        both numbers and the remedy; (3) only then set an offset in a fixture.
-        **Traced 2026-10-11:** the function takes only `ccxwriter`, so it cannot
-        see which shell the tie's slave is, even though its caller
-        `write_meshdata_constraint(f, femobj, tie_obj, ccxwriter)`
-        (`write_constraint_tie.py:79`) holds the tie's resolved faces and the tie
-        object.  Choosing by the master needs the signed distance from the slave
-        shell's reference surface to the master plane along the shell normal —
-        §11.11's `o`/`g` table — a geometry query the writer does not make
-        today; today's rule (`1 if Offset < 0 else 2`) is correct only for a
-        master sitting **on** the reference surface (`g = 0`).
+  - [x] **B4.1 — DONE (2026-10-11).**  The tie names the expanded face nearest
+        the master, from the slave's **own** section.  `_shell_slave_face` now
+        takes the tie's resolved references and (1) finds the `ShellThickness`
+        that sections the slave (`femutils.member_for_reference`, promoted from
+        the body-heat-source writer's private copy), (2) measures the signed gap
+        from the slave's reference surface to the master plane along the shell
+        normal, and (3) picks `S1`/`S2` by the near face — which at `g = 0`
+        reduces exactly to the old offset rule, so the existing offset test is
+        unchanged.  The geometry is one shared definition
+        (`mixedcoupling.shell_expansion_faces`, `tie_slave_side_and_tolerance`,
+        `planar_face`) used by the writer and the checker alike.
+        `checksanalysis` now **refuses** a tie whose `Tolerance` is below the
+        chosen face's distance from the master — naming both faces, both
+        numbers and the landing offset (`±0.5 − g/t`) — instead of writing a
+        deck that couples nothing (the handover said "warn"; the write is
+        blocked, which is what the §11.11 exit asks for).  Verified:
+        `test_mixed_shell_solid.py` **43 passed** (the geometry rule, the
+        per-section lookup, the refusal, and a landing-offset solve with no
+        untied node), and `test_mixed_coupling_numerical.py` **6 passed**,
+        which also confirms f3/f4 now couple through their near face.
   - *Not scheduled:* making the offset land an expansion node on the contact
       plane (`o = g/t − 0.5`).  The requirement is **per tie pair, not per
       shell**, and it moves material through the thickness — it can at most be
@@ -326,13 +327,12 @@ this is the only open track).
 |---|---|---|
 | ~~A2.1–A2.8~~ done | — | — |
 | B1, B2.1, B3, B5.1, B8, B9.2, B9.3 | — | — |
-| B4.1 | — | B7 |
-| B7 | review; B4.1 | — |
+| B7 | review | — |
 
 **Closed 2026-10-11, blocking nothing now:** `A1`, `A2`, `B9.1`, `B9.1b`,
-`B9.4`, `B5.2`, `B5.3`, `B2.2`.  `B9.5` is deferred to the bottom of this
-list, and `B2` / `B5` / `B4` / `B9` stay unticked only because a sibling
-inside them is open.
+`B9.4`, `B5.2`, `B5.3`, `B2.2`, `B6`, `B4.1`.  `B9.5` is deferred to the
+bottom of this list, and `B2` / `B5` / `B4` / `B9` stay unticked only because a
+sibling inside them is open.
 
 Tracks A and B do not touch each other: different repos, different branches, no
 shared file.
@@ -342,13 +342,13 @@ shared file.
 1. ~~**A1** (commit the docs), then **B9.1**, **B5.2**, **B5.3**, **B2.2** — the
    small, self-contained cleanups.~~ **Done 2026-10-11**, together with `B9.1b`
    and `B9.4`, which the B9.1 investigation turned up.
-2. ~~**B6** (the E family)~~ **done 2026-10-11**; **B4.1** — the remaining real
-   defect reachable without a rebuild.
+2. ~~**B6** (the E family)~~ and ~~**B4.1**~~ **both done 2026-10-11** — the
+   two real defects reachable without a rebuild.
 3. **B3**, **B2.1**, **B5.1**, **B8** — the ones needing a fixture.
 4. **B1** — the C++ change, last because it needs a rebuild.
 5. ~~**A2** — the study-side donation tail, whose gate is the lc03
    reproduction.~~ **Done 2026-10-11** (FreeCAD `c396c90ea8`, study `5692de7`).
-6. **B7** — after **B4.1** lands and the proposal has been reviewed.
+6. **B7** — the proposal, now that B4.1 has landed; review before any code.
 
 ---
 
