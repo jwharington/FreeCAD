@@ -73,6 +73,32 @@ def route_shell_offset(shellth_obj, compshell_obj):
     shellth_obj.Offset = float(getattr(compshell_obj, "Offset", 0.0))
 
 
+def _laminate_layers(compshell_obj):
+    """The laminate's merged FEM layers, or ``[]`` when it has none."""
+    laminate = getattr(compshell_obj, "Laminate", None)
+    return getattr(getattr(laminate, "Proxy", None), "FEMLayers", None) or []
+
+
+def shell_section_dimensions(shellth_obj):
+    """The thickness and offset the composite section is written with, or ``None``.
+
+    The FEM shell-thickness object carries a placeholder thickness, and its
+    offset reaches the object only when the card is written, but a check that
+    runs before that (``checksanalysis``) needs both to derive a tie's position
+    tolerance.  This is the source they come from.
+    """
+    compshell_obj = get_compshell_obj(shellth_obj)
+    if not compshell_obj:
+        return None
+    layers = _laminate_layers(compshell_obj)
+    if not layers:
+        return None
+    return {
+        "thickness": sum(layer.thickness for layer in layers),
+        "offset": float(getattr(compshell_obj, "Offset", 0.0)),
+    }
+
+
 def get_laminate_materials(geos):
     def get_lam(o):
         obj = o["Object"]
@@ -113,7 +139,7 @@ def shell_section_provider(shellth_obj, matgeoset, orientation_name):
     # the deck never defines stops ccx at parse time (ERROR reading *SHELL
     # SECTION: nonexistent orientation).
     has_orientation = matgeoset.get("orientation") is not None
-    layers = getattr(laminate.Proxy, "FEMLayers", None) or []
+    layers = _laminate_layers(compshell_obj)
     if len(layers) != 1 and _is_isotropic_laminate(laminate):
         raise ValueError(
             f"{laminate.Name}: declared isotropic but has "
@@ -164,6 +190,7 @@ def register_drape_laminate_providers():
         from femtools.fem_extension_registry import (
             register_indirect_material_provider,
             register_shell_orientation_provider,
+            register_shell_section_dimension_provider,
             register_shell_section_provider,
         )
     except Exception:
@@ -171,5 +198,8 @@ def register_drape_laminate_providers():
 
     register_shell_orientation_provider("compositeswb.drape", shell_orientation_provider)
     register_shell_section_provider("compositeswb.laminate", shell_section_provider)
+    register_shell_section_dimension_provider(
+        "compositeswb.laminate", shell_section_dimensions
+    )
     register_indirect_material_provider("compositeswb.laminate", indirect_material_provider)
     return True

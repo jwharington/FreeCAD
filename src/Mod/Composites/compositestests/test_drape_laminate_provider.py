@@ -116,6 +116,7 @@ class TestDrapeLaminateProviderRegistration(unittest.TestCase):
     def test_register_drape_laminate_providers(self):
         called_orientation = []
         called_section = []
+        called_dimensions = []
         called_indirect = []
 
         def register_shell_orientation_provider(name, fn):
@@ -124,12 +125,16 @@ class TestDrapeLaminateProviderRegistration(unittest.TestCase):
         def register_shell_section_provider(name, fn):
             called_section.append((name, fn))
 
+        def register_shell_section_dimension_provider(name, fn):
+            called_dimensions.append((name, fn))
+
         def register_indirect_material_provider(name, fn):
             called_indirect.append((name, fn))
 
         fake_module = types.SimpleNamespace(
             register_shell_orientation_provider=register_shell_orientation_provider,
             register_shell_section_provider=register_shell_section_provider,
+            register_shell_section_dimension_provider=register_shell_section_dimension_provider,
             register_indirect_material_provider=register_indirect_material_provider,
         )
         sys.modules["femtools.fem_extension_registry"] = fake_module
@@ -142,6 +147,7 @@ class TestDrapeLaminateProviderRegistration(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(called_orientation[0][0], "compositeswb.drape")
         self.assertEqual(called_section[0][0], "compositeswb.laminate")
+        self.assertEqual(called_dimensions[0][0], "compositeswb.laminate")
         self.assertEqual(called_indirect[0][0], "compositeswb.laminate")
 
 

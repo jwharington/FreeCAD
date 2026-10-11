@@ -17,8 +17,28 @@ references, and nothing else.
 import FreeCAD
 import ObjectsFem
 
+from . import fem_extension_registry
+
 COINCIDENT_TOLERANCE = 1e-6
 _ROUND_DIGITS = 6
+
+
+def shell_section_dimensions(shellth_obj):
+    """The thickness (mm) and offset the deck will write for a shell section.
+
+    A composite shell's section object carries a placeholder thickness, and its
+    offset is routed onto the object only as the card is written, so a reader
+    that runs earlier -- a tolerance check, or the tie writer -- asks the
+    provider registered for that section; without one the object's own
+    properties are the answer, which is exact for a plain section.
+    """
+    override = fem_extension_registry.get_shell_section_dimensions(shellth_obj)
+    if override is not None:
+        return float(override["thickness"]), float(override["offset"])
+    return (
+        shellth_obj.Thickness.getValueAs("mm").Value,
+        float(getattr(shellth_obj, "Offset", 0.0)),
+    )
 
 
 def _component(vector, axis):

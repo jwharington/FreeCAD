@@ -39,7 +39,11 @@ from femmesh import meshtools
 from . import femutils
 from .checksmaterials import check_linear_material
 from .geomtools import get_element
-from .mixedcoupling import planar_face, tie_slave_side_and_tolerance
+from .mixedcoupling import (
+    planar_face,
+    shell_section_dimensions,
+    tie_slave_side_and_tolerance,
+)
 
 
 def _tie_references_that_are_not_faces(tie_obj):
@@ -94,9 +98,9 @@ def _tie_tolerance_message(tie_obj, member):
     )
     if section is None:
         return None
-    thickness = section.Thickness.getValueAs("mm").Value
+    thickness, offset = shell_section_dimensions(section)
     side, required, gap = tie_slave_side_and_tolerance(
-        slave_face, master_face, thickness, section.Offset
+        slave_face, master_face, thickness, offset
     )
     tolerance = tie_obj.Tolerance.getValueAs("mm").Value
     if tolerance >= required:

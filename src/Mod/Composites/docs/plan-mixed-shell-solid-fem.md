@@ -2393,12 +2393,17 @@ first, tolerance derived, writer and `meshsetsgetter` untouched.
   placeholder in the QI example). The pass writes `required * (1 + 1e-3)`,
   because CalculiX's gate drops a node whose distance reaches the tolerance.
 
-**Follow-up.** `checksanalysis._tie_tolerance_message` and
-`write_constraint_tie._shell_slave_face` still read the section's placeholder
-`Thickness` (and an `Offset` not yet routed at check time) for a composite
-shell, so B4.1's refusal under-estimates the requirement for laminates. The face
-choice is thickness-independent, so the writer is correct; the guard is weaker
-than intended.
+**Follow-up — fixed the same day.** `checksanalysis._tie_tolerance_message` and
+`write_constraint_tie._shell_slave_face` read the section's placeholder
+`Thickness` (and an `Offset` routed only at write time), so B4.1's refusal
+under-estimated the requirement for laminates.  Both now call
+`femtools.mixedcoupling.shell_section_dimensions`, which asks a new registry
+seam (`register_shell_section_dimension_provider`) for the values the deck
+writes and falls back to the object's own properties for a plain section; the
+composite provider registers the laminate total and the shell's offset.  The B7
+pass uses the same helper, so the check, the writer and the pass read one
+source.  The face choice stays thickness-independent.
 
-**Exit:** `test_auto_tie.py` (4 passed) creates the tie, solves with no
-uncoupled node, and a second run creates nothing.
+**Exit:** `test_auto_tie.py` (5 passed) creates the tie, solves with no
+uncoupled node, and a second run creates nothing; the tolerance-refusal test
+fails on the old placeholder and passes on the laminate total.

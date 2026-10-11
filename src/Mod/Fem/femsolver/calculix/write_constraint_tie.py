@@ -29,7 +29,11 @@ __url__ = "https://www.freecad.org"
 from FreeCAD import Units, Vector
 
 from femtools.femutils import member_for_reference
-from femtools.mixedcoupling import planar_face, tie_slave_side_and_tolerance
+from femtools.mixedcoupling import (
+    planar_face,
+    shell_section_dimensions,
+    tie_slave_side_and_tolerance,
+)
 
 
 def get_analysis_types():
@@ -143,8 +147,7 @@ def _shell_slave_face(femobj, ccxwriter):
     side, _required, _gap = tie_slave_side_and_tolerance(
         slave_face,
         master_face,
-        section.Thickness.getValueAs("mm").Value,
-        section.Offset,
+        *shell_section_dimensions(section),
     )
     return side
 

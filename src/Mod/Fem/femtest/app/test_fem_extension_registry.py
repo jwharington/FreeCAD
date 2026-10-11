@@ -55,6 +55,21 @@ class TestFemExtensionRegistry(unittest.TestCase):
         self.assertEqual(result["material"], "COMPOSITE,ORIENTATION=foo")
         self.assertEqual(result["section_geo"], "1.0\n")
 
+    def test_shell_section_dimension_provider(self):
+        from femtools import fem_extension_registry as registry
+
+        def provider(shellth_obj):
+            return {"thickness": 1.6, "offset": -0.5}
+
+        registry.register_shell_section_dimension_provider("test.provider", provider)
+        try:
+            result = registry.get_shell_section_dimensions(None)
+        finally:
+            registry.unregister_shell_section_dimension_provider("test.provider")
+
+        self.assertEqual(result["thickness"], 1.6)
+        self.assertEqual(result["offset"], -0.5)
+
     def test_indirect_material_provider(self):
         from femtools import fem_extension_registry as registry
 

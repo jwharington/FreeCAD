@@ -104,16 +104,12 @@ This session (2026-10-11), each with its own tracker note:
 The tracker's ordering, minus the closed items:
 
 1. **B1** — the C++ view-provider change; the only item with a **rebuild**.
-2. **B7's follow-up** — `checksanalysis._tie_tolerance_message` and
-   `_shell_slave_face` still read the placeholder section thickness for a
-   composite shell, so B4.1's refusal under-estimates the requirement for
-   laminates (plan §12.1).
-3. **B9.2** delete `femsolver/settings.py::get_allow_mixed_elements` and its
+2. **B9.2** delete `femsolver/settings.py::get_allow_mixed_elements` and its
    call sites **after one release has shipped** with the default on.
-4. **B9.3** decide the branch's fate (keep it the explicit working record, or
+3. **B9.3** decide the branch's fate (keep it the explicit working record, or
    open the PR).
-5. **B9.6** — a pre-existing RED test module, found this session (below).
-6. **B9.5** — deferred to the bottom by the owner (below).
+4. **B9.6** — a pre-existing RED test module, found this session (below).
+5. **B9.5** — deferred to the bottom by the owner (below).
 
 ## 3. B1 — the results-viewer toggle (the one rebuild item)
 
@@ -146,10 +142,11 @@ Two findings, both load-bearing — full text in plan §12.1:
   section's placeholder `Thickness` (1.6 mm against 0.8 mm), and must *exceed*
   the face's distance because CalculiX's gate is strict.
 
-**Follow-up (open):** `checksanalysis._tie_tolerance_message` and
-`_shell_slave_face` still read the placeholder for a composite shell, so B4.1's
-refusal under-estimates the requirement for laminates.  One face per shell in
-this cut.
+**Follow-up — fixed the same day:** the check and the writer now read the
+deck's section values through `femtools.mixedcoupling.shell_section_dimensions`
+(a new `register_shell_section_dimension_provider` seam the composite provider
+fills with the laminate total and the shell's offset), so B4.1's refusal sees
+the laminate.  One face per shell in this cut.
 
 ## 5. B9.6 — a pre-existing RED test module
 

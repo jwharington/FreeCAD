@@ -15,6 +15,7 @@ from Composites.compositeexamples.examples._shell_example_common import (
 from Composites.features.CompositeShell import CompositeShellFP
 from Composites.fem.auto_tie import TOLERANCE_MARGIN, auto_tie
 
+from femtools.checksanalysis import check_member_for_solver_calculix
 from femtools.membertools import AnalysisMember
 from femtools.mixedcoupling import face_reference_on_axis
 
@@ -54,6 +55,27 @@ def test_the_pass_ties_the_declared_interface(solved):
     assert tie.Tolerance.getValueAs("mm").Value == pytest.approx(
         thickness / 2.0 * (1.0 + TOLERANCE_MARGIN)
     )
+
+
+def test_the_tolerance_refusal_reads_the_laminate_the_deck_expands(solved):
+    # B4.1's guard must read the section the deck writes, not the FEM object's
+    # placeholder: the QI laminate is 1.6 mm, so a tie at 0.5 mm is below the
+    # 0.8 mm its expanded face sits from the master and must be refused.  With
+    # the 0.8 mm placeholder the guard computed 0.4 mm and accepted it.
+    tie = solved["tie"]
+    original = tie.Tolerance.getValueAs("mm").Value
+    try:
+        tie.Tolerance = 0.5
+        message = check_member_for_solver_calculix(
+            solved["analysis"],
+            solved["solver"],
+            solved["mesh"],
+            AnalysisMember(solved["analysis"]),
+        )
+    finally:
+        tie.Tolerance = original
+    assert "position tolerance" in message, message
+    assert "0.8" in message, message
 
 
 def test_a_second_run_creates_nothing(solved):

@@ -28,7 +28,12 @@ A shell declared on a solid that is deliberately not bonded clears its own
 from femtools import membertools
 from femtools.femutils import member_for_reference
 from femtools.geomtools import get_element
-from femtools.mixedcoupling import add_tie, planar_face, tie_slave_side_and_tolerance
+from femtools.mixedcoupling import (
+    add_tie,
+    planar_face,
+    shell_section_dimensions,
+    tie_slave_side_and_tolerance,
+)
 from femmesh import meshtools
 
 from ..features.CompositeShell import is_composite_shell, support_faces, support_object
@@ -211,30 +216,11 @@ def _required_tolerance(member, shell, slave_reference, master_reference):
             f"{shell.Name}: a tie couples two planar faces, but "
             f"{slave_reference[1][0]} or {master_reference[1][0]} is not one."
         )
+    thickness, offset = shell_section_dimensions(section)
     _side, required, _gap = tie_slave_side_and_tolerance(
-        slave_face,
-        master_face,
-        _effective_thickness(shell, section),
-        getattr(shell, "Offset", 0.0),
+        slave_face, master_face, thickness, offset
     )
     return required * (1.0 + TOLERANCE_MARGIN)
-
-
-def _effective_thickness(shell, section):
-    """The thickness CalculiX expands, which for a laminate is its own total.
-
-    The FEM section object carries a placeholder thickness; the composite
-    provider replaces the section geometry with the laminate's merged FEM
-    layers when it writes the deck, and routes the shell's offset into the
-    section -- both at write time, after this pass. Reading either property
-    here would derive the tolerance from a value the deck never uses, which is
-    what left four corner nodes spanning half the real thickness and uncoupled.
-    """
-    laminate = getattr(shell, "Laminate", None)
-    layers = getattr(getattr(laminate, "Proxy", None), "FEMLayers", None) or []
-    if layers:
-        return sum(layer.thickness for layer in layers)
-    return section.Thickness.getValueAs("mm").Value
 
 
 def _require_disjoint_mesh(analysis):

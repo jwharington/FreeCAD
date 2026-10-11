@@ -343,22 +343,27 @@ this is the only open track).
         uncoupled (the plate's hand-picked 1.0 hid it).  The pass reads the
         laminate total and writes `required * (1 + 1e-3)`, because CalculiX's
         gate drops a node whose distance *reaches* the tolerance.
-      - **Follow-up, not fixed here.**  `checksanalysis._tie_tolerance_message`
-        and `write_constraint_tie._shell_slave_face` still read
-        `section.Thickness` (and a not-yet-routed `section.Offset`) for a
-        composite shell, so B4.1's guard under-estimates the required distance
-        for laminate sections.  The face *choice* is thickness-independent, so
-        the writer is safe; the refusal is weaker than intended.  Route the
-        laminate total into the section (or a shared helper) before relying on
-        it.
+      - **Follow-up — fixed the same day.**  `checksanalysis._tie_tolerance_message`
+        and `write_constraint_tie._shell_slave_face` read the section's
+        placeholder `Thickness` (and an `Offset` routed only at write time), so
+        B4.1's guard under-estimated the requirement for laminate sections.  Both
+        now call `femtools.mixedcoupling.shell_section_dimensions`, which asks a
+        new registry seam (`register_shell_section_dimension_provider`) for the
+        values the deck writes — the composite provider registers the laminate
+        total and the shell's offset — and falls back to the object's own
+        properties for a plain section.  The B7 pass uses the same helper.  The
+        face *choice* stays thickness-independent.  Verified:
+        `test_auto_tie.py::test_the_tolerance_refusal_reads_the_laminate_the_deck_expands`
+        refuses a 0.5 mm tie where the placeholder computed only 0.4 mm required.
       - **Limit of the first cut:** one face per shell.  A `SupportReference`
         naming several faces raises rather than guess a slave face per master.
 
-      Verified: `test_auto_tie.py` 4 passed; `test_mixed_coupling_numerical.py`
+      Verified: `test_auto_tie.py` 5 passed; `test_mixed_coupling_numerical.py`
       7 passed; `test_mixed_shell_solid_stiffener.py` 1 passed; Fem
       `test_mixed_shell_solid.py` 44 passed; `test_constraint_tie_shell.py`
-      2 passed; `test_composite_shell.py` green except the pre-existing B9.6
-      errors.
+      2 passed; `test_fem_extension_registry.py` 5 passed;
+      `test_drape_laminate_provider.py` green; `test_composite_shell.py` green
+      except the pre-existing B9.6 errors.
 
 - [x] **B8 — DONE (2026-10-11).**  The feature had already landed
       (`0542b6ba22`, 2026-10-09): `CompositeShell.Offset` is the per-skin

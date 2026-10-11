@@ -8,6 +8,7 @@ FEM core stays generic and exposes a few plugin seams. External workbenches
 
 _shell_orientation_providers = {}
 _shell_section_providers = {}
+_shell_section_dimension_providers = {}
 _indirect_material_providers = {}
 
 
@@ -43,6 +44,14 @@ def unregister_shell_section_provider(name):
     _unregister(_shell_section_providers, name)
 
 
+def register_shell_section_dimension_provider(name, fn):
+    _register(_shell_section_dimension_providers, name, fn)
+
+
+def unregister_shell_section_dimension_provider(name):
+    _unregister(_shell_section_dimension_providers, name)
+
+
 def register_indirect_material_provider(name, fn):
     _register(_indirect_material_providers, name, fn)
 
@@ -75,6 +84,24 @@ def get_shell_section_override(shellth_obj, matgeoset, orientation_name):
             continue
         if isinstance(override, dict) and override:
             return override
+    return None
+
+
+def get_shell_section_dimensions(shellth_obj):
+    """The thickness and offset a section will be written with, or ``None``.
+
+    A provider owns the mapping from a section object to the values its deck
+    card uses; a caller that reads them -- a tolerance check that runs before
+    the card is written, for one -- falls back to the object's own properties
+    when no provider answers.
+    """
+    for provider in _providers(_shell_section_dimension_providers):
+        try:
+            dimensions = provider(shellth_obj)
+        except Exception:
+            continue
+        if isinstance(dimensions, dict) and dimensions:
+            return dimensions
     return None
 
 
