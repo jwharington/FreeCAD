@@ -40,9 +40,11 @@
 
 #include <vtkCellArray.h>
 #include <vtkCellData.h>
+#include <vtkCellTypes.h>
 #include <vtkDoubleArray.h>
 #include <vtkImplicitFunction.h>
 #include <vtkPointData.h>
+#include <vtkUnstructuredGrid.h>
 
 #include <QApplication>
 #include <QMessageBox>
@@ -147,6 +149,8 @@ App::PropertyFloatConstraint::Constraints ViewProviderFemPostObject::sizeRange =
 
 PROPERTY_SOURCE(FemGui::ViewProviderFemPostObject, Gui::ViewProviderDocumentObject)
 
+const char* ViewProviderFemPostObject::showDimensionsEnum[] = {"All", "Shells", "Solids", nullptr};
+
 ViewProviderFemPostObject::ViewProviderFemPostObject()
 {
     // initialize the properties
@@ -158,6 +162,13 @@ ViewProviderFemPostObject::ViewProviderFemPostObject()
         "Select the field used for calculating the color"
     );
     ADD_PROPERTY_TYPE(Component, ((long)0), "Coloring", App::Prop_None, "Select component to display");
+    ADD_PROPERTY_TYPE(
+        ShowDimensions,
+        ("All"),
+        "Display Options",
+        App::Prop_None,
+        "Which element dimensions a mixed result draws"
+    );
     ADD_PROPERTY_TYPE(Transparency, (0), "Object Style", App::Prop_None, "Set object transparency.");
     ADD_PROPERTY_TYPE(
         EdgeColor,
@@ -186,6 +197,7 @@ ViewProviderFemPostObject::ViewProviderFemPostObject()
 
     LineWidth.setConstraints(&sizeRange);
     PointSize.setConstraints(&sizeRange);
+    ShowDimensions.setEnums(showDimensionsEnum);
 
     sPixmap = "FEM_PostPipelineFromResult";
 
@@ -249,6 +261,7 @@ ViewProviderFemPostObject::ViewProviderFemPostObject()
     m_wireframe = vtkSmartPointer<vtkExtractEdges>::New();
     m_wireframeSurface = vtkSmartPointer<vtkExtractEdges>::New();
     m_surfaceEdges = vtkSmartPointer<vtkAppendPolyData>::New();
+    m_dimensionFilter = vtkSmartPointer<vtkExtractCellsByType>::New();
     m_pointsSurface->AddInputConnection(m_surface->GetOutputPort());
     m_wireframeSurface->AddInputConnection(m_surface->GetOutputPort());
     m_surfaceEdges->AddInputConnection(m_surface->GetOutputPort());
@@ -814,12 +827,57 @@ bool ViewProviderFemPostObject::setupPipeline()
         return false;
     }
 
-    m_outline->SetInputData(dset);
-    m_points->SetInputData(dset);
-    m_wireframe->SetInputData(dset);
-    m_surface->SetInputData(dset);
+    m_dimensionFilter->SetInputData(dset);
+    applyDimensionFilter(dset);
+    m_outline->SetInputConnection(m_dimensionFilter->GetOutputPort());
+    m_points->SetInputConnection(m_dimensionFilter->GetOutputPort());
+    m_wireframe->SetInputConnection(m_dimensionFilter->GetOutputPort());
+    m_surface->SetInputConnection(m_dimensionFilter->GetOutputPort());
 
     return true;
+}
+
+void ViewProviderFemPostObject::applyDimensionFilter(vtkDataSet* dset)
+{
+    m_dimensionFilter->RemoveAllCellTypes();
+    vtkUnstructuredGrid* grid = vtkUnstructuredGrid::SafeDownCast(dset);
+    if (!grid) {
+        m_dimensionFilter->AddAllCellTypes();
+        return;
+    }
+
+    // The dataset's own cell types summarise which dimensions it holds, and
+    // the mode only means something when both are present: a mesh of faces
+    // alone, or of volumes alone, has one possible answer and is left whole.
+    vtkSmartPointer<vtkCellTypes> types = vtkSmartPointer<vtkCellTypes>::New();
+    grid->GetCellTypes(types);
+    bool hasFaces = false;
+    bool hasVolumes = false;
+    for (vtkIdType i = 0; i < types->GetNumberOfTypes(); ++i) {
+        switch (vtkCellTypes::GetDimension(types->GetCellType(i))) {
+            case 2:
+                hasFaces = true;
+                break;
+            case 3:
+                hasVolumes = true;
+                break;
+            default:
+                break;
+        }
+    }
+
+    const std::string mode = ShowDimensions.getValueAsString();
+    if (mode == "All" || !(hasFaces && hasVolumes)) {
+        m_dimensionFilter->AddAllCellTypes();
+        return;
+    }
+    const int wanted = (mode == "Shells") ? 2 : 3;
+    for (vtkIdType i = 0; i < types->GetNumberOfTypes(); ++i) {
+        unsigned char type = types->GetCellType(i);
+        if (vtkCellTypes::GetDimension(type) == wanted) {
+            m_dimensionFilter->AddCellType(type);
+        }
+    }
 }
 
 void ViewProviderFemPostObject::onChanged(const App::Property* prop)
@@ -846,6 +904,11 @@ void ViewProviderFemPostObject::onChanged(const App::Property* prop)
         WriteColorData(ResetColorBarRange);
     }
     else if (prop == &Component && setupPipeline()) {
+        WriteColorData(ResetColorBarRange);
+    }
+    else if (prop == &ShowDimensions) {
+        // the geometry itself changes, so rebuild it and not just the colors
+        updateVtk();
         WriteColorData(ResetColorBarRange);
     }
     else if (prop == &Transparency) {

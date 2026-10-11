@@ -139,13 +139,23 @@ this is the only open track).
         `test_mixed_shell_solid.py::test_every_variant_meshes_to_a_mixed_femmesh`
         asserts `FacesOnly` and `Volumes` are both non-empty for every face and
         edge variant, which is the split the toggle acts on.
-  - [ ] **B1.1 — the VTK pipeline result view.**  The default result display is
-        `Fem::FemPostPipeline`; hiding a dimension there means a property on
-        `ViewProviderFemPostObject` and a VTK cell filter by dimension *before*
-        `vtkGeometryFilter` (the original cell types — triangle/quad vs
-        tetra/hexa — are only distinguishable before it).  Post-processing is
-        generic, not mixed-specific, so this is its own item.  *Exit:* the
-        pipeline hides shells or solids like B1 does on the mesh.
+  - [ ] **B1.1 — the VTK pipeline result view (implemented 2026-10-11,
+        awaiting the visual check).**  The default result display is
+        `Fem::FemPostPipeline`.
+        - **Fix.**  `FemGui::ViewProviderFemPostObject.ShowDimensions` (`All` /
+          `Shells` / `Solids`, default `All`, *Display Options*) feeds a
+          `vtkExtractCellsByType` inserted before the four display algorithms.
+          The cell types it keeps are chosen from the dataset's own
+          `GetCellTypes()` summary (by `vtkCellTypes::GetDimension`), so
+          `Shells` keeps the 2-D cells and `Solids` the 3-D ones; `All`, and any
+          dataset holding one dimension only, pass everything through, so the
+          default render is unchanged.  `ViewProviderFemPostPipeline` inherits
+          the property — that is the object actually on screen.
+        - **Why before `vtkGeometryFilter`.**  It turns both dimensions into 2-D
+          polydata, after which nothing distinguishes a shell cell from a
+          solid's boundary face.
+        - *Exit:* the pipeline hides shells or solids like B1 on the mesh.  Gui
+          module — no headless test; the owner's visual check.
 
 - [x] **B2 — §11.8, coverage the plan does not reach.**  Both gaps closed:
   - [x] **B2.1 — DONE (2026-10-11).**  The real case: the Composites

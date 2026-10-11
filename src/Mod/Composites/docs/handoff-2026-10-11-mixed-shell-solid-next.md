@@ -134,7 +134,11 @@ show `..._FEMMesh` (or `CCX_Results_Mesh`), hide the pipeline, switch
 `ShowDimensions` — and the default pipeline view is **B1.1**: a property on
 `ViewProviderFemPostObject` plus a cell filter by dimension before
 `vtkGeometryFilter` (the original cell types are only distinguishable before
-it).
+it).  **B1.1 is implemented** — the same `ShowDimensions` enum on the post view
+provider feeds a `vtkExtractCellsByType` ahead of the display algorithms, with
+the kept types taken from the dataset's `GetCellTypes()` by
+`vtkCellTypes::GetDimension`; `All` passes everything through.  The owner is to
+switch the pipeline's *ShowDimensions* through the three modes.
 
 ## 4. B7 — the tie-assignment pass (implemented)
 

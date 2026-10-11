@@ -28,6 +28,8 @@
 
 #include <vtkAppendPolyData.h>
 #include <vtkDataObject.h>
+#include <vtkDataSet.h>
+#include <vtkExtractCellsByType.h>
 #include <vtkExtractEdges.h>
 #include <vtkGeometryFilter.h>
 #include <vtkOutlineCornerFilter.h>
@@ -81,6 +83,8 @@ public:
 
     App::PropertyEnumeration Field;
     App::PropertyEnumeration Component;
+    /// which element dimensions a mixed result draws: All, Shells or Solids
+    App::PropertyEnumeration ShowDimensions;
     App::PropertyPercent Transparency;
     App::PropertyBool PlainColorEdgeOnSurface;
     App::PropertyColor EdgeColor;
@@ -125,6 +129,7 @@ protected:
     ) override;
 
     bool setupPipeline();
+    void applyDimensionFilter(vtkDataSet* dset);
     void updateVtk();
     void setRangeOfColorBar(float min, float max);
 
@@ -151,6 +156,7 @@ protected:
 
     vtkSmartPointer<vtkPolyDataAlgorithm> m_currentAlgorithm;
     vtkSmartPointer<vtkGeometryFilter> m_surface;
+    vtkSmartPointer<vtkExtractCellsByType> m_dimensionFilter;
     vtkSmartPointer<vtkAppendPolyData> m_surfaceEdges;
     vtkSmartPointer<vtkOutlineCornerFilter> m_outline;
     vtkSmartPointer<vtkExtractEdges> m_wireframe, m_wireframeSurface;
@@ -168,6 +174,7 @@ private:
     bool m_blockPropertyChanges {false};
 
     static App::PropertyFloatConstraint::Constraints sizeRange;
+    static const char* showDimensionsEnum[];
 };
 
 }  // namespace FemGui
