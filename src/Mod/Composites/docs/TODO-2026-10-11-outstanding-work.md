@@ -546,3 +546,17 @@ ahead of them are taken first.
       thresholds.  *First step:* the acceptance gate that refuses the rim cell
       is named by the reject-gate diagnostic (`LastRejectGate()`), which is
       already surfaced.
+
+      **Read first:** `handoff-2026-10-11-b95-rim-birth-law.md` (this
+      directory) — a full handover for B9.5, measured on nextdrape `e708584`.
+      It corrects the note above in one way that matters: the two red tests are
+      **two different defects**.  `BentPlateDiagnosticsPopulate`
+      (`gapFraction` 0.5) is the **pitch-resonance fold stall** (the march
+      lands a node exactly on the crease at `20 + 14×5 = 90`; the seam trace
+      and the mixed-cell route both bail), not a boundary link at all.
+      `BoundaryLinksLieOnTheDevelopedTrim` is the rim-link class, and it is
+      measured in the **flat channel** (`DetectBoundaryLinksOffTrim`,
+      `QualityMetrics.cpp:1711`) — a node can sit on the 3D edge and still
+      develop off the outline.  Only 3 of 17 baseline shapes fail it today:
+      cyl-closed **23**/198 (worst 36 mm), cubic **2**/133 (6.73 mm), web_band
+      **52**/351 (40 mm).
