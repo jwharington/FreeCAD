@@ -35,15 +35,12 @@ first; it is deferred, not accepted.
 
 Repo: study, branch `fuselage-v2-bulkhead-visibility`.
 
-- [ ] **A1 — commit the stale-doc updates.** Four study files are edited and
-      uncommitted: `cad/HANDOVER-2026-10-11-fuselagev2-modularisation.md`,
-      `cad/PLAN-ls8e-fem-donation-2026-10-11.md`,
-      `cad/REVIEW-2026-10-11-femstudy-is-a-workbench.md`,
-      `cad/REVIEW-2026-10-11-fem-donation-and-study-adoption.md` — they now
-      record the commits above and the 130/0 suite instead of "in flight /
-      uncommitted".  *Exit:* `git status` clean for those four paths.
-      *Blocks:* nothing.  *Do first* — it makes the rest of the file's citations
-      point at committed text.
+- [x] **A1 — DONE (2026-10-11).**  The four study docs record the commits and
+      the 130/0 suite instead of "in flight / uncommitted" (study `ce6cdc8`),
+      and this tracker was committed beside them (FreeCAD `f80227f908`).  The
+      handover then gained a CONTINUATION block pointing here (study
+      `c85e941`), so a reader arriving at either document lands on the same
+      list.
 
 - [ ] **A2 — WP8 step 5: the mechanics leave the study.**  Lift the generic
       helpers out of `cad/fuselage/`, reduce `FuselageFem.py` to the hooks, and
@@ -284,7 +281,8 @@ it.  "§" refers to `plan-mixed-shell-solid-fem.md`.
         allocator makes the aliasing benign), which is what identified a stale
         key rather than a memory error.  Fixed by holding the edge in the entry
         and clearing the cache per solve (nextdrape `964dfcf`).  The suite is
-        now **stable at 194 ok / 2 failed** across repeated runs.
+        now **stable**, same failures on every run — see B9.5 for the two that
+        remain.
   - [x] **B9.4 — DONE (2026-10-11).** The question was settled by the owner as a
         rule: a compound whose bodies are apart, or touch only at a point, is
         not a drape support and must be refused with an error code.  The check
@@ -295,7 +293,7 @@ it.  "§" refers to `plan-mixed-shell-solid-fem.md`.
         `DrapeStatus::InvalidInput` with a `shape-disconnected` diagnostic.
         Bodies joined along an edge or a face still merge as before, so the
         two-island panel remainder is unaffected.  nextdrape `e708584`,
-        FreeCAD `<bump>`.  `boxes_compound` is no longer a baseline shape (it
+        FreeCAD `6d9f0dc10d`.  `boxes_compound` is no longer a baseline shape (it
         is refused by design); `drape_cli --all` is 17/17 `status=ok`.
   - [ ] **B9.2 — delete the flag getter and its branches** —
         `femsolver/settings.py::get_allow_mixed_elements` and its call sites —
@@ -312,23 +310,27 @@ it.  "§" refers to `plan-mixed-shell-solid-fem.md`.
 
 | item | blocked by | blocks |
 |---|---|---|
-| A1 | — | (doc trail only) |
 | A2.1–A2.5 | — | A2.8 |
 | A2.6 | stack defaults become arguments | A2.8 |
 | A2.7 | name lists become a rules argument | A2.8 |
 | A2.8 | A2.1–A2.7 | — |
-| B1–B3, B5, B6, B8, B9 | — | — |
+| B1, B2.1, B3, B5.1, B6, B8, B9.2, B9.3 | — | — |
 | B4.1 | — | B7 |
 | B7 | review; B4.1 | — |
-| B2.2 | decision: write the test or amend §8's rule | — |
+
+**Closed 2026-10-11, blocking nothing now:** `A1`, `B9.1`, `B9.1b`, `B9.4`,
+`B5.2`, `B5.3`, `B2.2`.  `B9.5` is deferred to the bottom of this list, and
+`B2` / `B5` / `B4` / `B9` stay unticked only because a sibling inside them is
+open.
 
 Tracks A and B do not touch each other: different repos, different branches, no
 shared file.
 
 ## Ordering, if worked straight through
 
-1. **A1** (commit the docs), then **B9.1**, **B5.2**, **B5.3**, **B2.2** — the
-   small, self-contained cleanups.
+1. ~~**A1** (commit the docs), then **B9.1**, **B5.2**, **B5.3**, **B2.2** — the
+   small, self-contained cleanups.~~ **Done 2026-10-11**, together with `B9.1b`
+   and `B9.4`, which the B9.1 investigation turned up.
 2. **B6** (the E family) and **B4.1** — the two real defects that are reachable
    without a rebuild.
 3. **B3**, **B2.1**, **B5.1**, **B8** — the ones needing a fixture.
