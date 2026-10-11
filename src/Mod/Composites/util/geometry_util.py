@@ -470,6 +470,54 @@ def largest_face(shape):
     return max(faces, key=lambda face: getattr(face, "Area", 0.0))
 
 
+def shape_area(shape):
+    """The total area of a shape's faces."""
+    return sum(face.Area for face in shape.Faces)
+
+
+def edge_names_by_x(shape):
+    """``shape``'s edge sub-element names ordered by average x, ascending.
+
+    A model whose +x points aft has its forward-most (nose) edge first.
+    """
+    rows = []
+    for index, edge in enumerate(shape.Edges, start=1):
+        points = [vertex.Point for vertex in edge.Vertexes]
+        x = sum(p.x for p in points) / len(points) if points else 0.0
+        rows.append((x, index))
+    rows.sort()
+    return ["Edge%d" % index for _, index in rows]
+
+
+def extreme_y_point(face):
+    """The point of ``face`` at extreme |y| — the widest line of the section.
+
+    That line sits at the height midpoint (z = the section centre), and the
+    fuse-direction fibre there is horizontal — the rosette anchor a panel's
+    layup calls for.  Coarse parametric scan, then refined along v at the best
+    u; the anchor only needs to sit on the widest line (the vertex-anchored
+    frame is the world frame, so the fibre direction does not depend on the
+    anchor's precision).
+    """
+    u0, u1, v0, v1 = face.ParameterRange
+    best_u, best_v, best_p = None, None, None
+    for iu in range(41):
+        u = u0 + (u1 - u0) * iu / 40.0
+        for iv in range(21):
+            v = v0 + (v1 - v0) * iv / 20.0
+            p = face.Surface.value(u, v)
+            if best_p is None or abs(p.y) > abs(best_p.y):
+                best_u, best_v, best_p = u, v, p
+    vlo = max(v0, best_v - 0.5 * (v1 - v0) / 20.0)
+    vhi = min(v1, best_v + 0.5 * (v1 - v0) / 20.0)
+    for iv in range(41):
+        v = vlo + (vhi - vlo) * iv / 40.0
+        p = face.Surface.value(best_u, v)
+        if abs(p.y) > abs(best_p.y):
+            best_v, best_p = v, p
+    return best_p
+
+
 def split_at_symmetry_plane(shape, plane_size=1400.0):
     """Cut every face of ``shape`` at the model symmetry plane y = 0.
 
