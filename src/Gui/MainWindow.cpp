@@ -1201,8 +1201,12 @@ static View3DInventorViewer* spaceballMotionEventTarget()
 {
     // check if the active window has a 3d view
 
-    if (auto viewer = getMainWindow()->activeWindow()->findChild<View3DInventorViewer*>()) {
-        return viewer;
+    if (MainWindow* mainWindow = getMainWindow()) {
+        if (auto activeView = mainWindow->activeWindow()) {
+            if (auto viewer = activeView->findChild<View3DInventorViewer*>()) {
+                return viewer;
+            }
+        }
     }
 
     // check active view for the document
