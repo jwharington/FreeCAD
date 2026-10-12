@@ -2654,6 +2654,70 @@ bool AssemblyObject::isMbDJointValid(App::DocumentObject* joint)
 AssemblyObject::MbDInertialData AssemblyObject::getMbDInertial(App::DocumentObject* part)
 {
     MbDInertialData data;
+
+    // A part may state its own inertia instead of having it computed from its
+    // shape.  A composite article is a *surface*: getInertialPropsOfShape
+    // refuses anything that is not solids/compsolids, so its mass would fall
+    // back to the non-geometry placeholder.  A study that has weighed the
+    // article (its plies' densities, its plate, its pin) writes the result in
+    // these properties and it is used as given.  MbD's units: mass in tonnes,
+    // lengths in mm, moments in tonne*mm^2, the axes placement being the
+    // principal axes at the centre of mass.
+    //
+    // The properties are looked for on the part *and on what it links to*: an
+    // App::Link forwards property lookups to its linked object, so a dynamic
+    // property on the link itself is not what getPropertyByName finds, and a
+    // study may reasonably state the article's mass on the article's own model
+    // rather than on the mechanism's link to it.
+    App::DocumentObject* linked = nullptr;
+    if (auto* link = dynamic_cast<App::Link*>(part)) {
+        linked = link->getLinkedObject();
+    }
+    for (App::DocumentObject* source : {part, linked}) {
+        if (!source) {
+            continue;
+        }
+        // The lookup itself can throw in this build when the property is absent
+        // (PropertyContainer::getPropertyByName), so a part that states nothing
+        // must not take the mechanism down with it.
+        try {
+            auto* massProp = dynamic_cast<App::PropertyFloat*>(
+                source->getPropertyByName("MbDMass"));
+            if (!massProp) {
+                continue;
+            }
+            const double statedMass = massProp->getValue();
+            if (!std::isfinite(statedMass) || statedMass <= 0.0) {
+                continue;
+            }
+            auto* comProp = dynamic_cast<App::PropertyVector*>(
+                source->getPropertyByName("MbDCenterOfMass"));
+            auto* inertiaProp = dynamic_cast<App::PropertyVector*>(
+                source->getPropertyByName("MbDInertia"));
+            auto* axesProp = dynamic_cast<App::PropertyRotation*>(
+                source->getPropertyByName("MbDPrincipalAxes"));
+            if (!comProp || !inertiaProp || !axesProp) {
+                Base::Console().warning(
+                    "%s states MbDMass but not the centre of mass, inertia and "
+                    "principal axes; computing from the shape instead\n",
+                    source->getFullName()
+                );
+                continue;
+            }
+            data.mass = statedMass;
+            data.pcs = Base::Placement(comProp->getValue(), axesProp->getValue());
+            data.inertia = inertiaProp->getValue();
+            Base::Console().message("inertia of %s stated by %s: %.6f t\n",
+                                    part->getFullName(),
+                                    source->getFullName(),
+                                    statedMass);
+            return data;
+        }
+        catch (const Base::Exception&) {
+            continue;
+        }
+    }
+
     double density = 1.0e-9;
     App::DocumentObject* materialPart = part;
     bool hasShapeMaterialDensity = false;
