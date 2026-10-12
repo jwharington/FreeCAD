@@ -769,6 +769,7 @@ def _plan_split_strategies(ranked, limit=MAX_SPLIT_STRATEGIES):
                 "parting_stock_margin_z": item.get("parting_stock_margin_z", 5.0),
                 "parting_stock_footprint": item.get("parting_stock_footprint"),
                 "part_line_only": item.get("part_line_only", False),
+                "run_withdrawal_clearance": item.get("run_withdrawal_clearance", True),
                 "status": "planned",
                 "reason": "top-ranked draw-direction strategy",
             }
@@ -798,6 +799,7 @@ def _evaluate_split_strategy_attempt(shape, strategy):
     )
 
     part_line_only = bool(strategy.get("part_line_only", False))
+    run_withdrawal_clearance = bool(strategy.get("run_withdrawal_clearance", True))
     non_planar_result = _propose_non_planar_parting(
         shape,
         strategy["direction"],
@@ -807,6 +809,7 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         stock_margin_z=strategy.get("parting_stock_margin_z", 5.0),
         stock_footprint=strategy.get("parting_stock_footprint"),
         part_line_only=part_line_only,
+        run_withdrawal_clearance=run_withdrawal_clearance,
     )
     solver_ready = (
         non_planar_result is not None and non_planar_result["status"] == "ready"
@@ -1215,6 +1218,7 @@ def _propose_non_planar_parting(
     part_line_tolerance=0.1,
     stock_footprint=None,
     part_line_only=False,
+    run_withdrawal_clearance=True,
 ):
     """Call the C++ marching-equator solver and map to the Phase 0 contract.
 
@@ -1271,6 +1275,7 @@ def _propose_non_planar_parting(
             float(part_line_tolerance),
             footprint,
             part_line_only,
+            run_withdrawal_clearance,
         )
     except Exception as exc:
         return {
@@ -1989,6 +1994,7 @@ def analyze_source_shape(
     parting_line_tolerance=0.1,
     parting_stock_footprint=None,
     part_line_only=False,
+    run_withdrawal_clearance=True,
 ):
     """Return a lightweight analysis preview for a selected source shape.
 
@@ -2080,6 +2086,7 @@ def analyze_source_shape(
             "parting_stock_margin_z": parting_stock_margin_z,
             "parting_stock_footprint": parting_stock_footprint,
             "part_line_only": part_line_only,
+            "run_withdrawal_clearance": run_withdrawal_clearance,
         }
     ]
     split_strategies = _plan_split_strategies(ranked, limit=1)

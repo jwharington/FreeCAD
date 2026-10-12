@@ -85,12 +85,18 @@ PYBIND11_MODULE(Composites_parting, m) {
     m.def("compute_non_planar_parting",
         [](py::object shape_obj, py::tuple direction,
            double stock_margin_x, double stock_margin_y, double stock_margin_z,
-           double part_line_tolerance, py::tuple footprint, bool part_line_only) {
+           double part_line_tolerance, py::tuple footprint, bool part_line_only,
+           bool run_withdrawal_clearance) {
             nextdrape::PartingParams params;
             params.stockMarginX = stock_margin_x;
             params.stockMarginY = stock_margin_y;
             params.stockMarginZ  = stock_margin_z;
             params.partLineToleranceMm = part_line_tolerance;
+            // The incremental-withdrawal clearance scan is the most expensive
+            // stage of the full pipeline and does NOT gate the mould halves
+            // (they come from split/skirt/close). The caller decides whether
+            // to pay for it; the default stays on so the verdict is unchanged.
+            params.runWithdrawalClearance = run_withdrawal_clearance;
             if (py::len(footprint) >= 2) {
                 params.stockFootprint.SetX(footprint[0].cast<double>());
                 params.stockFootprint.SetY(footprint[1].cast<double>());
@@ -199,6 +205,7 @@ PYBIND11_MODULE(Composites_parting, m) {
         py::arg("part_line_tolerance") = 0.1,
         py::arg("stock_footprint") = py::make_tuple(0.0, 0.0),
         py::arg("part_line_only") = false,
+        py::arg("run_withdrawal_clearance") = true,
         "Compute a non-planar parting surface + mould halves for a FreeCAD "
         "Part.Shape along a user-specified draw direction. Returns a dict; "
         "success=True iff the pipeline reached `ready` (full mould) or the "

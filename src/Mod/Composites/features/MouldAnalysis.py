@@ -50,6 +50,16 @@ class MouldAnalysisFP(CompositePartFP):
         obj.OutputMode = "Full mould"
 
         obj.addProperty(
+            "App::PropertyBool",
+            "WithdrawalClearance",
+            "MouldAnalysis",
+            "Run the incremental-withdrawal clearance check. It is the most "
+            "expensive stage of the full pipeline and verdicts the mould halves, "
+            "but does not generate them - turn it off when only the halves are "
+            "needed.",
+        ).WithdrawalClearance = True
+
+        obj.addProperty(
             "App::PropertyFloat",
             "PartLineTolerance",
             "MouldAnalysis",
@@ -266,6 +276,7 @@ class MouldAnalysisFP(CompositePartFP):
             parting_line_tolerance=fp.PartLineTolerance,
             parting_stock_footprint=stock_footprint,
             part_line_only=(fp.OutputMode == "Part-line only"),
+            run_withdrawal_clearance=fp.WithdrawalClearance,
         )
         fp.AnalysisStatus = result["status"]
         fp.DrawDirectionScore = result["draw_direction_score"]
