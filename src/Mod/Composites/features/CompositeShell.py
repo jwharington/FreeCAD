@@ -36,6 +36,7 @@ from .. import (
     is_comp_type,
     roma_map,
 )
+from ..mechanics.material_properties import common_material2dict
 from ..tools.drape_backend_nextdrape import NextDrapeBackend
 from .coin_geometry import (
     build_drapecd_coin,
@@ -146,6 +147,24 @@ def add_shell_offset_property(obj):
     obj.Offset = 0.0
 
 
+_SHELL_AREAL_WEIGHT_DOC = (
+    "Mass of the laminate per unit area, computed from the plies "
+    "(read-only). The assembly weighs a skin by its area times this"
+)
+
+
+def add_shell_areal_weight_property(obj):
+    """Add the areal mass an assembly weighs a shell's faces by."""
+    obj.addProperty(
+        type="App::PropertyArealMass",
+        name="ArealWeight",
+        group="Materials",
+        doc=_SHELL_AREAL_WEIGHT_DOC,
+    )
+    obj.setPropertyStatus("ArealWeight", "ReadOnly")
+    obj.ArealWeight = FreeCAD.Units.Quantity("0 g/m^2")
+
+
 _AUTO_COUPLE_DOC = (
     "Let the tie pass bond this shell to the solid its SupportReference "
     "names. Clear it for a shell declared on a solid that is deliberately "
@@ -219,6 +238,7 @@ class CompositeShellFP(CompositeBaseFP):
 
         add_shell_offset_property(obj)
         add_auto_couple_property(obj)
+        add_shell_areal_weight_property(obj)
 
         obj.addProperty(
             type="App::PropertyFloat",
@@ -354,6 +374,8 @@ class CompositeShellFP(CompositeBaseFP):
             add_shell_offset_property(fp)
         if not hasattr(fp, "AutoCouple"):
             add_auto_couple_property(fp)
+        if not hasattr(fp, "ArealWeight"):
+            add_shell_areal_weight_property(fp)
         for attr, value in (
             ("_cached_shape_fingerprint", ""),
             ("_cached_rosette_angle", None),
@@ -431,6 +453,12 @@ class CompositeShellFP(CompositeBaseFP):
         # restore completes runs the real logic.
         if not hasattr(fp, "Support") or not hasattr(fp, "Laminate"):
             return
+        if not hasattr(fp, "ArealWeight"):
+            # Restore reaches execute() before onDocumentRestored has run, so
+            # a document saved before the property existed arrives without it.
+            add_shell_areal_weight_property(fp)
+        self.update_areal_weight(fp)
+
         # Always hide the native LCS symbology so only the rosette
         # disk+arrows are visible in the 3D view.
         self._hide_lcs_view(fp)
@@ -965,6 +993,24 @@ class CompositeShellFP(CompositeBaseFP):
         if extras:
             payload.update(extras)
         fp.DrapeDiagnostics = json.dumps(payload, sort_keys=True)
+
+    def update_areal_weight(self, fp):
+        """Publish what the shell's laminate weighs per unit area, in g/m^2.
+
+        A skin's mass is its area times this, which is a number the assembly
+        cannot reach on its own: the plies live on the laminate, and the merged
+        FEM layers it hands the solver exist only in Python.  Density is stated
+        per unit volume (t/mm^3) and thickness in mm, so the per-ply products
+        are in t/mm^2 -- the units the deck is written in -- and 1e12 of them
+        make the g/m^2 the property is stated in.  A shell with no laminate has
+        no plies to weigh and states nothing.
+        """
+        layers = getattr(getattr(fp.Laminate, "Proxy", None), "FEMLayers", None) or []
+        areal_mass_t_mm2 = sum(
+            common_material2dict(layer.material)["Density"] * layer.thickness
+            for layer in layers
+        )
+        fp.ArealWeight = FreeCAD.Units.Quantity(f"{areal_mass_t_mm2 * 1e12} g/m^2")
 
     def onChanged(self, fp, prop):
         if getattr(self, "_initializing", False):

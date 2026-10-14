@@ -323,6 +323,50 @@ class TestQuasiIsotropicProvider(_DrapedLaminateFixture, unittest.TestCase):
             self.assertTrue(units_finite(value))
 
 
+class TestShellArealWeight(_DrapedLaminateFixture, unittest.TestCase):
+    """What a shell states its skins weigh per unit area.
+
+    The assembly weighs a skin by its area, and the plies that give it a
+    thickness live on the laminate, whose merged FEM layers exist only in
+    Python.  So the shell publishes the product the assembly cannot reach:
+    its plies' Σ(ρ·t), in the g/m^2 an areal mass is stated in.
+    """
+
+    def test_shell_states_its_plies_mass_per_unit_area(self):
+        doc = self._make_doc("ShellArealWeight")
+        laminate = self._make_laminate(doc, "Laminate", (0.0, 45.0))
+        shell = self._make_shell(doc, "DrapedShell", laminate)
+
+        # The default odd symmetry mirrors the stack's middle ply, so the
+        # laminate stacks three 0.5 mm plies of 1750 kg/m^3 carbon --
+        # 3 x 0.875 kg/m^2 -- whatever the two declared plies suggest.
+        self.assertAlmostEqual(
+            shell.ArealWeight.getValueAs("g/m^2").Value, 2625.0, places=6
+        )
+
+    def test_merged_quasi_isotropic_laminate_states_the_same_mass(self):
+        doc = self._make_doc("ShellArealWeightQI")
+        laminate = self._make_laminate(
+            doc, "QILaminate", (0.0, 45.0, -45.0, 90.0), isotropic=True
+        )
+        shell = self._make_shell(doc, "QIShell", laminate)
+
+        # Even symmetry doubles the four plies and the stack merges to one
+        # equivalent layer of 4 mm at the same density, so the product is
+        # eight 0.5 mm plies of 1750 kg/m^3 either way.
+        self.assertAlmostEqual(
+            shell.ArealWeight.getValueAs("g/m^2").Value, 7000.0, places=6
+        )
+
+    def test_shell_without_a_laminate_states_no_areal_weight(self):
+        doc = self._make_doc("ShellWithoutLaminate")
+        shell = self._make_shell(doc, "BareShell", None)
+
+        # No plies, so nothing follows from the geometry: the weight is not
+        # guessed at from the support's area and some density.
+        self.assertEqual(shell.ArealWeight.getValueAs("g/m^2").Value, 0.0)
+
+
 def units_finite(value):
     import math
 

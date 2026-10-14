@@ -39,6 +39,7 @@
 #include <App/PropertyPythonObject.h>
 #include <App/PropertyLinks.h>
 #include <App/PropertyStandard.h>
+#include <App/PropertyUnits.h>
 #include <Base/Console.h>
 #include <Base/Placement.h>
 #include <Base/Quantity.h>
@@ -50,8 +51,12 @@
 #include <Mod/Part/App/Attacher.h>
 #include <Mod/Part/App/AttachExtension.h>
 #include <Mod/Part/App/PartFeature.h>
+#include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
 #include <GProp_PrincipalProps.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS_Iterator.hxx>
+#include <TopoDS_Shape.hxx>
 
 #include <FreeCADMbD/ASMTSimulationParameters.h>
 #include <FreeCADMbD/ASMTAssembly.h>
@@ -333,6 +338,115 @@ FemMaterialDensityInfo collectFemMaterialDensityInfoTonPerMm3(
     }
 
     return info;
+}
+
+/// The skins a part's shape is built from, taken whole.
+///
+/// A compound of faces is one skin per face or shell, and only the pieces at
+/// the top of the shape count: the faces inside a solid bound that solid and
+/// would weigh its volume a second time.
+std::vector<TopoDS_Shape> collectShapeSkins(const TopoDS_Shape& shape)
+{
+    std::vector<TopoDS_Shape> skins;
+    if (shape.IsNull()) {
+        return skins;
+    }
+
+    if (shape.ShapeType() == TopAbs_COMPOUND) {
+        for (TopoDS_Iterator it(shape); it.More(); it.Next()) {
+            for (const TopoDS_Shape& piece : collectShapeSkins(it.Value())) {
+                skins.push_back(piece);
+            }
+        }
+        return skins;
+    }
+
+    if (shape.ShapeType() == TopAbs_FACE || shape.ShapeType() == TopAbs_SHELL) {
+        skins.push_back(shape);
+    }
+    return skins;
+}
+
+/// The areal mass a part states, converted into t/mm^2.
+///
+/// An areal mass property holds its value in the internal unit system, which
+/// makes the raw number kg/mm^2 and not the g/m^2 the property is stated in,
+/// so the conversion goes through the quantity.  False means the part states
+/// no usable areal mass.
+bool readArealMassTonPerMm2(App::DocumentObject* source, double& arealOut)
+{
+    try {
+        auto* arealProp = dynamic_cast<App::PropertyQuantity*>(
+            source->getPropertyByName("ArealWeight")
+        );
+        if (!arealProp) {
+            return false;
+        }
+        const Base::Quantity arealUnit = Base::Quantity::parse("1 t/mm^2");
+        arealOut = arealProp->getQuantityValue().getValueAs(arealUnit);
+    }
+    catch (const Base::Exception&) {
+        return false;
+    }
+    return std::isfinite(arealOut) && arealOut > 0.0;
+}
+
+/// What the skins of this part weigh per unit area, in t/mm^2, or 0 when the
+/// part does not state a laminate.
+///
+/// A skin has no volume to displace, so its mass cannot be reached through a
+/// density: it is its area times the plies' Σ(ρ·t), which the study writes
+/// down as ArealWeight on the composite shell that owns the plies.  A part
+/// that states none has no mass that follows from its geometry, and inventing
+/// one would weigh the mechanism on a guess, so it answers 0 and the caller
+/// says so.
+double getMbDShellArealMassTonPerMm2(App::DocumentObject* part, App::DocumentObject* materialPart)
+{
+    for (App::DocumentObject* source : {part, materialPart}) {
+        double arealMass = 0.0;
+        if (source && readArealMassTonPerMm2(source, arealMass)) {
+            return arealMass;
+        }
+    }
+    return 0.0;
+}
+
+/// Weigh the solids of a shape by volume against one density.
+///
+/// Handing the whole shape to Attacher::AttachEngine::getInertialPropsOfShape
+/// is not an option: that function dispatches on the shape type of the *first*
+/// piece and then requires every later piece to be of that same type, so a
+/// compound of a solid and a skin threw "provided shapes are incompatible".
+void weighMbDSolidsByVolume(const TopoDS_Shape& whole, double density, GProp_GProps& massProps)
+{
+    for (TopExp_Explorer it(whole, TopAbs_SOLID); it.More(); it.Next()) {
+        if (it.Current().Infinite()) {
+            continue;
+        }
+        GProp_GProps solidProps;
+        BRepGProp::VolumeProperties(it.Current(), solidProps);
+        massProps.Add(solidProps, density);
+    }
+}
+
+/// Weigh the skins of a shape by area against what their plies weigh per unit
+/// area, in t/mm^2.  A part that states no areal mass passes 0 and has its
+/// skins left unweighed, rather than weighed at a thickness nobody wrote down.
+void weighMbDSkins(const std::vector<TopoDS_Shape>& skins,
+                    double shellArealMass,
+                    GProp_GProps& massProps)
+{
+    if (shellArealMass <= 0.0) {
+        return;
+    }
+    for (const TopoDS_Shape& skin : skins) {
+        if (skin.Infinite()) {
+            continue;
+        }
+        GProp_GProps skinProps;
+        BRepGProp::SurfaceProperties(skin, skinProps);
+        massProps.Add(skinProps, shellArealMass);
+    }
 }
 
 }  // namespace
@@ -2656,13 +2770,11 @@ AssemblyObject::MbDInertialData AssemblyObject::getMbDInertial(App::DocumentObje
     MbDInertialData data;
 
     // A part may state its own inertia instead of having it computed from its
-    // shape.  A composite article is a *surface*: getInertialPropsOfShape
-    // refuses anything that is not solids/compsolids, so its mass would fall
-    // back to the non-geometry placeholder.  A study that has weighed the
-    // article (its plies' densities, its plate, its pin) writes the result in
-    // these properties and it is used as given.  MbD's units: mass in tonnes,
-    // lengths in mm, moments in tonne*mm^2, the axes placement being the
-    // principal axes at the centre of mass.
+    // shape.  A study that has weighed the article (its plies' densities, its
+    // plate, its pin) writes the result in these properties and it is used as
+    // given.  MbD's units: mass in tonnes, lengths in mm, moments in
+    // tonne*mm^2, the axes placement being the principal axes at the centre of
+    // mass.
     //
     // The properties are looked for on the part *and on what it links to*: an
     // App::Link forwards property lookups to its linked object, so a dynamic
@@ -2785,8 +2897,10 @@ AssemblyObject::MbDInertialData AssemblyObject::getMbDInertial(App::DocumentObje
     const Base::Placement plc = getPlacementFromProp(part, "Placement").inverse();
     try {
         GProp_GProps massProps;
-        bool hasWeightedProps = false;
 
+        // A solid is weighed by volume against its density: the one the study
+        // states for it by name, or the part's own.
+        bool weighedSolidByName = false;
         if (!femMaterialDensity.solidDensities.empty()) {
             const unsigned long solidCount = shape.countSubElements("Solid");
             for (unsigned long i = 1; i <= solidCount; ++i) {
@@ -2805,13 +2919,32 @@ AssemblyObject::MbDInertialData AssemblyObject::getMbDInertial(App::DocumentObje
                     {&solidShape}
                 );
                 massProps.Add(solidProps, solidDensity);
-                hasWeightedProps = true;
+                weighedSolidByName = true;
             }
         }
+        // Nothing was weighed by name, so the solids have not been touched and
+        // go by the part's own density together.
+        if (!weighedSolidByName) {
+            weighMbDSolidsByVolume(shape.getShape(), density, massProps);
+        }
 
-        if (!hasWeightedProps) {
-            const GProp_GProps gpr = Attacher::AttachEngine::getInertialPropsOfShape({&shape});
-            massProps.Add(gpr, density);
+        // A skin is weighed by its area, which no pass over the solids ever
+        // reaches, so the two weighings meet in one system rather than
+        // excluding each other: a composite skin bonds to the solid it was
+        // draped on and the mechanism carries both.
+        const std::vector<TopoDS_Shape> skins = collectShapeSkins(shape.getShape());
+        const double shellArealMass = getMbDShellArealMassTonPerMm2(part, materialPart);
+        weighMbDSkins(skins, shellArealMass, massProps);
+
+        if (massProps.Mass() <= 0.0) {
+            Base::Console().warning(
+                "%s: %s, so the mechanism has no mass for it and the solver "
+                "will treat it as weightless\n",
+                base->getFullName().c_str(),
+                skins.empty()
+                    ? "its shape holds no solid to weigh by volume"
+                    : "its shape is a skin and the part states no areal weight for it"
+            );
         }
 
         //////////
