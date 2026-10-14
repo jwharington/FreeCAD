@@ -2146,8 +2146,8 @@ std::shared_ptr<MbD::ASMTForceTorque> AssemblyObject::makeMbdForceTorqueOfType(
         } break;
         case ForceType::InLine: {
             std::shared_ptr<ASMTForceTorqueInLine> mbdForceTorque = ASMTForceTorqueInLine::With();
-            mbdForceTorque->tensionFunc = getForceFunction(force, "Tension");
-            mbdForceTorque->twistFunc = getForceFunction(force, "Twist");
+            mbdForceTorque->tensionFunc = getForceFunction(force, "TensionFunc");
+            mbdForceTorque->twistFunc = getForceFunction(force, "TwistFunc");
             return mbdForceTorque;
         } break;
         default:
