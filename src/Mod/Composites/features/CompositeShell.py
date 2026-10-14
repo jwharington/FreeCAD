@@ -8,6 +8,7 @@ import Part
 
 import hashlib
 import json
+import sys
 import time
 from datetime import datetime, timezone
 
@@ -15,17 +16,27 @@ import numpy as np
 
 from FreeCAD import Console
 
+# Set True to time the drape stages. Off by default: a GUI session re-drapes
+# on every support move and every dependent recompute, so an always-on trace
+# buries the console in one line per stage (55 of them in one log).
+debug = False
+
 _profiler_data = {}
 
 def _profiler(label):
-    '''Call at entry/exit to record elapsed time.'''
+    '''Call at entry/exit to record elapsed time; silent unless `debug`.
+
+    A pair that is never closed would charge the next stage the idle time in
+    between, so every exit of a timed stage closes its pair.
+    '''
+    if not debug:
+        return None
     if label not in _profiler_data:
         _profiler_data[label] = time.perf_counter()
     else:
         elapsed = time.perf_counter() - _profiler_data.pop(label)
         ms = elapsed * 1000
         # Print to stderr with flush
-        import sys
         sys.stderr.write(f'[PROFILER] {label}: {ms:.0f}ms\n')
         sys.stderr.flush()
         return elapsed
@@ -527,7 +538,8 @@ class CompositeShellFP(CompositeBaseFP):
         _profiler('drape_solve')
         import time as _time
         _t0 = _time.perf_counter()
-        print("[drape] %s: solve start (pitch %.1f)" % (fp.Name, float(fp.DrapePitch)), flush=True)
+        if debug:
+            print("[drape] %s: solve start (pitch %.1f)" % (fp.Name, float(fp.DrapePitch)), flush=True)
         self._diag(fp, "running drape solve")
         # Mirror the support (shape + placement — see the no-laminate
         # branch above for why the placement sync matters).
@@ -535,7 +547,8 @@ class CompositeShellFP(CompositeBaseFP):
         fp.Placement = support_placement(fp)
         result = self._run_drape_sync(fp, get_lcs())
         _profiler('drape_solve')
-        print("[drape] %s: solve done in %.1fs" % (fp.Name, _time.perf_counter() - _t0), flush=True)
+        if debug:
+            print("[drape] %s: solve done in %.1fs" % (fp.Name, _time.perf_counter() - _t0), flush=True)
         if isinstance(result, Exception):
             self._diag(fp, f"drape failed: {result}")
             self._mark_failed(fp, str(result))
@@ -548,8 +561,6 @@ class CompositeShellFP(CompositeBaseFP):
             _profiler('complete_drape')
             self._complete_drape(fp, result)
             _profiler('complete_drape')
-            if _profiler_data:
-                print(f'[PROFILER] TOTAL: {sum(_profiler_data.values()):.0f}ms', flush=True)
 
     def _execute_isotropic(self, fp):
         """Declared isotropic shell: sync the shape, never drape (D4)."""
@@ -617,6 +628,7 @@ class CompositeShellFP(CompositeBaseFP):
                     vp = getattr(obj, "ViewObject", None)
                     break
         if not (vp and hasattr(vp, "Proxy")):
+            _profiler('inject_drape_geometry')
             return
         proxy = getattr(vp, "Proxy", None)
         if not hasattr(proxy, "drape_host"):
@@ -637,6 +649,7 @@ class CompositeShellFP(CompositeBaseFP):
                     pass
         drape_host = getattr(vp.Proxy, "drape_host", None)
         if drape_host is None:
+            _profiler('inject_drape_geometry')
             return
 
         # Build and inject the support-surface geometry. If this fails we
@@ -723,13 +736,15 @@ class CompositeShellFP(CompositeBaseFP):
         )
         import time as _time
         _t0 = _time.perf_counter()
-        print("[drape] %s: borrowing from %s over the support region" % (fp.Name, source.Name), flush=True)
+        if debug:
+            print("[drape] %s: borrowing from %s over the support region" % (fp.Name, source.Name), flush=True)
         filtered, _old_to_new = drape_result_over_region(
             raw, support_shape(fp)
         )
-        print("[drape] %s: borrow done in %.2fs (%d nodes, %d quads)" % (
-            fp.Name, _time.perf_counter() - _t0,
-            len(filtered["node_positions"]), len(filtered["quads"])), flush=True)
+        if debug:
+            print("[drape] %s: borrow done in %.2fs (%d nodes, %d quads)" % (
+                fp.Name, _time.perf_counter() - _t0,
+                len(filtered["node_positions"]), len(filtered["quads"])), flush=True)
         # The borrow's own filter keeps boundary cells whole (a cell whose
         # centre is in the region) and refines locally when none lands in
         # it, so a member narrower than the lattice — the fuselage's 34 mm
