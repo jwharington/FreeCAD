@@ -4,7 +4,6 @@ from . import (
     FibreCompositeLamina,  # noqa
     HomogeneousLamina,  # noqa
     Laminate,  # noqa
-    Mould,  # noqa
     MouldAnalysis,  # noqa
     PartPlane,  # noqa
     PlaceDart,  # noqa
