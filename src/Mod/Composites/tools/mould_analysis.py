@@ -1498,58 +1498,69 @@ def find_wrong_side_faces(halves, direction, band_tol_deg):
     the equator band on the wrong side is a draft defect: the part line has
     put it in a half it cannot be withdrawn from. A piece whose source face
     ``straddles`` the draw is reported as such - the part line failed to cut
-    that source face at its equator.
+    that source face at its equator. The two kinds are returned separately as
+    well as together: a straddling piece is a part-line defect, not merely a
+    draft one.
     """
     unit = _normalized(direction)
     limit = -math.sin(math.radians(band_tol_deg))
     faces = []
+    wrong_side = []
+    straddling = []
     details = []
     for half, split_half in (("upper", halves[0]), ("lower", halves[1])):
         shell = split_half.shell
         if (shell is None or shell.isNull()) and not split_half.pieces:
             continue
-        for index, face in enumerate(_half_faces(split_half), start=1):
+        for index, entry in enumerate(_half_entries(split_half), start=1):
+            face, source_face_index, straddles = entry
             worst = _face_wrong_side_dot(face, unit, split_half.side_sign)
             if worst is None or worst >= limit:
                 continue
-            pieces = split_half.pieces
             detail = {
                 "half": half,
                 "shell_face_index": index,
                 "area": face.Area,
                 "worst_draft_deg": math.degrees(math.asin(max(-1.0, worst))),
+                "source_face_index": source_face_index,
+                "straddles": straddles,
             }
-            if pieces:
-                detail["source_face_index"] = pieces[index - 1]["source_face_index"]
-                detail["straddles"] = pieces[index - 1]["straddles"]
-            else:
-                detail["source_face_index"] = None
-                detail["straddles"] = False
             faces.append(face)
             details.append(detail)
+            (straddling if detail["straddles"] else wrong_side).append(face)
+
+    def compound(pieces):
+        return Part.makeCompound(pieces) if pieces else Part.Shape()
+
     area = sum(face.Area for face in faces)
     return {
-        "shape": Part.makeCompound(faces) if faces else Part.Shape(),
+        "shape": compound(faces),
         "face_count": len(faces),
         "faces": details,
         "area": area,
+        "wrong_side_shape": compound(wrong_side),
+        "wrong_side_count": len(wrong_side),
+        "straddling_shape": compound(straddling),
+        "straddling_count": len(straddling),
         "summary": (
-            f"{len(faces)} wrong-side face(s), area={area:.3f}, "
-            f"band={band_tol_deg:g} deg"
+            f"{len(faces)} wrong-side face(s) "
+            f"({len(straddling)} of them straddling the part line), "
+            f"area={area:.3f}, band={band_tol_deg:g} deg"
         ),
     }
 
 
-def _half_faces(split_half):
-    """The faces to judge for one half: its pieces when they are known.
+def _half_entries(split_half):
+    """``(face, source face index, straddles)`` for each face to judge.
 
     The pieces are the split itself, so each one keeps its provenance; the
-    shell's faces are the fallback when the cut supplied no piece map.
+    shell's faces are the fallback when the cut supplied no piece map, and
+    they carry no provenance.
     """
     if split_half.pieces:
-        return [piece["face"] for piece in split_half.pieces
-                if piece["face"] is not None]
-    return list(split_half.shell.Faces)
+        return [(piece["face"], piece["source_face_index"], piece["straddles"])
+                for piece in split_half.pieces if piece["face"] is not None]
+    return [(face, None, False) for face in split_half.shell.Faces]
 
 
 def _shape_volume(shape):
@@ -1923,6 +1934,10 @@ def _base_analysis_result():
         "upper_split_faces": [],
         "lower_split_faces": [],
         "draft_defect_shape": Part.Shape(),
+        "draft_defect_wrong_side_shape": Part.Shape(),
+        "draft_defect_straddling_shape": Part.Shape(),
+        "draft_defect_straddling_count": 0,
+        "draft_defect_straddling_summary": "No source shape available.",
         "draft_defect_face_count": 0,
         "draft_defect_faces": [],
         "draft_defect_area": 0.0,
@@ -2460,6 +2475,12 @@ def analyze_source_shape(
             "upper_split_faces": selected_non_planar.get("upper_split_faces", []),
             "lower_split_faces": selected_non_planar.get("lower_split_faces", []),
             "draft_defect_shape": draft_defects["shape"],
+            "draft_defect_wrong_side_shape": draft_defects["wrong_side_shape"],
+            "draft_defect_straddling_shape": draft_defects["straddling_shape"],
+            "draft_defect_straddling_count": draft_defects["straddling_count"],
+            "draft_defect_straddling_summary": (
+                f"{draft_defects['straddling_count']} straddling face(s): the part "
+                f"line did not cut them at their equator"),
             "draft_defect_face_count": draft_defects["face_count"],
             "draft_defect_faces": draft_defects["faces"],
             "draft_defect_area": draft_defects["area"],

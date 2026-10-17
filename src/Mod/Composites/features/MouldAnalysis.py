@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
+from typing import NamedTuple
+
 import FreeCAD
 import Part
 
@@ -21,7 +23,39 @@ def is_mould_analysis(obj):
     return is_comp_type(obj, "Part::FeaturePython", "Composite::MouldAnalysis")
 
 
-DRAFT_DEFECT_COLOR = (1.0, 0.0, 0.0)
+class DefectKind(NamedTuple):
+    """One kind of defect: its child link, its summary, and its colour.
+
+    ``shape_key`` / ``summary_key`` are the analysis-result fields holding its
+    faces and its description, so the two kinds cannot drift apart.
+    """
+
+    link: str
+    summary: str
+    shape_key: str
+    summary_key: str
+    description: str
+    color: tuple
+
+
+# The two defect kinds are shown in different colours, and each has its own
+# child so the split between them is structural, not only pigmentation.
+WRONG_SIDE_COLOR = (1.0, 0.0, 0.0)      # draft opposes the piece's own half
+STRADDLING_COLOR = (1.0, 0.5, 0.0)      # part line did not cut it at its equator
+
+DEFECT_KINDS = (
+    DefectKind(
+        "DraftDefects", "DraftDefectSummary",
+        "draft_defect_wrong_side_shape", "draft_defect_summary",
+        "Wrong-side draft faces: the piece's draft opposes its own mould half",
+        WRONG_SIDE_COLOR),
+    DefectKind(
+        "StraddlingFaces", "StraddlingSummary",
+        "draft_defect_straddling_shape", "draft_defect_straddling_summary",
+        "Straddling faces: the part line did not cut the source face at its "
+        "equator, leaving normals on both halves of the draw",
+        STRADDLING_COLOR),
+)
 
 SPLIT_FACE_HALVES = ("upper", "lower")
 
@@ -112,31 +146,26 @@ def lower_split_faces(analysis):
     return analysis_split_faces(analysis, "lower")
 
 
-def _add_draft_defect_outputs(obj):
-    obj.addProperty(
-        "App::PropertyString",
-        "DraftDefectSummary",
-        "MouldAnalysis",
-        "Split-shell faces whose draft opposes their own mould half",
-    ).DraftDefectSummary = "No source shape available."
-    obj.setPropertyStatus("DraftDefectSummary", "ReadOnly")
+def _add_defect_child(obj, kind):
+    """One defect kind: a summary string plus its faces, in its own colour."""
+    obj.addProperty("App::PropertyString", kind.summary, "MouldAnalysis",
+                    kind.description)
+    setattr(obj, kind.summary, "No source shape available.")
+    obj.setPropertyStatus(kind.summary, "ReadOnly")
 
-    obj.addProperty(
-        "App::PropertyLink",
-        "DraftDefects",
-        "MouldAnalysis",
-        "Wrong-side draft faces, shown in red on the source",
-        hidden=True,
-    )
-    draft_defects = obj.Document.addObject(
-        "Part::Feature",
-        f"{obj.Name}_DraftDefects",
-    )
+    obj.addProperty("App::PropertyLink", kind.link, "MouldAnalysis",
+                    f"{kind.description} (shown in {kind.color})", hidden=True)
+    child = obj.Document.addObject("Part::Feature", f"{obj.Name}_{kind.link}")
     if FreeCAD.GuiUp:
-        draft_defects.ViewObject.ShapeColor = DRAFT_DEFECT_COLOR
-        draft_defects.ViewObject.LineColor = DRAFT_DEFECT_COLOR
-    obj.DraftDefects = draft_defects
-    obj.setPropertyStatus("DraftDefects", "ReadOnly")
+        child.ViewObject.ShapeColor = kind.color
+        child.ViewObject.LineColor = kind.color
+    setattr(obj, kind.link, child)
+    obj.setPropertyStatus(kind.link, "ReadOnly")
+
+
+def _add_draft_defect_outputs(obj):
+    for kind in DEFECT_KINDS:
+        _add_defect_child(obj, kind)
 
 
 class MouldAnalysisFP(CompositePartFP):
@@ -419,7 +448,7 @@ class MouldAnalysisFP(CompositePartFP):
         if not hasattr(fp, "TessellationBandTolDeg"):
             _add_tessellation_band_property(fp)
         # Documents saved before the defect display get its outputs.
-        if not hasattr(fp, "DraftDefects"):
+        if not hasattr(fp, "StraddlingFaces"):
             _add_draft_defect_outputs(fp)
         if not hasattr(fp, "UpperSplitFaces"):
             _add_split_face_outputs(fp)
@@ -469,9 +498,11 @@ class MouldAnalysisFP(CompositePartFP):
             fp.MouldHalfA.Shape = result["mould_half_a_shape"]
         if fp.MouldHalfB:
             fp.MouldHalfB.Shape = result["mould_half_b_shape"]
-        fp.DraftDefectSummary = result["draft_defect_summary"]
-        if fp.DraftDefects:
-            fp.DraftDefects.Shape = result["draft_defect_shape"]
+        for kind in DEFECT_KINDS:
+            setattr(fp, kind.summary, result[kind.summary_key])
+            child = getattr(fp, kind.link, None)
+            if child:
+                child.Shape = result[kind.shape_key]
         for half in SPLIT_FACE_HALVES:
             _write_split_faces(fp, half.capitalize(),
                                split_faces(result, half))
@@ -511,7 +542,7 @@ class ViewProviderMouldAnalysis(VPCompositePart):
             return []
         children = []
         for name in ("PartingSurface", "MouldHalfA", "MouldHalfB", "DraftDefects",
-                     "UpperSplitFaces", "LowerSplitFaces"):
+                     "UpperSplitFaces", "LowerSplitFaces", "StraddlingFaces"):
             child = getattr(self.Object, name, None)
             if child:
                 children.append(child)

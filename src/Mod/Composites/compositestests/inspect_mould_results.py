@@ -150,6 +150,11 @@ def _print_report(report: dict):
     print("mould_halves_summary:", halves["summary"])
     print(f"mould_halves_status: {result.get('mould_halves_status')}")
     print(f"draft_defect_summary: {result.get('draft_defect_summary')}")
+    print(f"draft_defect_straddling_count: {result.get('draft_defect_straddling_count')}")
+    for kind in ("draft_defect_wrong_side_shape", "draft_defect_straddling_shape"):
+        shape = result.get(kind)
+        faces = 0 if shape is None or shape.isNull() else len(shape.Faces)
+        print(f"  {kind}: {faces} face(s)")
     for face in result.get("draft_defect_faces", []):
         source = face.get("source_face_index")
         provenance = f" source=Face{source}" if source else ""
