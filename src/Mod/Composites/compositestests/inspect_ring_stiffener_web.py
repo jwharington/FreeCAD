@@ -18,20 +18,25 @@ domain-edge coincidence) is printed here and mirrored C++-side by
 ``drape_cli --shapefile`` so both sides agree on what the solver sees.
 
 Usage:
-    FreeCADCmd -c "exec(open('.../inspect_ring_stiffener_web.py').read())"
-    with env WEB_DUMP_DIR (default /tmp/fc-drape-dump).
+    run-script.sh inspect_ring_stiffener_web.py [--dump-dir DIR]
 """
 
+import argparse
 import json
 import os
 
+import FreeCAD
+import Part
+
+from Composites.compositeexamples.examples import closed_ring_composite_shell
 from Composites.compositeexamples.examples.stiffener import (
     _make_shape_object,
     _make_sketch,
     _z_profile,
 )
+from Composites.features.Stiffener import StiffenerFP
 
-_DUMP_DIR = os.environ.get("WEB_DUMP_DIR", "/tmp/fc-drape-dump")
+_DEFAULT_DUMP_DIR = "/tmp/fc-drape-dump"
 
 
 def _characterise(face, label):
@@ -66,17 +71,22 @@ def _characterise(face, label):
     print(f"{label}: u-domain-edge max gap = {d_max:.6g} mm")
 
 
-def main():
-    import importlib
+def build_parser():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--dump-dir",
+        default=_DEFAULT_DUMP_DIR,
+        help=f"Directory the web BREPs and seed JSONs are written to "
+             f"(default {_DEFAULT_DUMP_DIR}).",
+    )
+    return parser
 
-    import FreeCAD
-    import Part
 
-    m = importlib.import_module(
-        "Composites.compositeexamples.examples.closed_ring_composite_shell")
+def main(argv=None):
+    dump_dir = build_parser().parse_args(argv).dump_dir
 
     doc = FreeCAD.newDocument("RingStiffenerWebDump")
-    geom = m.GEOMETRY
+    geom = closed_ring_composite_shell.GEOMETRY
     ring = Part.makeCylinder(
         geom["radius_mm"], geom["length_mm"],
         FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(0, 0, 1), geom["sweep_deg"])
@@ -87,9 +97,7 @@ def main():
                * geom["length_mm"]) < 1.0e-6
     ][0]
 
-    from Composites.features.Stiffener import StiffenerFP
-
-    os.makedirs(_DUMP_DIR, exist_ok=True)
+    os.makedirs(dump_dir, exist_ok=True)
     for name, z_centre in (("RingStiffenerA", 40.0),
                            ("RingStiffenerB", geom["length_mm"] - 40.0)):
         side = 3.0 * geom["radius_mm"]
@@ -114,17 +122,18 @@ def main():
         web_shape = Part.makeCompound(
             [sub for f in web_faces
              for sub in (f.Faces if len(getattr(f, 'Faces', [])) else [f])])
-        brep_path = os.path.join(_DUMP_DIR, f"{name}_Web.brep")
+        brep_path = os.path.join(dump_dir, f"{name}_Web.brep")
         web_shape.exportBrep(brep_path)
         bb = web_faces[0].BoundBox
         seed = {
             "point": [bb.Center.x, bb.Center.y, bb.Center.z],
             "warp_direction": [1.0, 0.0, 0.0],
         }
-        with open(os.path.join(_DUMP_DIR, f"{name}_Web.json"), "w") as fh:
+        with open(os.path.join(dump_dir, f"{name}_Web.json"), "w") as fh:
             json.dump({"seed": seed, "params": {"pitch": 2.5}}, fh, indent=2)
         print(f"{name}: dumped web compound → {brep_path} (seed at face centre)")
     FreeCAD.closeDocument(doc.Name)
 
 
-main()
+if __name__ == "__main__":
+    main()
