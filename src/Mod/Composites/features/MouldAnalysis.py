@@ -2,6 +2,7 @@
 # Copyright 2025 John Wharington jwharington@gmail.com
 
 import FreeCAD
+import Part
 
 from FreeCAD import Vector
 
@@ -10,6 +11,7 @@ from ..tools.mould_analysis import (
     DEFAULT_TESSELLATION_BAND_TOL_DEG,
     analyze_source_shape,
     default_mould_analysis_draw_direction,
+    split_faces,
 )
 from .Command import BaseCommand
 from .VPCompositePart import CompositePartFP, VPCompositePart
@@ -20,6 +22,8 @@ def is_mould_analysis(obj):
 
 
 DRAFT_DEFECT_COLOR = (1.0, 0.0, 0.0)
+
+SPLIT_FACE_HALVES = ("upper", "lower")
 
 
 def _add_tessellation_band_property(obj):
@@ -33,6 +37,79 @@ def _add_tessellation_band_property(obj):
         "face the part line crosses and stay below the smallest usable draft "
         "(blade-article: 0.8 - its hub has a 0.71 deg and a 1 deg cone).",
     ).TessellationBandTolDeg = DEFAULT_TESSELLATION_BAND_TOL_DEG
+
+
+def _add_split_face_outputs(obj):
+    """The cut pieces of both halves, with the source face each came from."""
+    for half in SPLIT_FACE_HALVES:
+        label = half.capitalize()
+        obj.addProperty(
+            "App::PropertyLink",
+            f"{label}SplitFaces",
+            "MouldAnalysis",
+            f"The {half} half's cut pieces, one face per source face region",
+            hidden=True,
+        )
+        pieces = obj.Document.addObject(
+            "Part::Feature",
+            f"{obj.Name}_{label}SplitFaces",
+        )
+        setattr(obj, f"{label}SplitFaces", pieces)
+        obj.setPropertyStatus(f"{label}SplitFaces", "ReadOnly")
+
+        obj.addProperty(
+            "App::PropertyIntegerList",
+            f"{label}SourceFaces",
+            "MouldAnalysis",
+            f"Source face each {half} piece was cut from (1-based Face numbering)",
+        )
+        obj.setPropertyStatus(f"{label}SourceFaces", "ReadOnly")
+
+        obj.addProperty(
+            "App::PropertyBoolList",
+            f"{label}StraddlingFaces",
+            "MouldAnalysis",
+            f"{half} pieces whose source face the part line did not cut at its "
+            f"equator",
+        )
+        obj.setPropertyStatus(f"{label}StraddlingFaces", "ReadOnly")
+
+
+def analysis_split_faces(analysis, half):
+    """The cut pieces of ``half`` of ``analysis``, with their provenance.
+
+    Returns one dict per piece: ``face`` (a Part.Face), ``source_face_index``
+    (1-based into the source shape's own face numbering - FreeCAD's FaceN) and
+    ``straddles``. The pieces of both halves tile the source exactly once.
+    """
+    if half not in SPLIT_FACE_HALVES:
+        raise ValueError(f"half must be one of {SPLIT_FACE_HALVES}, not {half!r}")
+    label = half.capitalize()
+    target = getattr(analysis, f"{label}SplitFaces", None)
+    source_faces = list(getattr(analysis, f"{label}SourceFaces", []) or [])
+    straddling = list(getattr(analysis, f"{label}StraddlingFaces", []) or [])
+    if target is None or target.Shape.isNull():
+        return []
+    return [
+        {
+            "face": face,
+            "source_face_index": (source_faces[index]
+                                  if index < len(source_faces) else None),
+            "straddles": (straddling[index]
+                          if index < len(straddling) else False),
+        }
+        for index, face in enumerate(target.Shape.Faces)
+    ]
+
+
+def upper_split_faces(analysis):
+    """The upper half's cut pieces, with provenance (see ``analysis_split_faces``)."""
+    return analysis_split_faces(analysis, "upper")
+
+
+def lower_split_faces(analysis):
+    """The lower half's cut pieces, with provenance (see ``analysis_split_faces``)."""
+    return analysis_split_faces(analysis, "lower")
 
 
 def _add_draft_defect_outputs(obj):
@@ -271,6 +348,7 @@ class MouldAnalysisFP(CompositePartFP):
         obj.setPropertyStatus("MouldHalfB", "ReadOnly")
 
         _add_draft_defect_outputs(obj)
+        _add_split_face_outputs(obj)
 
         obj.addProperty(
             "App::PropertyString",
@@ -343,6 +421,8 @@ class MouldAnalysisFP(CompositePartFP):
         # Documents saved before the defect display get its outputs.
         if not hasattr(fp, "DraftDefects"):
             _add_draft_defect_outputs(fp)
+        if not hasattr(fp, "UpperSplitFaces"):
+            _add_split_face_outputs(fp)
 
     def execute(self, fp):
         signature = self._input_signature(fp)
@@ -392,6 +472,9 @@ class MouldAnalysisFP(CompositePartFP):
         fp.DraftDefectSummary = result["draft_defect_summary"]
         if fp.DraftDefects:
             fp.DraftDefects.Shape = result["draft_defect_shape"]
+        for half in SPLIT_FACE_HALVES:
+            _write_split_faces(fp, half.capitalize(),
+                               split_faces(result, half))
         fp.ValidationStatus = result["validation_status"]
         fp.ValidationSummary = result["validation_summary"]
         fp.ValidationChecks = result["validation_checks"]
@@ -409,12 +492,26 @@ class MouldAnalysisFP(CompositePartFP):
     # skips it when nothing that defines the mould has changed.
 
 
+def _write_split_faces(fp, label, pieces):
+    """Persist one half's cut pieces: the faces as a compound, the rest as lists."""
+    pieces = [piece for piece in pieces if piece["face"] is not None]
+    setattr(fp, f"{label}SourceFaces",
+            [int(piece["source_face_index"] or 0) for piece in pieces])
+    setattr(fp, f"{label}StraddlingFaces",
+            [bool(piece["straddles"]) for piece in pieces])
+    target = getattr(fp, f"{label}SplitFaces", None)
+    if target:
+        target.Shape = (Part.makeCompound([piece["face"] for piece in pieces])
+                        if pieces else Part.Shape())
+
+
 class ViewProviderMouldAnalysis(VPCompositePart):
     def claimChildren(self):
         if not hasattr(self, "Object"):
             return []
         children = []
-        for name in ("PartingSurface", "MouldHalfA", "MouldHalfB", "DraftDefects"):
+        for name in ("PartingSurface", "MouldHalfA", "MouldHalfB", "DraftDefects",
+                     "UpperSplitFaces", "LowerSplitFaces"):
             child = getattr(self.Object, name, None)
             if child:
                 children.append(child)

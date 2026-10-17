@@ -23,6 +23,7 @@ import Part
 from Composites.tools.mould_analysis import (
     NORMALIZATION_CONFIDENCE_EXACT,
     NORMALIZATION_CONFIDENCE_FAIL,
+    SplitHalf,
     _analysis_gate_status,
     _classify_draft_faces,
     _dot,
@@ -575,6 +576,10 @@ class TestWrongSideFaces(unittest.TestCase):
     _UP = FreeCAD.Vector(0, 0, 1)
     _BAND_DEG = 2.0
 
+    @staticmethod
+    def _halves(upper=None, lower=None):
+        return (SplitHalf(upper, 1.0), SplitHalf(lower, -1.0))
+
     def _box_face(self, normal):
         box = _box()
         return next(face for face in box.Faces
@@ -583,32 +588,39 @@ class TestWrongSideFaces(unittest.TestCase):
     def test_correctly_split_box_has_no_defects(self):
         top = self._box_face(FreeCAD.Vector(0, 0, 1))
         bottom = self._box_face(FreeCAD.Vector(0, 0, -1))
-        result = find_wrong_side_faces(Part.Shell([top]), Part.Shell([bottom]),
-                                       self._UP, self._BAND_DEG)
+        result = find_wrong_side_faces(
+            self._halves(Part.Shell([top]), Part.Shell([bottom])),
+            self._UP, self._BAND_DEG)
         self.assertEqual(result["face_count"], 0)
 
     def test_down_facing_face_in_upper_shell_is_a_defect(self):
         bottom = self._box_face(FreeCAD.Vector(0, 0, -1))
-        result = find_wrong_side_faces(Part.Shell([bottom]), None,
+        result = find_wrong_side_faces(self._halves(Part.Shell([bottom])),
                                        self._UP, self._BAND_DEG)
         self.assertEqual(result["face_count"], 1)
 
     def test_up_facing_face_in_lower_shell_is_a_defect(self):
         top = self._box_face(FreeCAD.Vector(0, 0, 1))
-        result = find_wrong_side_faces(None, Part.Shell([top]),
+        result = find_wrong_side_faces(self._halves(lower=Part.Shell([top])),
                                        self._UP, self._BAND_DEG)
         self.assertEqual(result["face_count"], 1)
 
     def test_vertical_wall_inside_band_is_not_a_defect(self):
         wall = self._box_face(FreeCAD.Vector(1, 0, 0))
-        result = find_wrong_side_faces(Part.Shell([wall]), Part.Shell([wall]),
-                                       self._UP, self._BAND_DEG)
+        result = find_wrong_side_faces(
+            self._halves(Part.Shell([wall]), Part.Shell([wall])),
+            self._UP, self._BAND_DEG)
         self.assertEqual(result["face_count"], 0)
 
     def test_analysis_reports_draft_defects(self):
         result = analyze_source_shape(_box(), self._UP)
         self.assertEqual(result["draft_defect_face_count"], 0,
                          result["draft_defect_summary"])
+
+    def test_clean_box_validation_records_no_wrong_side_faces(self):
+        result = analyze_source_shape(_box(), self._UP)
+        self.assertIn("PASS: no wrong-side draft faces",
+                      " | ".join(result["validation_checks"]))
 
 
 class TestValidateMouldResult(unittest.TestCase):

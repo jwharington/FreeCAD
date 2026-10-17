@@ -3,6 +3,7 @@
 
 import math
 import re
+from typing import NamedTuple
 
 from FreeCAD import Vector
 import Part
@@ -1368,6 +1369,8 @@ def _propose_non_planar_parting(
         "upper_shell": upper_shell,
         "split_lower_shell": raw.get("lower_shell"),
         "split_upper_shell": raw.get("upper_shell"),
+        "upper_split_faces": raw.get("upper_split_faces", []),
+        "lower_split_faces": raw.get("lower_split_faces", []),
         "skirt_rays": [],
         "tangent_face_midpoints": raw.get("tangent_face_midpoints", []),
         "withdrawal_clearance": raw.get("withdrawal_clearance"),
@@ -1438,31 +1441,92 @@ def _face_wrong_side_dot(face, unit, side_sign):
     return worst
 
 
-def find_wrong_side_faces(upper_shell, lower_shell, direction, band_tol_deg):
-    """Faces of the split shells whose draft opposes their own half.
+class SplitHalf(NamedTuple):
+    """One half of the split: its shell, its withdrawal sign and its pieces.
 
-    An upper-shell face must face along +direction to release from the upper
-    half, a lower-shell face along -direction. A face with any sample beyond
+    ``pieces`` are the solver's cut pieces of that half, each carrying the
+    source face it was cut from. The OcctSplitter cut (the default) supplies
+    them; an empty tuple means the pieces are unknown and the shell's own
+    faces are the only available view.
+    """
+
+    shell: object
+    side_sign: float
+    pieces: tuple = ()
+
+
+def split_faces(payload, half):
+    """The solver's cut pieces of ``half`` ("upper" or "lower"), with provenance.
+
+    ``payload`` is a raw parting result (as ``_propose_non_planar_parting``
+    returns it). Each piece is a dict of ``face`` (a Part.Face), its
+    ``source_face_index`` (1-based into the source shape's own face map -
+    FreeCAD's FaceN numbering) and ``straddles``. The two halves' pieces tile
+    the source exactly once.
+    """
+    if half not in ("upper", "lower"):
+        raise ValueError(f"half must be 'upper' or 'lower', not {half!r}")
+    return [
+        {
+            "face": _as_face(entry.get("face")),
+            "source_face_index": entry.get("source_face_index"),
+            "straddles": bool(entry.get("straddles")),
+        }
+        for entry in (payload or {}).get(f"{half}_split_faces", []) or []
+    ]
+
+
+def _as_face(shape):
+    """``shape`` as a Part.Face, or None when it is absent or null.
+
+    The binding hands back a generic Part.Shape, so the piece is unwrapped
+    through its own face list rather than trusted to be a Part.Face already.
+    """
+    if shape is None or getattr(shape, "isNull", lambda: True)():
+        return None
+    if isinstance(shape, Part.Face):
+        return shape
+    faces = list(getattr(shape, "Faces", []) or [])
+    return faces[0] if len(faces) == 1 else None
+
+
+def find_wrong_side_faces(halves, direction, band_tol_deg):
+    """Pieces whose draft opposes their own half's withdrawal.
+
+    An upper-half piece must face along +direction to release from the upper
+    half, a lower-half piece along -direction. A piece with any sample beyond
     the equator band on the wrong side is a draft defect: the part line has
-    put it in a half it cannot be withdrawn from.
+    put it in a half it cannot be withdrawn from. A piece whose source face
+    ``straddles`` the draw is reported as such - the part line failed to cut
+    that source face at its equator.
     """
     unit = _normalized(direction)
     limit = -math.sin(math.radians(band_tol_deg))
     faces = []
     details = []
-    for half, shell, side_sign in (("upper", upper_shell, 1.0), ("lower", lower_shell, -1.0)):
-        if shell is None or shell.isNull():
+    for half, split_half in (("upper", halves[0]), ("lower", halves[1])):
+        shell = split_half.shell
+        if (shell is None or shell.isNull()) and not split_half.pieces:
             continue
-        for index, face in enumerate(shell.Faces, start=1):
-            worst = _face_wrong_side_dot(face, unit, side_sign)
-            if worst is not None and worst < limit:
-                faces.append(face)
-                details.append({
-                    "half": half,
-                    "shell_face_index": index,
-                    "area": face.Area,
-                    "worst_draft_deg": math.degrees(math.asin(max(-1.0, worst))),
-                })
+        for index, face in enumerate(_half_faces(split_half), start=1):
+            worst = _face_wrong_side_dot(face, unit, split_half.side_sign)
+            if worst is None or worst >= limit:
+                continue
+            pieces = split_half.pieces
+            detail = {
+                "half": half,
+                "shell_face_index": index,
+                "area": face.Area,
+                "worst_draft_deg": math.degrees(math.asin(max(-1.0, worst))),
+            }
+            if pieces:
+                detail["source_face_index"] = pieces[index - 1]["source_face_index"]
+                detail["straddles"] = pieces[index - 1]["straddles"]
+            else:
+                detail["source_face_index"] = None
+                detail["straddles"] = False
+            faces.append(face)
+            details.append(detail)
     area = sum(face.Area for face in faces)
     return {
         "shape": Part.makeCompound(faces) if faces else Part.Shape(),
@@ -1474,6 +1538,18 @@ def find_wrong_side_faces(upper_shell, lower_shell, direction, band_tol_deg):
             f"band={band_tol_deg:g} deg"
         ),
     }
+
+
+def _half_faces(split_half):
+    """The faces to judge for one half: its pieces when they are known.
+
+    The pieces are the split itself, so each one keeps its provenance; the
+    shell's faces are the fallback when the cut supplied no piece map.
+    """
+    if split_half.pieces:
+        return [piece["face"] for piece in split_half.pieces
+                if piece["face"] is not None]
+    return list(split_half.shell.Faces)
 
 
 def _shape_volume(shape):
@@ -1844,6 +1920,8 @@ def _base_analysis_result():
         "mould_half_b_shape": Part.Shape(),
         "mould_half_a_volume": 0.0,
         "mould_half_b_volume": 0.0,
+        "upper_split_faces": [],
+        "lower_split_faces": [],
         "draft_defect_shape": Part.Shape(),
         "draft_defect_face_count": 0,
         "draft_defect_faces": [],
@@ -2277,8 +2355,12 @@ def analyze_source_shape(
     validation = selected_attempt["validation"]
     selected_non_planar = selected_attempt.get("non_planar_result") or {}
     draft_defects = find_wrong_side_faces(
-        selected_non_planar.get("split_upper_shell"),
-        selected_non_planar.get("split_lower_shell"),
+        (
+            SplitHalf(selected_non_planar.get("split_upper_shell"), 1.0,
+                      tuple(split_faces(selected_non_planar, "upper"))),
+            SplitHalf(selected_non_planar.get("split_lower_shell"), -1.0,
+                      tuple(split_faces(selected_non_planar, "lower"))),
+        ),
         selected_split_strategy["direction"],
         (DEFAULT_TESSELLATION_BAND_TOL_DEG
          if parting_tessellation_band_tol_deg is None
@@ -2301,6 +2383,18 @@ def analyze_source_shape(
     )
 
     validation = _append_normalization_validation_check(validation, normalization)
+    split_shells_present = any(
+        shell is not None and not shell.isNull()
+        for shell in (selected_non_planar.get("split_upper_shell"),
+                      selected_non_planar.get("split_lower_shell"))
+    )
+    if split_shells_present:
+        draft_defect_check = (
+            f"WARN: wrong-side draft faces — {draft_defects['summary']}"
+            if draft_defects["face_count"]
+            else f"PASS: no wrong-side draft faces — {draft_defects['summary']}"
+        )
+        validation = _append_validation_check(validation, draft_defect_check)
     validation = _append_validation_check(
         validation,
         f"PASS: split strategy planning — {split_strategy_summary}",
@@ -2363,6 +2457,8 @@ def analyze_source_shape(
             "mould_half_b_shape": mould_halves["half_b_shape"],
             "mould_half_a_volume": mould_halves["half_a_volume"],
             "mould_half_b_volume": mould_halves["half_b_volume"],
+            "upper_split_faces": selected_non_planar.get("upper_split_faces", []),
+            "lower_split_faces": selected_non_planar.get("lower_split_faces", []),
             "draft_defect_shape": draft_defects["shape"],
             "draft_defect_face_count": draft_defects["face_count"],
             "draft_defect_faces": draft_defects["faces"],

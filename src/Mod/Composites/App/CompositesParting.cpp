@@ -138,6 +138,23 @@ PYBIND11_MODULE(Composites_parting, m) {
                     wrap_shape(tfm.face), tfm.zMidpoint));
             }
 
+            // Marshal the split faces: the cut pieces of each half with the
+            // source face each was cut from (1-based, TopExp::MapShapes order =
+            // FreeCAD's FaceN) and whether the part line failed to cut that
+            // source face at its equator.
+            const auto packSplitFaces = [](const std::vector<nextdrape::SplitFace>& pieces) {
+                py::list packed;
+                for (const auto& piece : pieces) {
+                    packed.append(py::dict(
+                        py::arg("face")              = wrap_shape(piece.face),
+                        py::arg("source_face_index") = piece.sourceFaceIndex,
+                        py::arg("straddles")         = piece.straddles));
+                }
+                return packed;
+            };
+            py::list upperSplitFaces = packSplitFaces(r.UpperSplitFaces());
+            py::list lowerSplitFaces = packSplitFaces(r.LowerSplitFaces());
+
             // Derive the part-line 3D shape on demand from the canonical
             // segment chain (never a cached duplicate; partLine3d was removed).
             // Inlined in the dict so the returned shape's lifetime is owned by
@@ -208,6 +225,8 @@ PYBIND11_MODULE(Composites_parting, m) {
                 py::arg("part_line_segments")     = segments,
                 py::arg("upper_shell")           = wrap_shape(r.upperShell),
                 py::arg("lower_shell")           = wrap_shape(r.lowerShell),
+                py::arg("upper_split_faces")     = upperSplitFaces,
+                py::arg("lower_split_faces")     = lowerSplitFaces,
                 py::arg("mould_half_upper")      = wrap_shape(r.mouldHalfUpper),
                 py::arg("mould_half_lower")      = wrap_shape(r.mouldHalfLower),
                 py::arg("skirt")                 = wrap_shape(r.skirt),

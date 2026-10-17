@@ -87,6 +87,74 @@ class TestMouldAnalysis(TestFreeCADFP):
         self.assertEqual(analysis.ValidationStatus, "Pass")
         self.assertNotEqual(tuple(analysis.BestDrawDirection), (0.0, 0.0, 0.0))
 
+    def _split_faces(self, analysis):
+        """The analysis's cut pieces of both halves, with provenance."""
+        from Composites.features.MouldAnalysis import (
+            lower_split_faces,
+            upper_split_faces,
+        )
+
+        return upper_split_faces(analysis), lower_split_faces(analysis)
+
+    def _box_analysis(self, name):
+        source = self._make_source(f"{name}Source", Part.makeBox(20.0, 15.0, 10.0))
+        return self._make_mould_analysis(source, name=name)
+
+    def test_split_faces_cover_every_source_face_once(self):
+        analysis = self._box_analysis("SplitFaces")
+        upper, lower = self._split_faces(analysis)
+
+        # The pieces of both halves tile the source: every source face is
+        # accounted for exactly once across the two halves.
+        self.assertEqual(
+            sorted(piece["source_face_index"] for piece in upper + lower),
+            list(range(1, len(analysis.Source.Shape.Faces) + 1)),
+        )
+
+    def test_split_faces_tile_their_source_faces(self):
+        analysis = self._box_analysis("SplitTiling")
+        source_faces = list(analysis.Source.Shape.Faces)
+        upper, lower = self._split_faces(analysis)
+        piece_area = {}
+        for piece in upper + lower:
+            index = piece["source_face_index"]
+            piece_area[index] = piece_area.get(index, 0.0) + piece["face"].Area
+
+        for index, face in enumerate(source_faces, start=1):
+            self.assertAlmostEqual(piece_area.get(index, 0.0), face.Area, places=6)
+
+    def test_split_face_provenance_names_real_source_faces(self):
+        analysis = self._box_analysis("SplitProvenance")
+        source_face_count = len(analysis.Source.Shape.Faces)
+        upper, lower = self._split_faces(analysis)
+
+        for piece in upper + lower:
+            self.assertGreaterEqual(piece["source_face_index"], 1)
+            self.assertLessEqual(piece["source_face_index"], source_face_count)
+
+    def test_split_faces_survive_save_and_reload(self):
+        analysis = self._box_analysis("SplitRoundTrip")
+        before = self._split_faces(analysis)
+        filepath = os.path.join(tempfile.gettempdir(), "mould_split_faces.FCStd")
+        try:
+            self._save_document(filepath)
+            reopened = FreeCAD.openDocument(filepath)
+            try:
+                reloaded = reopened.getObject(analysis.Name)
+                after = self._split_faces(reloaded)
+            finally:
+                FreeCAD.closeDocument(reopened.Name)
+        finally:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+
+        def pieces(pieces):
+            return [(piece["source_face_index"], piece["straddles"],
+                     round(piece["face"].Area, 6)) for piece in pieces]
+
+        self.assertEqual(pieces(before[0]), pieces(after[0]))
+        self.assertEqual(pieces(before[1]), pieces(after[1]))
+
     def test_part_plane_on_cylinder(self):
         source = self._make_source("CylinderSource", Part.makeCylinder(10.0, 20.0))
         part_plane = self._make_part_plane(source)

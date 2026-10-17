@@ -151,8 +151,12 @@ def _print_report(report: dict):
     print(f"mould_halves_status: {result.get('mould_halves_status')}")
     print(f"draft_defect_summary: {result.get('draft_defect_summary')}")
     for face in result.get("draft_defect_faces", []):
+        source = face.get("source_face_index")
+        provenance = f" source=Face{source}" if source else ""
+        if face.get("straddles"):
+            provenance += " STRADDLING"
         print(
-            f"  - {face['half']} shell Face{face['shell_face_index']}: "
+            f"  - {face['half']} piece {face['shell_face_index']}:{provenance} "
             f"worst_draft={face['worst_draft_deg']:.3f} deg area={face['area']:.3f}"
         )
     for label in ("a", "b"):
