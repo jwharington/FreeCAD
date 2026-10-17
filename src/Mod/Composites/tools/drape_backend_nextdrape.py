@@ -8,9 +8,6 @@ TopoDS_Shape with zero-copy access — no BREP serialization.
 
 from __future__ import annotations
 
-import json
-import os
-
 import numpy as np
 from typing import TYPE_CHECKING, Any
 
@@ -48,39 +45,6 @@ def _require_drapable_shape(shape: Any) -> None:
             "the drape support must be a shell or a face, not a solid — "
             "a ply is draped over a surface"
         )
-
-
-def _dump_solver_input(shape: Any, seed: dict, params: dict) -> None:
-    """Dump the exact solver inputs to FC_DRAPE_DUMP_DIR when set.
-
-    Reproduction aid for the nextdrape ``drape_cli --shapefile`` harness:
-    write the BREP plus the seed and params dicts that feed
-    ``DrapeEngine.compute``, so a failing solve can be debugged at the
-    nextdrape level on byte-identical geometry.
-
-    Each solve writes a new file: a run dumps several solves (initial
-    drape, re-drapes on remainders, foot shells at their scaled pitch)
-    whose B-spline bounding boxes inflate to the same box, so the tag
-    carries a solve counter, the pitch and the face count to keep them
-    apart — the bbox alone collapsed them onto one file.
-    """
-    dump_dir = os.environ.get("FC_DRAPE_DUMP_DIR")
-    if not dump_dir:
-        return
-    global _dump_sequence
-    _dump_sequence += 1
-    bbox = shape.BoundBox
-    tag = (f"{_dump_sequence:02d}"
-           f"_{bbox.XLength:.1f}x{bbox.YLength:.1f}x{bbox.ZLength:.1f}"
-           f"_{bbox.Center.x:.1f}_{bbox.Center.y:.1f}_{bbox.Center.z:.1f}"
-           f"_p{params.get('pitch', 0):g}_f{len(shape.Faces)}")
-    os.makedirs(dump_dir, exist_ok=True)
-    shape.exportBrep(os.path.join(dump_dir, f"{tag}.brep"))
-    with open(os.path.join(dump_dir, f"{tag}.json"), "w") as f:
-        json.dump({"seed": seed, "params": params}, f, indent=2, default=float)
-
-
-_dump_sequence = 0
 
 
 def _region_box(region: Any) -> tuple[float, float, float, float]:
@@ -520,7 +484,6 @@ class NextDrapeBackend(DrapeBackend):
             params = self._build_params()
             solver_shape = self._cut_shape if self._use_cut_shape else self._shape
             _require_drapable_shape(solver_shape)
-            _dump_solver_input(solver_shape, seed, params)
             self._result = self._engine.compute(solver_shape, seed, params)
             if not self._result.get("success"):
                 self._valid = False
