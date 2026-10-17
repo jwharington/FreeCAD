@@ -21,6 +21,98 @@ def is_mould_analysis(obj):
     return is_comp_type(obj, "Part::FeaturePython", "Composite::MouldAnalysis")
 
 
+DRAFT_DEFECT_COLOR = (1.0, 0.0, 0.0)      # draft opposes the piece's own half
+STRADDLING_COLOR = (1.0, 0.5, 0.0)        # the part line left it straddling its equator
+
+SPLIT_FACE_HALVES = ("upper", "lower")
+
+
+def _add_tessellation_band_property(obj):
+    obj.addProperty(
+        "App::PropertyFloat",
+        "TessellationBandTolDeg",
+        "MouldAnalysis",
+        "Equator-band half-width (degrees) the part-line solver treats as the "
+        "veil: faces whose draft is within it carry no draft opinion and the "
+        "part line may cross them anywhere. It has to cover the shallowest "
+        "face the part line crosses and stay below the smallest usable draft "
+        "(blade-article: 0.8 - its hub has a 0.71 deg and a 1 deg cone).",
+    ).TessellationBandTolDeg = DEFAULT_TESSELLATION_BAND_TOL_DEG
+
+
+def _add_split_face_outputs(obj):
+    """The cut pieces of both halves, with the source face each came from."""
+    for half in SPLIT_FACE_HALVES:
+        label = half.capitalize()
+        obj.addProperty(
+            "App::PropertyLink",
+            f"{label}SplitFaces",
+            "MouldAnalysis",
+            f"The {half} half's cut pieces, one face per source face region",
+            hidden=True,
+        )
+        pieces = obj.Document.addObject(
+            "Part::Feature",
+            f"{obj.Name}_{label}SplitFaces",
+        )
+        setattr(obj, f"{label}SplitFaces", pieces)
+        obj.setPropertyStatus(f"{label}SplitFaces", "ReadOnly")
+
+        obj.addProperty(
+            "App::PropertyIntegerList",
+            f"{label}SourceFaces",
+            "MouldAnalysis",
+            f"Source face each {half} piece was cut from (1-based Face numbering)",
+        )
+        obj.setPropertyStatus(f"{label}SourceFaces", "ReadOnly")
+
+        obj.addProperty(
+            "App::PropertyBoolList",
+            f"{label}StraddlingFaces",
+            "MouldAnalysis",
+            f"{half} pieces whose source face the part line did not cut at its "
+            f"equator",
+        )
+        obj.setPropertyStatus(f"{label}StraddlingFaces", "ReadOnly")
+
+
+def analysis_split_faces(analysis, half):
+    """The cut pieces of ``half`` of ``analysis``, with their provenance.
+
+    Returns one dict per piece: ``face`` (a Part.Face), ``source_face_index``
+    (1-based into the source shape's own face numbering - FreeCAD's FaceN) and
+    ``straddles``. The pieces of both halves tile the source exactly once.
+    """
+    if half not in SPLIT_FACE_HALVES:
+        raise ValueError(f"half must be one of {SPLIT_FACE_HALVES}, not {half!r}")
+    label = half.capitalize()
+    target = getattr(analysis, f"{label}SplitFaces", None)
+    source_faces = list(getattr(analysis, f"{label}SourceFaces", []) or [])
+    straddling = list(getattr(analysis, f"{label}StraddlingFaces", []) or [])
+    if target is None or target.Shape.isNull():
+        return []
+    return [
+        {
+            "face": face,
+            "source_face_index": (source_faces[index]
+                                  if index < len(source_faces) else None),
+            "straddles": (straddling[index]
+                          if index < len(straddling) else False),
+        }
+        for index, face in enumerate(target.Shape.Faces)
+    ]
+
+
+def upper_split_faces(analysis):
+    """The upper half's cut pieces, with provenance (see ``analysis_split_faces``)."""
+    return analysis_split_faces(analysis, "upper")
+
+
+def lower_split_faces(analysis):
+    """The lower half's cut pieces, with provenance (see ``analysis_split_faces``)."""
+    return analysis_split_faces(analysis, "lower")
+
+
 def _add_draft_defect_outputs(obj):
     obj.addProperty(
         "App::PropertyString",
@@ -34,8 +126,7 @@ def _add_draft_defect_outputs(obj):
         "App::PropertyLink",
         "DraftDefects",
         "MouldAnalysis",
-        "Wrong-side draft faces: red, or orange where the part line left them "
-        "straddling its equator",
+        "Wrong-side draft faces, shown in red on the source",
         hidden=True,
     )
     draft_defects = obj.Document.addObject(
@@ -43,8 +134,8 @@ def _add_draft_defect_outputs(obj):
         f"{obj.Name}_DraftDefects",
     )
     if FreeCAD.GuiUp:
-        draft_defects.ViewObject.ShapeColor = WRONG_SIDE_COLOR
-        draft_defects.ViewObject.LineColor = WRONG_SIDE_COLOR
+        draft_defects.ViewObject.ShapeColor = DRAFT_DEFECT_COLOR
+        draft_defects.ViewObject.LineColor = DRAFT_DEFECT_COLOR
     obj.DraftDefects = draft_defects
     obj.setPropertyStatus("DraftDefects", "ReadOnly")
 
@@ -403,24 +494,6 @@ class MouldAnalysisFP(CompositePartFP):
     # skips it when nothing that defines the mould has changed.
 
 
-def _paint_defects(child, details):
-    """Colour each defect face by kind: wrong-side, or straddling its equator.
-
-    Per-face DiffuseColor is ordered like the child's own faces, and the
-    child's shape is built from the same defect list in the same order, so
-    entry ``i`` of the detail list is face ``i`` of the compound.
-    """
-    if not FreeCAD.GuiUp or not details:
-        return
-    faces = child.Shape.Faces
-    if len(faces) != len(details):
-        return
-    child.ViewObject.DiffuseColor = [
-        STRADDLING_COLOR if detail.get("straddles") else WRONG_SIDE_COLOR
-        for detail in details
-    ]
-
-
 def _write_split_faces(fp, label, pieces):
     """Persist one half's cut pieces: the faces as a compound, the rest as lists."""
     pieces = [piece for piece in pieces if piece["face"] is not None]
@@ -432,6 +505,23 @@ def _write_split_faces(fp, label, pieces):
     if target:
         target.Shape = (Part.makeCompound([piece["face"] for piece in pieces])
                         if pieces else Part.Shape())
+
+
+def _paint_defects(child, details):
+    """Colour each defect face by kind: wrong-side, or straddling its equator.
+
+    The child's shape is built from this same defect list in the same order,
+    so entry ``i`` is face ``i`` of the compound, which is the order
+    DiffuseColor is applied in.
+    """
+    if not FreeCAD.GuiUp or not details:
+        return
+    if len(child.Shape.Faces) != len(details):
+        return
+    child.ViewObject.DiffuseColor = [
+        STRADDLING_COLOR if detail.get("straddles") else DRAFT_DEFECT_COLOR
+        for detail in details
+    ]
 
 
 class ViewProviderMouldAnalysis(VPCompositePart):
