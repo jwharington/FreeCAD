@@ -7,6 +7,16 @@ import re
 from FreeCAD import Vector
 import Part
 
+# The C++ parting binding is optional: FreeCAD can be built without it, and
+# mould_analysis must still load headless. The import error is reported in
+# the analysis result instead of failing the module.
+try:
+    import Composites_parting
+    _PARTING_IMPORT_ERROR = ""
+except ImportError as _exc:
+    Composites_parting = None
+    _PARTING_IMPORT_ERROR = str(_exc)
+
 
 default_mould_analysis_draw_direction = Vector(0, 0, 1)
 
@@ -1216,18 +1226,14 @@ def _dominant_axis(direction):
 
 
 def _import_parting_solver():
-    """Lazily import the Composites_parting C++ binding.
+    """Return the Composites_parting solver as a `(callable, error_message)` pair.
 
-    Returns a `(callable, error_message)` pair. The callable is `None` when the
-    binding is unavailable (for example, if FreeCAD was built without the C++
-    extension). Importing lazily keeps `mould_analysis` loadable headless
-    without the .so present.
+    The callable is `None` when the binding is unavailable (for example, if
+    FreeCAD was built without the C++ extension).
     """
-    try:
-        import Composites_parting  # noqa: F401
-        return Composites_parting.compute_non_planar_parting, ""
-    except ImportError as exc:
-        return None, str(exc)
+    if Composites_parting is None:
+        return None, _PARTING_IMPORT_ERROR
+    return Composites_parting.compute_non_planar_parting, ""
 
 
 def _propose_non_planar_parting(
@@ -1277,18 +1283,6 @@ def _propose_non_planar_parting(
         footprint = (float(stock_footprint.x), float(stock_footprint.y))
 
     try:
-        # Reproduction aid for the nextdrape mould_cli --load-shapefile harness:
-        # when FC_PARTING_DUMP_DIR is set, write the EXACT shape + draw direction
-        # that feed the binding, so the solver can be debugged at the nextdrape
-        # level on byte-identical geometry.
-        import os as _os
-        _dump = _os.environ.get("FC_PARTING_DUMP_DIR")
-        if _dump:
-            _bbox = shape.BoundBox
-            _tag = f"{_bbox.XLength:.0f}x{_bbox.YLength:.0f}x{_bbox.ZLength:.0f}_{_bbox.Center.x:.0f}_{_bbox.Center.y:.0f}_{_bbox.Center.z:.0f}"
-            shape.exportBrep(_os.path.join(_dump, f"{_tag}.brep"))
-            with open(_os.path.join(_dump, f"{_tag}.dir"), "w") as f:
-                f.write(f"{float(direction.x)},{float(direction.y)},{float(direction.z)}\n")
         raw = compute(
             shape,
             (float(direction.x), float(direction.y), float(direction.z)),

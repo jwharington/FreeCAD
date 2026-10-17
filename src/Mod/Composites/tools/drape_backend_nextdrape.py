@@ -53,8 +53,7 @@ def _require_drapable_shape(shape: Any) -> None:
 def _dump_solver_input(shape: Any, seed: dict, params: dict) -> None:
     """Dump the exact solver inputs to FC_DRAPE_DUMP_DIR when set.
 
-    Reproduction aid for the nextdrape ``drape_cli --shapefile`` harness
-    (the drape-side twin of the mould path's ``FC_PARTING_DUMP_DIR``):
+    Reproduction aid for the nextdrape ``drape_cli --shapefile`` harness:
     write the BREP plus the seed and params dicts that feed
     ``DrapeEngine.compute``, so a failing solve can be debugged at the
     nextdrape level on byte-identical geometry.
