@@ -612,19 +612,18 @@ class TestWrongSideFaces(unittest.TestCase):
             self._UP, self._BAND_DEG)
         self.assertEqual(result["face_count"], 0)
 
-    def test_straddling_piece_is_its_own_defect_kind(self):
+    def test_straddling_piece_is_reported_as_straddling(self):
         # A piece whose source face the part line failed to cut at its equator
-        # is reported as straddling, not as a plain wrong-side face.
+        # is reported straddling, which is what colours it differently.
         bottom = self._box_face(FreeCAD.Vector(0, 0, -1))
         pieces = ({"face": bottom, "source_face_index": 5, "straddles": True},)
         result = find_wrong_side_faces(
             (SplitHalf(None, 1.0, pieces), SplitHalf(None, -1.0)),
             self._UP, self._BAND_DEG)
 
-        self.assertEqual(result["straddling_count"], 1)
-        self.assertEqual(result["wrong_side_count"], 0)
-        self.assertEqual(len(result["straddling_shape"].Faces), 1)
+        self.assertEqual(result["face_count"], 1)
         self.assertTrue(result["faces"][0]["straddles"])
+        self.assertEqual(len(result["shape"].Faces), 1)
 
     def test_analysis_reports_draft_defects(self):
         result = analyze_source_shape(_box(), self._UP)
