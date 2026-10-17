@@ -550,6 +550,10 @@ class NextDrapeBackend(DrapeBackend):
                 "backend": self.backend_name,
                 "status": "failed",
                 "failure_reason": r.get("error", "solve failed"),
+                # The solver's own reason codes (seed-project-failed,
+                # warp-dir-invalid, no-valid-quads, ...): without them a
+                # refusal reads only as "solver_failure".
+                "failure_diagnostics": r.get("failure_diagnostics", []),
             }
         d = r.get("diagnostics", {})
         payload = {

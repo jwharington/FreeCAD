@@ -175,6 +175,26 @@ static nextdrape::SeedInput build_seed(const py::dict& seed_dict) {
     return seed;
 }
 
+// Failure diagnostics (locations + codes): the codes LatticeBuilder::Build
+// records when it refuses a solve - seed-project-failed, seed-frame-failed,
+// warp-dir-invalid, no-valid-quads - are the only statement of *why* a shape
+// was refused.  Packed for the success path and the failure path alike; a
+// failed solve that returns only "solver_failure" cannot be diagnosed.
+static py::list pack_failure_diagnostics(const nextdrape::DrapeResult& result) {
+    py::list entries;
+    for (const auto& d : result.diagnostics) {
+        py::dict entry;
+        entry["code"] = d.code;
+        entry["shear_deg"] = d.shearDeg;
+        entry["x"] = d.location.X();
+        entry["y"] = d.location.Y();
+        entry["z"] = d.location.Z();
+        entry["message"] = d.message;
+        entries.append(entry);
+    }
+    return entries;
+}
+
 static py::dict pack_result(const nextdrape::DrapeResult& result) {
     py::dict res;
     res["success"] = true;
@@ -283,18 +303,7 @@ static py::dict pack_result(const nextdrape::DrapeResult& result) {
     // Failure diagnostics (locations + codes): the re-drape shear questions
     // ("where is the worst quad?") are answered here, not by re-deriving
     // them from the mesh.
-    py::list fail_list;
-    for (const auto& d : result.diagnostics) {
-        py::dict entry;
-        entry["code"] = d.code;
-        entry["shear_deg"] = d.shearDeg;
-        entry["x"] = d.location.X();
-        entry["y"] = d.location.Y();
-        entry["z"] = d.location.Z();
-        entry["message"] = d.message;
-        fail_list.append(entry);
-    }
-    res["failure_diagnostics"] = fail_list;
+    res["failure_diagnostics"] = pack_failure_diagnostics(result);
 
     return res;
 }
@@ -328,7 +337,10 @@ static py::dict engine_compute(nextdrape::DrapeEngine& engine,
     if (result.status != nextdrape::DrapeStatus::Ok) {
         std::string status_str = nextdrape::StatusToString(result.status);
         return py::dict(py::arg("success") = false,
-                        py::arg("error") = std::string("Drape status: ") + status_str);
+                        py::arg("error") = std::string("Drape status: ") + status_str,
+                        py::arg("status") = status_str,
+                        py::arg("failure_diagnostics") =
+                            pack_failure_diagnostics(result));
     }
 
     return pack_result(result);
