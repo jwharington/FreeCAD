@@ -55,6 +55,16 @@ def _load_fixture_shape(fixture_path: Path):
     return doc, obj, obj.Shape
 
 
+def _load_brep_shape(brep_path: Path):
+    if not brep_path.is_file():
+        raise SystemExit(f"brep not found: {brep_path}")
+    doc = App.newDocument("inspect_mould_brep")
+    obj = doc.addObject("Part::Feature", "Source")
+    obj.Shape = Part.read(str(brep_path))
+    doc.recompute()
+    return doc, obj, obj.Shape
+
+
 def _make_shape(shape_name: str):
     doc = App.newDocument(f"inspect_mould_{shape_name}")
     if shape_name == "box":
@@ -80,11 +90,14 @@ def _make_shape(shape_name: str):
     return doc, obj, obj.Shape
 
 
-def _build_inspection_report(shape_name: str, shape, direction, source_obj=None):
+def _build_inspection_report(shape_name: str, shape, direction, source_obj=None,
+                             tessellation_band_tol_deg=None, run_withdrawal_clearance=False):
     result = analyze_source_shape(
         shape,
         direction,
         source_obj=source_obj,
+        parting_tessellation_band_tol_deg=tessellation_band_tol_deg,
+        run_withdrawal_clearance=run_withdrawal_clearance,
     )
     # Native C++ withdrawal-clearance verdict, re-surfaced from the flattened
     # top-level analysis fields (there is no pure-Python fallback any more).
@@ -134,6 +147,19 @@ def _print_report(report: dict):
         print(f"  - {item}")
     print("parting_surface_summary:", parting["summary"])
     print("mould_halves_summary:", halves["summary"])
+    print(f"mould_halves_status: {result.get('mould_halves_status')}")
+    for label in ("a", "b"):
+        _print_half_validity(label, result.get(f"mould_half_{label}_shape"))
+
+
+def _print_half_validity(label, half):
+    if half is None or half.isNull():
+        print(f"mould_half_{label}: null")
+        return
+    print(
+        f"mould_half_{label}: valid={half.isValid()} solids={len(half.Solids)} "
+        f"volume={half.Volume:.6g}"
+    )
 
 
 def _scale_shape(shape, scale):
@@ -147,11 +173,17 @@ def _scale_shape(shape, scale):
 
 
 def inspect_benchmark_shape(shape_name: str, direction=None, fixture_path: Path = _DEFAULT_FIXTURE,
-                            scale: float = 1.0):
+                            scale: float = 1.0, brep_path: Path = None,
+                            tessellation_band_tol_deg=None, run_withdrawal_clearance=False):
     draw_direction = direction or default_mould_analysis_draw_direction
     doc = None
     try:
-        if shape_name == "propblade":
+        if brep_path is not None:
+            doc, obj, shape = _load_brep_shape(brep_path)
+            if scale != 1.0:
+                obj = None  # the scaled shape no longer lives in this document object
+                shape = _scale_shape(shape, scale)
+        elif shape_name == "propblade":
             if not fixture_path.is_file():
                 raise SystemExit(f"fixture not found: {fixture_path}")
             doc, obj, shape = _load_fixture_shape(fixture_path)
@@ -160,7 +192,9 @@ def inspect_benchmark_shape(shape_name: str, direction=None, fixture_path: Path 
         else:
             doc, obj, shape = _make_shape(shape_name)
             shape = _scale_shape(shape, scale)
-        return _build_inspection_report(shape_name, shape, draw_direction, source_obj=obj)
+        return _build_inspection_report(shape_name, shape, draw_direction, source_obj=obj,
+                                        tessellation_band_tol_deg=tessellation_band_tol_deg,
+                                        run_withdrawal_clearance=run_withdrawal_clearance)
     finally:
         if doc is not None:
             try:
@@ -182,6 +216,26 @@ def build_parser():
         type=Path,
         default=_DEFAULT_FIXTURE,
         help="Path to the .FCStd fixture used when --shape propblade is selected.",
+    )
+    parser.add_argument(
+        "--brep",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Inspect the shape read from this BREP file instead of a named --shape.",
+    )
+    parser.add_argument(
+        "--tessellation-band-tol",
+        type=float,
+        default=None,
+        metavar="DEG",
+        help="Tessellation part-line band tolerance in degrees passed to the parting "
+             "binding. Defaults to the binding default.",
+    )
+    parser.add_argument(
+        "--withdrawal",
+        action="store_true",
+        help="Run the (slow) incremental-withdrawal clearance scan; off by default.",
     )
     parser.add_argument(
         "--direction",
@@ -237,10 +291,15 @@ def main(argv=None):
                          scale=args.scale)
         return 0
     direction = _DIRECTION_PRESETS[args.direction]
-    report = inspect_benchmark_shape(args.shape, direction=direction, fixture_path=args.fixture,
-                                     scale=args.scale)
+    shape_name = args.brep.stem if args.brep is not None else args.shape
+    report = inspect_benchmark_shape(shape_name, direction=direction, fixture_path=args.fixture,
+                                     scale=args.scale, brep_path=args.brep,
+                                     tessellation_band_tol_deg=args.tessellation_band_tol,
+                                     run_withdrawal_clearance=args.withdrawal)
 
-    if args.shape == "propblade":
+    if args.brep is not None:
+        print(f"brep: {args.brep}")
+    elif args.shape == "propblade":
         print(f"fixture: {args.fixture}")
     else:
         print(f"shape preset: {args.shape}")

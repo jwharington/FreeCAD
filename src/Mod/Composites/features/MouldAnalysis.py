@@ -18,6 +18,23 @@ def is_mould_analysis(obj):
     return is_comp_type(obj, "Part::FeaturePython", "Composite::MouldAnalysis")
 
 
+# nextdrape's own default equator-band half-width (PartingParams).
+DEFAULT_TESSELLATION_BAND_TOL_DEG = 2.0
+
+
+def _add_tessellation_band_property(obj):
+    obj.addProperty(
+        "App::PropertyFloat",
+        "TessellationBandTolDeg",
+        "MouldAnalysis",
+        "Equator-band half-width (degrees) the part-line solver treats as the "
+        "veil: faces whose draft is within it carry no draft opinion and the "
+        "part line may cross them anywhere. It has to cover the shallowest "
+        "face the part line crosses and stay below the smallest usable draft "
+        "(blade-article: 0.8 - its hub has a 0.71 deg and a 1 deg cone).",
+    ).TessellationBandTolDeg = DEFAULT_TESSELLATION_BAND_TOL_DEG
+
+
 class MouldAnalysisFP(CompositePartFP):
     Type = "Composite::MouldAnalysis"
 
@@ -55,9 +72,9 @@ class MouldAnalysisFP(CompositePartFP):
             "MouldAnalysis",
             "Run the incremental-withdrawal clearance check. It is the most "
             "expensive stage of the full pipeline and verdicts the mould halves, "
-            "but does not generate them - turn it off when only the halves are "
-            "needed.",
-        ).WithdrawalClearance = True
+            "but does not generate them. Off by default; opt in to verdict the "
+            "halves.",
+        ).WithdrawalClearance = False
 
         obj.addProperty(
             "App::PropertyFloat",
@@ -65,6 +82,8 @@ class MouldAnalysisFP(CompositePartFP):
             "MouldAnalysis",
             "Target spacing (mm) between samples along the part line",
         ).PartLineTolerance = 0.1
+
+        _add_tessellation_band_property(obj)
 
         obj.addProperty(
             "App::PropertyFloat",
@@ -258,7 +277,50 @@ class MouldAnalysisFP(CompositePartFP):
 
         super().__init__(obj)
 
+    def _input_signature(self, fp):
+        """Everything that defines the mould, as one comparable tuple.
+
+        A source whose geometry changed touches this object through the
+        ``Source`` link, so the configured properties plus the source's own
+        geometry distinguish a real change from a repeat recompute.
+        """
+        source = fp.Source
+        shape = getattr(source, "Shape", None) if source is not None else None
+        if shape is None or shape.isNull():
+            return None
+        box = shape.BoundBox
+        geometry = (source.Name, round(shape.Volume, 6),
+                    round(box.XMin, 6), round(box.XMax, 6),
+                    round(box.YMin, 6), round(box.YMax, 6),
+                    round(box.ZMin, 6), round(box.ZMax, 6))
+        draw = fp.PreferredDrawDirection
+        footprint = fp.PartingStockFootprint
+        return (geometry,
+                (draw.x, draw.y, draw.z),
+                fp.OutputMode,
+                fp.PartLineTolerance,
+                fp.PartingStockMarginX,
+                fp.PartingStockMarginY,
+                fp.PartingStockMarginZ,
+                (footprint.x, footprint.y, footprint.z),
+                bool(fp.WithdrawalClearance),
+                fp.TessellationBandTolDeg)
+
+    def onDocumentRestored(self, fp):
+        super().onDocumentRestored(fp)
+        # Documents saved before the band was configurable get the default.
+        if not hasattr(fp, "TessellationBandTolDeg"):
+            _add_tessellation_band_property(fp)
+
     def execute(self, fp):
+        signature = self._input_signature(fp)
+        if signature is not None and signature == getattr(self, "_analysed_inputs", None):
+            # Nothing that defines the mould has changed. Writing the outputs
+            # below (Shape, the status strings, the child halves) leaves this
+            # object touched, so without this guard every document recompute
+            # runs the whole find-seed/split/skirt/close pipeline again - one
+            # build paid for three solves, each dominated by closeHalves.
+            return
         source_shape = fp.Source.Shape if fp.Source else None
         footprint = fp.PartingStockFootprint
         stock_footprint = (
@@ -277,6 +339,7 @@ class MouldAnalysisFP(CompositePartFP):
             parting_stock_footprint=stock_footprint,
             part_line_only=(fp.OutputMode == "Part-line only"),
             run_withdrawal_clearance=fp.WithdrawalClearance,
+            parting_tessellation_band_tol_deg=fp.TessellationBandTolDeg,
         )
         fp.AnalysisStatus = result["status"]
         fp.DrawDirectionScore = result["draw_direction_score"]
@@ -299,19 +362,16 @@ class MouldAnalysisFP(CompositePartFP):
         fp.ValidationChecks = result["validation_checks"]
         fp.AnalysisSummary = result["summary"]
         fp.Shape = result["shape"]
+        self._analysed_inputs = signature
 
-    def onChanged(self, fp, prop):
-        if prop in (
-            "Source",
-            "PreferredDrawDirection",
-            "OutputMode",
-            "PartLineTolerance",
-            "PartingStockMarginX",
-            "PartingStockMarginY",
-            "PartingStockMarginZ",
-            "PartingStockFootprint",
-        ):
-            fp.recompute()
+    # There is deliberately no onChanged -> recompute hook here. Analysing on
+    # the first property write makes the result depend on the order the caller
+    # sets them in: the draw direction, the output mode and the withdrawal
+    # flag all have to be in place *before* the first analysis, and a caller
+    # setting them one by one cannot win. A property write touches the object
+    # (the Source link is locked), so the document's own recompute runs the
+    # analysis once, with everything configured - and MouldAnalysisFP.execute
+    # skips it when nothing that defines the mould has changed.
 
 
 class ViewProviderMouldAnalysis(VPCompositePart):

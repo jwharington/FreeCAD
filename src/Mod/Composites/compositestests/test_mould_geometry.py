@@ -467,7 +467,7 @@ class TestWithdrawalClearanceValidity(unittest.TestCase):
     def test_inspection_helper_reports_box_clearance_pass(self):
         from compositestests.inspect_mould_results import inspect_benchmark_shape
 
-        report = inspect_benchmark_shape("box")
+        report = inspect_benchmark_shape("box", run_withdrawal_clearance=True)
         self.assertEqual(report["shape_name"], "box")
         self.assertTrue(report["document_name"])
         self.assertTrue(report["object_name"])
@@ -480,7 +480,7 @@ class TestWithdrawalClearanceValidity(unittest.TestCase):
         # solver on the solver's own mould halves. Draw the box along +Z and
         # assert the native verdict passes.
         result = analyze_source_shape(
-            _box(), FreeCAD.Vector(0, 0, 1)
+            _box(), FreeCAD.Vector(0, 0, 1), run_withdrawal_clearance=True
         )
         self.assertEqual(result["non_planar_status"], "ready")
         self.assertEqual(result["withdrawal_clearance_status"], "Pass")

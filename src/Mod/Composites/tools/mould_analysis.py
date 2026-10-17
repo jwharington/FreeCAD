@@ -768,8 +768,10 @@ def _plan_split_strategies(ranked, limit=MAX_SPLIT_STRATEGIES):
                 "parting_stock_margin_y": item.get("parting_stock_margin_y", 5.0),
                 "parting_stock_margin_z": item.get("parting_stock_margin_z", 5.0),
                 "parting_stock_footprint": item.get("parting_stock_footprint"),
+                "parting_tessellation_band_tol_deg": item.get(
+                    "parting_tessellation_band_tol_deg"),
                 "part_line_only": item.get("part_line_only", False),
-                "run_withdrawal_clearance": item.get("run_withdrawal_clearance", True),
+                "run_withdrawal_clearance": item.get("run_withdrawal_clearance", False),
                 "status": "planned",
                 "reason": "top-ranked draw-direction strategy",
             }
@@ -799,7 +801,7 @@ def _evaluate_split_strategy_attempt(shape, strategy):
     )
 
     part_line_only = bool(strategy.get("part_line_only", False))
-    run_withdrawal_clearance = bool(strategy.get("run_withdrawal_clearance", True))
+    run_withdrawal_clearance = bool(strategy.get("run_withdrawal_clearance", False))
     non_planar_result = _propose_non_planar_parting(
         shape,
         strategy["direction"],
@@ -810,6 +812,7 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         stock_footprint=strategy.get("parting_stock_footprint"),
         part_line_only=part_line_only,
         run_withdrawal_clearance=run_withdrawal_clearance,
+        tessellation_band_tol_deg=strategy.get("parting_tessellation_band_tol_deg"),
     )
     solver_ready = (
         non_planar_result is not None and non_planar_result["status"] == "ready"
@@ -1218,7 +1221,9 @@ def _propose_non_planar_parting(
     part_line_tolerance=0.1,
     stock_footprint=None,
     part_line_only=False,
-    run_withdrawal_clearance=True,
+    run_withdrawal_clearance=False,
+    part_line_source="tessellation",
+    tessellation_band_tol_deg=None,
 ):
     """Call the C++ marching-equator solver and map to the Phase 0 contract.
 
@@ -1276,6 +1281,15 @@ def _propose_non_planar_parting(
             footprint,
             part_line_only,
             run_withdrawal_clearance,
+            # The tessellation solver is the drafted path and the default; HLR
+            # is the projected-outline debugging reference and is never what a
+            # caller falls into by not asking. The band is the veil half-width:
+            # faces inside it carry no draft opinion, so it must cover the
+            # shallowest face the part line crosses and stay below the smallest
+            # usable draft (see MouldAnalysis.TessellationBandTolDeg).
+            part_line_source=part_line_source,
+            **({} if tessellation_band_tol_deg is None
+               else {"tessellation_band_tol_deg": float(tessellation_band_tol_deg)}),
         )
     except Exception as exc:
         return {
@@ -1994,7 +2008,8 @@ def analyze_source_shape(
     parting_line_tolerance=0.1,
     parting_stock_footprint=None,
     part_line_only=False,
-    run_withdrawal_clearance=True,
+    run_withdrawal_clearance=False,
+    parting_tessellation_band_tol_deg=None,
 ):
     """Return a lightweight analysis preview for a selected source shape.
 
@@ -2085,6 +2100,7 @@ def analyze_source_shape(
             "parting_stock_margin_y": parting_stock_margin_y,
             "parting_stock_margin_z": parting_stock_margin_z,
             "parting_stock_footprint": parting_stock_footprint,
+            "parting_tessellation_band_tol_deg": parting_tessellation_band_tol_deg,
             "part_line_only": part_line_only,
             "run_withdrawal_clearance": run_withdrawal_clearance,
         }

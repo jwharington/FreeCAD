@@ -26,11 +26,13 @@
 #include <TopoDS_Compound.hxx>
 #include <gp_Dir.hxx>
 #include <gp_XY.hxx>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 // nextdrape
 #include <nextdrape/partline/FaceSegment.hpp>
-#include <nextdrape/partline/HLRPartingSolver.hpp>
+#include <nextdrape/partline/PartingSolver.hpp>
 #include <nextdrape/mould/MouldHelper.hpp>
 
 namespace py = pybind11;
@@ -86,12 +88,27 @@ PYBIND11_MODULE(Composites_parting, m) {
         [](py::object shape_obj, py::tuple direction,
            double stock_margin_x, double stock_margin_y, double stock_margin_z,
            double part_line_tolerance, py::tuple footprint, bool part_line_only,
-           bool run_withdrawal_clearance) {
+           bool run_withdrawal_clearance, const std::string& part_line_source,
+           double tessellation_band_tol_deg) {
             nextdrape::PartingParams params;
             params.stockMarginX = stock_margin_x;
             params.stockMarginY = stock_margin_y;
             params.stockMarginZ  = stock_margin_z;
             params.partLineToleranceMm = part_line_tolerance;
+            // Part-line source (plan §10.3 B1). "tessellation" is the default:
+            // HLR is kept only as the debugging reference, never the path a
+            // caller falls into by not asking (a shape left on HLR gets the
+            // HLR part line, however good the tessellation one is).
+            if (part_line_source == "tessellation" || part_line_source == "tess") {
+                params.partLineSource = nextdrape::PartLineSource::Tessellation;
+            } else if (part_line_source == "hlr") {
+                params.partLineSource = nextdrape::PartLineSource::Hlr;
+            } else {
+                throw std::runtime_error(
+                    "part_line_source must be 'tessellation' or 'hlr', got: " +
+                    part_line_source);
+            }
+            params.tessellationBandTolDeg = tessellation_band_tol_deg;
             // The incremental-withdrawal clearance scan is the most expensive
             // stage of the full pipeline and does NOT gate the mould halves
             // (they come from split/skirt/close). The caller decides whether
@@ -107,13 +124,13 @@ PYBIND11_MODULE(Composites_parting, m) {
                      direction[1].cast<double>(),
                      direction[2].cast<double>());
 
-            nextdrape::HLRPartingSolver solver;
+            // Source selected by `part_line_source` (default tessellation).
+            auto solver = nextdrape::makePartingSolver(params);
             const auto stopAt = part_line_only
                 ? nextdrape::SolveStopStage::AfterPartLine
                 : nextdrape::SolveStopStage::FullPipeline;
-            bool ok = solver.Solve(source, D, params, stopAt);
-            const auto& r = solver.Result();
-
+            bool ok = solver->Solve(source, D, params, stopAt);
+            const auto& r = solver->Result();
             // Marshal tangent_face_midpoints: list of (face_shape, z_mid).
             py::list midpoints;
             for (const auto& tfm : r.tangentFaceMidpoints) {
@@ -195,7 +212,8 @@ PYBIND11_MODULE(Composites_parting, m) {
                 py::arg("mould_half_lower")      = wrap_shape(r.mouldHalfLower),
                 py::arg("skirt")                 = wrap_shape(r.skirt),
                 py::arg("withdrawal_clearance")  = withdrawalClearance,
-                py::arg("tangent_face_midpoints") = midpoints
+                py::arg("tangent_face_midpoints") = midpoints,
+                py::arg("part_line_source")       = part_line_source
             );
         },
         py::arg("shape"), py::arg("draw_direction"),
@@ -205,11 +223,21 @@ PYBIND11_MODULE(Composites_parting, m) {
         py::arg("part_line_tolerance") = 0.1,
         py::arg("stock_footprint") = py::make_tuple(0.0, 0.0),
         py::arg("part_line_only") = false,
-        py::arg("run_withdrawal_clearance") = true,
+        py::arg("run_withdrawal_clearance") = false,
+        py::arg("part_line_source") = "tessellation",
+        py::arg("tessellation_band_tol_deg") = 2.0,
         "Compute a non-planar parting surface + mould halves for a FreeCAD "
         "Part.Shape along a user-specified draw direction. Returns a dict; "
         "success=True iff the pipeline reached `ready` (full mould) or the "
         "part line only (part_line_only=True, solver stops at AfterPartLine). "
         "stock_margin_x/y/z set the independent mould block margins. "
+        "part_line_source selects the part-line solver: 'tessellation' "
+        "(default, the drafted-path solver) or 'hlr' (the projected-outline "
+        "debugging reference). tessellation_band_tol_deg is the equator-band "
+        "half-width the tessellation source treats as the veil: faces within "
+        "it carry no draft opinion and the part line may cross them anywhere. "
+        "It must be at least the shallowest face's |n.d| that the part line "
+        "has to cross, and as small as possible, since every face inside it "
+        "loses its own opinion. "
         "Shapes are returned as live Part.Shape objects directly.");
 }
