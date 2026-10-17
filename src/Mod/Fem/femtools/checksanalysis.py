@@ -315,8 +315,13 @@ def check_member_for_solver_calculix(analysis, solver, mesh, member):
             items = 0
             for reference in tie.References:
                 items += len(reference[1])
-            if items != 2:
-                message += "{} doesn't reference exactly two needed faces.\n".format(tie.Name)
+            # A slave and a master: the master is the last reference entry
+            # (meshsetsgetter.get_constraints_tie_faces), and either side may
+            # hold several faces - a skin tied to the faces of a core.
+            if items < 2:
+                message += "{} needs at least two faces, a slave and a master.\n".format(
+                    tie.Name
+                )
                 continue
             for sub_ref in _tie_references_that_are_not_faces(tie):
                 message += "{} references {}, which is not a face; a tie couples two surfaces.\n".format(

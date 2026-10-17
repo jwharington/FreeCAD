@@ -862,6 +862,40 @@ class TestMixedShellSolid(unittest.TestCase):
         self.assertNotIn("not a face", message, message)
 
     # ********************************************************************************************
+    def test_tie_with_a_master_of_several_faces_is_accepted(self):
+        # femtools.mixedcoupling.add_tie ties a skin to several faces of a
+        # core: [slave_ref, master_ref] with the master holding many faces.
+        # The check used to demand exactly two faces in all, so the solver
+        # refused a tie the deck writer handles.
+        doc, analysis, solver, mesh_obj = self._mixed_analysis_document()
+        box = doc.getObject("Box")
+        skin = doc.addObject("Part::Box", "Skin")
+        tie = ObjectsFem.makeConstraintTie(doc, "Tie")
+        tie.References = [(skin, "Face1"), (box, ("Face1", "Face2", "Face3"))]
+        analysis.addObject(tie)
+        doc.recompute()
+
+        member = membertools.AnalysisMember(analysis)
+        with mixed_shell_solid_flag(True):
+            message = check_member_for_solver_calculix(analysis, solver, mesh_obj, member)
+        self.assertNotIn(tie.Name, message, message)
+
+    # ********************************************************************************************
+    def test_tie_on_one_face_is_refused(self):
+        # A tie needs a slave and a master.
+        doc, analysis, solver, mesh_obj = self._mixed_analysis_document()
+        box = doc.getObject("Box")
+        tie = ObjectsFem.makeConstraintTie(doc, "Tie")
+        tie.References = [(box, "Face1")]
+        analysis.addObject(tie)
+        doc.recompute()
+
+        member = membertools.AnalysisMember(analysis)
+        with mixed_shell_solid_flag(True):
+            message = check_member_for_solver_calculix(analysis, solver, mesh_obj, member)
+        self.assertIn("needs at least two faces", message, message)
+
+    # ********************************************************************************************
     def test_mixed_deck_carries_a_solid_and_a_shell_section(self):
         # Stage 5. The deck must section the volumes once, the shell once, and
         # put no element in both.
