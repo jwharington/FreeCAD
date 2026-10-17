@@ -71,6 +71,23 @@ def _material_elements_for_dimension(mat_data, dimension):
     return elements if elements else None
 
 
+def _tie_master_face_count(references):
+    """How many of a tie's faces are the master: those of its last entry.
+
+    Counted the way meshtools.pair_obj_reference flattens the references, one
+    per sub-element, so it indexes the per-face results of _get_elements.
+
+    A link-sub list merges the faces of one object into one entry, so a tie
+    between two faces of the same solid arrives as a single entry
+    ``(obj, (slave, master))``: there the entries cannot tell the sides apart,
+    and the master is the last face, as it always was.
+    """
+    if len(references) < 2:
+        return 1
+    master_object, master_subs = references[-1]
+    return max(1, len(meshtools.pair_obj_reference([(master_object, master_subs)])))
+
+
 class MeshSetsGetter:
     def __init__(self, analysis_obj, solver_obj, mesh_obj, member):
         # class attributes from parameter values
@@ -926,8 +943,15 @@ class MeshSetsGetter:
             obj = femobj["Object"]
             result = self._get_elements(obj)
 
-            femobj["TieSlaveFaces"] = result[:-1]
-            femobj["TieMasterFaces"] = result[-1:]
+            # The master is the last reference *entry*, however many faces it
+            # names; _get_elements returns one result per face.  Splitting off
+            # only the last face is right for the GUI's one-face-per-entry
+            # references, but a master of several faces (femtools.mixedcoupling
+            # add_tie: [slave_ref, master_ref]) would lose all but its last
+            # face to the slave surface.
+            master_face_count = _tie_master_face_count(obj.References)
+            femobj["TieSlaveFaces"] = result[:-master_face_count]
+            femobj["TieMasterFaces"] = result[-master_face_count:]
 
     def get_constraints_sectionprint_faces(self):
         for femobj in self.member.cons_sectionprint:
