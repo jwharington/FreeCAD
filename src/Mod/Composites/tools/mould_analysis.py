@@ -10,6 +10,14 @@ import Part
 
 default_mould_analysis_draw_direction = Vector(0, 0, 1)
 
+# nextdrape's own default equator-band half-width (PartingParams), used when
+# the caller does not configure the tessellation band.
+DEFAULT_TESSELLATION_BAND_TOL_DEG = 2.0
+
+# Per-axis (u, v) samples taken on each split-shell face when looking for
+# wrong-side draft.
+WRONG_SIDE_SAMPLES_PER_AXIS = 7
+
 NORMALIZATION_CONFIDENCE_EXACT = "exact"
 NORMALIZATION_CONFIDENCE_APPROXIMATE = "approximate"
 NORMALIZATION_CONFIDENCE_FAIL = "fail"
@@ -1364,6 +1372,8 @@ def _propose_non_planar_parting(
         "parting_line_segments": raw.get("part_line_segments", []),
         "lower_shell": lower_shell,
         "upper_shell": upper_shell,
+        "split_lower_shell": raw.get("lower_shell"),
+        "split_upper_shell": raw.get("upper_shell"),
         "skirt_rays": [],
         "tangent_face_midpoints": raw.get("tangent_face_midpoints", []),
         "withdrawal_clearance": raw.get("withdrawal_clearance"),
@@ -1403,6 +1413,73 @@ def _bboxs_overlap(first_bbox, second_bbox, tolerance=1.0e-6):
         or first_bbox.ZMax < (second_bbox.ZMin - tolerance)
         or second_bbox.ZMax < (first_bbox.ZMin - tolerance)
     )
+
+
+def _face_wrong_side_dot(face, unit, side_sign):
+    """Worst draft of ``face`` against its half's withdrawal direction.
+
+    ``side_sign`` is +1 for the upper half (withdrawn along +unit) and -1 for
+    the lower half. Only samples inside the trimmed face are counted. Returns
+    the most negative ``side_sign * (normal . unit)``, or None when no sample
+    lands on the face.
+    """
+    try:
+        umin, umax, vmin, vmax = face.ParameterRange
+    except Exception:
+        return None
+    u_values, v_values = _face_parameter_grid(
+        umin, umax, vmin, vmax, WRONG_SIDE_SAMPLES_PER_AXIS,
+    )
+    worst = None
+    for u in u_values:
+        for v in v_values:
+            if not face.isPartOfDomain(u, v):
+                continue
+            normal = face.normalAt(u, v)
+            if not normal.Length:
+                continue
+            draft = side_sign * _dot(_normalized(normal), unit)
+            if worst is None or draft < worst:
+                worst = draft
+    return worst
+
+
+def find_wrong_side_faces(upper_shell, lower_shell, direction, band_tol_deg):
+    """Faces of the split shells whose draft opposes their own half.
+
+    An upper-shell face must face along +direction to release from the upper
+    half, a lower-shell face along -direction. A face with any sample beyond
+    the equator band on the wrong side is a draft defect: the part line has
+    put it in a half it cannot be withdrawn from.
+    """
+    unit = _normalized(direction)
+    limit = -math.sin(math.radians(band_tol_deg))
+    faces = []
+    details = []
+    for half, shell, side_sign in (("upper", upper_shell, 1.0), ("lower", lower_shell, -1.0)):
+        if shell is None or shell.isNull():
+            continue
+        for index, face in enumerate(shell.Faces, start=1):
+            worst = _face_wrong_side_dot(face, unit, side_sign)
+            if worst is not None and worst < limit:
+                faces.append(face)
+                details.append({
+                    "half": half,
+                    "shell_face_index": index,
+                    "area": face.Area,
+                    "worst_draft_deg": math.degrees(math.asin(max(-1.0, worst))),
+                })
+    area = sum(face.Area for face in faces)
+    return {
+        "shape": Part.makeCompound(faces) if faces else Part.Shape(),
+        "face_count": len(faces),
+        "faces": details,
+        "area": area,
+        "summary": (
+            f"{len(faces)} wrong-side face(s), area={area:.3f}, "
+            f"band={band_tol_deg:g} deg"
+        ),
+    }
 
 
 def _shape_volume(shape):
@@ -1773,6 +1850,11 @@ def _base_analysis_result():
         "mould_half_b_shape": Part.Shape(),
         "mould_half_a_volume": 0.0,
         "mould_half_b_volume": 0.0,
+        "draft_defect_shape": Part.Shape(),
+        "draft_defect_face_count": 0,
+        "draft_defect_faces": [],
+        "draft_defect_area": 0.0,
+        "draft_defect_summary": "No source shape available.",
         "withdrawal_clearance_status": "Waiting for source",
         "withdrawal_clearance_summary": "No source shape available.",
         "withdrawal_clearance_failure_count": 0,
@@ -2199,6 +2281,15 @@ def analyze_source_shape(
     mould_halves = selected_attempt["mould_halves"]
     withdrawal_clearance = selected_attempt["withdrawal_clearance"]
     validation = selected_attempt["validation"]
+    selected_non_planar = selected_attempt.get("non_planar_result") or {}
+    draft_defects = find_wrong_side_faces(
+        selected_non_planar.get("split_upper_shell"),
+        selected_non_planar.get("split_lower_shell"),
+        selected_split_strategy["direction"],
+        (DEFAULT_TESSELLATION_BAND_TOL_DEG
+         if parting_tessellation_band_tol_deg is None
+         else parting_tessellation_band_tol_deg),
+    )
 
     split_strategy_summary = _format_split_strategy_summary(
         selected_split_strategy,
@@ -2278,6 +2369,11 @@ def analyze_source_shape(
             "mould_half_b_shape": mould_halves["half_b_shape"],
             "mould_half_a_volume": mould_halves["half_a_volume"],
             "mould_half_b_volume": mould_halves["half_b_volume"],
+            "draft_defect_shape": draft_defects["shape"],
+            "draft_defect_face_count": draft_defects["face_count"],
+            "draft_defect_faces": draft_defects["faces"],
+            "draft_defect_area": draft_defects["area"],
+            "draft_defect_summary": draft_defects["summary"],
             "withdrawal_clearance_status": withdrawal_clearance["status"],
             "withdrawal_clearance_summary": withdrawal_clearance["summary"],
             "withdrawal_clearance_failure_count": withdrawal_clearance["failure_count"],

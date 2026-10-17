@@ -149,6 +149,12 @@ def _print_report(report: dict):
     print("parting_surface_summary:", parting["summary"])
     print("mould_halves_summary:", halves["summary"])
     print(f"mould_halves_status: {result.get('mould_halves_status')}")
+    print(f"draft_defect_summary: {result.get('draft_defect_summary')}")
+    for face in result.get("draft_defect_faces", []):
+        print(
+            f"  - {face['half']} shell Face{face['shell_face_index']}: "
+            f"worst_draft={face['worst_draft_deg']:.3f} deg area={face['area']:.3f}"
+        )
     for label in ("a", "b"):
         _print_half_validity(label, result.get(f"mould_half_{label}_shape"))
 

@@ -7,6 +7,7 @@ from FreeCAD import Vector
 
 from .. import MOULD_TOOL_ICON, is_comp_type
 from ..tools.mould_analysis import (
+    DEFAULT_TESSELLATION_BAND_TOL_DEG,
     analyze_source_shape,
     default_mould_analysis_draw_direction,
 )
@@ -18,8 +19,7 @@ def is_mould_analysis(obj):
     return is_comp_type(obj, "Part::FeaturePython", "Composite::MouldAnalysis")
 
 
-# nextdrape's own default equator-band half-width (PartingParams).
-DEFAULT_TESSELLATION_BAND_TOL_DEG = 2.0
+DRAFT_DEFECT_COLOR = (1.0, 0.0, 0.0)
 
 
 def _add_tessellation_band_property(obj):
@@ -33,6 +33,33 @@ def _add_tessellation_band_property(obj):
         "face the part line crosses and stay below the smallest usable draft "
         "(blade-article: 0.8 - its hub has a 0.71 deg and a 1 deg cone).",
     ).TessellationBandTolDeg = DEFAULT_TESSELLATION_BAND_TOL_DEG
+
+
+def _add_draft_defect_outputs(obj):
+    obj.addProperty(
+        "App::PropertyString",
+        "DraftDefectSummary",
+        "MouldAnalysis",
+        "Split-shell faces whose draft opposes their own mould half",
+    ).DraftDefectSummary = "No source shape available."
+    obj.setPropertyStatus("DraftDefectSummary", "ReadOnly")
+
+    obj.addProperty(
+        "App::PropertyLink",
+        "DraftDefects",
+        "MouldAnalysis",
+        "Wrong-side draft faces, shown in red on the source",
+        hidden=True,
+    )
+    draft_defects = obj.Document.addObject(
+        "Part::Feature",
+        f"{obj.Name}_DraftDefects",
+    )
+    if FreeCAD.GuiUp:
+        draft_defects.ViewObject.ShapeColor = DRAFT_DEFECT_COLOR
+        draft_defects.ViewObject.LineColor = DRAFT_DEFECT_COLOR
+    obj.DraftDefects = draft_defects
+    obj.setPropertyStatus("DraftDefects", "ReadOnly")
 
 
 class MouldAnalysisFP(CompositePartFP):
@@ -243,6 +270,8 @@ class MouldAnalysisFP(CompositePartFP):
         obj.MouldHalfB = mould_half_b
         obj.setPropertyStatus("MouldHalfB", "ReadOnly")
 
+        _add_draft_defect_outputs(obj)
+
         obj.addProperty(
             "App::PropertyString",
             "ValidationStatus",
@@ -311,6 +340,9 @@ class MouldAnalysisFP(CompositePartFP):
         # Documents saved before the band was configurable get the default.
         if not hasattr(fp, "TessellationBandTolDeg"):
             _add_tessellation_band_property(fp)
+        # Documents saved before the defect display get its outputs.
+        if not hasattr(fp, "DraftDefects"):
+            _add_draft_defect_outputs(fp)
 
     def execute(self, fp):
         signature = self._input_signature(fp)
@@ -357,6 +389,9 @@ class MouldAnalysisFP(CompositePartFP):
             fp.MouldHalfA.Shape = result["mould_half_a_shape"]
         if fp.MouldHalfB:
             fp.MouldHalfB.Shape = result["mould_half_b_shape"]
+        fp.DraftDefectSummary = result["draft_defect_summary"]
+        if fp.DraftDefects:
+            fp.DraftDefects.Shape = result["draft_defect_shape"]
         fp.ValidationStatus = result["validation_status"]
         fp.ValidationSummary = result["validation_summary"]
         fp.ValidationChecks = result["validation_checks"]
@@ -379,7 +414,7 @@ class ViewProviderMouldAnalysis(VPCompositePart):
         if not hasattr(self, "Object"):
             return []
         children = []
-        for name in ("PartingSurface", "MouldHalfA", "MouldHalfB"):
+        for name in ("PartingSurface", "MouldHalfA", "MouldHalfB", "DraftDefects"):
             child = getattr(self.Object, name, None)
             if child:
                 children.append(child)
