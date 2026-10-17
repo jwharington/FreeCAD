@@ -498,7 +498,8 @@ class TestNonPlanarPartingSolver(unittest.TestCase):
     """
 
     def _analyze(self, shape, direction):
-        return analyze_source_shape(shape, direction)
+        # These cases assert the withdrawal verdict, so they opt in to the scan.
+        return analyze_source_shape(shape, direction, run_withdrawal_clearance=True)
 
     def _assert_uv_segments(self, label, result):
         segments = result.get("parting_line_segments", [])

@@ -11,6 +11,7 @@ fixture-backed real shape and includes the explicit withdrawal-clearance check.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import FreeCAD as App
@@ -285,6 +286,9 @@ def _dump_shape_brep(shape_name, out_path, fixture_path, scale: float = 1.0):
 
 
 def main(argv=None):
+    # FreeCADCmd discards buffered stdout when the script ends in SystemExit,
+    # and this script's whole value is the lines it prints.
+    sys.stdout.reconfigure(line_buffering=True)
     args = build_parser().parse_args(argv)
     if args.dump_shape:
         _dump_shape_brep(args.shape, Path(args.dump_shape), fixture_path=args.fixture,

@@ -939,6 +939,16 @@ def _evaluate_split_strategy_attempt(shape, strategy):
     native_wc = (non_planar_result or {}).get("withdrawal_clearance")
     if native_wc and native_wc.get("status"):
         withdrawal_clearance = native_wc
+    elif not run_withdrawal_clearance:
+        withdrawal_clearance = {
+            "status": "Skipped",
+            "summary": "Withdrawal clearance not requested (opt-in).",
+            "sample_count": 0,
+            "failure_count": 0,
+            "failure_regions": [],
+            "half_checks": [],
+            "step_mm": 0.0,
+        }
     elif essential_validation["status"] == "Pass":
         withdrawal_clearance = {
             "status": "Unimplemented",

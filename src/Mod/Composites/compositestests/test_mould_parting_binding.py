@@ -107,6 +107,7 @@ class NonPlanarPartingBindingTest(unittest.TestCase):
         result = _propose_non_planar_parting(
             _box(),
             FreeCAD.Vector(0.0, 0.0, 1.0),
+            run_withdrawal_clearance=True,
         )
         wc = result["withdrawal_clearance"]
         self.assertIn(wc["status"], ("Pass", "Fail"), f"no WC verdict: {wc}")
