@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <memory>
+#include <unordered_map>
 
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
@@ -843,17 +844,25 @@ std::set<int> FemMesh::getFacesOnly() const
     // is the test the mixed path depends on: "faces that do not belong to a
     // volume" is what makes a mesh mixed. It is preserved exactly here.
     //
-    // The volume node sets are built once, before the face loop. Rebuilding one
-    // per (face, volume) pair - together with the intersection set the subset
-    // test used to go through - made this quadratic in allocations, and it
-    // dominated the entire run: 36,243 of 43,727 py-spy samples in a single
-    // call on a 35k-node mixed mesh, around six minutes of wall time. See
-    // docs/fem-mesh-query-cost.md.
+    // The volume node sets are built once, before the face loop, and a face
+    // tests only the volumes that hold one of its nodes. Rebuilding a volume's
+    // node set per (face, volume) pair - together with the intersection set
+    // the subset test used to go through - made this quadratic in allocations,
+    // and it dominated the entire run: 36,243 of 43,727 py-spy samples in a
+    // single call on a 35k-node mixed mesh, around six minutes of wall time.
+    // Testing every volume for every face is quadratic in comparisons as well,
+    // and on a 28,166-volume / 14,178-face mixed mesh it still cost 76.7 s to
+    // return 344 faces. See docs/fem-mesh-query-cost.md.
     std::vector<std::set<int>> volumeNodes;
+    std::unordered_map<int, std::vector<int>> volumesOfNode;
     SMDS_VolumeIteratorPtr aVolIter = myMesh->GetMeshDS()->volumesIterator();
     while (aVolIter->more()) {
         const SMDS_MeshVolume* aVol = aVolIter->next();
         std::list<int> vnodes = getElementNodes(aVol->GetID());
+        const int volumeIndex = static_cast<int>(volumeNodes.size());
+        for (int node : vnodes) {
+            volumesOfNode[node].push_back(volumeIndex);
+        }
         volumeNodes.emplace_back(vnodes.begin(), vnodes.end());
     }
 
@@ -871,16 +880,19 @@ std::set<int> FemMesh::getFacesOnly() const
         // a subset of aVolNodes exactly when every face node is present in the
         // volume's node set, which is what intersecting the two and comparing
         // the result for equality computed - without building either the
-        // vector or the second set.
-        for (const std::set<int>& aVolNodes : volumeNodes) {
-            if (std::includes(
-                    aVolNodes.begin(),
-                    aVolNodes.end(),
-                    aFaceNodes.begin(),
-                    aFaceNodes.end()
-                )) {
-                faceBelongsToAVolume = true;
-                break;
+        // vector or the second set. A volume holding a face holds its first
+        // node, so the volumes of that node are the only candidates.
+        if (!fnodes.empty()) {
+            auto candidates = volumesOfNode.find(fnodes.front());
+            if (candidates != volumesOfNode.end()) {
+                for (int volumeIndex : candidates->second) {
+                    const std::set<int>& aVolNodes = volumeNodes[volumeIndex];
+                    if (std::includes(aVolNodes.begin(), aVolNodes.end(),
+                                      aFaceNodes.begin(), aFaceNodes.end())) {
+                        faceBelongsToAVolume = true;
+                        break;
+                    }
+                }
             }
         }
         if (!faceBelongsToAVolume) {
