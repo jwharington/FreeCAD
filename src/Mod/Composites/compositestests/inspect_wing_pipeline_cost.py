@@ -119,7 +119,9 @@ def measure(save_path=None, stop_after="solve", drape_pitch=None):
                 _stage(
                     f"mesh.gmsh[{part.Name}]",
                     lambda part=part, index=index: merged_mesh._meshed_part(
-                        doc, index, part, wing.MESH_SIZE_MM, "2nd", 0
+                        doc, index, part, wing.MESH_SIZE_MM,
+                        {"element_order": "2nd", "curvature_size": 0,
+                         "parallel": None, "second_order_linear": False},
                     ),
                     timings,
                 )

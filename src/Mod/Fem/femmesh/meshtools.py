@@ -113,6 +113,75 @@ def get_femnodes_by_references(femmesh, references):
     return list(set(references_femnodes))  # removes duplicate nodes, sorts node order
 
 
+def sub_shape_group_name(object_name, sub_shape_name):
+    """The mesh group holding one sub-shape's elements: ``"BladeCore.Face12"``.
+
+    Written by femexamples.meshes.merged_mesh for every face of every part it
+    meshes, from the groups gmsh makes per sub-shape, and read back by
+    get_femnodes_by_refshape.  The dot keeps it apart from the
+    ``"<part>_Volumes"`` groups, which _group_name_candidates matches by the
+    ``"<name>_"`` prefix.
+    """
+    return f"{object_name}.{sub_shape_name}"
+
+
+def _sub_shape_group_owner(ref_object, sub_shape_name):
+    """The meshed object whose group holds ``ref_object``'s sub-shape.
+
+    That is the object itself, or the support a composite shell is draped on:
+    the mesh is made from the support, and a shell's face is the support's
+    face (a partner - the same face, perhaps reversed).  Anything that is not
+    the same face is not taken, so a shell offset from its support falls back
+    to the geometric search.
+    """
+    owners = [ref_object]
+    referenced_face = ref_object.Shape.getElement(sub_shape_name)
+    document = ref_object.Document
+    for name in _support_object_names(ref_object):
+        support = document.getObject(name)
+        try:
+            support_face = support.Shape.getElement(sub_shape_name)
+        except (AttributeError, ValueError, IndexError, Part.OCCError):
+            continue
+        if support_face.isPartner(referenced_face):
+            owners.append(support)
+    return owners
+
+
+def _femnodes_from_sub_shape_group(femmesh, ref_object, sub_shape_name):
+    """The nodes of a referenced face, from its mesh group, or None.
+
+    A merged mesh has no shape mapping, so without the group a face is found
+    by projecting every mesh node in its bounding box onto it - on a blade
+    skin face that is 49k nodes at ~150 ms each, two hours for one face.
+    """
+    if not femmesh.GroupCount:
+        return None
+    groups_by_name = {femmesh.getGroupName(g): g for g in femmesh.Groups}
+    for owner in _sub_shape_group_owner(ref_object, sub_shape_name):
+        group_id = groups_by_name.get(sub_shape_group_name(owner.Name, sub_shape_name))
+        if group_id is None:
+            continue
+        nodes = set()
+        for element_id in femmesh.getGroupElements(group_id):
+            nodes.update(femmesh.getElementNodes(element_id))
+        return list(nodes)
+    return None
+
+
+def get_nodes_by_face_reference(femmesh, ref_object, sub_shape_name):
+    """The mesh nodes on one referenced face, ``ref_object.<sub_shape_name>``.
+
+    From the face's mesh group when the mesh carries one (a merged mesh, see
+    sub_shape_group_name), otherwise by the geometric search.
+    """
+    group_nodes = _femnodes_from_sub_shape_group(femmesh, ref_object, sub_shape_name)
+    if group_nodes is not None:
+        return group_nodes
+    face = sub_shape_at_global_placement(ref_object, sub_shape_name)
+    return get_nodes_by_face_with_fallback(femmesh, face)
+
+
 def get_femnodes_by_refshape(femmesh, ref):
     nodes = []
     for refelement in ref[1]:
@@ -129,7 +198,7 @@ def get_femnodes_by_refshape(femmesh, ref):
         elif r.ShapeType == "Edge":
             nodes += get_nodes_by_edge_with_fallback(femmesh, r)
         elif r.ShapeType == "Face":
-            nodes += get_nodes_by_face_with_fallback(femmesh, r)
+            nodes += get_nodes_by_face_reference(femmesh, ref[0], refelement)
         elif r.ShapeType == "Solid":
             nodes += get_nodes_by_solid_with_fallback(femmesh, r)
         elif r.ShapeType == "Compound":
@@ -743,6 +812,32 @@ def get_beam_main_axis_m(beam_direction: FreeCAD.Vector, defined_angle: int) -> 
 
 
 # ************************************************************************************************
+def _support_object_names(obj):
+    """The names of the objects ``obj`` declares as its supporting geometry.
+
+    A composite shell holds the surface it is draped on either as ``Support``
+    (the original whole-object link) or as ``SupportReference`` (a set of faces
+    on one), and its mesh group is named for that support
+    (``BladeSkinSupport_upper``) rather than for the shell.  A section
+    referencing the shell therefore only reaches the group by following the
+    link.  The properties are read by name to keep this resolver free of a
+    Composites import.
+    """
+    names = []
+    for property_name in ("SupportReference", "Support"):
+        reference = getattr(obj, property_name, None)
+        if not reference:
+            continue
+        entries = reference if isinstance(reference, (list, tuple)) else (reference,)
+        for entry in entries:
+            # a LinkSub yields (object, [subelements])
+            candidate = entry[0] if isinstance(entry, tuple) and entry else entry
+            name = getattr(candidate, "Name", None)
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
 def _group_name_candidates(obj):
     """The names a mesh group may carry for this object, most specific first.
 
@@ -756,8 +851,16 @@ def _group_name_candidates(obj):
     names = [obj.Name]
     for reference in getattr(obj, "References", None) or ():
         referenced = reference[0]
-        if referenced is not None and referenced.Name not in names:
+        if referenced is None:
+            continue
+        if referenced.Name not in names:
             names.append(referenced.Name)
+        # A shell section references the shell, and the mesh carries the
+        # surface that shell is draped on rather than the shell itself - the
+        # support is a part of the mesh and has a group of its own.
+        for name in _support_object_names(referenced):
+            if name not in names:
+                names.append(name)
     return names
 
 
@@ -768,28 +871,45 @@ def get_femmesh_groupdata_sets_by_name(femmesh, fem_object, group_data_type):
     # we just check for the group name and the group data type
     # what happens if a reference shape was changed
     # but the mesh and the mesh groups were not created new !?!
+    #
+    # every matching group is collected, not just the first: one object can
+    # reference several parts - the blade's core material covers the core and
+    # the root boss, its shell section covers both skins - and every part
+    # carries its own group.  Stopping at the first match hands a multi-part
+    # object one part's elements, so the cover check in
+    # get_femelement_sets_from_group_data sees a short sum and the resolver
+    # drops into the whole-mesh node search.
     obj = fem_object["Object"]
     candidates = _group_name_candidates(obj)
-    if femmesh.GroupCount:
-        for g in femmesh.Groups:
-            grp_name = femmesh.getGroupName(g)
-            if not any(grp_name.startswith(name + "_") for name in candidates):
-                continue
-            if femmesh.getGroupElementType(g) == group_data_type:
-                FreeCAD.Console.PrintMessage(
-                    "  found mesh group for the IDs: {}, Type: {}\n".format(
-                        grp_name, group_data_type
-                    )
+    found_elements = []
+    seen_elements = set()
+    for g in femmesh.Groups:
+        grp_name = femmesh.getGroupName(g)
+        if not any(grp_name.startswith(name + "_") for name in candidates):
+            continue
+        if femmesh.getGroupElementType(g) == group_data_type:
+            FreeCAD.Console.PrintMessage(
+                "  found mesh group for the IDs: {}, Type: {}\n".format(
+                    grp_name, group_data_type
                 )
-                return femmesh.getGroupElements(g)  # == ref_shape_femelements
-    return ()  # an empty tuple is returned if no group data IDs where found
+            )
+            for element_id in femmesh.getGroupElements(g):  # == ref_shape_femelements
+                # a face shared by two groups would otherwise be counted twice
+                if element_id not in seen_elements:
+                    seen_elements.add(element_id)
+                    found_elements.append(element_id)
+    return tuple(found_elements)  # empty if no group data IDs where found
 
 
 # ************************************************************************************************
-def get_femelement_sets_from_group_data(femmesh, fem_objects):
+def get_femelement_sets_from_group_data(femmesh, fem_objects, group_data_type="Volume"):
     # get femelements from femmesh groupdata for reference shapes of each obj.References
+    # group_data_type is the group the mesh carries for the geometry: "Volume"
+    # for a material or a solid section, "Face" for a shell one, whose part is
+    # a surface and so has no volume to group.
     count_femelements = 0
     sum_group_elements = []
+    member_element_counts = []
     for fem_object_i, fem_object in enumerate(fem_objects):
         obj = fem_object["Object"]
         FreeCAD.Console.PrintMessage(
@@ -799,15 +919,23 @@ def get_femelement_sets_from_group_data(femmesh, fem_objects):
         # unique short identifier
         fem_object["ShortName"] = get_elset_short_name(obj, fem_object_i)
         # see comments over there !
-        group_elements = get_femmesh_groupdata_sets_by_name(femmesh, fem_object, "Volume")
+        group_elements = get_femmesh_groupdata_sets_by_name(femmesh, fem_object, group_data_type)
         sum_group_elements += group_elements
         count_femelements += len(group_elements)
+        member_element_counts.append((obj.Name, len(group_elements)))
         fem_object["FEMElements"] = group_elements
     # check if all worked out well
-    if not femelements_count_ok(femmesh.VolumeCount, count_femelements):
+    elements_in_mesh = len(femmesh.FacesOnly) if group_data_type == "Face" else femmesh.VolumeCount
+    if not femelements_count_ok(elements_in_mesh, count_femelements):
         FreeCAD.Console.PrintError(
             "Error in get_femelement_sets_from_group_data -- > femelements_count_ok() failed!\n"
+            "  {0} element groups, {1} in the mesh and {2} summed over the "
+            "members below\n".format(group_data_type, elements_in_mesh, count_femelements)
         )
+        for member_name, member_count in member_element_counts:
+            FreeCAD.Console.PrintError(
+                "    {0}: {1} elements\n".format(member_name, member_count)
+            )
         return False
     else:
         return True

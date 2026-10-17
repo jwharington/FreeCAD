@@ -42,7 +42,8 @@ from femmesh import meshtools
 from . import generate_mesh
 
 
-def mesh_parts_separately(doc, parts, max_size=None, element_order=None, curvature_size=None):
+def mesh_parts_separately(doc, parts, max_size=None, element_order=None, curvature_size=None,
+                          parallel=None, second_order_linear=False):
     """Mesh every part alone, then merge the results into one mixed FemMesh.
 
     The mesher never sees the parts together, so a shell that coincides with a
@@ -50,26 +51,47 @@ def mesh_parts_separately(doc, parts, max_size=None, element_order=None, curvatu
     temporary mesh objects used to produce it are removed from the document.
 
     ``max_size`` caps the element size on every part, which the default gmsh
-    sizing does not do on a long part. ``element_order`` sets the element
+    sizing does not do on a long part; it is either one size for all of them,
+    or a ``{part name: size}`` map when a small part on a large one needs its
+    own -- a size near the part's own features, or gmsh may drop a volume on
+    it.  ``parallel`` sets gmsh's threaded meshing on the temporary objects;
+    False makes the result reproducible, and the threads are whatever the
+    machine has otherwise - gmsh returns a different element count on every
+    call, and on a part with a wall near the element size it sometimes returns
+    no volume at all.  ``element_order`` sets the element
     order, which a layered composite ``*SHELL SECTION`` requires: CalculiX
     accepts one only on S8R and S6 shells, never on S4. ``curvature_size`` sets
     gmsh's curvature-based refinement, which is what actually decides the size
     on a curved part unless it is turned off - see ``_meshed_part``.
+    ``second_order_linear`` places 2nd-order midside nodes on the straight
+    edge instead of on the curved geometry: a thin section (a blade trailing
+    edge) meshes with sliver tets that curving inverts, and CalculiX then
+    rejects the deck with a nonpositive jacobian.
     """
+    options = {"element_order": element_order, "curvature_size": curvature_size,
+               "parallel": parallel, "second_order_linear": second_order_linear}
     generated = [
-        _meshed_part(doc, index, part, max_size, element_order, curvature_size)
+        _meshed_part(doc, index, part, _part_max_size(part, max_size), options)
         for index, part in enumerate(parts)
     ]
     merged = generated[0][1]
     part_volumes = [_volume_ids(merged)]
+    part_faces = [_surface_ids(merged)]
+    part_shape_faces = [_shape_face_elements(merged)]
     for _, extra in generated[1:]:
         merged, _, elem_map = meshtools.merge_femmeshes(merged, extra)
         part_volumes.append([elem_map[elem] for elem in _volume_ids(extra)])
+        part_faces.append([elem_map[elem] for elem in _surface_ids(extra)])
+        part_shape_faces.append({
+            face_name: [elem_map[elem] for elem in elements]
+            for face_name, elements in _shape_face_elements(extra).items()
+        })
     # Before the source objects go: for one part ``merged`` *is* the temporary
     # object's mesh, and touching it after the object is removed leaves the
     # caller with an empty mesh.
     _strip_groups(merged)
-    _name_part_groups(merged, parts, part_volumes)
+    _name_part_groups(merged, parts, part_volumes, part_faces)
+    _name_shape_face_groups(merged, parts, part_shape_faces)
     for mesh_obj, _ in generated:
         doc.removeObject(mesh_obj.Name)
     return merged
@@ -80,18 +102,61 @@ def _volume_ids(femmesh):
     return list(femmesh.Volumes)
 
 
-def _name_part_groups(femmesh, parts, part_volumes):
-    """One ``"<part>_Volumes"`` group per part, for the element-set resolver.
+def _name_part_groups(femmesh, parts, part_volumes, part_faces):
+    """One ``"<part>_Volumes"`` and ``"<part>_Faces"`` group per part.
 
-    Named for the document object, so ``get_solid_element_sets`` can match it
-    against a material or section reference and take its group path instead of
-    searching the whole mesh - see the module docstring for the trap.
+    Named for the document object, so ``get_solid_element_sets`` and
+    ``get_element_geometry2D_elements`` can match them against a material or
+    section reference and take the group path instead of searching the whole
+    mesh - see the module docstring for the trap.  A part that is a surface -
+    a drape support, which the skins are declared on and their sections have
+    to resolve - has faces and no volume, so a volume group alone would leave
+    every shell section on the node-search path.
     """
-    for part, element_ids in zip(parts, part_volumes):
-        if not element_ids:
-            continue
-        group_id = femmesh.addGroup(f"{part.Name}_Volumes", "Volume")
-        femmesh.addGroupElements(group_id, sorted(element_ids))
+    for part, volumes, faces in zip(parts, part_volumes, part_faces):
+        if volumes:
+            group_id = femmesh.addGroup(f"{part.Name}_Volumes", "Volume")
+            femmesh.addGroupElements(group_id, sorted(volumes))
+        if faces:
+            group_id = femmesh.addGroup(f"{part.Name}_Faces", "Face")
+            femmesh.addGroupElements(group_id, sorted(faces))
+
+
+def _shape_face_elements(femmesh):
+    """``{"Face<N>": [element ids]}`` from the groups gmsh makes per shape face.
+
+    gmsh writes one physical group per sub-shape of the part it meshed, named
+    and numbered as FreeCAD names the part's faces, so these say exactly which
+    mesh faces lie on which shape face.  They are read before the merge, which
+    keeps only the first mesh's groups.
+    """
+    return {
+        femmesh.getGroupName(group_id): list(femmesh.getGroupElements(group_id))
+        for group_id in femmesh.Groups
+        if femmesh.getGroupElementType(group_id) == "Face"
+        and femmesh.getGroupName(group_id).startswith("Face")
+    }
+
+
+def _name_shape_face_groups(femmesh, parts, part_shape_faces):
+    """One ``"<part>.Face<N>"`` group per face of every part.
+
+    A face reference - a tie, a fixed face, a pressure face - on a merged mesh
+    has no shape mapping to resolve through, and the geometric search costs
+    hours on a large curved face; meshtools.get_femnodes_by_refshape reads
+    these groups instead.
+    """
+    for part, shape_faces in zip(parts, part_shape_faces):
+        for face_name, elements in sorted(shape_faces.items()):
+            group_id = femmesh.addGroup(
+                meshtools.sub_shape_group_name(part.Name, face_name), "Face"
+            )
+            femmesh.addGroupElements(group_id, sorted(elements))
+
+
+def _surface_ids(femmesh):
+    """The part's own shell elements: the faces that belong to no volume."""
+    return list(femmesh.FacesOnly)
 
 
 def _strip_groups(femmesh):
@@ -104,10 +169,22 @@ def _strip_groups(femmesh):
         femmesh.removeGroup(group_id)
 
 
-def _meshed_part(doc, index, part, max_size=None, element_order=None, curvature_size=None):
+def _part_max_size(part, max_size):
+    """One part's element-size cap: ``max_size`` a number, or a name map."""
+    if isinstance(max_size, dict):
+        return max_size[part.Name]
+    return max_size
+
+
+def _meshed_part(doc, index, part, max_size, options):
+    element_order = options["element_order"]
+    curvature_size = options["curvature_size"]
+    parallel = options["parallel"]
     mesh_obj = ObjectsFem.makeMeshGmsh(doc, f"PartMesh{index}")
     mesh_obj.Shape = part
-    mesh_obj.SecondOrderLinear = False
+    mesh_obj.SecondOrderLinear = options["second_order_linear"]
+    if parallel is not None:
+        mesh_obj.ParallelProcessing = parallel
     if curvature_size is not None:
         # Curvature sizing refines independently of max_size, and on a small
         # radius it overrides the cap outright: a NACA 2412 leading edge is

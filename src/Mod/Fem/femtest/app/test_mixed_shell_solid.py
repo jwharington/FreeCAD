@@ -32,6 +32,7 @@ from femtools import membertools
 from femtools.checksanalysis import check_member_for_solver_calculix
 from femtools.femutils import member_for_reference
 from femmesh import meshsetsgetter
+from femmesh import meshtools
 from femsolver.calculix import writer as ccx_writer
 from femsolver.calculix import write_mesh as write_mesh_module
 from femexamples import constraint_mixed_edge_coupling as edge_coupling
@@ -1209,6 +1210,11 @@ def _groups_by_name(femmesh):
     return {femmesh.getGroupName(group): group for group in femmesh.Groups}
 
 
+def _face_group_names(part):
+    """The ``"<part>.Face<N>"`` group names mesh_parts_separately writes."""
+    return {f"{part.Name}.Face{index}" for index in range(1, len(part.Shape.Faces) + 1)}
+
+
 def test_mesh_parts_separately_names_a_volume_group_per_part():
     """The mesh carries one ``"<part>_Volumes"`` group per part.
 
@@ -1218,7 +1224,9 @@ def test_mesh_parts_separately_names_a_volume_group_per_part():
     sub-shapes, which carry no document name, so the match fails and the deck
     is resolved again by node search over the whole mesh - minutes on a real
     article.  The returned mesh must therefore carry exactly the part groups,
-    named for the part, each covering that part's volumes.
+    named for the part, each covering that part's volumes - and one
+    ``"<part>.Face<N>"`` group per face of the part, which is how a face
+    reference resolves on a mesh with no shape mapping.
     """
     doc = FreeCAD.newDocument("mesh_part_groups")
     try:
@@ -1236,11 +1244,15 @@ def test_mesh_parts_separately_names_a_volume_group_per_part():
         assert single.VolumeCount == several.VolumeCount
 
         single_groups = _groups_by_name(single)
-        assert set(single_groups) == {"Assembly_Volumes"}, single_groups
+        expected_single = {"Assembly_Volumes"} | _face_group_names(assembly)
+        assert set(single_groups) == expected_single, single_groups
         assert len(single.getGroupElements(single_groups["Assembly_Volumes"])) == single.VolumeCount
 
         several_groups = _groups_by_name(several)
-        assert set(several_groups) == {"Box_Volumes", "Other_Volumes"}, several_groups
+        expected_several = (
+            {"Box_Volumes", "Other_Volumes"} | _face_group_names(box) | _face_group_names(other)
+        )
+        assert set(several_groups) == expected_several, several_groups
         assert (
             len(several.getGroupElements(several_groups["Box_Volumes"]))
             == len(several.getGroupElements(several_groups["Other_Volumes"]))
@@ -1248,6 +1260,72 @@ def test_mesh_parts_separately_names_a_volume_group_per_part():
         )
     finally:
         FreeCAD.closeDocument(doc.Name)
+
+
+def test_face_reference_nodes_from_face_group_match_the_geometric_search():
+    """A face's ``"<part>.Face<N>"`` group gives exactly the face's nodes.
+
+    The group is what a face reference resolves through on a merged mesh,
+    instead of projecting every node onto the face - hours on a large curved
+    face - so it must hold the same nodes the geometric search finds, on
+    every face of every part, the second part's ids renumbered by the merge.
+    """
+    doc = FreeCAD.newDocument("face_group_nodes")
+    try:
+        box = add_shape(doc, "Box", Part.makeBox(20.0, 10.0, 10.0))
+        other = add_shape(
+            doc, "Other", Part.makeBox(20.0, 10.0, 10.0, FreeCAD.Vector(30.0, 0.0, 0.0))
+        )
+        doc.recompute()
+        merged = mesh_parts_separately(doc, [box, other], max_size=5.0)
+
+        mismatched = []
+        for part in (box, other):
+            for index in range(1, len(part.Shape.Faces) + 1):
+                face_name = f"Face{index}"
+                from_group = set(
+                    meshtools.get_nodes_by_face_reference(merged, part, face_name)
+                )
+                by_geometry = set(
+                    meshtools.get_nodes_by_face_with_fallback(
+                        merged, part.Shape.getElement(face_name)
+                    )
+                )
+                if not from_group or from_group != by_geometry:
+                    mismatched.append((part.Name, face_name, len(from_group), len(by_geometry)))
+        assert not mismatched, mismatched
+    finally:
+        FreeCAD.closeDocument(doc.Name)
+
+
+def test_tie_master_is_every_face_of_the_last_reference_entry():
+    """A master of several faces stays the master.
+
+    The tie's results come back one per face; ``add_tie`` names a slave entry
+    and a master entry, and the master may hold many faces.  Splitting off
+    only the last face would hand the rest of the master to the slave surface.
+    """
+    master_of_three = [("Shell", ("Face1",)), ("Core", ("Face2", "Face3", "Face4"))]
+
+    assert meshsetsgetter._tie_master_face_count(master_of_three) == 3
+
+
+def test_tie_master_of_one_face_entries_is_the_last_face():
+    """The GUI's one-face-per-entry references split as they always have."""
+    one_face_each = [("Shell", ("Face1",)), ("Core", ("Face2",))]
+
+    assert meshsetsgetter._tie_master_face_count(one_face_each) == 1
+
+
+def test_tie_on_two_faces_of_one_object_keeps_the_last_face_as_master():
+    """Two faces of one solid merge into one entry; the last face is the master.
+
+    femexamples.constraint_tie ties Face5 and Face7 of the same solid, which
+    the link-sub list stores as ``(obj, ("Face5", "Face7"))``.
+    """
+    one_object = [("Solid", ("Face5", "Face7"))]
+
+    assert meshsetsgetter._tie_master_face_count(one_object) == 1
 
 
 def _bulkhead_document(shell_thickness=5.0):

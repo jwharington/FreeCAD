@@ -778,8 +778,7 @@ class MeshSetsGetter:
                 return ref_nodes_cache[cache_key]
 
             try:
-                ref_face = meshtools.sub_shape_at_global_placement(ref_obj, sub_ref)
-                nodes = meshtools.get_nodes_by_face_with_fallback(self.femmesh, ref_face)
+                nodes = meshtools.get_nodes_by_face_reference(self.femmesh, ref_obj, sub_ref)
                 ref_nodes_cache[cache_key] = set(nodes) if nodes else None
             except Exception:
                 ref_nodes_cache[cache_key] = None
@@ -984,6 +983,20 @@ class MeshSetsGetter:
 
             femobj["BodyHeatSourceElements"] = result
 
+    def get_element_id_sets(self):
+        """Each material's and element geometry's element ids, by reference.
+
+        Only the Z88 writer reads these (``MaterialElements``, ``ShellElements``,
+        ``BeamElements``, ``Rotation1DElements``), so it asks for them after
+        get_mesh_sets instead of every solver paying for them.  They are
+        resolved by geometric node search, which on a merged mesh with no
+        shape mapping costs minutes.
+        """
+        self.get_materials_elements()
+        self.get_shell_elements()
+        self.get_beam_elements()
+        self.get_rotation1D_elements()
+
     def get_beam_elements(self):
         for femobj in self.member.geos_beamsection:
             obj = femobj["Object"]
@@ -1007,20 +1020,6 @@ class MeshSetsGetter:
                 result = self._get_elements(obj)
 
                 femobj["Rotation1DElements"] = result
-    def get_element_id_sets(self):
-        """Each material's and element geometry's element ids, by reference.
-
-        Only the Z88 writer reads these (``MaterialElements``, ``ShellElements``,
-        ``BeamElements``, ``Rotation1DElements``), so it asks for them after
-        get_mesh_sets instead of every solver paying for them.  They are
-        resolved by geometric node search, which on a merged mesh with no
-        shape mapping costs minutes.
-        """
-        self.get_materials_elements()
-        self.get_shell_elements()
-        self.get_beam_elements()
-        self.get_rotation1D_elements()
-
 
     def get_materials_elements(self):
         for femobj in self.member.mats_linear:
@@ -1060,12 +1059,20 @@ class MeshSetsGetter:
     def get_element_geometry2D_elements(self):
         # get element ids and write them into the objects
         FreeCAD.Console.PrintMessage("Shell thicknesses\n")
+        femobjs = self.member.geos_shellthickness
+        # A merged mixed mesh has groups and no shape mapping, so the group
+        # path is the only exact one; the table below is the fallback for a
+        # mesh whose shells were not meshed as their own parts.
+        if self.femmesh.GroupCount and meshtools.get_femelement_sets_from_group_data(
+            self.femmesh, femobjs, "Face"
+        ):
+            return
         if not self.femelement_faces_table:
             self.femelement_faces_table = meshtools.get_femelement_faces_table(
                 self.femmesh, self.faces_only
             )
         meshtools.get_femelement_sets(
-            self.femmesh, self.femelement_faces_table, self.member.geos_shellthickness
+            self.femmesh, self.femelement_faces_table, femobjs
         )
 
     def get_element_geometry1D_elements(self):
@@ -1128,15 +1135,24 @@ class MeshSetsGetter:
                 self.get_solid_element_sets(solid_materials)
                 self._record_material_elements_by_dimension(3, solid_materials)
         if self.member.geos_shellthickness:
-            if not self.femelement_faces_table:
-                self.femelement_faces_table = meshtools.get_femelement_faces_table(
-                    self.femmesh, self.faces_only
-                )
             shell_materials = self._materials_for_dimension(2)
             if shell_materials:
-                meshtools.get_femelement_sets(
-                    self.femmesh, self.femelement_faces_table, shell_materials
+                # Like the shell sections: a merged mixed mesh carries a face
+                # group per shell part and no shape mapping, so the group path
+                # is the exact one and the node search below only the fallback.
+                found_in_groups = self.femmesh.GroupCount and (
+                    meshtools.get_femelement_sets_from_group_data(
+                        self.femmesh, shell_materials, "Face"
+                    )
                 )
+                if not found_in_groups:
+                    if not self.femelement_faces_table:
+                        self.femelement_faces_table = meshtools.get_femelement_faces_table(
+                            self.femmesh, self.faces_only
+                        )
+                    meshtools.get_femelement_sets(
+                        self.femmesh, self.femelement_faces_table, shell_materials
+                    )
                 self._record_material_elements_by_dimension(2, shell_materials)
         if self.member.geos_beamsection or self.member.geos_fluidsection:
             if not self.femelement_edges_table:
