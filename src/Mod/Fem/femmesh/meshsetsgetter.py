@@ -282,10 +282,6 @@ class MeshSetsGetter:
 
         # materials and element geometry element sets getter
         self.get_element_sets_material_and_femelement_geometry()
-        self.get_materials_elements()
-        self.get_shell_elements()
-        self.get_beam_elements()
-        self.get_rotation1D_elements()
 
         # constraints element sets getter
         self.get_constraints_centrif_elements()
@@ -987,6 +983,20 @@ class MeshSetsGetter:
                 result = self._get_elements(obj)
 
                 femobj["Rotation1DElements"] = result
+    def get_element_id_sets(self):
+        """Each material's and element geometry's element ids, by reference.
+
+        Only the Z88 writer reads these (``MaterialElements``, ``ShellElements``,
+        ``BeamElements``, ``Rotation1DElements``), so it asks for them after
+        get_mesh_sets instead of every solver paying for them.  They are
+        resolved by geometric node search, which on a merged mesh with no
+        shape mapping costs minutes.
+        """
+        self.get_materials_elements()
+        self.get_shell_elements()
+        self.get_beam_elements()
+        self.get_rotation1D_elements()
+
 
     def get_materials_elements(self):
         for femobj in self.member.mats_linear:

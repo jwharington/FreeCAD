@@ -77,6 +77,7 @@ class Z88Tools(ObjectTools):
         meshdatagetter.mask_hexa20 = masks["hexa20"]
 
         meshdatagetter.get_mesh_sets()
+        meshdatagetter.get_element_id_sets()
 
         # write solver input
         w = writer.FemInputWriterZ88(
