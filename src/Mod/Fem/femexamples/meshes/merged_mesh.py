@@ -37,6 +37,8 @@ reference its sub-solids instead, mesh those solids as their own parts.
 
 import ObjectsFem
 
+import Part
+
 from femmesh import meshtools
 
 from . import generate_mesh
@@ -70,56 +72,165 @@ def mesh_parts_separately(doc, parts, max_size=None, element_order=None, curvatu
     """
     options = {"element_order": element_order, "curvature_size": curvature_size,
                "parallel": parallel, "second_order_linear": second_order_linear}
-    generated = [
-        _meshed_part(doc, index, part, _part_max_size(part, max_size), options)
-        for index, part in enumerate(parts)
-    ]
+    generated, member_meshes, temporary = [], [], []
+    for index, part in enumerate(parts):
+        members = _part_members(part)
+        # The mesher is handed a document object: the mesh's ``Shape`` is a
+        # PropertyLink, so a compound gets a temporary Part::Feature to carry it.
+        if len(members) == 1:
+            meshed_object = members[0]
+        else:
+            meshed_object = doc.addObject("Part::Feature", "PartGroup%d" % index)
+            meshed_object.Shape = _part_shape(members)
+            doc.recompute()
+            temporary.append(meshed_object)
+        mesh_obj, mesh = _meshed_part(doc, index, meshed_object,
+                                       _part_max_size(part, max_size), options)
+        generated.append((mesh_obj, mesh))
+        member_meshes.append(_member_meshes(mesh, members, meshed_object.Shape))
     merged = generated[0][1]
-    part_volumes = [_volume_ids(merged)]
-    part_faces = [_surface_ids(merged)]
-    part_shape_faces = [_shape_face_elements(merged)]
-    for _, extra in generated[1:]:
+    member_elements = _elements_of_members(merged, member_meshes[0])
+    for index, (_, extra) in enumerate(generated[1:], start=1):
         merged, _, elem_map = meshtools.merge_femmeshes(merged, extra)
-        part_volumes.append([elem_map[elem] for elem in _volume_ids(extra)])
-        part_faces.append([elem_map[elem] for elem in _surface_ids(extra)])
-        part_shape_faces.append({
-            face_name: [elem_map[elem] for elem in elements]
-            for face_name, elements in _shape_face_elements(extra).items()
-        })
+        member_elements += _elements_of_members(extra, member_meshes[index], elem_map)
     # Before the source objects go: for one part ``merged`` *is* the temporary
     # object's mesh, and touching it after the object is removed leaves the
     # caller with an empty mesh.
     _strip_groups(merged)
-    _name_part_groups(merged, parts, part_volumes, part_faces)
-    _name_shape_face_groups(merged, parts, part_shape_faces)
+    _name_member_groups(merged, member_elements)
     for mesh_obj, _ in generated:
         doc.removeObject(mesh_obj.Name)
+    for carrier in temporary:
+        doc.removeObject(carrier.Name)
     return merged
+
+
+def _part_members(part):
+    """The document objects a part is made of: itself, or the members of a tuple.
+
+    A tuple is meshed as one compound, so its members share the mesh at their
+    common faces - conformally, which is what carries load between layup zones
+    (a Part::Compound unifies the coincident faces, and gmsh meshes the result
+    as one connected body).  Each member keeps its own groups, so each zone
+    still resolves its own material and section.
+    """
+    return part if isinstance(part, tuple) else (part,)
+
+
+def _part_shape(members):
+    """The shape one part is meshed from: its own, or a compound of its members."""
+    if len(members) == 1:
+        return members[0].Shape
+    return Part.makeCompound([member.Shape for member in members])
+
+
+def _member_meshes(mesh, members, shape):
+    """Per member: its volume and face elements, and its named shape faces.
+
+    A single-member part is read as its own mesh (every volume and every shell
+    face belongs to it).  For a compound, gmsh groups one Volume per member
+    solid in order (``Solid1``...), and each compound face is traced back to
+    the member that owns it by area and centre - ``isSame`` does not hold, a
+    split giving its pieces distinct faces of identical geometry.
+    """
+    if len(members) == 1:
+        return [{"member": members[0], "volumes": _volume_ids(mesh),
+                 "faces": _surface_ids(mesh), "shape_faces": _shape_face_elements(mesh)}]
+    result = []
+    for index, member in enumerate(members, start=1):
+        shape_faces = _member_shape_faces(mesh, shape, member)
+        on_member = set()
+        for elements in shape_faces.values():
+            on_member.update(elements)
+        result.append({"member": member,
+                       "volumes": _solid_group_elements(mesh, "Solid%d" % index),
+                       "faces": [element for element in _surface_ids(mesh) if element in on_member],
+                       "shape_faces": shape_faces})
+    return result
+
+
+def _solid_group_elements(femmesh, group_name):
+    """The elements of one of gmsh's per-solid groups, by name."""
+    for group_id in femmesh.Groups:
+        if femmesh.getGroupName(group_id) == group_name:
+            return list(femmesh.getGroupElements(group_id))
+    return []
+
+
+def _member_shape_faces(femmesh, shape, member):
+    """``{"Face<k>": [elements]}`` of one member of a compound, by its own numbering.
+
+    The compound's ``Face<N>`` groups are re-keyed to the member's face index,
+    found by matching area and centre of gravity.
+    """
+    owners = {}
+    for member_index, face in enumerate(member.Shape.Faces, start=1):
+        owners.setdefault(_face_key(face), member_index)
+    named = {}
+    for index, face in enumerate(shape.Faces, start=1):
+        member_index = owners.get(_face_key(face))
+        group_id = _group_of(femmesh, "Face%d" % index)
+        if member_index is None or group_id is None:
+            continue
+        if femmesh.getGroupElementType(group_id) != "Face":
+            continue
+        elements = list(femmesh.getGroupElements(group_id))
+        if elements:
+            named["Face%d" % member_index] = elements
+    return named
+
+
+def _face_key(face):
+    """A face's identity for matching across a compound: its area and centre."""
+    centre = face.CenterOfMass
+    return (round(face.Area, 9), round(centre.x, 9), round(centre.y, 9), round(centre.z, 9))
+
+
+def _group_of(femmesh, name):
+    """The id of a group by name, or None."""
+    for group_id in femmesh.Groups:
+        if femmesh.getGroupName(group_id) == name:
+            return group_id
+    return None
+
+
+def _elements_of_members(mesh, member_meshes, elem_map=None):
+    """One entry per member: the member and its elements, renumbered if merged."""
+    def mapped(elements):
+        return [elem_map[element] for element in elements] if elem_map else list(elements)
+    return [{"member": entry["member"],
+             "volumes": mapped(entry["volumes"]),
+             "faces": mapped(entry["faces"]),
+             "shape_faces": {name: mapped(elements)
+                             for name, elements in entry["shape_faces"].items()}}
+            for entry in member_meshes]
+
+
+def _name_member_groups(femmesh, member_elements):
+    """Name every member's groups for the resolver.
+
+    ``"<member>_Volumes"`` and ``"<member>_Faces"`` are what a material and a
+    shell section match against, and ``"<member>.Face<N>"`` is what a face
+    reference resolves through - the contract the module docstring's trap is
+    about, now per member of a compound as well as per part.
+    """
+    for entry in member_elements:
+        member = entry["member"]
+        if entry["volumes"]:
+            group_id = femmesh.addGroup(f"{member.Name}_Volumes", "Volume")
+            femmesh.addGroupElements(group_id, sorted(entry["volumes"]))
+        if entry["faces"]:
+            group_id = femmesh.addGroup(f"{member.Name}_Faces", "Face")
+            femmesh.addGroupElements(group_id, sorted(entry["faces"]))
+        for face_name, elements in sorted(entry["shape_faces"].items()):
+            group_id = femmesh.addGroup(
+                meshtools.sub_shape_group_name(member.Name, face_name), "Face")
+            femmesh.addGroupElements(group_id, sorted(elements))
 
 
 def _volume_ids(femmesh):
     """The volume element ids of a mesh, in order."""
     return list(femmesh.Volumes)
-
-
-def _name_part_groups(femmesh, parts, part_volumes, part_faces):
-    """One ``"<part>_Volumes"`` and ``"<part>_Faces"`` group per part.
-
-    Named for the document object, so ``get_solid_element_sets`` and
-    ``get_element_geometry2D_elements`` can match them against a material or
-    section reference and take the group path instead of searching the whole
-    mesh - see the module docstring for the trap.  A part that is a surface -
-    a drape support, which the skins are declared on and their sections have
-    to resolve - has faces and no volume, so a volume group alone would leave
-    every shell section on the node-search path.
-    """
-    for part, volumes, faces in zip(parts, part_volumes, part_faces):
-        if volumes:
-            group_id = femmesh.addGroup(f"{part.Name}_Volumes", "Volume")
-            femmesh.addGroupElements(group_id, sorted(volumes))
-        if faces:
-            group_id = femmesh.addGroup(f"{part.Name}_Faces", "Face")
-            femmesh.addGroupElements(group_id, sorted(faces))
 
 
 def _shape_face_elements(femmesh):
@@ -136,22 +247,6 @@ def _shape_face_elements(femmesh):
         if femmesh.getGroupElementType(group_id) == "Face"
         and femmesh.getGroupName(group_id).startswith("Face")
     }
-
-
-def _name_shape_face_groups(femmesh, parts, part_shape_faces):
-    """One ``"<part>.Face<N>"`` group per face of every part.
-
-    A face reference - a tie, a fixed face, a pressure face - on a merged mesh
-    has no shape mapping to resolve through, and the geometric search costs
-    hours on a large curved face; meshtools.get_femnodes_by_refshape reads
-    these groups instead.
-    """
-    for part, shape_faces in zip(parts, part_shape_faces):
-        for face_name, elements in sorted(shape_faces.items()):
-            group_id = femmesh.addGroup(
-                meshtools.sub_shape_group_name(part.Name, face_name), "Face"
-            )
-            femmesh.addGroupElements(group_id, sorted(elements))
 
 
 def _surface_ids(femmesh):
