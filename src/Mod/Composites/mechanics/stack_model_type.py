@@ -9,6 +9,7 @@ class StackModelType(Enum):
     SmearedFabric = auto()
     SmearedCore = auto()
     Smeared = auto()
+    SmearedGroups = auto()
 
     def merged_name(item):
         match item:
@@ -18,5 +19,7 @@ class StackModelType(Enum):
                 return "Sublaminate"
             case StackModelType.Smeared:
                 return "Laminate"
+            case StackModelType.SmearedGroups:
+                return "Groups"
             case _:
                 return ""

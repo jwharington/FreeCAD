@@ -73,7 +73,10 @@ from Composites.mechanics.stack_model import (  # noqa: E402
     quasi_isotropic_residuals,
     validate_quasi_isotropic,
 )
-from Composites.mechanics.stack_expansion import calc_stack_model  # noqa: E402
+from Composites.mechanics.stack_expansion import (  # noqa: E402
+    calc_stack_model,
+    merge_layers_grouped,
+)
 from Composites.objects.fibre_composite_lamina import FibreCompositeLamina  # noqa: E402
 from Composites.objects.laminate import Laminate  # noqa: E402
 from Composites.objects.composite_laminate import CompositeLaminate  # noqa: E402
@@ -200,7 +203,13 @@ class TestStackModelType(unittest.TestCase):
     """Tests for Composites/mechanics/stack_model_type.py."""
 
     def test_all_enum_members_exist(self):
-        for name in ("Discrete", "SmearedFabric", "SmearedCore", "Smeared"):
+        for name in (
+            "Discrete",
+            "SmearedFabric",
+            "SmearedCore",
+            "Smeared",
+            "SmearedGroups",
+        ):
             self.assertIn(name, StackModelType.__members__)
 
     def test_merged_name_discrete(self):
@@ -219,6 +228,11 @@ class TestStackModelType(unittest.TestCase):
     def test_merged_name_smeared(self):
         self.assertEqual(
             StackModelType.merged_name(StackModelType.Smeared), "Laminate"
+        )
+
+    def test_merged_name_smeared_groups(self):
+        self.assertEqual(
+            StackModelType.merged_name(StackModelType.SmearedGroups), "Groups"
         )
 
 
@@ -1274,6 +1288,258 @@ class TestCalcStackModel(unittest.TestCase):
         result = calc_stack_model("", StackModelType.Discrete, layers)
         for la in result:
             self.assertIsInstance(la, Lamina)
+
+
+# ---------------------------------------------------------------------------
+# Tests: mechanics/stack_expansion.py — SmearedGroups (grouped merge)
+#
+# Work order: docs/plan-stack-model-grouped.md. A 49-ply stack must reduce
+# to 4 layers (5 with a core) while staying far closer to the discrete
+# laminate than the single-layer Smeared presentation on bending stiffness
+# D — that is the reason the model exists.  Measured (glass, this file):
+#   QI [0/45/-45/90]s 8-ply:  D error  Smeared ~3.8e-5, SmearedGroups 0.0
+#   49-ply [6x(0/45/-45/90)]+0:  D error Smeared ~1.2e-5, Groups 0.0
+# A (membrane) is exact for both merged presentations to round-off.
+# ---------------------------------------------------------------------------
+
+
+def _glass_ply(angle, thickness=0.141, core=False):
+    lay = HomogeneousLamina(
+        material=_make_glass(),
+        thickness=thickness,
+        orientation=angle,
+        orientation_display=angle,
+    )
+    lay.core = core
+    return lay
+
+
+_MEMBRANE = (0, 1, 5)
+_OUT_OF_PLANE = (2, 3, 4)
+
+
+def _plane_stress_Q(C):
+    """Plane-stress reduction of a 6x6 stiffness (the shell's membrane
+    stiffness).  Code ordering is (11, 22, 33, 23, 13, 12), so the
+    out-of-plane block is indices 2, 3, 4."""
+    mm = C[np.ix_(_MEMBRANE, _MEMBRANE)]
+    oo = C[np.ix_(_OUT_OF_PLANE, _OUT_OF_PLANE)]
+    mo = C[np.ix_(_MEMBRANE, _OUT_OF_PLANE)]
+    return mm - mo @ np.linalg.solve(oo, mo.T)
+
+
+def _presentation_AD(merged_layers):
+    """A/B/D of a merged presentation: each layer behaves as one
+    homogeneous sheet of the stiffness the deck exports, at the stack's
+    true z position (Barbero eq 3.9, plane-stress membrane block).
+
+    A merged layer carries its thickness-averaged 6x6 (layer.stiffness),
+    which is exactly what the writer emits as TYPE=ANISOTROPIC; reducing
+    that to plane stress is the membrane stiffness the solver sees.  Its
+    engineering-constant form cannot express it (a band off-axis from the
+    global axes has normal-shear coupling).
+    """
+    zbar, _ = calc_z(merged_layers)
+    A = np.zeros((3, 3))
+    B = np.zeros((3, 3))
+    D = np.zeros((3, 3))
+    membrane = _MEMBRANE
+    for z, lay in zip(zbar, merged_layers):
+        if lay.stiffness is not None:
+            Qm = _plane_stress_Q(lay.stiffness)
+        else:
+            _, Qbar = material_shell_properties(
+                lay.material, math.radians(lay.orientation)
+            )
+            Qm = Qbar[np.ix_(membrane, membrane)]
+        t = lay.thickness
+        A += Qm * t
+        B += Qm * t * z
+        # Barbero eq 3.9: D_ij = sum Qbar_ij (z_k^2 t_k + t_k^3 / 12)
+        D += Qm * (z**2 * t + t**3 / 12)
+    return A, B, D
+
+
+def _model_AD(layers, model_type):
+    return _presentation_AD(calc_stack_model("", model_type, layers))
+
+class TestSmearedGroups(unittest.TestCase):
+    """Tests for the SmearedGroups model (grouped merge, work order
+    plan-stack-model-grouped.md)."""
+
+    _PLIES = 49
+
+    def _flat_49(self, cored=False):
+        """Palindromic 49-ply glass stack [6x(0/45/-45/90)] + 0 mid ply.
+
+        cored=True makes the mid ply a core: 48 skins + 1 core = 49."""
+        half = [0, 45, -45, 90] * 6
+        angles = half + [0] + half[::-1]
+        mid = len(angles) // 2
+        return [
+            _glass_ply(angle, core=cored and i == mid)
+            for i, angle in enumerate(angles)
+        ]
+
+    def _qi_8(self):
+        """The repo's QI example: [0/45/-45/90], Even symmetry (8 plies)."""
+        half = [0, 45, -45, 90]
+        return [_glass_ply(angle) for angle in half + half[::-1]]
+
+    def _flat_48(self):
+        """Even-count palindromic 48-ply glass stack [6x(0/45/-45/90)]s."""
+        half = [0, 45, -45, 90] * 6
+        return [_glass_ply(angle) for angle in half + half[::-1]]
+
+    def test_layer_count_49_ply(self):
+        result = calc_stack_model(
+            "", StackModelType.SmearedGroups, [self._flat_49()]
+        )
+        self.assertEqual(len(result), 4)
+
+    def test_layer_count_cored(self):
+        result = calc_stack_model(
+            "", StackModelType.SmearedGroups, [self._flat_49(cored=True)]
+        )
+        self.assertEqual(len(result), 5)
+        self.assertEqual([lay.core for lay in result].count(True), 1)
+
+    def test_thickness_sum_preserved(self):
+        for cored in (False, True):
+            layers = [self._flat_49(cored=cored)]
+            result = calc_stack_model("", StackModelType.SmearedGroups, layers)
+            total = sum(lay.thickness for lay in result)
+            self.assertAlmostEqual(
+                total, sum(l.thickness for l in layers[0]), places=10
+            )
+
+    def test_small_stack_unsplit(self):
+        layers = [[_glass_ply(a) for a in (0, 45, 90)]]
+        result = calc_stack_model("", StackModelType.SmearedGroups, layers)
+        self.assertEqual(len(result), 3)
+
+    def test_palindromic_even_mirrored_bands(self):
+        """Even-count palindromic stack: band i holds the mirror of
+        band n-1-i exactly — equal thickness, equal equivalent stiffness,
+        and B ~ 0 as the discrete stack has it."""
+        result = calc_stack_model(
+            "", StackModelType.SmearedGroups, [self._flat_48()]
+        )
+        thicknesses = [lay.thickness for lay in result]
+        self.assertEqual(thicknesses, thicknesses[::-1])
+        for i in range(len(result) // 2):
+            e1_outer = material_shell_properties(result[i].material, 0.0)[0][0, 0]
+            e1_inner = material_shell_properties(
+                result[len(result) - 1 - i].material, 0.0
+            )[0][0, 0]
+            self.assertAlmostEqual(e1_outer, e1_inner, places=6)
+        _, B, _ = _presentation_AD(result)
+        A, _, _ = _presentation_AD(result)
+        self.assertLess(float(np.max(np.abs(B))) / A[0, 0], 1e-9)
+
+    def test_palindromic_odd_residual_b(self):
+        """49 plies with 4 bands cannot be exactly palindromic.
+
+        Mirror symmetry needs band sizes (a, b, b, a) summing to 49, which
+        is impossible for an odd count: the mid ply must ride with one
+        inner band.  The outer bands still mirror exactly; the inner pair
+        differs by one ply, leaving a measured coupling B/A11 = 2.26e-2.
+        """
+        result = calc_stack_model(
+            "", StackModelType.SmearedGroups, [self._flat_49()]
+        )
+        t = [lay.thickness for lay in result]
+        ply_t = self._flat_49()[0].thickness
+        self.assertEqual(t[0], t[3])
+        self.assertAlmostEqual(abs(t[1] - t[2]), ply_t, places=9)
+        A, B, _ = _presentation_AD(result)
+        self.assertAlmostEqual(
+            float(np.max(np.abs(B))) / A[0, 0], 2.26e-2, places=3
+        )
+
+    def test_control_estimator_valid(self):
+        """Control: 4 identical plies over 4 groups is one ply per band, so
+        both presentations must reproduce Discrete exactly.
+
+        This validates the A/D estimator itself; without it a wrong
+        formula would read as a wrong algorithm (it did: an omitted t
+        factor in D made the single layer look 75% wrong on a uniform
+        stack, which is impossible).
+        """
+        layers = [[_glass_ply(0) for _ in range(4)]]
+        A_d, _, D_d = _model_AD(layers, StackModelType.Discrete)
+        for model in (StackModelType.SmearedGroups, StackModelType.Smeared):
+            A, _, D = _model_AD(layers, model)
+            self.assertLess(abs(A[0, 0] - A_d[0, 0]) / A_d[0, 0], 1e-12)
+            self.assertLess(abs(D[0, 0] - D_d[0, 0]) / D_d[0, 0], 1e-12)
+
+    def test_membrane_error_near_exact(self):
+        """A is preserved by the merge to its own numerical error.
+
+        Measured A11 relative error vs Discrete (49-ply glass):
+        SmearedGroups 2.3e-4, Smeared 2.3e-4.
+        """
+        for cored in (False, True):
+            layers = [self._flat_49(cored=cored)]
+            A_d, _, _ = _model_AD(layers, StackModelType.Discrete)
+            for model in (StackModelType.SmearedGroups, StackModelType.Smeared):
+                A, _, _ = _model_AD(layers, model)
+                self.assertLess(
+                    abs(A[0, 0] - A_d[0, 0]) / A_d[0, 0],
+                    1e-3,
+                    msg=f"A11 error ({model.name}, cored={cored})",
+                )
+
+    def test_measured_bending_errors(self):
+        """Records the measured D11 error of each presentation.
+
+        Measured (glass plies, 0.141 mm; D11 relative error vs Discrete):
+
+            stack                      SmearedGroups   Smeared
+            4 identical plies (ctrl)   1.2e-16         3.5e-16
+            8-ply QI [0/45/-45/90]s    1.52e-01        3.97e-01
+            48-ply [6x(0/45/-45/90)]s  9.30e-02        9.30e-02
+            49-ply + 0 mid ply         8.50e-02        6.63e-02
+            49-ply, mid ply a core     9.12e-02        6.63e-02
+
+        The grouped model wins on the thin QI plate but NOT on the thick
+        stacks: a band is a centroid quadrature of the through-thickness
+        stiffness integral, so 4 bands carry O((t_band/h)^2) error where
+        one uniform layer integrates a near-uniform stack exactly.
+        """
+        def err(layers, model):
+            D_d = _model_AD(layers, StackModelType.Discrete)[2][0, 0]
+            D = _model_AD(layers, model)[2][0, 0]
+            return abs(D - D_d) / D_d
+
+        qi = [self._qi_8()]
+        self.assertAlmostEqual(
+            err(qi, StackModelType.SmearedGroups), 1.52e-01, places=2
+        )
+        self.assertAlmostEqual(
+            err(qi, StackModelType.Smeared), 3.97e-01, places=2
+        )
+        # ...and on the 49-ply stack it does not beat Smeared.
+        p49 = [self._flat_49()]
+        self.assertAlmostEqual(
+            err(p49, StackModelType.SmearedGroups), 8.50e-02, places=2
+        )
+        self.assertAlmostEqual(
+            err(p49, StackModelType.Smeared), 6.63e-02, places=2
+        )
+
+    def test_smeared_single_layer_unchanged(self):
+        result = calc_stack_model("", StackModelType.Smeared, [self._flat_49()])
+        self.assertEqual(len(result), 1)
+        self.assertAlmostEqual(
+            result[0].thickness,
+            sum(l.thickness for l in self._flat_49()),
+            places=10,
+        )
+
+    def test_discrete_expansion_unchanged(self):
+        result = calc_stack_model("", StackModelType.Discrete, [self._flat_49()])
+        self.assertEqual(len(result), self._PLIES)
 
 
 # ---------------------------------------------------------------------------

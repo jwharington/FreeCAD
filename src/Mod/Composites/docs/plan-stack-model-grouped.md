@@ -109,3 +109,83 @@ core stays its own unmerged layer).
   `shell.Laminate.StackModelType`, so **no propeller-side change is needed** to try the new model.
 - The propeller's exposure check reads the frd's `TOSTRAIN` block and is what will judge this
   work: `cad/check-strain-exposure.py DECK FRD --detail`.
+
+## Results (measured 2026-10-07)
+
+Implemented: `StackModelType.SmearedGroups` (`merged_name` → `Groups`),
+`merge_layers_grouped(prefix, layers, groups=4)` in `stack_expansion.py`,
+dispatched from `calc_stack_model`. Bands are contiguous and roughly equal
+in thickness; a core is emitted unmerged and does not count against
+`groups`; a palindromic stack gets mirrored band boundaries.
+
+### Criterion 1 — layer count (PASS)
+
+49-ply stack: 4 layers. 49-ply with a core mid ply: 5 layers, one of them
+the core. Asserted in `test_mechanics.TestSmearedGroups`.
+
+### Criterion 2 — stiffness vs Discrete (A PASS, D DOES NOT MEET THE BAR)
+
+Relative error against `Discrete`, membrane `A11` and bending `D11`, glass
+plies of 0.141 mm, plane-stress reduction of the stiffness the deck
+exports:
+
+| stack | model | A11 err | D11 err |
+| --- | --- | --- | --- |
+| 4 identical plies (control) | SmearedGroups | 0.0 | 1.2e-16 |
+| 4 identical plies (control) | Smeared | 0.0 | 3.5e-16 |
+| 8-ply QI `[0/45/-45/90]s` | SmearedGroups | 1.1e-04 | **1.52e-01** |
+| 8-ply QI `[0/45/-45/90]s` | Smeared | 2.3e-04 | 3.97e-01 |
+| 48-ply `[6x(0/45/-45/90)]s` | SmearedGroups | 2.3e-04 | 9.30e-02 |
+| 48-ply `[6x(0/45/-45/90)]s` | Smeared | 2.3e-04 | 9.30e-02 |
+| 49-ply `[6x(0/45/-45/90)]+0` | SmearedGroups | 2.3e-04 | 8.50e-02 |
+| 49-ply `[6x(0/45/-45/90)]+0` | Smeared | 2.3e-04 | **6.63e-02** |
+| 49-ply, mid ply a core | SmearedGroups | 2.2e-04 | 9.12e-02 |
+| 49-ply, mid ply a core | Smeared | 2.3e-04 | **6.63e-02** |
+
+The control rows validate the estimator: with one ply per band both models
+must reproduce `Discrete` exactly, and they do.
+
+`A` is preserved by both merges to the merge's own numerical error
+(~2e-4). On the thin 8-ply QI plate the grouped model is 2.6x better than
+`Smeared` on `D`. **On the thick stacks it is not better at all**: the
+48-ply tie, and on the 49-ply propeller-relevant stack `Smeared` is 22%
+*closer* to `Discrete` than `SmearedGroups`.
+
+Why, structurally: a band is a centroid quadrature of the through-thickness
+stiffness integral, so 4 bands carry O((t_band/h)^2) error. A single
+uniform layer integrates the same integral exactly when the stack's
+stiffness is near-uniform through the thickness — which the repeating
+`(0/45/-45/90)` blocks are. Adding layers only helps when the stack has a
+strong through-thickness stiffness gradient, which the 8-ply plate has and
+the 49-ply does not.
+
+A second, unavoidable cost: with 4 bands over an odd ply count, mirror
+symmetry is arithmetically impossible (2a + 2b = 49 has no integer
+solution), so the mid ply rides with one inner band and the merged stack
+carries `B/A11 = 2.26e-2` where `Discrete` has exactly zero.
+
+Per the guardrail this is a **stop-and-report** result, not something to
+tune: the 4-layer reduction does not beat `Smeared` on `D` for the stack it
+was built for.
+
+### Criterion 3 — ccx accepts it (PASS)
+
+`test_quasi_iso_fem.TestQuasiIsoFemCrossValidation` and
+`test_stack_model_ccx.TestStackModelCcxRoundTrip` now iterate every
+`StackModelType`, so `SmearedGroups` is solved through the real writer →
+deck → ccx path on the §7.6 plate: it solves, its deck is self-consistent,
+and its response agrees with `Discrete` within the 5% §7.6 tolerance. A
+49-ply section writes 4 `*SHELL SECTION` layer lines with 4 defined
+materials and no `gen3dnor: increase nk_`.
+
+### Criterion 4 — nothing existing moves (PASS)
+
+`test_mechanics`: 216 tests, 0 failures. `Discrete`/`Smeared`/
+`SmearedFabric`/`SmearedCore` behaviour and their `merged_name` values are
+untouched.
+
+### Criterion 5 — symmetry (partial)
+
+Even-count palindromic stacks get exactly mirrored bands, with `B/A11` at
+round-off. Odd counts cannot; measured residual `B/A11 = 2.26e-2` (one ply
+thickness out of a 6.9 mm stack).

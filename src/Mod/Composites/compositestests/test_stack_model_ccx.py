@@ -33,8 +33,19 @@ import unittest
 import FreeCAD
 
 from Composites.mechanics.stack_model_type import StackModelType
+from Composites.objects import (
+    HomogeneousLamina,
+    Laminate,
+    SymmetryType,
+)
+from Composites.util.fem_util import (
+    get_layers_ccx,
+    write_lamina_materials_ccx,
+    write_shell_section_ccx,
+)
 
 from .test_quasi_iso_fem import (
+    CARBON,
     QI_CROSS_VALIDATION_TOLERANCE,
     TestQuasiIsoFemCrossValidation,
 )
@@ -159,6 +170,40 @@ class TestStackModelCcxRoundTrip(TestQuasiIsoFemCrossValidation):
                         f"{total} vs laminate thickness {declared}"
                     ),
                 )
+
+    def test_smeared_groups_49_ply_deck(self):
+        """A 49-ply stack reduces to 4 layer lines the writer can emit.
+
+        The propeller's 49-ply mount laminate cannot be written as ply
+        cards at all: ccx stops with ``*ERROR in gen3dnor: increase nk_``
+        (98 layers per element) under Discrete.  SmearedGroups must
+        present exactly 4 layers, each with a defined material, so the
+        section stays far below the solver's layer limit.
+        """
+        half = [0, 45, -45, 90] * 6
+        plies = [
+            HomogeneousLamina(
+                material=CARBON,
+                thickness=0.141,
+                orientation=angle,
+                orientation_display=angle,
+            )
+            for angle in half + [0] + half[::-1]
+        ]
+        self.assertEqual(len(plies), 49)
+        laminate = Laminate(
+            symmetry=SymmetryType.Assymmetric, layers=plies
+        )
+        layers = get_layers_ccx(laminate, model_type=StackModelType.SmearedGroups)
+        self.assertEqual(len(layers), 4)
+        section = write_shell_section_ccx("Test", layers)
+        section_lines = [line for line in section.splitlines() if line.strip()]
+        self.assertEqual(len(section_lines), 4)
+        materials = write_lamina_materials_ccx(layers, prefix="Test")
+        referenced = {line.split(",,")[1] for line in section_lines}
+        self.assertEqual(referenced, set(_MATERIAL_RE.findall(materials)))
+        for name in referenced:
+            self.assertIn("GROUPS", name)
 
     def test_merged_models_match_discrete_response(self):
         """Same physical laminate: every model within §7.6 tolerance.
