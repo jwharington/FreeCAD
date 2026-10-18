@@ -54,7 +54,8 @@ def mesh_parts_separately(doc, parts, max_size=None, element_order=None, curvatu
 
     ``max_size`` caps the element size on every part, which the default gmsh
     sizing does not do on a long part; it is either one size for all of them,
-    or a ``{part name: size}`` map when a small part on a large one needs its
+    or a ``{part name: size}`` map (a tuple part keyed by its first member's
+    name) when a small part on a large one needs its
     own -- a size near the part's own features, or gmsh may drop a volume on
     it.  ``parallel`` sets gmsh's threaded meshing on the temporary objects;
     False makes the result reproducible, and the threads are whatever the
@@ -265,9 +266,12 @@ def _strip_groups(femmesh):
 
 
 def _part_max_size(part, max_size):
-    """One part's element-size cap: ``max_size`` a number, or a name map."""
+    """One part's element-size cap: ``max_size`` a number, or a name map.
+
+    A tuple part is keyed by its first member's name.
+    """
     if isinstance(max_size, dict):
-        return max_size[part.Name]
+        return max_size[_part_members(part)[0].Name]
     return max_size
 
 
