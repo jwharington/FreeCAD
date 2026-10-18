@@ -881,7 +881,11 @@ class Joint:
     def redrawJointPlacements(self, joint):
         if joint.ViewObject:
             proxy = joint.ViewObject.Proxy
-            if proxy:
+            # A joint created by a script comes back with an int in Proxy: its
+            # view provider was never attached, so the JCS markers it would
+            # draw do not exist.  Test for the method, not for truthiness, or a
+            # non-zero int gets called and raises AttributeError.
+            if hasattr(proxy, "redrawJointPlacements"):
                 proxy.redrawJointPlacements(joint)
 
     """
@@ -987,7 +991,8 @@ class Joint:
                     part.Placement = plc
             self.partsMovedByPresolved = {}
 
-            if joint.ViewObject:
+            if joint.ViewObject and hasattr(joint.ViewObject.Proxy,
+                                            "redrawJointPlacements"):
                 joint.ViewObject.Proxy.redrawJointPlacements(joint)
 
     def preventParallel(self, joint):
