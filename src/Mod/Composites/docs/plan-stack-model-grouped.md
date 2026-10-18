@@ -123,41 +123,64 @@ in thickness; a core is emitted unmerged and does not count against
 49-ply stack: 4 layers. 49-ply with a core mid ply: 5 layers, one of them
 the core. Asserted in `test_mechanics.TestSmearedGroups`.
 
-### Criterion 2 — stiffness vs Discrete (A PASS, D DOES NOT MEET THE BAR)
+### Criterion 2 — stiffness vs Discrete (PASS on the thin stacks, NOT on the 49-ply)
 
-Relative error against `Discrete`, membrane `A11` and bending `D11`, glass
-plies of 0.141 mm, plane-stress reduction of the stiffness the deck
-exports:
+Relative error against `Discrete`, glass plies of 0.141 mm, plane-stress
+reduction of the stiffness the deck exports. `D` is the Frobenius norm of
+the full 3x3 bending matrix, not one entry — `D11` is shown where it was
+quoted, and it tells the same story, so the comparison is not an artefact
+of picking a single entry. Reproduced by
+`compositestests/inspect_stack_model_errors.py`.
 
-| stack | model | A11 err | D11 err |
-| --- | --- | --- | --- |
-| 4 identical plies (control) | SmearedGroups | 0.0 | 1.2e-16 |
-| 4 identical plies (control) | Smeared | 0.0 | 3.5e-16 |
-| 8-ply QI `[0/45/-45/90]s` | SmearedGroups | 1.1e-04 | **1.52e-01** |
-| 8-ply QI `[0/45/-45/90]s` | Smeared | 2.3e-04 | 3.97e-01 |
-| 48-ply `[6x(0/45/-45/90)]s` | SmearedGroups | 2.3e-04 | 9.30e-02 |
-| 48-ply `[6x(0/45/-45/90)]s` | Smeared | 2.3e-04 | 9.30e-02 |
-| 49-ply `[6x(0/45/-45/90)]+0` | SmearedGroups | 2.3e-04 | 8.50e-02 |
-| 49-ply `[6x(0/45/-45/90)]+0` | Smeared | 2.3e-04 | **6.63e-02** |
-| 49-ply, mid ply a core | SmearedGroups | 2.2e-04 | 9.12e-02 |
-| 49-ply, mid ply a core | Smeared | 2.3e-04 | **6.63e-02** |
+| stack | model | layers | A err | B err | D err | D11 err |
+| --- | --- | --- | --- | --- | --- | --- |
+| 4 identical plies (control) | SmearedGroups | 4 | 1.4e-17 | 0.0 | 1.2e-16 | 1.2e-16 |
+| 4 identical plies (control) | Smeared | 1 | 1.4e-17 | 0.0 | 3.5e-16 | 3.5e-16 |
+| 8-ply QI `[0/45/-45/90]s` | SmearedGroups | 4 | 2.3e-04 | ~0 | **2.06e-01** | 1.52e-01 |
+| 8-ply QI `[0/45/-45/90]s` | Smeared | 1 | 3.4e-04 | ~0 | 4.97e-01 | 3.97e-01 |
+| 48-ply `[6x(0/45/-45/90)]s` | SmearedGroups | 4 | 3.4e-04 | ~0 | 9.64e-02 | 9.30e-02 |
+| 48-ply `[6x(0/45/-45/90)]s` | Smeared | 1 | 3.4e-04 | ~0 | 9.64e-02 | 9.30e-02 |
+| 49-ply `[6x(0/45/-45/90)]+0` | SmearedGroups | 4 | 3.4e-04 | 1.9e-02 | 8.95e-02 | 8.50e-02 |
+| 49-ply `[6x(0/45/-45/90)]+0` | Smeared | 1 | 3.4e-04 | ~0 | **7.49e-02** | **6.63e-02** |
+| 49-ply, mid ply a core | SmearedGroups | 5 | 2.2e-04 | — | — | 9.12e-02 |
+| 49-ply, mid ply a core | Smeared | 1 | 3.4e-04 | — | — | 6.63e-02 |
+| `[0x4/90x4]s` (gradient) | SmearedGroups | 4 | 3.9e-16 | ~0 | **3.9e-16** | 3.9e-16 |
+| `[0x4/90x4]s` (gradient) | Smeared | 1 | 5.1e-04 | ~0 | 5.40e-01 | 3.91e-01 |
 
 The control rows validate the estimator: with one ply per band both models
-must reproduce `Discrete` exactly, and they do.
+must reproduce `Discrete` exactly, and they do. (A first version of this
+measurement omitted the `t` factor in Barbero's D and read the uniform
+control as 75% wrong — impossible; the control is what caught it.)
 
 `A` is preserved by both merges to the merge's own numerical error
-(~2e-4). On the thin 8-ply QI plate the grouped model is 2.6x better than
-`Smeared` on `D`. **On the thick stacks it is not better at all**: the
-48-ply tie, and on the 49-ply propeller-relevant stack `Smeared` is 22%
-*closer* to `Discrete` than `SmearedGroups`.
+(~3e-4).
 
-Why, structurally: a band is a centroid quadrature of the through-thickness
-stiffness integral, so 4 bands carry O((t_band/h)^2) error. A single
-uniform layer integrates the same integral exactly when the stack's
-stiffness is near-uniform through the thickness — which the repeating
-`(0/45/-45/90)` blocks are. Adding layers only helps when the stack has a
-strong through-thickness stiffness gradient, which the 8-ply plate has and
-the 49-ply does not.
+**Where grouping wins.** When a band is thin or homogeneous relative to the
+stack's stiffness variation it is a real improvement: 2.4x better than
+`Smeared` on the 8-ply QI plate, and on `[0x4/90x4]s` — where 4 bands of 4
+makes every band a single angle — it is **exact** (3.9e-16 against a
+`Smeared` error of 5.4e-1).
+
+**Where it does not.** On thick, near-uniform stacks it is a tie or worse.
+The 48-ply case is an *exact* tie (9.64e-02 both, agreeing to 10 digits),
+and on the 49-ply stack `Smeared` is ~20% closer to `Discrete`.
+
+Two structural reasons, both verified:
+
+1. A band is a **centroid quadrature** of the through-thickness stiffness
+   integral, `D = Σ Q_k t_k (z_k² + t_k²/12)`. When every band has the same
+   thickness and the same equivalent stiffness this sum equals `Q h³/12`
+   for one layer **exactly** — hence the 48-ply tie. Grouping only helps
+   where `Q` actually varies through the thickness at band scale.
+2. A 12-ply band averages that variation away, so more groups does not
+   monotonically help: what matters is plies *per band*, not groups per
+   stack. The 49-ply stack gets 12-ply bands — too coarse to represent its
+   (near-uniform) stiffness profile, while a single layer integrates a
+   near-constant `Q` exactly.
+
+So the honest reading is not "grouping is useless" but "grouping pays when
+the group count is comparable to the stack's block structure" — 8-ply and
+blocky stacks benefit, 48+ ply near-uniform stacks do not.
 
 A second, unavoidable cost: with 4 bands over an odd ply count, mirror
 symmetry is arithmetically impossible (2a + 2b = 49 has no integer
@@ -167,6 +190,12 @@ carries `B/A11 = 2.26e-2` where `Discrete` has exactly zero.
 Per the guardrail this is a **stop-and-report** result, not something to
 tune: the 4-layer reduction does not beat `Smeared` on `D` for the stack it
 was built for.
+
+**Disposition (decided):** keep the model. It is wired, tested and solves
+in ccx, and it is measurably the right choice for thin or blocky stacks
+(2.4x better on the 8-ply QI plate, exact when bands are homogeneous). It
+is not the answer for the 49-ply propeller mount laminate, and the
+propeller should stay on whatever its measurements support there.
 
 ### Criterion 3 — ccx accepts it (PASS)
 
@@ -180,7 +209,7 @@ materials and no `gen3dnor: increase nk_`.
 
 ### Criterion 4 — nothing existing moves (PASS)
 
-`test_mechanics`: 216 tests, 0 failures. `Discrete`/`Smeared`/
+`test_mechanics`: 218 tests, 0 failures. `Discrete`/`Smeared`/
 `SmearedFabric`/`SmearedCore` behaviour and their `merged_name` values are
 untouched.
 

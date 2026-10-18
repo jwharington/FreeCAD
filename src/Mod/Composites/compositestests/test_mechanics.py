@@ -1490,22 +1490,65 @@ class TestSmearedGroups(unittest.TestCase):
                     msg=f"A11 error ({model.name}, cored={cored})",
                 )
 
-    def test_measured_bending_errors(self):
-        """Records the measured D11 error of each presentation.
+    def test_bands_uniform_in_thickness_and_stiffness_tie_exactly(self):
+        """Equal-thickness bands of equal equivalent stiffness give exactly
+        the same D as one smeared layer — no gain, no loss.
 
-        Measured (glass plies, 0.141 mm; D11 relative error vs Discrete):
+        A band is a centroid quadrature of the through-thickness stiffness
+        integral: D = sum Q_k t_k (z_k^2 + t_k^2/12).  When every band has
+        the same t and the same Q, that sum equals Q h^3/12 for the one
+        layer exactly.  The 48-ply repeating stack is that case (each band
+        spans three whole (0/45/-45/90) blocks), so the two presentations
+        must agree, and they do to 10 digits (measured 9.64e-2 both).
+        """
+        layers = [self._flat_48()]
+        D_d = _model_AD(layers, StackModelType.Discrete)[2]
+        errors = {}
+        for model in (StackModelType.SmearedGroups, StackModelType.Smeared):
+            D = _model_AD(layers, model)[2]
+            errors[model.name] = np.linalg.norm(D - D_d) / np.linalg.norm(D_d)
+        self.assertAlmostEqual(
+            errors["SmearedGroups"], errors["Smeared"], places=9
+        )
+
+    def test_homogeneous_bands_reproduce_discrete_exactly(self):
+        """Grouping is lossless when the bands are homogeneous.
+
+        [0x4/90x4]s is 16 plies: 4 bands of 4 make every band a single
+        angle, so the merge cannot lose anything (measured D and A errors
+        3.9e-16).  The single smeared layer of the same stack is 5.4e-1
+        away on D.  This is the model's real niche: it degrades gracefully
+        to exact when the group count matches the stack's block structure.
+        """
+        layers = [[_glass_ply(a) for a in [0] * 4 + [90] * 8 + [0] * 4]]
+        A_d, _, D_d = _model_AD(layers, StackModelType.Discrete)
+        A, _, D = _model_AD(layers, StackModelType.SmearedGroups)
+        self.assertLess(np.linalg.norm(A - A_d) / np.linalg.norm(A_d), 1e-12)
+        self.assertLess(np.linalg.norm(D - D_d) / np.linalg.norm(D_d), 1e-12)
+        D_s = _model_AD(layers, StackModelType.Smeared)[2]
+        self.assertAlmostEqual(
+            np.linalg.norm(D_s - D_d) / np.linalg.norm(D_d), 5.40e-01, places=2
+        )
+
+    def test_measured_bending_errors(self):
+        """Records the measured D error of each presentation.
+
+        Measured (glass plies, 0.141 mm; D relative error vs Discrete,
+        Frobenius norm of the full 3x3 D matrix — D11 tells the same
+        story, so the comparison is not a single-entry artefact):
 
             stack                      SmearedGroups   Smeared
             4 identical plies (ctrl)   1.2e-16         3.5e-16
-            8-ply QI [0/45/-45/90]s    1.52e-01        3.97e-01
-            48-ply [6x(0/45/-45/90)]s  9.30e-02        9.30e-02
-            49-ply + 0 mid ply         8.50e-02        6.63e-02
-            49-ply, mid ply a core     9.12e-02        6.63e-02
+            8-ply QI [0/45/-45/90]s    2.06e-01        4.97e-01
+            48-ply [6x(0/45/-45/90)]s  9.64e-02        9.64e-02  (exact tie)
+            49-ply + 0 mid ply         8.95e-02        7.49e-02
+            49-ply, mid ply a core     9.12e-02        6.63e-02 (D11)
+            [0x4/90x4]s gradient       3.9e-16         5.40e-01
 
-        The grouped model wins on the thin QI plate but NOT on the thick
-        stacks: a band is a centroid quadrature of the through-thickness
-        stiffness integral, so 4 bands carry O((t_band/h)^2) error where
-        one uniform layer integrates a near-uniform stack exactly.
+        Groups wins when a band is thin or homogeneous relative to the
+        stack's stiffness variation, and loses on thick near-uniform
+        stacks where 12-ply bands average the variation away and a single
+        layer integrates a near-constant Q exactly.
         """
         def err(layers, model):
             D_d = _model_AD(layers, StackModelType.Discrete)[2][0, 0]
