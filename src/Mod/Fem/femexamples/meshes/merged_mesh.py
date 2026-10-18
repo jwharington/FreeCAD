@@ -282,6 +282,10 @@ def _meshed_part(doc, index, part, max_size, options):
     mesh_obj = ObjectsFem.makeMeshGmsh(doc, f"PartMesh{index}")
     mesh_obj.Shape = part
     mesh_obj.SecondOrderLinear = options["second_order_linear"]
+    # The thin trailing edge makes near-degenerate slivers that survive the
+    # standard optimizer and CalculiX rejects (nonpositive jacobian, measured
+    # det -1.6e-5 mid-blade); netgen's pass removes them.
+    mesh_obj.OptimizeNetgen = True
     if parallel is not None:
         mesh_obj.ParallelProcessing = parallel
     if curvature_size is not None:
