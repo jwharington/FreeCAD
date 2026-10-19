@@ -35,6 +35,8 @@ one part therefore gets a group named for the compound - if the materials
 reference its sub-solids instead, mesh those solids as their own parts.
 """
 
+import FreeCAD
+
 import ObjectsFem
 
 import Part
@@ -45,7 +47,7 @@ from . import generate_mesh
 
 
 def mesh_parts_separately(doc, parts, max_size=None, element_order=None, curvature_size=None,
-                          parallel=None, second_order_linear=False):
+                          parallel=None, second_order_linear=False, refinements=None):
     """Mesh every part alone, then merge the results into one mixed FemMesh.
 
     The mesher never sees the parts together, so a shell that coincides with a
@@ -70,9 +72,30 @@ def mesh_parts_separately(doc, parts, max_size=None, element_order=None, curvatu
     edge instead of on the curved geometry: a thin section (a blade trailing
     edge) meshes with sliver tets that curving inverts, and CalculiX then
     rejects the deck with a nonpositive jacobian.
+
+    ``refinements`` turns a part's element size down in one REGION of it,
+    without refining the rest: ``{part name: [spec, ...]}``, keyed like
+    ``max_size`` (a tuple part by its first member's name), where each spec is
+    a ``Fem::MeshShape`` - gmsh's ``Ball``/``Cylinder``/``Box`` size field - as
+    its property names to values, e.g.::
+
+        {"CylinderShape": [{"ShapeType": "Cylinder", "SizeIn": "1.5 mm",
+                            "SizeOut": "12 mm", "Thickness": "4 mm",
+                            "CylinderRadius": "12 mm",
+                            "CylinderCenter": (0.0, 0.0, 30.0),
+                            "CylinderAxis": (0.0, 1.0, 0.0)}]}
+
+    It is a background field, so gmsh keeps it local
+    (``Mesh.MeshSizeExtendFromBoundary`` is turned off) and ``SizeIn`` applies
+    inside the shape, ``SizeOut`` outside it, with ``Thickness`` of transition.
+    A spec naming a property the object does not have raises rather than being
+    ignored: a refinement that silently does nothing is indistinguishable from
+    one that was not needed, and this function already reports success either
+    way.
     """
     options = {"element_order": element_order, "curvature_size": curvature_size,
-               "parallel": parallel, "second_order_linear": second_order_linear}
+               "parallel": parallel, "second_order_linear": second_order_linear,
+               "refinements": refinements}
     generated, member_meshes, temporary = [], [], []
     for index, part in enumerate(parts):
         members = _part_members(part)
@@ -86,7 +109,8 @@ def mesh_parts_separately(doc, parts, max_size=None, element_order=None, curvatu
             doc.recompute()
             temporary.append(meshed_object)
         mesh_obj, mesh = _meshed_part(doc, index, meshed_object,
-                                       _part_max_size(part, max_size), options)
+                                       _part_max_size(part, max_size), options,
+                                       _part_refinements(part, refinements))
         generated.append((mesh_obj, mesh))
         member_meshes.append(_member_meshes(mesh, members, meshed_object.Shape))
     merged = generated[0][1]
@@ -275,12 +299,41 @@ def _part_max_size(part, max_size):
     return max_size
 
 
-def _meshed_part(doc, index, part, max_size, options):
+def _part_refinements(part, refinements):
+    """One part's local size-field specs, or None - keyed like ``max_size``."""
+    if not refinements:
+        return None
+    return refinements.get(_part_members(part)[0].Name)
+
+
+def _add_refinement(doc, mesh_obj, index, spec):
+    """Attach one ``Fem::MeshShape`` size field to a part's temporary mesh.
+
+    ``ShapeType`` goes first: the region's own geometry properties belong to an
+    extension that only exists once the shape is chosen, so setting a radius
+    before a type would either raise or land on the wrong shape.
+    """
+    shape = ObjectsFem.makeMeshShape(doc, mesh_obj, f"PartRefinement{index}")
+    for name in sorted(spec, key=lambda key: key != "ShapeType"):
+        value = spec[name]
+        if isinstance(value, (tuple, list)):
+            value = FreeCAD.Vector(*value)
+        if not hasattr(shape, name):
+            raise ValueError("MeshShape has no property %r (spec: %r)"
+                             % (name, spec))
+        setattr(shape, name, value)
+    doc.recompute()
+    return shape
+
+
+def _meshed_part(doc, index, part, max_size, options, refinements=None):
     element_order = options["element_order"]
     curvature_size = options["curvature_size"]
     parallel = options["parallel"]
     mesh_obj = ObjectsFem.makeMeshGmsh(doc, f"PartMesh{index}")
     mesh_obj.Shape = part
+    for at, spec in enumerate(refinements or []):
+        _add_refinement(doc, mesh_obj, "%d_%d" % (index, at), spec)
     mesh_obj.SecondOrderLinear = options["second_order_linear"]
     # The thin trailing edge makes near-degenerate slivers that survive the
     # standard optimizer and CalculiX rejects (nonpositive jacobian, measured
