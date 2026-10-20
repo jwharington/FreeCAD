@@ -17,6 +17,42 @@ A drapeable shell feature: Support + Laminate + Rosette, rendered with
 the weave shader.
 _Avoid_: panel, shell feature
 
+**Mould block**:
+The rectangular stock a mould analysis builds around the part, in axes
+whose +Z is the draw direction. Its faces are four block walls and two
+caps.
+_Avoid_: mould box, stock, bounding box (the source bbox is an input to
+the block, not the block)
+
+**Block frame**:
+The mould block's own axes and its extent along each, recovered from the
+halves' wall faces. Fixture positions are block-frame coordinates; the
+block is not world-axis aligned.
+_Avoid_: local frame, solver frame
+
+**Mating height**:
+The z at which the two halves meet above a given point in the block frame.
+Position-dependent, because the parting surface is non-planar.
+_Avoid_: split height, parting offset (`PartingSurfaceOffset` is a stub
+that reports 0.0 and carries no plane)
+
+**MouldFixture**:
+The feature that cuts shop-floor fixtures into both halves of a mould:
+alignment dowels and bushes, clamp bolts, clamp-ear notches and parting
+wedges.
+_Avoid_: mould tool (that is the mould analysis), jig
+
+**Clamp-ear notch**:
+The cut form of a clamp ear: a rectangular notch in a block wall, centred
+on the mating plane, that a clamp can grip.
+_Avoid_: clamp slot; clamp ear (reserve for the protruding form, which
+this tool does not cut)
+
+**Parting wedge**:
+A triangular notch in a block wall, apex on the mating plane, into which a
+wedge is driven to separate the halves.
+_Avoid_: pry slot; wedge (ambiguous with the driven tool)
+
 ### Seam joint
 
 **Master**:

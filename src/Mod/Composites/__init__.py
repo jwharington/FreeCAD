@@ -34,6 +34,7 @@ MATPATH = os.path.join(MODULE_PATH, "resources", "materials")
 
 TEXTURE_PLAN_TOOL_ICON = path.join(ICONPATH, "TexturePlan.svg")
 MOULD_TOOL_ICON = path.join(ICONPATH, "Mould.svg")
+MOULD_FIXTURE_TOOL_ICON = path.join(ICONPATH, "MouldFixture.svg")
 PART_PLANE_TOOL_ICON = path.join(ICONPATH, "PartPlane.svg")
 SEAM_TOOL_ICON = path.join(ICONPATH, "Seam.svg")
 STIFFENER_TOOL_ICON = path.join(ICONPATH, "Stiffener.svg")

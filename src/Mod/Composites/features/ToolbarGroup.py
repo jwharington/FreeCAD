@@ -5,6 +5,7 @@ from . import (
     HomogeneousLamina,  # noqa
     Laminate,  # noqa
     MouldAnalysis,  # noqa
+    MouldFixture,  # noqa
     PartPlane,  # noqa
     PlaceDart,  # noqa
     Rosette,  # noqa
@@ -65,6 +66,7 @@ def get_command_groups():
         ("Composites_MouldTools", CommandGroup(
             [
                 "Composites_MouldAnalysis",
+                "Composites_MouldFixture",
                 "Composites_PartPlane",
             ],
             menu="Mould",

@@ -126,6 +126,7 @@ class CompositesWorkbench(Gui.Workbench):
         from Composites.features.AlignFibreRosette import AlignFibreRosetteCommand
         from Composites.features.TransferRosette import TransferRosetteCommand
         from Composites.features.MouldAnalysis import CompositeMouldAnalysisCommand
+        from Composites.features.MouldFixture import CompositeMouldFixtureCommand
         from Composites.features.PartPlane import CompositePartPlaneCommand
         from Composites.features.Bulkhead import CompositeBulkheadCommand
         from Composites.features.TexturePlan import TexturePlanCommand
@@ -146,6 +147,7 @@ class CompositesWorkbench(Gui.Workbench):
             ("Composites_AlignFibreRosette", AlignFibreRosetteCommand()),
             ("Composites_TransferRosette", TransferRosetteCommand()),
             ("Composites_MouldAnalysis", CompositeMouldAnalysisCommand()),
+            ("Composites_MouldFixture", CompositeMouldFixtureCommand()),
             ("Composites_PartPlane", CompositePartPlaneCommand()),
             ("Composites_TexturePlan", TexturePlanCommand()),
             ("Composites_FibreCompositeLamina", FibreCompositeLaminaCommand()),
@@ -174,6 +176,7 @@ class CompositesWorkbench(Gui.Workbench):
             "Composites_TexturePlan",
             "Composites_MouldTools",
             "Composites_MouldAnalysis",
+            "Composites_MouldFixture",
         ]
         self.list = (
             cmds_section
