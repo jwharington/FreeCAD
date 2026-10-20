@@ -558,4 +558,11 @@ class CompositeMouldAnalysisCommand(BaseCommand):
     cls_vp = ViewProviderMouldAnalysis
 
 
+# The ViewProvider class that repairs this feature's serialised VP proxy on
+# document restore (see CompositeBaseFP.onDocumentRestored). Without it a
+# saved mould reopens with an int proxy, so its icon, its claimed children and
+# its children's visibility all fail.
+MouldAnalysisFP.view_provider_class = ViewProviderMouldAnalysis
+
+
 # Command registration moved to InitGui.py to avoid FreeCADGui dependency

@@ -89,5 +89,37 @@ class TestViewProviderDisplayModeContract(unittest.TestCase):
                 )
 
 
+class TestViewProviderRestoreWiring(unittest.TestCase):
+    """A feature must name its view provider so restore can repair the proxy.
+
+    FreeCAD serialises the VP proxy as an int (a memory address) on save, so
+    after a reload it is not a Python object and icons, claimChildren and task
+    panels all break. CompositeBaseFP.onDocumentRestored re-attaches the class
+    named by the feature's own ``view_provider_class``.
+
+    Only the mould features are checked. The rest of the package has not been
+    swept and still has unwired features, so asserting the contract across
+    every feature would report failures this change did not create.
+    """
+
+    def test_mould_analysis_names_its_view_provider(self):
+        from Composites.features.MouldAnalysis import (
+            MouldAnalysisFP,
+            ViewProviderMouldAnalysis,
+        )
+
+        self.assertIs(MouldAnalysisFP.view_provider_class,
+                      ViewProviderMouldAnalysis)
+
+    def test_mould_fixture_names_its_view_provider(self):
+        from Composites.features.MouldFixture import (
+            MouldFixtureFP,
+            ViewProviderMouldFixture,
+        )
+
+        self.assertIs(MouldFixtureFP.view_provider_class,
+                      ViewProviderMouldFixture)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
