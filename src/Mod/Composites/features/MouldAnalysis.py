@@ -8,7 +8,9 @@ from FreeCAD import Vector
 
 from .. import MOULD_TOOL_ICON, is_comp_type
 from ..tools.mould_analysis import (
+    DEFAULT_PART_LINE_SOURCE,
     DEFAULT_TESSELLATION_BAND_TOL_DEG,
+    PART_LINE_SOURCES,
     analyze_source_shape,
     default_mould_analysis_draw_direction,
     split_faces,
@@ -38,6 +40,19 @@ def _add_tessellation_band_property(obj):
         "face the part line crosses and stay below the smallest usable draft "
         "(blade-article: 0.8 - its hub has a 0.71 deg and a 1 deg cone).",
     ).TessellationBandTolDeg = DEFAULT_TESSELLATION_BAND_TOL_DEG
+
+
+def _add_part_line_source_property(obj):
+    obj.addProperty(
+        "App::PropertyEnumeration",
+        "PartLineSource",
+        "MouldAnalysis",
+        "Part-line solver. 'tessellation' marches the draft/equator scan and is "
+        "the drafted path; 'hlr' projects the outline instead, and still closes "
+        "on shapes the march does not (a box, cone_side, a sphere). The choice "
+        "changes the part line, so it changes both halves.",
+    ).PartLineSource = list(PART_LINE_SOURCES)
+    obj.PartLineSource = DEFAULT_PART_LINE_SOURCE
 
 
 def _add_split_face_outputs(obj):
@@ -189,6 +204,7 @@ class MouldAnalysisFP(CompositePartFP):
         ).PartLineTolerance = 0.1
 
         _add_tessellation_band_property(obj)
+        _add_part_line_source_property(obj)
 
         obj.addProperty(
             "App::PropertyFloat",
@@ -412,13 +428,16 @@ class MouldAnalysisFP(CompositePartFP):
                 fp.PartingStockMarginZ,
                 (footprint.x, footprint.y, footprint.z),
                 bool(fp.WithdrawalClearance),
-                fp.TessellationBandTolDeg)
+                fp.TessellationBandTolDeg,
+                fp.PartLineSource)
 
     def onDocumentRestored(self, fp):
         super().onDocumentRestored(fp)
         # Documents saved before the band was configurable get the default.
         if not hasattr(fp, "TessellationBandTolDeg"):
             _add_tessellation_band_property(fp)
+        if not hasattr(fp, "PartLineSource"):
+            _add_part_line_source_property(fp)
         # Documents saved before the defect display get its outputs.
         if not hasattr(fp, "DraftDefects"):
             _add_draft_defect_outputs(fp)
@@ -453,6 +472,7 @@ class MouldAnalysisFP(CompositePartFP):
             part_line_only=(fp.OutputMode == "Part-line only"),
             run_withdrawal_clearance=fp.WithdrawalClearance,
             parting_tessellation_band_tol_deg=fp.TessellationBandTolDeg,
+            part_line_source=fp.PartLineSource,
         )
         fp.AnalysisStatus = result["status"]
         fp.DrawDirectionScore = result["draw_direction_score"]

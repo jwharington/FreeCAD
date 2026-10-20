@@ -87,6 +87,24 @@ class TestMouldAnalysis(TestFreeCADFP):
         self.assertEqual(analysis.ValidationStatus, "Pass")
         self.assertNotEqual(tuple(analysis.BestDrawDirection), (0.0, 0.0, 0.0))
 
+    def test_hlr_part_line_source_produces_halves_on_box(self):
+        """The HLR source closes the part line the tessellation march cannot.
+
+        The march fails on a box in this tree ("no closed loop"), so this pins
+        the alternative PartLineSource exposes as the working path - and the
+        halves MouldFixture needs to cut.
+        """
+        source = self._make_source("BoxSource", Part.makeBox(20.0, 15.0, 10.0))
+        analysis = self._make_mould_analysis(source, name="MouldAnalysisHlr")
+        analysis.PartLineSource = "hlr"
+        self.doc.recompute()
+
+        self.assertEqual(analysis.AnalysisStatus, "Ready",
+                         analysis.MouldHalvesSummary)
+        self.assertEqual(analysis.MouldHalvesStatus, "Ready")
+        self.assertEqual(len(analysis.MouldHalfA.Shape.Solids), 1)
+        self.assertEqual(len(analysis.MouldHalfB.Shape.Solids), 1)
+
     def _split_faces(self, analysis):
         """The analysis's cut pieces of both halves, with provenance."""
         from Composites.features.MouldAnalysis import (
@@ -336,6 +354,9 @@ class TestNonPlanarPartingInterface(TestFreeCADFP):
         source = self._make_box_source()
         obj = self._make_analysis(source)
         self.assertEqual(obj.OutputMode, "Full mould")
+        self.assertEqual(obj.PartLineSource, "tessellation")
+        self.assertEqual(list(obj.getEnumerationsOfProperty("PartLineSource")),
+                         ["tessellation", "hlr"])
         self.assertAlmostEqual(obj.PartLineTolerance, 0.1, places=6)
         self.assertAlmostEqual(obj.PartingStockMarginX, 5.0, places=6)
         self.assertAlmostEqual(obj.PartingStockMarginY, 5.0, places=6)
