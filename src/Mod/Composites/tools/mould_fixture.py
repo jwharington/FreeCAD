@@ -191,6 +191,20 @@ class PortParams:
     offset_from_mating: float = 8.0
 
 
+@dataclass(frozen=True)
+class StockMargins:
+    """The mould's declared in-plane stock, as the mould analysis reports it.
+
+    ``explicit_footprint`` records that the mould set a stock footprint, which
+    is the in-plane stock in place of these margins: the two numbers then do not
+    describe the block and cannot be compared with what a fixture needs.
+    """
+
+    x: float
+    y: float
+    explicit_footprint: bool = False
+
+
 @dataclass
 class FixtureRequest:
     """Everything ``build_fixtures`` consumes, so it takes one argument."""
@@ -203,6 +217,7 @@ class FixtureRequest:
     clamping: ClampingParams = field(default_factory=ClampingParams)
     ports: PortParams = field(default_factory=PortParams)
     wedges: WedgeParams = field(default_factory=WedgeParams)
+    stock_margins: object = None
 
 
 @dataclass(eq=False)
@@ -732,6 +747,72 @@ def _require_solid(name, half, result):
     return True
 
 
+MARGIN_PROPERTY_NAMES = "PartingStockMarginX/Y"
+
+FOOTPRINT_NOTE = (
+    "the mould sets an explicit PartingStockFootprint, which is the in-plane "
+    f"stock in place of {MARGIN_PROPERTY_NAMES}: the fixtures are not checked "
+    "against the margins"
+)
+
+
+def _in_plane_requirements(alignment, clamping, wedges):
+    """``(what, needed)`` for each enabled fixture cut in from a block wall.
+
+    Each need is a distance from the wall the fixture is measured from. The
+    socket or notch reaches that far into the block, so that much material has
+    to stand between the wall and the part for the cut to stay in the stock.
+    """
+    required = []
+    if alignment.enabled:
+        radius = 0.5 * max(alignment.pin_diameter, alignment.bush_diameter)
+        required.append(("the align pin and bush sockets",
+                         alignment.edge_offset + radius))
+    if clamping.bolts_enabled:
+        radius = 0.5 * max(clamping.bolt_hole_diameter,
+                           clamping.bolt_tapped_diameter)
+        required.append(("the clamp bolt holes",
+                         clamping.bolt_edge_offset + radius))
+    if clamping.ears_enabled:
+        required.append(("the clamp-ear notches", clamping.ear_depth))
+    if wedges.enabled:
+        required.append(("the parting wedges", wedges.depth))
+    return required
+
+
+def required_in_plane_margin(alignment, clamping, wedges):
+    """The stock the enabled in-plane fixtures need, or 0.0 when none are."""
+    needs = [needed for _what, needed
+             in _in_plane_requirements(alignment, clamping, wedges)]
+    return max(needs, default=0.0)
+
+
+def margin_issues(margins, alignment, clamping, wedges):
+    """Fixtures that need more in-plane stock than the mould declares.
+
+    The margin is measured from the part's bounding box and a cavity does not
+    fill its box, so it is a lower bound on the material standing between a
+    block wall and the part: a fixture that fits within the margin may still
+    reach the part, and only one that does not fit is certainly short of stock.
+
+    Process ports are left out. A port is bored in from the wall in order to
+    reach the part, so the margin does not bound it.
+    """
+    if margins.explicit_footprint:
+        return [FOOTPRINT_NOTE]
+    available = min(margins.x, margins.y)
+    issues = []
+    for what, needed in _in_plane_requirements(alignment, clamping, wedges):
+        if needed > available:
+            issues.append(
+                f"{what} need {needed:.3f} mm of stock between the block wall "
+                f"and the part, but {MARGIN_PROPERTY_NAMES} are "
+                f"{margins.x:.3f}/{margins.y:.3f} mm: raise the margins on the "
+                f"mould, or reduce the offsets and sizes on this fixture"
+            )
+    return issues
+
+
 def build_fixtures(request):
     """Cut every enabled fixture into both halves.
 
@@ -787,6 +868,11 @@ def build_fixtures(request):
         mating_fallbacks=mould.mating_fallbacks,
     )
     result["issues"].extend(mould.breakthroughs)
+    if request.stock_margins is not None:
+        result["issues"].extend(
+            margin_issues(request.stock_margins, request.alignment,
+                          request.clamping, request.wedges)
+        )
     result["status"] = STATUS_READY
     result["summary"] = _summary(result, frame)
     return result

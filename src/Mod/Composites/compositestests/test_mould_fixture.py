@@ -42,12 +42,15 @@ from Composites.tools.mould_fixture import (
     FixtureRequest,
     MouldFixtureError,
     PortParams,
+    StockMargins,
     WedgeParams,
     _wall_normals,
     block_frame,
     build_fixtures,
     corner_positions,
+    margin_issues,
     perimeter_stations,
+    required_in_plane_margin,
     upper_lower,
 )
 from .test_base import TestFreeCADFP
@@ -623,6 +626,56 @@ class TestFixtureCuts(unittest.TestCase):
                                delta=1e-6)
 
 
+class TestStockMargins(unittest.TestCase):
+    """The stock a mould declares, against the stock its fixtures need."""
+
+    def test_required_margin_is_the_widest_enabled_fixture(self):
+        # Defaults: pins 20 + 8, bolts 15 + 5.5, wedges 15; the ears are off.
+        self.assertAlmostEqual(
+            required_in_plane_margin(AlignmentParams(), ClampingParams(),
+                                     WedgeParams()),
+            28.0, delta=1e-9)
+
+    def test_short_margins_name_the_fixture_and_the_properties(self):
+        issues = margin_issues(StockMargins(x=5.0, y=5.0), AlignmentParams(),
+                               ClampingParams(bolts_enabled=False),
+                               WedgeParams(enabled=False))
+        self.assertEqual(len(issues), 1)
+        self.assertIn("the align pin and bush sockets", issues[0])
+        self.assertIn("28.000", issues[0])
+        self.assertIn("PartingStockMarginX/Y", issues[0])
+
+    def test_ample_margins_report_nothing(self):
+        self.assertEqual(margin_issues(StockMargins(x=30.0, y=30.0),
+                                       AlignmentParams(), ClampingParams(),
+                                       WedgeParams()),
+                         [])
+
+    def test_the_smaller_margin_is_what_bounds_the_fixtures(self):
+        # A fixture can sit against either wall, so the smaller of the two
+        # margins is the one that has to be enough.
+        issues = margin_issues(StockMargins(x=30.0, y=5.0), AlignmentParams(),
+                               ClampingParams(bolts_enabled=False),
+                               WedgeParams(enabled=False))
+        self.assertEqual(len(issues), 1)
+
+    def test_no_in_plane_fixture_needs_margin(self):
+        # Process ports are not asked for any: a port is bored in to reach the
+        # part, so the margin cannot bound it.
+        self.assertEqual(
+            required_in_plane_margin(AlignmentParams(enabled=False),
+                                     ClampingParams(bolts_enabled=False),
+                                     WedgeParams(enabled=False)),
+            0.0)
+
+    def test_an_explicit_footprint_replaces_the_comparison(self):
+        issues = margin_issues(
+            StockMargins(x=5.0, y=5.0, explicit_footprint=True),
+            AlignmentParams(), ClampingParams(), WedgeParams())
+        self.assertEqual(len(issues), 1)
+        self.assertIn("PartingStockFootprint", issues[0])
+
+
 class TestMouldFixtureFeature(TestFreeCADFP):
     """The feature object, against a real MouldAnalysis holding stand-in halves.
 
@@ -633,13 +686,19 @@ class TestMouldFixtureFeature(TestFreeCADFP):
     exercised for real; only the geometry is synthetic.
     """
 
-    def _mould_with_stand_in_halves(self):
+    def _mould_with_stand_in_halves(self, margin=40.0):
         from Composites.features.MouldAnalysis import MouldAnalysisFP
 
         source = self.doc.addObject("Part::Feature", "Source")
         source.Shape = Part.makeBox(20.0, 20.0, 20.0)
         mould = self.doc.addObject("Part::FeaturePython", "Mould")
         MouldAnalysisFP(mould, source)
+        # The default fixtures need 28 mm at their widest - a corner pin at a
+        # 20 mm edge offset plus the 8 mm radius of the bush socket - so 40 mm
+        # is a mould that needs no fixture-driven resize. Set before the first
+        # recompute, because these margins are part of the analysis's guard.
+        mould.PartingStockMarginX = margin
+        mould.PartingStockMarginY = margin
         # Let the real analysis run to its current (failing) conclusion first,
         # so its recompute guard is armed and a later recompute cannot clobber
         # the stand-in halves.
@@ -659,6 +718,18 @@ class TestMouldFixtureFeature(TestFreeCADFP):
         self.doc.recompute()
         return fixture
 
+    def _add_fixture_without_recompute(self, mould, name="Fixture"):
+        """Create the fixture object without building it.
+
+        The post-create resize is asserted on the mould's own properties, and a
+        recompute would run the analysis again over the stand-in halves.
+        """
+        from Composites.features.MouldFixture import MouldFixtureFP
+
+        fixture = self.doc.addObject("Part::FeaturePython", name)
+        MouldFixtureFP(fixture, mould)
+        return fixture
+
     def test_feature_cuts_both_halves(self):
         mould, lower, upper = self._mould_with_stand_in_halves()
         fixture = self._make_fixture(mould)
@@ -668,6 +739,39 @@ class TestMouldFixtureFeature(TestFreeCADFP):
         # A clean build reports no issues; the readable account is the summary.
         self.assertEqual(fixture.FixtureIssues, [])
         self.assertIn("alignment holes", fixture.FixtureSummary)
+
+    def test_build_reports_short_margins_without_writing_them(self):
+        mould, _lower, _upper = self._mould_with_stand_in_halves(margin=5.0)
+        fixture = self._make_fixture(mould)
+        self.assertEqual(fixture.FixtureStatus, "Ready", fixture.FixtureSummary)
+        self.assertTrue(
+            any("PartingStockMarginX/Y" in issue for issue in fixture.FixtureIssues),
+            fixture.FixtureIssues,
+        )
+        # Reported, not applied: once the fixture exists it does not resize the
+        # mould behind the user's back.
+        self.assertAlmostEqual(mould.PartingStockMarginX, 5.0, delta=1e-9)
+        self.assertAlmostEqual(mould.PartingStockMarginY, 5.0, delta=1e-9)
+
+    def test_post_create_raises_the_margins_for_the_fixtures(self):
+        from Composites.features.MouldFixture import CompositeMouldFixtureCommand
+
+        mould, _lower, _upper = self._mould_with_stand_in_halves(margin=5.0)
+        fixture = self._add_fixture_without_recompute(mould)
+        CompositeMouldFixtureCommand().post_create(fixture)
+        # The widest fixture is the corner pin and bush: a 20 mm edge offset
+        # plus the 8 mm radius of the 16 mm bush socket.
+        self.assertAlmostEqual(mould.PartingStockMarginX, 28.0, delta=1e-9)
+        self.assertAlmostEqual(mould.PartingStockMarginY, 28.0, delta=1e-9)
+
+    def test_post_create_leaves_ample_margins_alone(self):
+        from Composites.features.MouldFixture import CompositeMouldFixtureCommand
+
+        mould, _lower, _upper = self._mould_with_stand_in_halves(margin=40.0)
+        fixture = self._add_fixture_without_recompute(mould)
+        CompositeMouldFixtureCommand().post_create(fixture)
+        self.assertAlmostEqual(mould.PartingStockMarginX, 40.0, delta=1e-9)
+        self.assertAlmostEqual(mould.PartingStockMarginY, 40.0, delta=1e-9)
 
     def test_feature_reports_a_mould_without_halves(self):
         mould, _lower, _upper = self._mould_with_stand_in_halves()

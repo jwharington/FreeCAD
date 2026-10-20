@@ -14,6 +14,7 @@ its outputs.
 
 import FreeCAD
 import Part
+from FreeCAD import Console
 
 from .. import MOULD_FIXTURE_TOOL_ICON, is_comp_type
 from ..tools.mould_fixture import (
@@ -21,8 +22,10 @@ from ..tools.mould_fixture import (
     ClampingParams,
     FixtureRequest,
     PortParams,
+    StockMargins,
     WedgeParams,
     build_fixtures,
+    required_in_plane_margin,
 )
 from ..tools.mould_fixture import PORT_HALVES as PORT_HALF_OPTIONS
 from .Command import BaseCommand
@@ -67,6 +70,86 @@ def mould_halves(source):
     if source is None:
         return None, None
     return getattr(source, "MouldHalfA", None), getattr(source, "MouldHalfB", None)
+
+
+def stock_margins(source):
+    """The mould's declared in-plane stock, or ``None`` when it declares none."""
+    margin_x = getattr(source, "PartingStockMarginX", None)
+    margin_y = getattr(source, "PartingStockMarginY", None)
+    if margin_x is None or margin_y is None:
+        return None
+    footprint = getattr(source, "PartingStockFootprint", None)
+    explicit = footprint is not None and (footprint.x != 0.0 or footprint.y != 0.0)
+    return StockMargins(x=float(margin_x), y=float(margin_y),
+                        explicit_footprint=explicit)
+
+
+def fixture_params(fp):
+    """The fixture properties as the tool's parameter objects."""
+    return (
+        AlignmentParams(
+            enabled=bool(fp.AlignmentPins),
+            count=int(fp.PinCount),
+            pin_diameter=float(fp.PinDiameter),
+            bush_diameter=float(fp.BushDiameter),
+            depth=float(fp.PinDepth),
+            edge_offset=float(fp.PinEdgeOffset),
+            pin_half=fp.PinHalf,
+        ),
+        ClampingParams(
+            bolts_enabled=bool(fp.ClampBolts),
+            bolt_count=int(fp.BoltCount),
+            bolt_hole_diameter=float(fp.BoltHoleDiameter),
+            bolt_tapped_diameter=float(fp.BoltTappedDiameter),
+            bolt_depth=float(fp.BoltDepth),
+            bolt_edge_offset=float(fp.BoltEdgeOffset),
+            ears_enabled=bool(fp.ClampEars),
+            ear_count=int(fp.ClampEarCount),
+            ear_width=float(fp.ClampEarWidth),
+            ear_height=float(fp.ClampEarHeight),
+            ear_depth=float(fp.ClampEarDepth),
+        ),
+        PortParams(
+            enabled=bool(fp.ProcessPorts),
+            count=int(fp.PortCount),
+            diameter=float(fp.PortDiameter),
+            depth=float(fp.PortDepth),
+            half=fp.PortHalf,
+            offset_from_mating=float(fp.PortMatingOffset),
+        ),
+        WedgeParams(
+            enabled=bool(fp.PartingWedges),
+            count=int(fp.WedgeCount),
+            width=float(fp.WedgeWidth),
+            height=float(fp.WedgeHeight),
+            depth=float(fp.WedgeDepth),
+        ),
+    )
+
+
+def reserve_stock_margins(source, fixture):
+    """Raise the mould's in-plane margins to fit this fixture's own sizes.
+
+    Returns ``[(property, before, after)]`` for the margins raised, empty when
+    the mould already declares enough stock or its margins do not apply.
+
+    For the command to run once, when the fixture is created: the margins are
+    part of the mould's recompute guard, so raising them re-runs its whole
+    parting analysis, and a user's later size edits are reported rather than
+    resizing the mould under them.
+    """
+    margins = stock_margins(source)
+    if margins is None or margins.explicit_footprint:
+        return []
+    alignment, clamping, _ports, wedges = fixture_params(fixture)
+    needed = required_in_plane_margin(alignment, clamping, wedges)
+    raised = []
+    for name, before in (("PartingStockMarginX", margins.x),
+                         ("PartingStockMarginY", margins.y)):
+        if needed > before:
+            setattr(source, name, needed)
+            raised.append((name, before, needed))
+    return raised
 
 
 class MouldFixtureFP(CompositePartFP):
@@ -184,47 +267,6 @@ class MouldFixtureFP(CompositePartFP):
 
         super().__init__(obj)
 
-    def _params(self, fp):
-        return (
-            AlignmentParams(
-                enabled=bool(fp.AlignmentPins),
-                count=int(fp.PinCount),
-                pin_diameter=float(fp.PinDiameter),
-                bush_diameter=float(fp.BushDiameter),
-                depth=float(fp.PinDepth),
-                edge_offset=float(fp.PinEdgeOffset),
-                pin_half=fp.PinHalf,
-            ),
-            ClampingParams(
-                bolts_enabled=bool(fp.ClampBolts),
-                bolt_count=int(fp.BoltCount),
-                bolt_hole_diameter=float(fp.BoltHoleDiameter),
-                bolt_tapped_diameter=float(fp.BoltTappedDiameter),
-                bolt_depth=float(fp.BoltDepth),
-                bolt_edge_offset=float(fp.BoltEdgeOffset),
-                ears_enabled=bool(fp.ClampEars),
-                ear_count=int(fp.ClampEarCount),
-                ear_width=float(fp.ClampEarWidth),
-                ear_height=float(fp.ClampEarHeight),
-                ear_depth=float(fp.ClampEarDepth),
-            ),
-            PortParams(
-                enabled=bool(fp.ProcessPorts),
-                count=int(fp.PortCount),
-                diameter=float(fp.PortDiameter),
-                depth=float(fp.PortDepth),
-                half=fp.PortHalf,
-                offset_from_mating=float(fp.PortMatingOffset),
-            ),
-            WedgeParams(
-                enabled=bool(fp.PartingWedges),
-                count=int(fp.WedgeCount),
-                width=float(fp.WedgeWidth),
-                height=float(fp.WedgeHeight),
-                depth=float(fp.WedgeDepth),
-            ),
-        )
-
     def _input_signature(self, fp):
         """Everything that defines the fixtures, as one comparable tuple.
 
@@ -247,7 +289,7 @@ class MouldFixtureFP(CompositePartFP):
         draw = getattr(source, "BestDrawDirection", None)
         draw_key = None if draw is None else (round(draw.x, 6), round(draw.y, 6),
                                              round(draw.z, 6))
-        return (half_keys, parting_key, draw_key, self._params(fp))
+        return (half_keys, parting_key, draw_key, fixture_params(fp))
 
     def execute(self, fp):
         signature = self._input_signature(fp)
@@ -272,7 +314,7 @@ class MouldFixtureFP(CompositePartFP):
         if draw is None:
             draw = FreeCAD.Vector(0, 0, 1)
         parting = getattr(source, "PartingSurface", None)
-        alignment, clamping, ports, wedges = self._params(fp)
+        alignment, clamping, ports, wedges = fixture_params(fp)
         result = build_fixtures(
             FixtureRequest(
                 lower=lower.Shape,
@@ -283,6 +325,7 @@ class MouldFixtureFP(CompositePartFP):
                 clamping=clamping,
                 ports=ports,
                 wedges=wedges,
+                stock_margins=stock_margins(source),
             )
         )
         fp.FixtureStatus = result["status"]
@@ -331,6 +374,19 @@ class CompositeMouldFixtureCommand(BaseCommand):
     instance_name = "MouldFixture"
     cls_fp = MouldFixtureFP
     cls_vp = ViewProviderMouldFixture
+
+    def post_create(self, fixture):
+        """Size the mould to receive the fixtures, before the first build."""
+        raised = reserve_stock_margins(fixture.Source, fixture)
+        if not raised:
+            return
+        changes = ", ".join(
+            f"{name} {before:.3f} -> {after:.3f} mm" for name, before, after in raised
+        )
+        Console.PrintWarning(
+            f"Mould fixtures: raised {changes} on {fixture.Source.Label} so the "
+            f"mould has the stock these fixtures need\n"
+        )
 
     def validate_selection(self, sel):
         lower, upper = mould_halves(sel.get("source"))
