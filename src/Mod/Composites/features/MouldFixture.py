@@ -85,14 +85,14 @@ class MouldFixtureFP(CompositePartFP):
                       "Cut alignment dowel and bush sockets into the halves.", True)
         _add_property(obj, "App::PropertyInteger", "PinCount",
                       "Number of dowel/bush pairs, 1-4, placed on the block corners.", 2)
-        _add_property(obj, "App::PropertyFloat", "PinDiameter",
-                      "Dowel pin socket diameter (mm), cut in the pin half.", 8.0)
-        _add_property(obj, "App::PropertyFloat", "BushDiameter",
-                      "Bush socket diameter (mm), cut in the bush half.", 16.0)
-        _add_property(obj, "App::PropertyFloat", "PinDepth",
-                      "Depth (mm) of each socket, measured from the mating surface.", 25.0)
-        _add_property(obj, "App::PropertyFloat", "PinEdgeOffset",
-                      "Inset (mm) of each pin from the two block walls at its corner.", 20.0)
+        _add_property(obj, "App::PropertyLength", "PinDiameter",
+                      "Dowel pin socket diameter, cut in the pin half.", 8.0)
+        _add_property(obj, "App::PropertyLength", "BushDiameter",
+                      "Bush socket diameter, cut in the bush half.", 16.0)
+        _add_property(obj, "App::PropertyLength", "PinDepth",
+                      "Depth of each socket, measured from the mating surface.", 25.0)
+        _add_property(obj, "App::PropertyLength", "PinEdgeOffset",
+                      "Inset of each pin from the two block walls at its corner.", 20.0)
         _add_enumeration(obj, "PinHalf",
                          "Half that carries the dowel pin; the other carries the bush.",
                          PIN_HALVES, "Lower")
@@ -102,40 +102,40 @@ class MouldFixtureFP(CompositePartFP):
                       "a tapped hole in the lower.", True)
         _add_property(obj, "App::PropertyInteger", "BoltCount",
                       "Number of clamp bolts, equally spaced around the block perimeter.", 4)
-        _add_property(obj, "App::PropertyFloat", "BoltHoleDiameter",
-                      "Bolt clearance hole diameter (mm), cut through the upper half.", 11.0)
-        _add_property(obj, "App::PropertyFloat", "BoltTappedDiameter",
-                      "Tapped core hole diameter (mm), cut into the lower half.", 8.5)
-        _add_property(obj, "App::PropertyFloat", "BoltDepth",
-                      "Depth (mm) of each tapped hole from the mating surface.", 20.0)
-        _add_property(obj, "App::PropertyFloat", "BoltEdgeOffset",
-                      "Inset (mm) of the bolt pattern from the block walls.", 15.0)
+        _add_property(obj, "App::PropertyLength", "BoltHoleDiameter",
+                      "Bolt clearance hole diameter, cut through the upper half.", 11.0)
+        _add_property(obj, "App::PropertyLength", "BoltTappedDiameter",
+                      "Tapped core hole diameter, cut into the lower half.", 8.5)
+        _add_property(obj, "App::PropertyLength", "BoltDepth",
+                      "Depth of each tapped hole from the mating surface.", 20.0)
+        _add_property(obj, "App::PropertyLength", "BoltEdgeOffset",
+                      "Inset of the bolt pattern from the block walls.", 15.0)
         _add_property(obj, "App::PropertyBool", "ClampEars",
                       "Cut clamp-ear notches into the block walls at the mating plane, "
                       "so a clamp or wedge can grip the halves.", False)
         _add_property(obj, "App::PropertyInteger", "ClampEarCount",
                       "Number of clamp-ear notches around the block perimeter.", 4)
-        _add_property(obj, "App::PropertyFloat", "ClampEarWidth",
-                      "Clamp-ear notch width (mm), along the block wall.", 30.0)
-        _add_property(obj, "App::PropertyFloat", "ClampEarHeight",
-                      "Clamp-ear notch height (mm), across the mating plane.", 15.0)
-        _add_property(obj, "App::PropertyFloat", "ClampEarDepth",
-                      "Clamp-ear notch depth (mm), into the block from the wall.", 12.0)
+        _add_property(obj, "App::PropertyLength", "ClampEarWidth",
+                      "Clamp-ear notch width, along the block wall.", 30.0)
+        _add_property(obj, "App::PropertyLength", "ClampEarHeight",
+                      "Clamp-ear notch height, across the mating plane.", 15.0)
+        _add_property(obj, "App::PropertyLength", "ClampEarDepth",
+                      "Clamp-ear notch depth, into the block from the wall.", 12.0)
 
         _add_property(obj, "App::PropertyBool", "ProcessPorts",
                       "Bore vacuum, ejector and thermocouple ports in from the block "
                       "walls.", True)
         _add_property(obj, "App::PropertyInteger", "PortCount",
                       "Number of process ports around the block perimeter.", 2)
-        _add_property(obj, "App::PropertyFloat", "PortDiameter",
-                      "Process port bore diameter (mm).", 6.0)
-        _add_property(obj, "App::PropertyFloat", "PortDepth",
-                      "Process port bore depth (mm) into the block from the wall. A "
-                      "bore that reaches the cavity breaks into it; one that does not "
-                      "stays a blind pocket.", 40.0)
-        _add_property(obj, "App::PropertyFloat", "PortMatingOffset",
-                      "Offset (mm) of a bore from the mating plane, so it lies in one "
-                      "half rather than being split by the parting surface.", 8.0)
+        _add_property(obj, "App::PropertyLength", "PortDiameter",
+                      "Process port bore diameter.", 6.0)
+        _add_property(obj, "App::PropertyLength", "PortDepth",
+                      "Process port bore depth into the block from the wall. A bore "
+                      "that reaches the cavity breaks into it; one that does not stays "
+                      "a blind pocket.", 40.0)
+        _add_property(obj, "App::PropertyLength", "PortMatingOffset",
+                      "Offset of a bore from the mating plane, so it lies in one half "
+                      "rather than being split by the parting surface.", 8.0)
         _add_enumeration(obj, "PortHalf",
                          "Half, or halves, each process port is bored into.",
                          PORT_HALF_OPTIONS, "Lower")
@@ -145,12 +145,12 @@ class MouldFixtureFP(CompositePartFP):
                       "mating plane, so a driven wedge separates the halves.", True)
         _add_property(obj, "App::PropertyInteger", "WedgeCount",
                       "Number of parting wedges around the block perimeter.", 4)
-        _add_property(obj, "App::PropertyFloat", "WedgeWidth",
-                      "Parting wedge width (mm), along the block wall.", 20.0)
-        _add_property(obj, "App::PropertyFloat", "WedgeHeight",
-                      "Parting wedge height (mm), across the mating plane.", 12.0)
-        _add_property(obj, "App::PropertyFloat", "WedgeDepth",
-                      "Parting wedge depth (mm), into the block from the wall.", 15.0)
+        _add_property(obj, "App::PropertyLength", "WedgeWidth",
+                      "Parting wedge width, along the block wall.", 20.0)
+        _add_property(obj, "App::PropertyLength", "WedgeHeight",
+                      "Parting wedge height, across the mating plane.", 12.0)
+        _add_property(obj, "App::PropertyLength", "WedgeDepth",
+                      "Parting wedge depth, into the block from the wall.", 15.0)
 
         for label in ("Lower", "Upper"):
             obj.addProperty(
