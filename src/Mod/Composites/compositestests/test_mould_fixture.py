@@ -37,13 +37,27 @@ import FreeCAD
 import Part
 
 from Composites.tools.mould_fixture import (
+    ALIGN_KIND,
+    BOLT_OFFSET_PROPERTY,
+    CLAMP_KIND,
+    INTERFERENCE_VOLUME_TOL,
+    PIN_OFFSET_PROPERTY,
+    SKIRT_CLEARANCE_FACTOR,
     AlignmentParams,
+    BlockFrame,
     ClampingParams,
     FixtureRequest,
+    MouldBlock,
     MouldFixtureError,
     PortParams,
     StockMargins,
     WedgeParams,
+    _alignment_tools,
+    _clamping_tools,
+    _clearance_issues,
+    _interference_issues,
+    _pin_zones,
+    _summary,
     _wall_normals,
     block_frame,
     build_fixtures,
@@ -56,7 +70,11 @@ from Composites.tools.mould_fixture import (
 from .test_base import TestFreeCADFP
 
 # Block dimensions in the block's own frame, and the cavity inside it.
-BLOCK = (100.0, 80.0, 60.0)
+# Wide enough for the default bolts under the skirt clearance rule: a bolt at
+# a 15 mm inset with a 4.25 mm radius needs 8.5 mm of gap to the part outline,
+# and the 40 x 30 cavity is rotated 45 degrees in plane, so its reach along the
+# block axes is 35/sqrt(2) = 24.7 mm and the skirt is (BLOCK - 24.7) / 2.
+BLOCK = (140.0, 120.0, 60.0)
 SPLIT_Z = 30.0
 CAVITY_HALF = (20.0, 15.0)
 CAVITY_Z = (20.0, 40.0)
@@ -339,11 +357,18 @@ class TestFixtureLayouts(unittest.TestCase):
         self.assertEqual(first, second)
 
     def test_bolts_and_wedges_do_not_share_a_station(self):
-        bolts = perimeter_stations(self.frame, 4, 15.0, phase=0.5)
+        # The bolt pattern's phase is chosen by the build, so the layout is read
+        # from one rather than assuming where the pattern starts.
+        request = _only(bolts=True, wedges=True)
+        request.lower, request.upper = self.lower, self.upper
+        request.draw = self.draw
+        request.parting_surface = self.parting
+        result = build_fixtures(request)
+        self.assertTrue(result["bolt_stations"])
         wedges = perimeter_stations(self.frame, 4, 0.0, phase=0.0)
-        for bolt in bolts:
+        for x, y in result["bolt_stations"]:
             for wedge in wedges:
-                bolt_point = self.frame.point(bolt.x, bolt.y, 0.0)
+                bolt_point = self.frame.point(x, y, 0.0)
                 wedge_point = self.frame.point(wedge.x, wedge.y, 0.0)
                 self.assertGreater(bolt_point.distanceToPoint(wedge_point), 10.0)
 
@@ -392,7 +417,7 @@ class TestFixtureCuts(unittest.TestCase):
         # across the block and every lookup must have crossed it.
         self.assertEqual(result["mating_fallbacks"], 0)
         geometry = block_frame(result["lower_shape"], result["upper_shape"], self.draw)
-        for x, y in corner_positions(geometry, 2, 20.0):
+        for x, y in corner_positions(geometry, 2, self._alignment().edge_offset):
             z_mate = self._mating_height(x, y, geometry)
             # A dowel socket in the pin (lower) half.
             probe = _probe(geometry, x, y, z_mate - 12.0, z_mate - 3.0, 2.0)
@@ -412,7 +437,8 @@ class TestFixtureCuts(unittest.TestCase):
         result = build_fixtures(request)
         geometry = block_frame(result["lower_shape"], result["upper_shape"], self.draw)
         heights = [self._mating_height(x, y, geometry)
-                   for x, y in corner_positions(geometry, 2, 20.0)]
+                   for x, y in corner_positions(geometry, 2,
+                                                self._alignment().edge_offset)]
         self.assertGreater(abs(heights[0] - heights[1]), 1.0)
 
     def test_over_deep_socket_is_reported(self):
@@ -441,7 +467,7 @@ class TestFixtureCuts(unittest.TestCase):
         request.alignment = self._alignment()
         result = build_fixtures(request)
         geometry = block_frame(result["lower_shape"], result["upper_shape"], self.draw)
-        x, y = corner_positions(geometry, 2, 20.0)[0]
+        x, y = corner_positions(geometry, 2, self._alignment().edge_offset)[0]
         z_mate = self._mating_height(x, y, geometry)
         # Just outside the pin diameter (8 mm) but inside the bush diameter
         # (16 mm): material must be gone from the patch above the mating plane.
@@ -457,17 +483,19 @@ class TestFixtureCuts(unittest.TestCase):
         self.assertEqual(result["status"], "Ready", result["summary"])
         self.assertEqual(result["bolt_holes"], 4)
         geometry = block_frame(result["lower_shape"], result["upper_shape"], self.draw)
-        for station in perimeter_stations(self.frame, 4, 15.0, phase=0.5):
-            z_mate = self._mating_height(station.x, station.y, geometry)
+        # The pattern's phase is chosen by the build, so the stations are read
+        # from the result rather than recomputed at a guessed phase.
+        for x, y in result["bolt_stations"]:
+            z_mate = self._mating_height(x, y, geometry)
             # The clearance hole reaches the upper cap face.
-            probe = _probe(geometry, station.x, station.y, z_mate + 0.5,
+            probe = _probe(geometry, x, y, z_mate + 0.5,
                            geometry.z_max - 0.5, 3.0)
             self.assertLess(_material(result["upper_shape"], probe), PROBE_TOL)
             self.assertGreater(_material(self.upper, probe), 100.0)
             # The tapped hole in the lower half does not break out of the
             # bottom face: below the hole's 20 mm floor the material must be
             # untouched, so the probe reads exactly what the original had.
-            probe = _probe(geometry, station.x, station.y, geometry.z_min + 0.5,
+            probe = _probe(geometry, x, y, geometry.z_min + 0.5,
                            z_mate - 20.5, 2.0)
             untouched = _material(self.lower, probe)
             self.assertGreater(untouched, 20.0)
@@ -549,16 +577,51 @@ class TestFixtureCuts(unittest.TestCase):
         for recovered, original in zip(rebuilt.size, self.frame.size):
             self.assertAlmostEqual(recovered, original, delta=1e-9)
 
-    def test_no_parting_surface_falls_back_and_says_so(self):
-        request = _only(alignment=True)
+    def test_nothing_to_measure_from_falls_back_and_says_so(self):
+        """With neither a parting surface nor a half, the mid-height is used.
+
+        The fallback is the last resort rather than the first: a missing parting
+        surface no longer degrades anything, because the lower half's own top
+        face carries the interface and varies with position. It is reached only
+        when there is nothing at all to section, so this pins it there - on the
+        block - and the summary wording that carries the count.
+        """
+        frame = block_frame(self.lower, self.upper, self.draw)
+        block = MouldBlock(frame=frame, parting_surface=None, lower=None)
+        self.assertAlmostEqual(block.mating_height(0.0, 0.0), frame.z_mid)
+        self.assertEqual(block.mating_fallbacks, 1)
+        self.assertIn("mid-height", _summary(
+            {"alignment_holes": 0, "bolt_holes": 0, "clamp_notches": 0,
+             "port_bores": 0, "wedge_count": 0, "mating_fallbacks": 1,
+             "issues": []}, frame))
+
+    def test_bolts_are_placed_clear_of_the_corner_pin_sockets(self):
+        """The bolt pattern shifts so it does not cut into the sockets.
+
+        Default pins sit on the block corners and default bolts on the block
+        perimeter, which met on the corner stations: 2.66 mm of interference on
+        two of the four bolts, worse in the upper half where the bush socket is
+        the larger of the pair. The pattern stays equally spaced; only where it
+        starts moves.
+        """
+        request = _only(alignment=True, bolts=True)
         request.lower = self.lower
         request.upper = self.upper
         request.draw = self.draw
-        request.parting_surface = None
         result = build_fixtures(request)
         self.assertEqual(result["status"], "Ready", result["summary"])
-        self.assertGreater(result["mating_fallbacks"], 0)
-        self.assertIn("mid-height", result["summary"])
+        self.assertEqual([issue for issue in result["issues"] if "share" in issue], [])
+
+        # Asserted from the tools themselves, not from the report above.
+        frame = block_frame(self.lower, self.upper, self.draw)
+        mould = MouldBlock(frame=frame, parting_surface=None, lower=self.lower)
+        pins, _pins_upper, _holes = _alignment_tools(mould, AlignmentParams())
+        bolts, _bolts_upper, _bolt_holes, _notches, _stations = _clamping_tools(
+            mould, ClampingParams(), _pin_zones(frame, AlignmentParams()))
+        for pin in pins:
+            for bolt in bolts:
+                self.assertLessEqual(pin.common(bolt).Volume,
+                                     INTERFERENCE_VOLUME_TOL)
 
     def test_reversed_half_arguments_still_cut_the_right_half(self):
         straight = self._build(alignment=True)
@@ -626,15 +689,104 @@ class TestFixtureCuts(unittest.TestCase):
                                delta=1e-6)
 
 
+class TestFixtureInterference(unittest.TestCase):
+    """Fixtures cut into one half must not share material."""
+
+    def _cylinder(self, radius, x):
+        return Part.makeCylinder(radius, 20.0, FreeCAD.Vector(x, 0.0, 0.0))
+
+    def test_overlapping_fixtures_are_reported(self):
+        issues = _interference_issues([(ALIGN_KIND, self._cylinder(4.0, 0.0)),
+                                       (CLAMP_KIND, self._cylinder(4.0, 2.0))])
+        self.assertEqual(len(issues), 1)
+        self.assertIn(ALIGN_KIND, issues[0])
+        self.assertIn(CLAMP_KIND, issues[0])
+
+    def test_fixtures_that_miss_are_not_reported(self):
+        self.assertEqual(
+            _interference_issues([(ALIGN_KIND, self._cylinder(4.0, 0.0)),
+                                  (CLAMP_KIND, self._cylinder(4.0, 50.0))]),
+            [])
+
+    def test_fixtures_that_merely_touch_are_not_reported(self):
+        # Tangent cylinders share no material; only real overlap counts.
+        self.assertEqual(
+            _interference_issues([(ALIGN_KIND, self._cylinder(4.0, 0.0)),
+                                  (CLAMP_KIND, self._cylinder(4.0, 8.0))]),
+            [])
+
+
+class TestSkirtClearance(unittest.TestCase):
+    """A diameter of web between every hole and both edges of the skirt.
+
+    The skirt is the material between the part outline (its inner edge) and the
+    block wall (its outer edge); a pin or bolt socket keeps
+    ``SKIRT_CLEARANCE_FACTOR`` of its own radius of gap from every one of those,
+    and from every other socket. Reported rather than cut thinner, because the
+    fix is a wider offset or a smaller hole.
+    """
+
+    def _frame(self):
+        return BlockFrame(x_axis=X_AXIS, y_axis=Y_AXIS, z_axis=Z_AXIS,
+                          x_min=0.0, x_max=100.0, y_min=0.0, y_max=100.0,
+                          z_min=0.0, z_max=50.0)
+
+    def _square_outline(self, low=40.0, high=60.0):
+        corners = [(low, low), (high, low), (high, high), (low, high)]
+        return [(ax, ay, bx, by)
+                for (ax, ay), (bx, by) in zip(corners, corners[1:] + corners[:1])]
+
+    def test_a_socket_too_close_to_the_wall_is_reported(self):
+        issues = _clearance_issues(self._frame(), [],
+                                   [(ALIGN_KIND, PIN_OFFSET_PROPERTY, 5.0, 50.0, 4.0)])
+        self.assertEqual(len(issues), 1)
+        self.assertIn("block wall", issues[0])
+        self.assertIn(PIN_OFFSET_PROPERTY, issues[0])
+
+    def test_a_socket_too_close_to_the_part_outline_is_reported(self):
+        issues = _clearance_issues(self._frame(), self._square_outline(),
+                                   [(CLAMP_KIND, BOLT_OFFSET_PROPERTY, 50.0, 70.0, 4.0)])
+        self.assertEqual(len(issues), 1)
+        self.assertIn("part outline", issues[0])
+        self.assertIn(BOLT_OFFSET_PROPERTY, issues[0])
+
+    def test_sockets_too_close_to_each_other_are_reported(self):
+        issues = _clearance_issues(
+            self._frame(), [],
+            [(ALIGN_KIND, PIN_OFFSET_PROPERTY, 30.0, 50.0, 4.0),
+             (CLAMP_KIND, BOLT_OFFSET_PROPERTY, 40.0, 50.0, 4.0)])
+        self.assertEqual(len(issues), 1)
+        self.assertIn(ALIGN_KIND, issues[0])
+        self.assertIn(CLAMP_KIND, issues[0])
+
+    def test_sockets_with_a_diameter_of_web_are_not_reported(self):
+        self.assertEqual(_clearance_issues(
+            self._frame(), self._square_outline(),
+            [(ALIGN_KIND, PIN_OFFSET_PROPERTY, 20.0, 50.0, 4.0),
+             (CLAMP_KIND, BOLT_OFFSET_PROPERTY, 80.0, 50.0, 4.0)]), [])
+
+    def test_the_rule_is_a_diameter_of_web(self):
+        # A radius-4 socket needs 8 mm of gap, so its centre needs x >= 12.
+        self.assertEqual(SKIRT_CLEARANCE_FACTOR, 2.0)
+        frame = self._frame()
+        issues = _clearance_issues(
+            frame, [],
+            [(ALIGN_KIND, PIN_OFFSET_PROPERTY, 11.9, 50.0, 4.0)])
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(_clearance_issues(
+            frame, [],
+            [(ALIGN_KIND, PIN_OFFSET_PROPERTY, 12.1, 50.0, 4.0)]), [])
+
+
 class TestStockMargins(unittest.TestCase):
     """The stock a mould declares, against the stock its fixtures need."""
 
     def test_required_margin_is_the_widest_enabled_fixture(self):
-        # Defaults: pins 20 + 8, bolts 15 + 5.5, wedges 15; the ears are off.
+        # Defaults: pins 24 + 8, bolts 15 + 4.25, wedges 15; the ears are off.
         self.assertAlmostEqual(
             required_in_plane_margin(AlignmentParams(), ClampingParams(),
                                      WedgeParams()),
-            28.0, delta=1e-9)
+            32.0, delta=1e-9)
 
     def test_short_margins_name_the_fixture_and_the_properties(self):
         issues = margin_issues(StockMargins(x=5.0, y=5.0), AlignmentParams(),
@@ -642,11 +794,11 @@ class TestStockMargins(unittest.TestCase):
                                WedgeParams(enabled=False))
         self.assertEqual(len(issues), 1)
         self.assertIn("the align pin and bush sockets", issues[0])
-        self.assertIn("28.000", issues[0])
+        self.assertIn("32.000", issues[0])
         self.assertIn("PartingStockMarginX/Y", issues[0])
 
     def test_ample_margins_report_nothing(self):
-        self.assertEqual(margin_issues(StockMargins(x=30.0, y=30.0),
+        self.assertEqual(margin_issues(StockMargins(x=35.0, y=35.0),
                                        AlignmentParams(), ClampingParams(),
                                        WedgeParams()),
                          [])
@@ -694,7 +846,7 @@ class TestMouldFixtureFeature(TestFreeCADFP):
         mould = self.doc.addObject("Part::FeaturePython", "Mould")
         MouldAnalysisFP(mould, source)
         # The default fixtures need 28 mm at their widest - a corner pin at a
-        # 20 mm edge offset plus the 8 mm radius of the bush socket - so 40 mm
+        # 24 mm edge offset plus the 8 mm radius of the bush socket - so 40 mm
         # is a mould that needs no fixture-driven resize. Set before the first
         # recompute, because these margins are part of the analysis's guard.
         mould.PartingStockMarginX = margin
@@ -759,10 +911,10 @@ class TestMouldFixtureFeature(TestFreeCADFP):
         mould, _lower, _upper = self._mould_with_stand_in_halves(margin=5.0)
         fixture = self._add_fixture_without_recompute(mould)
         CompositeMouldFixtureCommand().post_create(fixture)
-        # The widest fixture is the corner pin and bush: a 20 mm edge offset
+        # The widest fixture is the corner pin and bush: a 24 mm edge offset
         # plus the 8 mm radius of the 16 mm bush socket.
-        self.assertAlmostEqual(mould.PartingStockMarginX, 28.0, delta=1e-9)
-        self.assertAlmostEqual(mould.PartingStockMarginY, 28.0, delta=1e-9)
+        self.assertAlmostEqual(mould.PartingStockMarginX, 32.0, delta=1e-9)
+        self.assertAlmostEqual(mould.PartingStockMarginY, 32.0, delta=1e-9)
 
     def test_post_create_leaves_ample_margins_alone(self):
         from Composites.features.MouldFixture import CompositeMouldFixtureCommand

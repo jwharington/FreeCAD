@@ -175,7 +175,10 @@ class MouldFixtureFP(CompositePartFP):
         _add_property(obj, "App::PropertyLength", "PinDepth",
                       "Depth of each socket, measured from the mating surface.", 25.0)
         _add_property(obj, "App::PropertyLength", "PinEdgeOffset",
-                      "Inset of each pin from the two block walls at its corner.", 20.0)
+                      "Inset of each pin from the two block walls at its corner. "
+                      "The socket keeps 2R of gap from the wall, so the centre "
+                      "stands 3R in: 24 mm for the default 8 mm pin and 16 mm "
+                      "bush. Less than that is reported rather than cut.", 24.0)
         _add_enumeration(obj, "PinHalf",
                          "Half that carries the dowel pin; the other carries the bush.",
                          PIN_HALVES, "Lower")
@@ -192,7 +195,10 @@ class MouldFixtureFP(CompositePartFP):
         _add_property(obj, "App::PropertyLength", "BoltDepth",
                       "Depth of each tapped hole from the mating surface.", 20.0)
         _add_property(obj, "App::PropertyLength", "BoltEdgeOffset",
-                      "Inset of the bolt pattern from the block walls.", 15.0)
+                      "Inset of the bolt pattern from the block walls. The "
+                      "clearance hole keeps 2R of gap from the wall, so the "
+                      "pattern stands 3R in: 18 mm for the 11 mm clearance "
+                      "hole. Less than that is reported rather than cut.", 18.0)
         _add_property(obj, "App::PropertyBool", "ClampEars",
                       "Cut clamp-ear notches into the block walls at the mating plane, "
                       "so a clamp or wedge can grip the halves.", False)

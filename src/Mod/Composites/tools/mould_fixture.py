@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from itertools import combinations
 from FreeCAD import Vector
 import Part
 
@@ -58,6 +59,29 @@ MATING_PROBE_INSET = 0.5
 # Corner pattern order. Fixed so a given count always lands on the same
 # corners, whatever order OCCT enumerates the half's faces in.
 _CORNER_ORDER = ((-1.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (1.0, -1.0))
+
+# How finely the bolt pattern's phase is searched for one that clears the
+# alignment sockets and the skirt.
+BOLT_PHASE_SAMPLES = 72
+
+# Every hole keeps this multiple of its radius of gap from every other hole and
+# from both edges of the skirt: the part outline inboard, the block wall
+# outboard. A clear diameter of web is what keeps a socket from breaking into
+# the cavity or the wall, and what leaves the material between two holes
+# machinable.
+SKIRT_CLEARANCE_FACTOR = 2.0
+
+PIN_OFFSET_PROPERTY = "PinEdgeOffset"
+BOLT_OFFSET_PROPERTY = "BoltEdgeOffset"
+
+# Two fixtures cut into the same half count as interfering when they share this
+# much material. Above the noise of two solids that merely touch.
+INTERFERENCE_VOLUME_TOL = 1.0e-3
+
+ALIGN_KIND = "the align pin and bush sockets"
+CLAMP_KIND = "the clamp bolt holes and clamp-ear notches"
+PORT_KIND = "the process ports"
+WEDGE_KIND = "the parting wedges"
 
 STATUS_READY = "Ready"
 STATUS_FAIL = "Fail"
@@ -97,6 +121,16 @@ class BlockFrame:
 
     def point(self, x, y, z):
         return self.x_axis * x + self.y_axis * y + self.z_axis * z
+
+    def local(self, world):
+        """The block coordinates of a world point.
+
+        The axes are unit and mutually perpendicular and the extents are signed
+        distances from the world origin, so ``point`` is a projection and this is
+        its inverse: a dot with each axis.
+        """
+        return (world.dot(self.x_axis), world.dot(self.y_axis),
+                world.dot(self.z_axis))
 
     @property
     def x_mid(self):
@@ -140,7 +174,9 @@ class AlignmentParams:
     pin_diameter: float = 8.0
     bush_diameter: float = 16.0
     depth: float = 25.0
-    edge_offset: float = 20.0
+    # 3R for the default bush: the socket keeps 2R of gap from the wall, so a
+    # centre any closer to it breaks the skirt clearance rule.
+    edge_offset: float = 24.0
     pin_half: str = "Lower"
 
 
@@ -154,7 +190,9 @@ class ClampingParams:
     bolt_hole_diameter: float = 11.0
     bolt_tapped_diameter: float = 8.5
     bolt_depth: float = 20.0
-    bolt_edge_offset: float = 15.0
+    # 3R for the 11 mm clearance hole: the socket keeps 2R of gap from the wall,
+    # so a centre any closer to it breaks the skirt clearance rule.
+    bolt_edge_offset: float = 18.0
     ears_enabled: bool = False
     ear_count: int = 4
     ear_width: float = 30.0
@@ -222,55 +260,77 @@ class FixtureRequest:
 
 @dataclass(eq=False)
 class MouldBlock:
-    """A recovered block frame plus the parting surface that sits in it.
+    """A recovered block frame, the parting surface in it, and its lower half.
 
     ``mating_fallbacks`` counts how many fixture positions had to fall back to
-    the block mid-height because no parting surface crossed them, so the
-    approximation is reported rather than hidden.
+    the block mid-height because neither the parting surface nor the half gave a
+    crossing, so the approximation is reported rather than hidden.
     """
 
     frame: BlockFrame
     parting_surface: object = None
+    lower: object = None
     mating_fallbacks: int = 0
     breakthroughs: list = field(default_factory=list)
+    _mating_cache: dict = field(default_factory=dict, repr=False)
 
     def mating_height(self, x, y):
         """The z at which the two halves meet above ``(x, y)``.
 
-        The parting surface is non-planar in general, so the local mating
-        height is read by sectioning the draw-direction line through the point
-        with the surface's own geometry: a position-dependent height, not one
-        plane for the whole block.
+        The interface is not one plane: it varies with position, so the height
+        is measured per position, never assumed flat.
+
+        Two sources, in order. The parting surface, when the probe line crosses
+        it, gives the height directly. Otherwise the lower half does: its top
+        face *is* the interface, so sectioning it carries the same variation
+        and needs no assumption about how the solver reports its parting
+        geometry - a part line carried as a bare edge loop cannot be crossed by
+        a probe at all, because a line through the loop's interior meets the
+        surface the loop bounds, never one of the edges. A position where
+        neither gives a crossing falls back to the block mid-height and is
+        counted in ``mating_fallbacks``.
 
         The sample is taken ``MATING_PROBE_INSET`` inboard of the position, for
-        the wall-adjacent fixtures described there. A missing or non-crossing
-        surface falls back to the block mid-height and is counted in
-        ``mating_fallbacks``.
+        the wall-adjacent fixtures described there.
         """
+        key = (round(x, 6), round(y, 6))
+        if key in self._mating_cache:
+            return self._mating_cache[key]
+        height = self._measure_mating_height(x, y)
+        self._mating_cache[key] = height
+        return height
+
+    def _measure_mating_height(self, x, y):
+        """One measurement of the interface above ``(x, y)``."""
         frame = self.frame
         fallback = frame.z_mid
-        surface = self.parting_surface
-        if surface is None or surface.isNull():
-            self.mating_fallbacks += 1
-            return fallback
         sample_x, sample_y = self._inboard(x, y)
         low = frame.z_min - TOOL_OVERSHOOT
+        high = frame.z_max + TOOL_OVERSHOOT
         start = frame.point(sample_x, sample_y, low)
-        span = (frame.z_max - frame.z_min) + 2.0 * TOOL_OVERSHOOT
+        line = Part.makeLine(start, start + frame.z_axis * (high - low))
+
+        crossed = self._crossings(self.parting_surface, line, low, high)
+        if crossed:
+            return min(crossed, key=lambda height: abs(height - fallback))
+        crossed = self._crossings(self.lower, line, low, high)
+        if crossed:
+            # The lower half's top face, which is the interface itself.
+            return max(crossed)
+        self.mating_fallbacks += 1
+        return fallback
+
+    def _crossings(self, shape, line, low, high):
+        """The draw-axis heights where ``line`` meets ``shape`` inside the block."""
+        if shape is None or shape.isNull():
+            return []
         try:
-            section = surface.section(Part.makeLine(start, start + frame.z_axis * span))
+            section = shape.section(line)
         except Exception:
-            self.mating_fallbacks += 1
-            return fallback
-        heights = []
-        for vertex in section.Vertexes:
-            height = vertex.Point.dot(frame.z_axis)
-            if low <= height <= frame.z_max + TOOL_OVERSHOOT:
-                heights.append(height)
-        if not heights:
-            self.mating_fallbacks += 1
-            return fallback
-        return min(heights, key=lambda height: abs(height - fallback))
+            return []
+        return [vertex.Point.dot(self.frame.z_axis)
+                for vertex in section.Vertexes
+                if low <= vertex.Point.dot(self.frame.z_axis) <= high]
 
     def note_blind_socket(self, kind, z_mate, depth, into_lower):
         """Record a socket whose floor falls through a cap face.
@@ -620,21 +680,261 @@ def _alignment_tools(mould, params):
     return bush_tools, pin_tools, holes
 
 
-def _clamping_tools(mould, params):
-    """``(lower_tools, upper_tools, bolt_holes, notches)``."""
+def _bolt_tools(mould, params, phase):
+    """``(lower, upper, stations)`` for the bolt pattern at one phase.
+
+    Building a candidate pattern is cheap because the mating height is cached,
+    which is what lets the phase search try patterns against each other. The
+    blind-socket notes are left to the caller, so a candidate that is rejected
+    leaves nothing behind.
+    """
     frame = mould.frame
-    lower_tools, upper_tools = [], []
-    if params.bolts_enabled:
-        for station in perimeter_stations(frame, params.bolt_count,
-                                          params.bolt_edge_offset, phase=0.5):
-            z_mate = mould.mating_height(station.x, station.y)
-            upper_tools.append(_drill_through_upper(
-                frame, station.x, station.y, z_mate, params.bolt_hole_diameter))
-            mould.note_blind_socket("tapped bolt", z_mate, params.bolt_depth, True)
-            lower_tools.append(_drill_down(
-                frame, station.x, station.y, z_mate,
-                params.bolt_tapped_diameter, params.bolt_depth))
-    bolt_holes = len(lower_tools)
+    lower, upper, stations = [], [], []
+    for station in perimeter_stations(frame, params.bolt_count,
+                                      params.bolt_edge_offset, phase=phase):
+        stations.append(station)
+        z_mate = mould.mating_height(station.x, station.y)
+        upper.append(_drill_through_upper(frame, station.x, station.y, z_mate,
+                                          params.bolt_hole_diameter))
+        lower.append(_drill_down(frame, station.x, station.y, z_mate,
+                                 params.bolt_tapped_diameter, params.bolt_depth))
+    return lower, upper, stations
+
+
+def _clashes(tools, obstacles):
+    """Whether any of ``tools`` shares material with any of ``obstacles``."""
+    for tool in tools:
+        for obstacle in obstacles:
+            if _shared_volume(tool, obstacle) > INTERFERENCE_VOLUME_TOL:
+                return True
+    return False
+
+
+def _bolt_station_phase(mould, params, pin_zones, segments, obstacles=()):
+    """The equally-spaced perimeter phase the bolt pattern can be laid out at.
+
+    The bolt pattern is one phase around the block, so a single shift moves
+    every bolt and the stations stay equally spaced; only where the pattern
+    starts is chosen. Candidates are tried nearest the intended 0.5 first, and
+    the first that both obeys the skirt clearance rule and cuts into no fixture
+    already placed - a wedge, a bore, an ear - wins. Shifting the pattern to
+    clear the pins is exactly what pushed it into the wedges before this.
+
+    When no phase is clear, the one with the most room is taken and the
+    shortfall is reported rather than hidden.
+
+    ``pin_zones`` is ``(x, y, radius)`` per socket and ``segments`` the part
+    outline, both in frame coordinates. ``obstacles`` are the tools already
+    placed.
+    """
+    if params.bolt_count < 1:
+        return 0.5
+    frame = mould.frame
+    bolt_radius = 0.5 * max(params.bolt_hole_diameter, params.bolt_tapped_diameter)
+    candidates = sorted((step / float(BOLT_PHASE_SAMPLES)
+                         for step in range(BOLT_PHASE_SAMPLES)),
+                        key=lambda phase: abs(phase - 0.5))
+    widest = None
+    for phase in candidates:
+        lower, upper, stations = _bolt_tools(mould, params, phase)
+        surplus = min(_surplus(frame, segments, station.x, station.y, bolt_radius,
+                               pin_zones)
+                      for station in stations)
+        if surplus < 0.0:
+            if widest is None or surplus > widest[0]:
+                widest = (surplus, phase)
+            continue
+        if _clashes(lower + upper, obstacles):
+            continue
+        return phase
+    return widest[1] if widest is not None else 0.5
+
+
+def _required_gap(radius):
+    """The gap a hole of ``radius`` keeps from the skirt and from any other hole."""
+    return SKIRT_CLEARANCE_FACTOR * radius
+
+
+def _point_segment_distance(px, py, ax, ay, bx, by):
+    """Distance from ``(px, py)`` to the segment AB, in the block plane."""
+    span_x, span_y = bx - ax, by - ay
+    length_squared = span_x * span_x + span_y * span_y
+    if length_squared <= 0.0:
+        return math.hypot(px - ax, py - ay)
+    along = ((px - ax) * span_x + (py - ay) * span_y) / length_squared
+    along = max(0.0, min(1.0, along))
+    return math.hypot(px - (ax + along * span_x), py - (ay + along * span_y))
+
+
+def _outline_segments(frame, part_line):
+    """The skirt's inner edge, as ``(ax, ay, bx, by)`` in the block plane.
+
+    That edge is the part line: it bounds the cavity, so its projection into the
+    block plane is where the part begins. The block walls are the outer edge.
+    """
+    if part_line is None or part_line.isNull():
+        return []
+    segments = []
+    for edge in part_line.Edges:
+        vertices = edge.Vertexes
+        if not vertices:
+            continue
+        first, last = vertices[0].Point, vertices[-1].Point
+        ax, ay = frame.local(first)[:2]
+        bx, by = frame.local(last)[:2]
+        segments.append((ax, ay, bx, by))
+    return segments
+
+
+def _skirt_gaps(frame, segments, x, y, radius):
+    """``(wall, outline)`` gaps for a hole of ``radius`` at ``(x, y)``.
+
+    Edge to edge: from the hole's own edge out to the block wall, and in to the
+    part outline. ``outline`` is ``None`` when the part line is not known, which
+    is not the same as a clear one.
+    """
+    wall = min(x - frame.x_min, frame.x_max - x,
+               y - frame.y_min, frame.y_max - y) - radius
+    gaps = [_point_segment_distance(x, y, *segment) - radius
+            for segment in segments]
+    return wall, (min(gaps) if gaps else None)
+
+
+def _surplus(frame, segments, x, y, radius, neighbours=()):
+    """How much more gap a hole at ``(x, y)`` keeps than the rule demands.
+
+    Negative means it breaks the rule. ``neighbours`` is ``(x, y, radius)`` of
+    the other holes it has to clear as well.
+    """
+    needed = _required_gap(radius)
+    wall, outline = _skirt_gaps(frame, segments, x, y, radius)
+    surplus = wall - needed
+    if outline is not None:
+        surplus = min(surplus, outline - needed)
+    for other_x, other_y, other_radius in neighbours:
+        pair_gap = (math.hypot(x - other_x, y - other_y)
+                    - (radius + other_radius))
+        surplus = min(surplus,
+                      pair_gap - _required_gap(max(radius, other_radius)))
+    return surplus
+
+
+def _clearance_issues(frame, segments, holes):
+    """Holes keeping less than a diameter of gap from the skirt or each other.
+
+    ``holes`` is ``(label, offset_property, x, y, radius)``. A violation names
+    the property to raise, because the fix is a wider offset or a smaller hole,
+    never a thinner web.
+    """
+    issues = []
+    for label, offset_property, x, y, radius in holes:
+        needed = _required_gap(radius)
+        wall, outline = _skirt_gaps(frame, segments, x, y, radius)
+        if wall < needed:
+            issues.append(
+                f"{label} keep {wall:.3f} mm to the block wall but need "
+                f"{needed:.3f} mm (2 x the {radius:.3f} mm radius): raise "
+                f"{offset_property}, or reduce the socket diameter"
+            )
+        if outline is not None and outline < needed:
+            issues.append(
+                f"{label} keep {outline:.3f} mm to the part outline but need "
+                f"{needed:.3f} mm (2 x the {radius:.3f} mm radius): raise "
+                f"{offset_property}, or reduce the socket diameter"
+            )
+    for (label_a, _property_a, xa, ya, ra), (label_b, _property_b, xb, yb, rb) \
+            in combinations(holes, 2):
+        gap = math.hypot(xa - xb, ya - yb) - (ra + rb)
+        needed = _required_gap(max(ra, rb))
+        if gap < needed:
+            issues.append(
+                f"{label_a} and {label_b} are {gap:.3f} mm apart at their "
+                f"edges but need {needed:.3f} mm: move the offsets further "
+                f"apart, or reduce the counts"
+            )
+    return issues
+
+
+def _boxes_overlap(first, second):
+    """Whether two bounding boxes meet, as a cheap pre-filter."""
+    return (first.XMin <= second.XMax and second.XMin <= first.XMax
+            and first.YMin <= second.YMax and second.YMin <= first.YMax
+            and first.ZMin <= second.ZMax and second.ZMin <= first.ZMax)
+
+
+def _shared_volume(first, second):
+    """How much material two tool solids share, ``0.0`` when they miss."""
+    if not _boxes_overlap(first.BoundBox, second.BoundBox):
+        return 0.0
+    try:
+        return first.common(second).Volume
+    except Exception:
+        return 0.0
+
+
+def _interference_issues(labeled_tools):
+    """Overlapping pairs of fixtures cut into the same half.
+
+    Two fixtures sharing material weaken the block and can break into each
+    other's sockets, so a clash is reported rather than cut silently. Fixtures
+    are compared only within one half: the clearance hole and the tapped hole
+    of a bolt are meant to line up across the mating plane, not to avoid each
+    other.
+    """
+    issues = []
+    for (label_a, tool_a), (label_b, tool_b) in combinations(labeled_tools, 2):
+        overlap = _shared_volume(tool_a, tool_b)
+        if overlap > INTERFERENCE_VOLUME_TOL:
+            issues.append(
+                f"{label_a} and {label_b} share {overlap:.3f} mm^3: move the "
+                f"offsets further apart, or reduce the counts"
+            )
+    return issues
+
+
+def _pin_zones(frame, params):
+    """``(x, y, radius)`` per alignment socket, in frame coordinates.
+
+    Read from the positions rather than the built sockets: the corner pattern is
+    what a fixture has to clear, and a socket's own solid would only repeat it
+    in a frame that has to be mapped back.
+    """
+    if not params.enabled:
+        return []
+    radius = 0.5 * max(params.pin_diameter, params.bush_diameter)
+    return [(x, y, radius)
+            for x, y in corner_positions(frame, params.count, params.edge_offset)]
+
+
+def _labeled(tools, label):
+    """``[(label, tool)]``, so an interference report can name the fixtures."""
+    return [(label, tool) for tool in tools]
+
+
+def _hole_audit(request, pin_zones, bolt_stations):
+    """``(label, offset_property, x, y, radius)`` for every hole in the layout.
+
+    The sockets at a station are a pin in one half and a bush in the other, so
+    the larger of the two radii is what the site has to clear with.
+    """
+    holes = [(ALIGN_KIND, PIN_OFFSET_PROPERTY, x, y, radius)
+             for x, y, radius in pin_zones]
+    if request.clamping.bolts_enabled:
+        radius = 0.5 * max(request.clamping.bolt_hole_diameter,
+                           request.clamping.bolt_tapped_diameter)
+        holes.extend((CLAMP_KIND, BOLT_OFFSET_PROPERTY, station.x, station.y,
+                      radius) for station in bolt_stations)
+    return holes
+
+
+def _clamping_tools(mould, params, pin_zones=(), segments=(), obstacles=()):
+    """``(lower_tools, upper_tools, bolt_holes, notches, bolt_stations)``.
+
+    The ears are placed first so the bolt pattern can be laid out around them
+    rather than the other way round: only the bolt phase is free to move.
+    """
+    frame = mould.frame
+    lower_tools, upper_tools, bolt_stations = [], [], []
     notches = 0
     if params.ears_enabled:
         for station in perimeter_stations(frame, params.ear_count, 0.0, phase=0.25):
@@ -644,7 +944,20 @@ def _clamping_tools(mould, params):
             lower_tools.append(notch)
             upper_tools.append(notch.copy())
             notches += 1
-    return lower_tools, upper_tools, bolt_holes, notches
+    bolt_holes = 0
+    if params.bolts_enabled:
+        phase = _bolt_station_phase(
+            mould, params, pin_zones, segments,
+            tuple(obstacles) + tuple(lower_tools) + tuple(upper_tools))
+        bolt_lower, bolt_upper, bolt_stations = _bolt_tools(mould, params, phase)
+        for station in bolt_stations:
+            mould.note_blind_socket("tapped bolt",
+                                    mould.mating_height(station.x, station.y),
+                                    params.bolt_depth, True)
+        lower_tools.extend(bolt_lower)
+        upper_tools.extend(bolt_upper)
+        bolt_holes = len(bolt_lower)
+    return lower_tools, upper_tools, bolt_holes, notches, bolt_stations
 
 
 def _port_tools(mould, params):
@@ -724,6 +1037,7 @@ def _base_result():
         "port_bores": 0,
         "wedge_count": 0,
         "mating_fallbacks": 0,
+        "bolt_stations": [],
         "issues": [],
     }
 
@@ -837,18 +1151,38 @@ def build_fixtures(request):
             "ordered by geometry"
         )
 
-    mould = MouldBlock(frame=frame, parting_surface=request.parting_surface)
+    mould = MouldBlock(frame=frame, parting_surface=request.parting_surface,
+                       lower=lower)
     try:
+        pin_zones = _pin_zones(frame, request.alignment)
+        segments = _outline_segments(frame, request.parting_surface)
         pin_lower, pin_upper, align_holes = _alignment_tools(mould, request.alignment)
-        clamp_lower, clamp_upper, bolt_holes, notches = _clamping_tools(
-            mould, request.clamping)
         port_lower, port_upper, bores = _port_tools(mould, request.ports)
         wedges, wedge_count = _wedge_tools(mould, request.wedges)
+        # The bolts are placed last, around everything already in the block.
+        clamp_lower, clamp_upper, bolt_holes, notches, bolt_stations = _clamping_tools(
+            mould, request.clamping, pin_zones, segments,
+            tuple(pin_lower) + tuple(pin_upper) + tuple(port_lower)
+            + tuple(port_upper) + tuple(wedges))
     except MouldFixtureError as exc:
         return _fail(result, exc.reason)
 
     lower_tools = pin_lower + clamp_lower + port_lower + wedges
     upper_tools = pin_upper + clamp_upper + port_upper + [tool.copy() for tool in wedges]
+    # Each half is checked on its own: a bolt's clearance hole and its tapped
+    # hole are meant to line up across the mating plane. The wedges belong to
+    # both halves, so they are checked against each.
+    result["issues"].extend(_clearance_issues(
+        frame, segments, _hole_audit(request, pin_zones, bolt_stations)))
+
+    both_halves = (_labeled(wedges, WEDGE_KIND))
+    for half_tools in ((_labeled(pin_lower, ALIGN_KIND)
+                        + _labeled(clamp_lower, CLAMP_KIND)
+                        + _labeled(port_lower, PORT_KIND) + both_halves),
+                       (_labeled(pin_upper, ALIGN_KIND)
+                        + _labeled(clamp_upper, CLAMP_KIND)
+                        + _labeled(port_upper, PORT_KIND) + both_halves)):
+        result["issues"].extend(_interference_issues(half_tools))
     cut_lower = _cut_half(lower, lower_tools)
     cut_upper = _cut_half(upper, upper_tools)
     for name, original, cut in (("lower", lower, cut_lower),
@@ -866,6 +1200,7 @@ def build_fixtures(request):
         port_bores=bores,
         wedge_count=wedge_count,
         mating_fallbacks=mould.mating_fallbacks,
+        bolt_stations=[(station.x, station.y) for station in bolt_stations],
     )
     result["issues"].extend(mould.breakthroughs)
     if request.stock_margins is not None:
