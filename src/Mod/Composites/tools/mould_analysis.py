@@ -31,6 +31,25 @@ DEFAULT_TESSELLATION_BAND_TOL_DEG = 2.0
 PART_LINE_SOURCES = ("tessellation", "hlr")
 DEFAULT_PART_LINE_SOURCE = "tessellation"
 
+# Skirt outer-wall levelling (src/3rdParty/nextdrape/docs/spec-skirt-levelling.md).
+# The C++ binding's own defaults are off / whole / 1.0 mm, so a caller that
+# does not ask for levelling gets today's cast and no level strip. Only a
+# `fixed` extent leaves a level surface to export (A14). The FreeCAD-side
+# default transition is the spec's 10 mm minimum rather than the binding's
+# 1.0 mm - below it an S-curve reads as a crease (A5) - and it is only
+# forwarded when a caller names one, because A7 forbids silently upgrading a
+# caller's implicit choice.
+SKIRT_LEVELLING_MODES = ("off", "direct", "s-curve")
+SKIRT_LEVELLING_EXTENTS = ("whole", "fixed")
+DEFAULT_SKIRT_LEVELLING = "off"
+DEFAULT_SKIRT_LEVELLING_EXTENT = "whole"
+DEFAULT_SKIRT_LEVELLING_TRANSITION_MM = 10.0
+
+
+def _no_level_strips(note):
+    """The A14 level-strip export for a run that produced none, with the reason."""
+    return {"present": False, "note": note, "walls": []}
+
 # Per-axis (u, v) samples taken on each split-shell face when looking for
 # wrong-side draft.
 WRONG_SIDE_SAMPLES_PER_AXIS = 7
@@ -797,6 +816,12 @@ def _plan_split_strategies(ranked, limit=MAX_SPLIT_STRATEGIES):
                     "parting_tessellation_band_tol_deg"),
                 "part_line_source": item.get("part_line_source",
                                              DEFAULT_PART_LINE_SOURCE),
+                "skirt_levelling": item.get("skirt_levelling",
+                                            DEFAULT_SKIRT_LEVELLING),
+                "skirt_levelling_extent": item.get(
+                    "skirt_levelling_extent", DEFAULT_SKIRT_LEVELLING_EXTENT),
+                "skirt_levelling_transition_mm": item.get(
+                    "skirt_levelling_transition_mm"),
                 "part_line_only": item.get("part_line_only", False),
                 "run_withdrawal_clearance": item.get("run_withdrawal_clearance", False),
                 "status": "planned",
@@ -841,6 +866,11 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         run_withdrawal_clearance=run_withdrawal_clearance,
         tessellation_band_tol_deg=strategy.get("parting_tessellation_band_tol_deg"),
         part_line_source=strategy.get("part_line_source", DEFAULT_PART_LINE_SOURCE),
+        skirt_levelling=strategy.get("skirt_levelling", DEFAULT_SKIRT_LEVELLING),
+        skirt_levelling_extent=strategy.get("skirt_levelling_extent",
+                                            DEFAULT_SKIRT_LEVELLING_EXTENT),
+        skirt_levelling_transition_mm=strategy.get(
+            "skirt_levelling_transition_mm"),
     )
     solver_ready = (
         non_planar_result is not None and non_planar_result["status"] == "ready"
@@ -1246,6 +1276,62 @@ def _import_parting_solver():
     return Composites_parting.compute_non_planar_parting, ""
 
 
+def level_strip_ring_points(level_strips, key):
+    """One bounding ring's stations in ring order: ``key`` is "level_in" or "outer".
+
+    The export groups its stations by block wall, and the wall runs repeat
+    around the block in ring order - nextdrape's GroupWallRuns starts its scan
+    at a wall change - so concatenating them walks the strip once around. The
+    straight segment between one run's last station and the next run's first
+    closes the ring.
+    """
+    points = []
+    for wall in (level_strips or {}).get("walls", ()):
+        points.extend(Vector(*point) for point in wall[f"{key}_points"])
+    return points
+
+
+def level_strip_rings(level_strips):
+    """The two rings bounding the level strip, as ``(inboard, outboard)`` wires.
+
+    ``(None, None)`` when the solver exported no level strip. Both rings carry
+    the same stations in the same order, so a consumer pairs them station for
+    station: that pairing comes from the same construction the band is built
+    from (A14), never re-derived from the geometry.
+    """
+    if not (level_strips or {}).get("present"):
+        return None, None
+    rings = []
+    for key in ("level_in", "outer"):
+        points = level_strip_ring_points(level_strips, key)
+        if len(points) < 3:
+            raise ValueError(
+                f"the level strip's '{key}' ring has {len(points)} stations; "
+                f"a ring needs at least 3"
+            )
+        rings.append(Part.makePolygon(points + [points[0]]))
+    return rings[0], rings[1]
+
+
+def level_strip_status(level_strips):
+    """``(present, summary)`` for the solver's level-strip export.
+
+    The summary names the runs and their station counts when there is a strip,
+    and the solver's own reason when there is not - never an empty result to be
+    mistaken for a strip that is legitimately there (A14).
+    """
+    if not level_strips:
+        return False, "No level strip: the solver exported none."
+    if level_strips.get("present"):
+        counts = ", ".join(
+            f"wall {wall['wall']}: {len(wall['level_in_points'])} stations"
+            for wall in level_strips.get("walls", ())
+        )
+        return True, f"Level strip present ({counts})."
+    note = level_strips.get("note") or "the solver gave no reason"
+    return False, f"No level strip: {note}."
+
+
 def _propose_non_planar_parting(
     shape,
     direction,
@@ -1258,6 +1344,9 @@ def _propose_non_planar_parting(
     run_withdrawal_clearance=False,
     part_line_source=DEFAULT_PART_LINE_SOURCE,
     tessellation_band_tol_deg=None,
+    skirt_levelling=DEFAULT_SKIRT_LEVELLING,
+    skirt_levelling_extent=DEFAULT_SKIRT_LEVELLING_EXTENT,
+    skirt_levelling_transition_mm=None,
 ):
     """Call the C++ marching-equator solver and map to the Phase 0 contract.
 
@@ -1266,9 +1355,10 @@ def _propose_non_planar_parting(
     ...), `summary`, `parting_line` (the 3D part line),
     `parting_line_segments` (the face-attached UV chain), `parting_surface`
     (alias for the part line), `lower_shell` / `upper_shell` (the split source
-    halves), `skirt_rays`, and `tangent_face_midpoints` diagnostics. Any
-    non-ready status is surfaced to the caller as a failed attempt — there is
-    no planar fallback.
+    halves), `skirt_rays`, `tangent_face_midpoints` diagnostics, and
+    `level_strips` - the A14 export of the two rings bounding the flat strip a
+    `fixed` levelled skirt leaves. Any non-ready status is surfaced to the
+    caller as a failed attempt — there is no planar fallback.
     """
     compute, import_error = _import_parting_solver()
     if compute is None:
@@ -1285,6 +1375,7 @@ def _propose_non_planar_parting(
             "upper_shell": None,
             "skirt_rays": [],
             "tangent_face_midpoints": [],
+            "level_strips": _no_level_strips("the solver is unavailable"),
             "error": summary,
         }
 
@@ -1312,6 +1403,13 @@ def _propose_non_planar_parting(
             part_line_source=part_line_source,
             **({} if tessellation_band_tol_deg is None
                else {"tessellation_band_tol_deg": float(tessellation_band_tol_deg)}),
+            # Levelling shapes the skirt's outer wall; only a `fixed` extent
+            # leaves the level surface the strip export bounds.
+            skirt_levelling=skirt_levelling,
+            skirt_levelling_extent=skirt_levelling_extent,
+            **({} if skirt_levelling_transition_mm is None
+               else {"skirt_levelling_transition":
+                     float(skirt_levelling_transition_mm)}),
         )
     except Exception as exc:
         return {
@@ -1324,6 +1422,7 @@ def _propose_non_planar_parting(
             "upper_shell": None,
             "skirt_rays": [],
             "tangent_face_midpoints": [],
+            "level_strips": _no_level_strips(f"the solver raised: {exc}"),
             "error": str(exc),
             "part_line_only": part_line_only,
         }
@@ -1360,6 +1459,8 @@ def _propose_non_planar_parting(
             "upper_shell": None,
             "skirt_rays": [],
             "tangent_face_midpoints": raw.get("tangent_face_midpoints", []),
+            "level_strips": (raw.get("level_strips") or _no_level_strips(
+                f"the run stopped at {status}")),
             "error": raw["summary"],
             "part_line_only": part_line_only,
         }
@@ -1382,6 +1483,8 @@ def _propose_non_planar_parting(
         "lower_split_faces": raw.get("lower_split_faces", []),
         "skirt_rays": [],
         "tangent_face_midpoints": raw.get("tangent_face_midpoints", []),
+        "level_strips": (raw.get("level_strips") or _no_level_strips(
+            "the solver exported no level strip")),
         "withdrawal_clearance": raw.get("withdrawal_clearance"),
         "error": "",
         "part_line_only": part_line_only,
@@ -1939,6 +2042,11 @@ def _base_analysis_result():
         "parting_model": "NonPlanar",
         "parting_line": None,
         "parting_skirt_rays": [],
+        "parting_level_strips": _no_level_strips("no source shape"),
+        "level_strip_present": False,
+        "level_strip_in_shape": Part.Shape(),
+        "level_strip_out_shape": Part.Shape(),
+        "level_strip_summary": "No source shape available.",
         "non_planar_status": "not_requested",
         "non_planar_summary": "",
         "validation_status": "Waiting for source",
@@ -2181,6 +2289,9 @@ def analyze_source_shape(
     run_withdrawal_clearance=False,
     parting_tessellation_band_tol_deg=None,
     part_line_source=DEFAULT_PART_LINE_SOURCE,
+    skirt_levelling=DEFAULT_SKIRT_LEVELLING,
+    skirt_levelling_extent=DEFAULT_SKIRT_LEVELLING_EXTENT,
+    skirt_levelling_transition_mm=DEFAULT_SKIRT_LEVELLING_TRANSITION_MM,
 ):
     """Return a lightweight analysis preview for a selected source shape.
 
@@ -2273,6 +2384,9 @@ def analyze_source_shape(
             "parting_stock_footprint": parting_stock_footprint,
             "parting_tessellation_band_tol_deg": parting_tessellation_band_tol_deg,
             "part_line_source": part_line_source,
+            "skirt_levelling": skirt_levelling,
+            "skirt_levelling_extent": skirt_levelling_extent,
+            "skirt_levelling_transition_mm": skirt_levelling_transition_mm,
             "part_line_only": part_line_only,
             "run_withdrawal_clearance": run_withdrawal_clearance,
         }
@@ -2436,6 +2550,19 @@ def analyze_source_shape(
         f"validation={validation['summary']}"
     )
 
+    level_strips = selected_non_planar.get("level_strips") or _no_level_strips(
+        "the solver exported no level strip")
+    level_strip_present, level_strip_summary = level_strip_status(level_strips)
+    level_strip_in, level_strip_out = Part.Shape(), Part.Shape()
+    if level_strip_present:
+        try:
+            level_strip_in, level_strip_out = level_strip_rings(level_strips)
+        except ValueError as exc:
+            # "Present", but a degenerate ring is a solver contract violation:
+            # report it rather than export a chain that is not a ring (A14).
+            level_strip_present = False
+            level_strip_summary = f"No level strip: {exc}."
+
     result.update(
         {
             "status": status,
@@ -2479,6 +2606,11 @@ def analyze_source_shape(
             "parting_line": (selected_attempt.get("non_planar_result") or {}).get("parting_line"),
             "parting_line_segments": (selected_attempt.get("non_planar_result") or {}).get("parting_line_segments", []),
             "parting_skirt_rays": (selected_attempt.get("non_planar_result") or {}).get("skirt_rays", []),
+            "parting_level_strips": level_strips,
+            "level_strip_present": level_strip_present,
+            "level_strip_in_shape": level_strip_in,
+            "level_strip_out_shape": level_strip_out,
+            "level_strip_summary": level_strip_summary,
             "non_planar_status": (
                 (selected_attempt.get("non_planar_result") or {}).get("status")
                 if selected_split_strategy.get("parting_model") == "NonPlanar"

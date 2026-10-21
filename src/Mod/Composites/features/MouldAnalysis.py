@@ -9,8 +9,13 @@ from FreeCAD import Vector
 from .. import MOULD_TOOL_ICON, is_comp_type
 from ..tools.mould_analysis import (
     DEFAULT_PART_LINE_SOURCE,
+    DEFAULT_SKIRT_LEVELLING,
+    DEFAULT_SKIRT_LEVELLING_EXTENT,
+    DEFAULT_SKIRT_LEVELLING_TRANSITION_MM,
     DEFAULT_TESSELLATION_BAND_TOL_DEG,
     PART_LINE_SOURCES,
+    SKIRT_LEVELLING_EXTENTS,
+    SKIRT_LEVELLING_MODES,
     analyze_source_shape,
     default_mould_analysis_draw_direction,
     split_faces,
@@ -53,6 +58,47 @@ def _add_part_line_source_property(obj):
         "changes the part line, so it changes both halves.",
     ).PartLineSource = list(PART_LINE_SOURCES)
     obj.PartLineSource = DEFAULT_PART_LINE_SOURCE
+
+
+def _add_skirt_levelling_properties(obj):
+    """How the skirt's outer wall is shaped, on their own so a restore can add
+    them.
+
+    Levelling is what makes the mould manufacturable - a skirt that meets the
+    block wall at a slope cannot be machined - and only a `fixed` extent leaves
+    the flat strip the O-ring groove is cut into. It is off by default so a
+    mould that does not ask for it casts exactly what it did before (A12).
+    """
+    obj.addProperty(
+        "App::PropertyEnumeration",
+        "SkirtLevelling",
+        "MouldAnalysis",
+        "Shape the skirt's outer wall so it lands level on the block wall: "
+        "'off' (default), 'direct' or 's-curve'. 's-curve' is a Bezier whose "
+        "z has zero gradient at both rails, so the land runs out smoothly.",
+    ).SkirtLevelling = list(SKIRT_LEVELLING_MODES)
+    obj.SkirtLevelling = DEFAULT_SKIRT_LEVELLING
+
+    obj.addProperty(
+        "App::PropertyEnumeration",
+        "SkirtLevellingExtent",
+        "MouldAnalysis",
+        "How much of each skirt ray the levelling transition occupies: "
+        "'whole' spans the cutline-to-wall run, 'fixed' takes the whole fall "
+        "in the first SkirtLevellingTransition mm outboard of the cutline and "
+        "holds the rest flat. Only 'fixed' leaves a level strip.",
+    ).SkirtLevellingExtent = list(SKIRT_LEVELLING_EXTENTS)
+    obj.SkirtLevellingExtent = DEFAULT_SKIRT_LEVELLING_EXTENT
+
+    obj.addProperty(
+        "App::PropertyLength",
+        "SkirtLevellingTransition",
+        "MouldAnalysis",
+        "Length of the levelling transition, measured from the cutline "
+        "outward. The spec's absolute minimum is 10 mm - below it an S-curve "
+        "reads as a crease - and the mould's in-plane stock margin grows to "
+        "hold it.",
+    ).SkirtLevellingTransition = DEFAULT_SKIRT_LEVELLING_TRANSITION_MM
 
 
 def _add_split_face_outputs(obj):
@@ -159,6 +205,38 @@ def _add_draft_defect_outputs(obj):
     obj.setPropertyStatus("DraftDefects", "Output")
 
 
+def _add_level_strip_outputs(obj):
+    """The two rings bounding the level strip, and what the solver said of it.
+
+    The rings are the boundary of the flat strip a `fixed` levelled skirt
+    leaves between the transition and the block wall, and they are what the
+    O-ring groove is cut between. Each is a closed wire of the same stations in
+    the same ring order, so a consumer pairs them station for station.
+    """
+    obj.addProperty(
+        "App::PropertyString",
+        "LevelStripSummary",
+        "MouldAnalysis",
+        "Whether the skirt left a level strip for the O-ring groove, and why "
+        "not when it did not",
+    ).LevelStripSummary = "No level strip."
+    obj.setPropertyStatus("LevelStripSummary", "Output")
+
+    for name, label in (("LevelStripIn", "inboard"),
+                        ("LevelStripOut", "outboard")):
+        obj.addProperty(
+            "App::PropertyLink",
+            name,
+            "MouldAnalysis",
+            f"The {label} ring bounding the level strip",
+            hidden=True,
+        )
+        ring = obj.Document.addObject("Part::Feature", f"{obj.Name}_{name}")
+        ring.setPropertyStatus("Shape", "Output")
+        setattr(obj, name, ring)
+        obj.setPropertyStatus(name, "Output")
+
+
 class MouldAnalysisFP(CompositePartFP):
     Type = "Composite::MouldAnalysis"
 
@@ -209,6 +287,7 @@ class MouldAnalysisFP(CompositePartFP):
 
         _add_tessellation_band_property(obj)
         _add_part_line_source_property(obj)
+        _add_skirt_levelling_properties(obj)
 
         obj.addProperty(
             "App::PropertyFloat",
@@ -373,6 +452,7 @@ class MouldAnalysisFP(CompositePartFP):
 
         _add_draft_defect_outputs(obj)
         _add_split_face_outputs(obj)
+        _add_level_strip_outputs(obj)
 
         obj.addProperty(
             "App::PropertyString",
@@ -420,6 +500,12 @@ class MouldAnalysisFP(CompositePartFP):
             _add_draft_defect_outputs(fp)
         if not hasattr(fp, "UpperSplitFaces"):
             _add_split_face_outputs(fp)
+        # Documents saved before the skirt could be levelled carry none of its
+        # inputs, and the rings the groove is cut between are new outputs.
+        if not hasattr(fp, "SkirtLevelling"):
+            _add_skirt_levelling_properties(fp)
+        if not hasattr(fp, "LevelStripIn"):
+            _add_level_strip_outputs(fp)
 
     def execute(self, fp):
         """Analyse the source, once per change of input.
@@ -450,6 +536,9 @@ class MouldAnalysisFP(CompositePartFP):
             run_withdrawal_clearance=fp.WithdrawalClearance,
             parting_tessellation_band_tol_deg=fp.TessellationBandTolDeg,
             part_line_source=fp.PartLineSource,
+            skirt_levelling=fp.SkirtLevelling,
+            skirt_levelling_extent=fp.SkirtLevellingExtent,
+            skirt_levelling_transition_mm=float(fp.SkirtLevellingTransition),
         )
         fp.AnalysisStatus = result["status"]
         fp.DrawDirectionScore = result["draw_direction_score"]
@@ -474,6 +563,11 @@ class MouldAnalysisFP(CompositePartFP):
         for half in SPLIT_FACE_HALVES:
             _write_split_faces(fp, half.capitalize(),
                                split_faces(result, half))
+        fp.LevelStripSummary = result["level_strip_summary"]
+        if fp.LevelStripIn:
+            fp.LevelStripIn.Shape = result["level_strip_in_shape"]
+        if fp.LevelStripOut:
+            fp.LevelStripOut.Shape = result["level_strip_out_shape"]
         fp.ValidationStatus = result["validation_status"]
         fp.ValidationSummary = result["validation_summary"]
         fp.ValidationChecks = result["validation_checks"]
@@ -526,7 +620,8 @@ class ViewProviderMouldAnalysis(VPCompositePart):
             return []
         children = []
         for name in ("PartingSurface", "MouldHalfA", "MouldHalfB", "DraftDefects",
-                     "UpperSplitFaces", "LowerSplitFaces"):
+                     "UpperSplitFaces", "LowerSplitFaces",
+                     "LevelStripIn", "LevelStripOut"):
             child = getattr(self.Object, name, None)
             if child:
                 children.append(child)
