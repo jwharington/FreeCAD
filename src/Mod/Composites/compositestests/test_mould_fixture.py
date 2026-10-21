@@ -98,6 +98,12 @@ Y_AXIS = Z_AXIS.cross(X_AXIS)
 PROBE_TOL = 1.0e-6
 SIZE_TOL = 1.0e-6
 
+# How far a wedge slot's apex may leave the part line between the sections it is
+# lofted through. On the tilted interface below the apex edge is a straight line
+# on a straight plane, so the error is numerical; a slot cut as separate blocks
+# misses by the tilt over half a sample instead, about 1 mm.
+FOLLOW_TOL = 0.01
+
 
 def _oriented_box(x_axis, y_axis, z_axis, x_range, y_range, z_range):
     """A rectangular prism built directly in its own axes.
@@ -851,6 +857,40 @@ class TestFixtureCuts(unittest.TestCase):
                     any(_shared_volume(port, wedge) > INTERFERENCE_VOLUME_TOL
                         for wedge in uninterrupted),
                     "the %s bore does not reach the slot anyway" % half)
+
+    def test_wedge_slots_are_one_continuous_tool_per_run(self):
+        """One slot per wall, lofted through sections taken on the part line.
+
+        The interface is tilted, so it varies along every wall, and a slot cut
+        as separate blocks steps between the stations it was measured at. Two
+        things show this one does not: each wall yields a single tool rather
+        than a row of them, and the interface still lies on that tool at
+        stations between its sections, which is where a stepped slot is wrong.
+        """
+        frame = block_frame(self.lower, self.upper, self.draw)
+        mould = MouldBlock(frame=frame, parting_surface=self.parting,
+                           lower=self.lower, upper=self.upper)
+        params = WedgeParams()
+        runs = _wall_runs(frame, params.corner_standoff)
+        lower_tools, upper_tools, slot_count = _wedge_tools(mould, params)
+        self.assertEqual(slot_count, len(runs))
+        self.assertEqual(len(lower_tools), len(runs))
+        self.assertEqual(len(upper_tools), len(runs))
+
+        for (station, length), tool in zip(runs, lower_tools):
+            inward = (frame.x_axis * station.inward[0]
+                      + frame.y_axis * station.inward[1])
+            # Deliberately off the section positions: the apex reaches depth
+            # inboard of the wall, and sits on the interface there.
+            for fraction in (-0.45, -0.2, 0.05, 0.3, 0.45):
+                along = length * fraction
+                x = station.x + station.tangent[0] * along
+                y = station.y + station.tangent[1] * along
+                on_interface = (frame.point(x, y, mould.mating_height(x, y))
+                                + inward * params.depth)
+                self.assertLessEqual(
+                    tool.distToShape(Part.Vertex(on_interface))[0], FOLLOW_TOL,
+                    "the slot leaves the part line %.3f mm along the wall" % along)
 
     def test_every_fixture_kind_together(self):
         result = self._build(alignment=True, bolts=True, ears=True, ports=True,

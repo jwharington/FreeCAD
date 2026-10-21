@@ -65,10 +65,11 @@ _CORNER_ORDER = ((-1.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (1.0, -1.0))
 BOLT_PHASE_SAMPLES = 72
 
 # A wedge slot runs the whole wall, and the interface it straddles varies along
-# that wall, so a run is cut as segments about this long, each measured at its
-# own midpoint. Shorter segments follow the parting geometry more closely; every
-# seam between them is a step the shop floor dresses.
-WEDGE_SLOT_SEGMENT_MM = 25.0
+# that wall, so a run is lofted through a section about this far apart, each
+# taken on the interface itself. Shorter samples follow the parting geometry
+# more closely. The sections are facets of one slot, so the apex rides the part
+# line and the seams between them are not steps.
+WEDGE_SLOT_SAMPLE_MM = 10.0
 
 # Every hole keeps this multiple of its radius of gap from every other hole and
 # from both edges of the skirt: the part outline inboard, the block wall
@@ -842,22 +843,20 @@ def _wall_notch(frame, station, z_mate, width, height, depth):
     return _prism(corners, inward * (depth + TOOL_OVERSHOOT))
 
 
-def _parting_wedge(frame, station, z_mate, length, height, depth):
-    """A triangular slot along the wall, apex on the mating plane.
+def _slot_section(frame, station, z_mate, height, depth):
+    """The slot's cross-section at one station, as a closed wire.
 
-    Driven in, a wedge separates the halves. The apex sits *on* the mating
-    plane so each half receives a mirror-image half of the notch, and the slot
-    runs ``length`` along the wall, centred on the station.
+    A triangle whose apex sits *on* the mating plane, so each half receives a
+    mirror-image share of the notch, and whose wall-side edge spans the plane so
+    the slot opens through the block face. A slot is a loft through one of these
+    per station, which is what makes its apex ride the part line.
     """
     inward = _orient_inward(frame, station)
-    tangent = _orient_tangent(frame, station)
     base = frame.point(station.x, station.y, z_mate) - inward * TOOL_OVERSHOOT
     wall_bottom = base - frame.z_axis * (height / 2.0)
     wall_top = base + frame.z_axis * (height / 2.0)
     apex = base + inward * (depth + TOOL_OVERSHOOT)
-    shift = tangent * (length / 2.0)
-    triangle = [wall_bottom - shift, wall_top - shift, apex - shift]
-    return _prism(triangle, tangent * length)
+    return Part.Wire(Part.makePolygon([wall_bottom, wall_top, apex], True))
 
 
 def _alignment_tools(mould, params):
@@ -1350,31 +1349,42 @@ def _subtract_keepouts(span, keepouts):
             if end - start > PLANE_OFFSET_TOL]
 
 
-def _slot_segments(mould, station, start, end, params):
-    """The tools covering ``start``..``end`` of one wall, measured per piece.
+def _slot_sections(mould, station, start, end, params):
+    """The sections covering ``start``..``end`` of one wall, on the interface.
 
-    Each piece is measured at its own midpoint, so the slot follows the parting
-    geometry rather than one plane across the wall.
+    One section every ``WEDGE_SLOT_SAMPLE_MM``, each measured at its own
+    position, so the slot follows the parting geometry rather than one plane
+    across the wall - and, being sections of a single loft, follows it with no
+    step at any station.
     """
     length = end - start
     if length <= PLANE_OFFSET_TOL:
         return []
-    segments = max(1, int(math.ceil(length / WEDGE_SLOT_SEGMENT_MM)))
-    piece = length / segments
-    tools = []
-    for index in range(segments):
-        along = start + (index + 0.5) * piece
-        segment = PerimeterStation(
+    count = max(2, int(math.ceil(length / WEDGE_SLOT_SAMPLE_MM)) + 1)
+    sections = []
+    for index in range(count):
+        along = start + length * index / (count - 1)
+        point = PerimeterStation(
             x=station.x + station.tangent[0] * along,
             y=station.y + station.tangent[1] * along,
             tangent=station.tangent,
             inward=station.inward,
         )
-        tools.append(_parting_wedge(
-            mould.frame, segment,
-            mould.mating_height(segment.x, segment.y),
-            piece, params.height, params.depth))
-    return tools
+        sections.append(_slot_section(
+            mould.frame, point, mould.mating_height(point.x, point.y),
+            params.height, params.depth))
+    return sections
+
+
+def _slot_tool(mould, station, start, end, params):
+    """One continuous slot covering ``start``..``end`` of one wall."""
+    sections = _slot_sections(mould, station, start, end, params)
+    if len(sections) < 2:
+        return []
+    tool = Part.makeLoft(sections, solid=True, ruled=True)
+    if tool.isNull() or not tool.Solids:
+        return []
+    return [tool]
 
 
 def _wedge_tools(mould, params, ports=()):
@@ -1396,7 +1406,7 @@ def _wedge_tools(mould, params, ports=()):
             keepouts = _slot_keepouts(
                 station, [port for port in ports if port[2] in (half, "Both")])
             for start, end in _subtract_keepouts(full, keepouts):
-                tools.extend(_slot_segments(mould, station, start, end, params))
+                tools.extend(_slot_tool(mould, station, start, end, params))
     return lower_tools, upper_tools, len(runs)
 
 
