@@ -65,6 +65,71 @@ def _shape_key(shape):
             round(box.ZMin, 6), round(box.ZMax, 6))
 
 
+def _add_bolt_properties(obj):
+    """The clamp bolts' shape, on its own so a restore can add it.
+
+    The bolts go right through both halves with a nut on top, so the lower half
+    needs a clearance hole rather than the tapped one an earlier version cut,
+    and the head is recessed into the face it enters by.
+    """
+    _add_property(obj, "App::PropertyBool", "ClampBolts",
+                  "Cut clamp bolt holes right through both halves, the head "
+                  "recessed into the lower cap face and a nut on the upper.",
+                  True)
+    _add_property(obj, "App::PropertyInteger", "BoltCount",
+                  "Number of clamp bolts, equally spaced around the block "
+                  "perimeter.", 4)
+    _add_property(obj, "App::PropertyLength", "BoltHoleDiameter",
+                  "Bolt clearance hole diameter, cut through both halves. 11 mm "
+                  "clears an M10.", 11.0)
+    _add_property(obj, "App::PropertyLength", "BoltHeadDiameter",
+                  "Counterbore diameter that sinks the bolt head into the lower "
+                  "cap face. 17 mm clears an M10 socket head; the nut on the "
+                  "upper face needs no recess, so there is none there.", 17.0)
+    _add_property(obj, "App::PropertyLength", "BoltHeadDepth",
+                  "Depth of the bolt head counterbore, into the lower cap face. "
+                  "Has to stop short of the mating surface.", 10.5)
+    _add_property(obj, "App::PropertyLength", "BoltEdgeOffset",
+                  "Inset of the bolt pattern from the block walls. A bolt keeps "
+                  "2R of gap from the wall, so the pattern stands 3R in: 26 mm "
+                  "for the 17 mm head counterbore. Less than that is reported "
+                  "rather than cut.", 26.0)
+
+
+def _add_seat_properties(obj):
+    """The alignment seat's extra cuts, on their own so a restore can add them.
+
+    A commercial locating part is not a plain dowel: its flange or shoulder
+    seats on a counterbore, it is held by a screw from the back of the block,
+    and its blind seat holds an air pocket that has to be vented or it
+    outgasses into a vacuum tool. Only the screw hole is on by default, because
+    it is what the default part needs and it vents the seat as well.
+    """
+    _add_property(obj, "App::PropertyLength", "SeatShoulderDiameter",
+                  "Counterbore diameter for a locating part's flange or "
+                  "shoulder. Zero cuts no counterbore.", 0.0)
+    _add_property(obj, "App::PropertyLength", "SeatShoulderDepth",
+                  "Depth of the shoulder counterbore, from the mating face. "
+                  "Has to stop short of the seat floor.", 0.0)
+    _add_property(obj, "App::PropertyLength", "SeatVentDiameter",
+                  "Diameter of a vent from each seat floor out through the cap "
+                  "face, so a blind seat is not a trapped volume under vacuum. "
+                  "Zero cuts no vent; a screw clearance hole already vents the "
+                  "seat, so this is only needed for a part with no back screw.",
+                  0.0)
+    _add_property(obj, "App::PropertyLength", "SeatScrewDiameter",
+                  "Clearance diameter for the screw that holds a screw-fixed "
+                  "locating part, cut from the cap face behind the seat to its "
+                  "floor. 5.5 mm clears an M5. Zero cuts no screw hole.", 5.5)
+    _add_property(obj, "App::PropertyLength", "SeatScrewHeadDiameter",
+                  "Counterbore diameter that sinks the screw head into the cap "
+                  "face. 9.5 mm clears an M5 socket head. Zero leaves the head "
+                  "standing proud.", 9.5)
+    _add_property(obj, "App::PropertyLength", "SeatScrewHeadDepth",
+                  "Depth of the screw head counterbore, into the cap face. Has "
+                  "to stop short of the seat floor.", 5.5)
+
+
 def _add_wedge_properties(obj):
     """The parting-wedge slot's shape, on its own so a restore can add it."""
     _add_property(obj, "App::PropertyBool", "PartingWedges",
@@ -115,13 +180,19 @@ def fixture_params(fp):
             depth=float(fp.PinDepth),
             edge_offset=float(fp.PinEdgeOffset),
             pin_half=fp.PinHalf,
+            shoulder_diameter=float(fp.SeatShoulderDiameter),
+            shoulder_depth=float(fp.SeatShoulderDepth),
+            vent_diameter=float(fp.SeatVentDiameter),
+            screw_diameter=float(fp.SeatScrewDiameter),
+            screw_head_diameter=float(fp.SeatScrewHeadDiameter),
+            screw_head_depth=float(fp.SeatScrewHeadDepth),
         ),
         ClampingParams(
             bolts_enabled=bool(fp.ClampBolts),
             bolt_count=int(fp.BoltCount),
             bolt_hole_diameter=float(fp.BoltHoleDiameter),
-            bolt_tapped_diameter=float(fp.BoltTappedDiameter),
-            bolt_depth=float(fp.BoltDepth),
+            bolt_head_diameter=float(fp.BoltHeadDiameter),
+            bolt_head_depth=float(fp.BoltHeadDepth),
             bolt_edge_offset=float(fp.BoltEdgeOffset),
             ears_enabled=bool(fp.ClampEars),
             ear_count=int(fp.ClampEarCount),
@@ -188,11 +259,18 @@ class MouldFixtureFP(CompositePartFP):
         _add_property(obj, "App::PropertyInteger", "PinCount",
                       "Number of dowel/bush pairs, 1-4, placed on the block corners.", 2)
         _add_property(obj, "App::PropertyLength", "PinDiameter",
-                      "Dowel pin socket diameter, cut in the pin half.", 8.0)
+                      "Diameter of the seat in the pin half. A matched round "
+                      "interlock pair has the same outer diameter in both "
+                      "halves, so this normally equals BushDiameter - 10 mm for "
+                      "the default A1-10 part.", 10.0)
         _add_property(obj, "App::PropertyLength", "BushDiameter",
-                      "Bush socket diameter, cut in the bush half.", 16.0)
+                      "Diameter of the seat in the bush half. Equal to "
+                      "PinDiameter for a round interlock pair; a dowel-and-bush "
+                      "pair sets them differently.", 10.0)
         _add_property(obj, "App::PropertyLength", "PinDepth",
-                      "Depth of each socket, measured from the mating surface.", 25.0)
+                      "Depth of each seat, measured from the mating surface. The "
+                      "part must not bottom, so leave the assembled gap clear: "
+                      "10 mm matches the default A1-10 part's engagement.", 10.0)
         _add_property(obj, "App::PropertyLength", "PinEdgeOffset",
                       "Inset of each pin from the two block walls at its corner. "
                       "The socket keeps 2R of gap from the wall, so the centre "
@@ -201,23 +279,9 @@ class MouldFixtureFP(CompositePartFP):
         _add_enumeration(obj, "PinHalf",
                          "Half that carries the dowel pin; the other carries the bush.",
                          PIN_HALVES, "Lower")
+        _add_seat_properties(obj)
 
-        _add_property(obj, "App::PropertyBool", "ClampBolts",
-                      "Cut clamp bolt holes: clearance through the upper half into "
-                      "a tapped hole in the lower.", True)
-        _add_property(obj, "App::PropertyInteger", "BoltCount",
-                      "Number of clamp bolts, equally spaced around the block perimeter.", 4)
-        _add_property(obj, "App::PropertyLength", "BoltHoleDiameter",
-                      "Bolt clearance hole diameter, cut through the upper half.", 11.0)
-        _add_property(obj, "App::PropertyLength", "BoltTappedDiameter",
-                      "Tapped core hole diameter, cut into the lower half.", 8.5)
-        _add_property(obj, "App::PropertyLength", "BoltDepth",
-                      "Depth of each tapped hole from the mating surface.", 20.0)
-        _add_property(obj, "App::PropertyLength", "BoltEdgeOffset",
-                      "Inset of the bolt pattern from the block walls. The "
-                      "clearance hole keeps 2R of gap from the wall, so the "
-                      "pattern stands 3R in: 18 mm for the 11 mm clearance "
-                      "hole. Less than that is reported rather than cut.", 18.0)
+        _add_bolt_properties(obj)
         _add_property(obj, "App::PropertyBool", "ClampEars",
                       "Cut clamp-ear notches into the block walls at the mating plane, "
                       "so a clamp or wedge can grip the halves.", False)
@@ -291,6 +355,15 @@ class MouldFixtureFP(CompositePartFP):
         # reads it, and removing a user's property is worse than leaving one.
         if not hasattr(fp, "WedgeCornerStandoff"):
             _add_wedge_properties(fp)
+        # Documents saved before the seat's extra cuts existed carry none of
+        # them, and fixture_params reads all three directly.
+        if not hasattr(fp, "SeatShoulderDiameter"):
+            _add_seat_properties(fp)
+        # A bolt used to thread into the lower half, so documents saved then
+        # carry a tapped diameter and a tapped depth in place of the head
+        # counterbore, and fixture_params reads the counterbore directly.
+        if not hasattr(fp, "BoltHeadDiameter"):
+            _add_bolt_properties(fp)
 
     def _input_signature(self, fp):
         """Everything that defines the fixtures, as one comparable tuple.

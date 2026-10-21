@@ -177,28 +177,53 @@ class AlignmentParams:
 
     enabled: bool = True
     count: int = 2
-    pin_diameter: float = 8.0
-    bush_diameter: float = 16.0
-    depth: float = 25.0
-    # 3R for the default bush: the socket keeps 2R of gap from the wall, so a
-    # centre any closer to it breaks the skirt clearance rule.
+    # A matched round-interlock pair has the SAME outer diameter in both halves,
+    # unlike a dowel-and-bush pair whose two seats differ. These are the A1-10
+    # round taper interlock: D = 10 into each half, 10 mm of engagement.
+    pin_diameter: float = 10.0
+    bush_diameter: float = 10.0
+    depth: float = 10.0
+    # 3R: a seat keeps 2R of gap from the wall, so a centre any closer than that
+    # breaks the skirt clearance rule. R is 5 here, so 15 mm is the minimum and
+    # 24 mm keeps the seats well inboard of the block edge.
     edge_offset: float = 24.0
     pin_half: str = "Lower"
+    # The seat's extra cuts, all off by default so a plain dowel socket costs
+    # nothing. A commercial locating part is not a plain dowel: its flange or
+    # shoulder seats on a counterbore, and its blind seat is a trapped volume
+    # that has to be vented to atmosphere or it outgasses under vacuum.
+    shoulder_diameter: float = 0.0
+    shoulder_depth: float = 0.0
+    vent_diameter: float = 0.0
+    # A screw-fixed part is reached from the back of the block, which for a seat
+    # opening at the mating face is the cap face. The clearance hole that lets
+    # the screw through also vents the seat, so the vent above is only needed for
+    # a part with no back screw. 5.5 mm clears an M5, and the head counterbore
+    # clears an M5 socket head (8.5 mm across, 5.0 tall).
+    screw_diameter: float = 5.5
+    screw_head_diameter: float = 9.5
+    screw_head_depth: float = 5.5
 
 
 @dataclass(frozen=True)
 class ClampingParams:
-    """Through-bolts into the upper half, tapped holes into the lower, plus
-    wall notches a clamp or wedge can grip."""
+    """Through-bolts with a nut on top, plus wall notches a clamp can grip.
+
+    A bolt enters the lower cap face - recessed into it, so the half still lands
+    flat - passes up through both halves and is nutted on the upper cap face.
+    The nut needs no recess, which is why the counterbore is on the lower face
+    only.
+    """
 
     bolts_enabled: bool = True
     bolt_count: int = 4
+    # 11 mm clears an M10, whose socket head is 16 mm across and 10 mm tall.
     bolt_hole_diameter: float = 11.0
-    bolt_tapped_diameter: float = 8.5
-    bolt_depth: float = 20.0
-    # 3R for the 11 mm clearance hole: the socket keeps 2R of gap from the wall,
+    bolt_head_diameter: float = 17.0
+    bolt_head_depth: float = 10.5
+    # 3R for the 17 mm head counterbore: a bolt keeps 2R of gap from the wall,
     # so a centre any closer to it breaks the skirt clearance rule.
-    bolt_edge_offset: float = 18.0
+    bolt_edge_offset: float = 26.0
     ears_enabled: bool = False
     ear_count: int = 4
     ear_width: float = 30.0
@@ -703,6 +728,98 @@ def _drill_through_upper(frame, x, y, z_mate, diameter):
     return Part.makeCylinder(diameter / 2.0, height, start, frame.z_axis)
 
 
+def _drill_through_lower(frame, x, y, z_mate, diameter):
+    """A hole from the mating surface down through the lower cap face."""
+    start = frame.point(x, y, frame.z_min - TOOL_OVERSHOOT)
+    height = (z_mate - frame.z_min) + 2.0 * TOOL_OVERSHOOT
+    return Part.makeCylinder(diameter / 2.0, height, start, frame.z_axis)
+
+
+def _seat_radius(params):
+    """The widest radius an alignment seat presents, shoulder included.
+
+    The clearance rule is about the material a seat removes, and a counterbore
+    removes more of it than the bore does, so the shoulder is what has to be
+    held clear of the wall, the part outline and the other fixtures.
+    """
+    radius = 0.5 * max(params.pin_diameter, params.bush_diameter)
+    if params.shoulder_diameter > 0.0:
+        radius = max(radius, 0.5 * params.shoulder_diameter)
+    return radius
+
+
+def _bolt_radius(params):
+    """The widest radius a clamp bolt presents, head counterbore included."""
+    radius = 0.5 * params.bolt_hole_diameter
+    if params.bolt_head_diameter > 0.0:
+        radius = max(radius, 0.5 * params.bolt_head_diameter)
+    return radius
+
+
+def _drill_between(frame, x, y, start_z, end_z, diameter):
+    """A cylinder along the draw from ``start_z`` to ``end_z``.
+
+    Overshoots at both ends, which is what a cut wants: the face it breaks out
+    of and the floor it bottoms on are clean either way.
+    """
+    low = min(start_z, end_z) - TOOL_OVERSHOOT
+    return Part.makeCylinder(diameter / 2.0,
+                             abs(end_z - start_z) + 2.0 * TOOL_OVERSHOOT,
+                             frame.point(x, y, low), frame.z_axis)
+
+
+def _seat_tool(mould, x, y, z_mate, diameter, params, into_lower):
+    """One whole seat, as a single tool.
+
+    The bore the locating part sits in, the counterbore its flange seats on when
+    it has one, the bore that lets a screw in from the back, and the screw's own
+    counterbore in the cap face. Combined into one tool because they are coaxial
+    parts of a single feature - a screw's counterbore and its clearance hole
+    overlap along the axis by design - and the interference check would
+    otherwise read them as two fixtures fighting for the same material.
+
+    A screw reaches a screw-fixed part from the back of the block, which for a
+    seat opening at the mating face is the cap face. That bore also vents the
+    seat: a blind one holds an air pocket which outgasses into the tool and
+    reads as a leak under vacuum. Both run along the seat's own axis, and the
+    clearance rule already holds every seat clear of the cavity, so neither can
+    reach the part.
+    """
+    frame = mould.frame
+    drill = _drill_down if into_lower else _drill_up
+    socket = drill(frame, x, y, z_mate, diameter, params.depth)
+    floor = z_mate - params.depth if into_lower else z_mate + params.depth
+    cap = frame.z_min if into_lower else frame.z_max
+    # How much half is left between the seat's floor and the face behind it.
+    span = (floor - cap) if into_lower else (cap - floor)
+    if span <= PLANE_OFFSET_TOL:
+        # The seat has already broken through. note_blind_socket reports that,
+        # and there is nothing left behind it for a bore or a counterbore to do.
+        return socket
+    cuts = [socket]
+    if params.shoulder_diameter > 0.0:
+        cuts.append(drill(frame, x, y, z_mate, params.shoulder_diameter,
+                          params.shoulder_depth))
+    # Inward from the cap face is the opposite direction to the seat itself.
+    inward = 1.0 if into_lower else -1.0
+    open_z = cap
+    if params.screw_head_diameter > 0.0:
+        if params.screw_head_depth >= span:
+            raise MouldFixtureError(
+                f"screw head counterbore {params.screw_head_depth:.3f} mm deep "
+                f"leaves nothing of the {span:.3f} mm between the cap face and "
+                f"the seat floor"
+            )
+        cuts.append(_drill_between(frame, x, y, cap,
+                                   cap + inward * params.screw_head_depth,
+                                   params.screw_head_diameter))
+        open_z = cap + inward * params.screw_head_depth
+    for bore in (params.vent_diameter, params.screw_diameter):
+        if bore > 0.0:
+            cuts.append(_drill_between(frame, x, y, open_z, floor, bore))
+    return Part.makeCompound(cuts)
+
+
 def _prism(points, direction):
     return Part.Face(Part.makePolygon(list(points), True)).extrude(direction)
 
@@ -749,6 +866,41 @@ def _alignment_tools(mould, params):
         raise MouldFixtureError(
             f"align pin half must be one of {PIN_HALVES}, not {params.pin_half!r}"
         )
+    # The extras apply to both seats, so each has to suit the narrower of them.
+    narrowest = min(params.pin_diameter, params.bush_diameter)
+    if params.shoulder_diameter > 0.0:
+        if params.shoulder_diameter <= narrowest:
+            raise MouldFixtureError(
+                f"seat shoulder diameter {params.shoulder_diameter:.3f} mm does "
+                f"not countersink a {narrowest:.3f} mm seat"
+            )
+        if params.shoulder_depth >= params.depth:
+            raise MouldFixtureError(
+                f"seat shoulder depth {params.shoulder_depth:.3f} mm reaches "
+                f"past the {params.depth:.3f} mm seat it countersinks"
+            )
+    if params.vent_diameter > 0.0 and params.vent_diameter >= narrowest:
+        raise MouldFixtureError(
+            f"seat vent diameter {params.vent_diameter:.3f} mm is no smaller "
+            f"than the {narrowest:.3f} mm seat it drains"
+        )
+    if params.screw_diameter > 0.0 and params.screw_diameter >= narrowest:
+        raise MouldFixtureError(
+            f"seat screw clearance {params.screw_diameter:.3f} mm is no smaller "
+            f"than the {narrowest:.3f} mm seat it opens into"
+        )
+    if params.screw_head_diameter > 0.0:
+        if params.screw_diameter <= 0.0:
+            raise MouldFixtureError(
+                "a screw head counterbore needs a screw clearance hole to sit "
+                "around"
+            )
+        if params.screw_head_diameter <= params.screw_diameter:
+            raise MouldFixtureError(
+                f"seat screw head diameter {params.screw_head_diameter:.3f} mm "
+                f"does not counterbore the {params.screw_diameter:.3f} mm screw "
+                f"clearance"
+            )
     frame = mould.frame
     pin_tools, bush_tools = [], []
     for x, y in corner_positions(frame, params.count, params.edge_offset):
@@ -757,16 +909,11 @@ def _alignment_tools(mould, params):
                                 params.pin_half == "Lower")
         mould.note_blind_socket("align bush", z_mate, params.depth,
                                 params.pin_half != "Lower")
-        if params.pin_half == "Lower":
-            pin_tools.append(_drill_down(frame, x, y, z_mate,
-                                         params.pin_diameter, params.depth))
-            bush_tools.append(_drill_up(frame, x, y, z_mate,
-                                        params.bush_diameter, params.depth))
-        else:
-            pin_tools.append(_drill_up(frame, x, y, z_mate,
-                                       params.pin_diameter, params.depth))
-            bush_tools.append(_drill_down(frame, x, y, z_mate,
-                                          params.bush_diameter, params.depth))
+        pin_tools.append(_seat_tool(mould, x, y, z_mate, params.pin_diameter,
+                                    params, into_lower=params.pin_half == "Lower"))
+        bush_tools.append(_seat_tool(mould, x, y, z_mate, params.bush_diameter,
+                                     params, into_lower=params.pin_half != "Lower"))
+    # One seat is one hole, however many cuts it takes to make it.
     holes = len(pin_tools) + len(bush_tools)
     if params.pin_half == "Lower":
         return pin_tools, bush_tools, holes
@@ -776,10 +923,13 @@ def _alignment_tools(mould, params):
 def _bolt_tools(mould, params, phase):
     """``(lower, upper, stations)`` for the bolt pattern at one phase.
 
+    Each bolt is one tool: the clearance hole through the half plus, in the
+    lower half, the counterbore its head sinks into. Combined because they
+    overlap along the axis by design, and the interference check reads two
+    overlapping tools as two fixtures fighting for the same material.
+
     Building a candidate pattern is cheap because the mating height is cached,
-    which is what lets the phase search try patterns against each other. The
-    blind-socket notes are left to the caller, so a candidate that is rejected
-    leaves nothing behind.
+    which is what lets the phase search try patterns against each other.
     """
     frame = mould.frame
     lower, upper, stations = [], [], []
@@ -789,8 +939,23 @@ def _bolt_tools(mould, params, phase):
         z_mate = mould.mating_height(station.x, station.y)
         upper.append(_drill_through_upper(frame, station.x, station.y, z_mate,
                                           params.bolt_hole_diameter))
-        lower.append(_drill_down(frame, station.x, station.y, z_mate,
-                                 params.bolt_tapped_diameter, params.bolt_depth))
+        cuts = [_drill_through_lower(frame, station.x, station.y, z_mate,
+                                     params.bolt_hole_diameter)]
+        if params.bolt_head_diameter > 0.0:
+            # The head sinks into the face the bolt enters by, so the half still
+            # lands flat on whatever it is bolted down to.
+            available = z_mate - frame.z_min
+            if params.bolt_head_depth >= available:
+                raise MouldFixtureError(
+                    f"bolt head counterbore {params.bolt_head_depth:.3f} mm deep "
+                    f"reaches the mating surface, only {available:.3f} mm from "
+                    f"the lower cap face"
+                )
+            cuts.append(_drill_between(frame, station.x, station.y,
+                                       frame.z_min,
+                                       frame.z_min + params.bolt_head_depth,
+                                       params.bolt_head_diameter))
+        lower.append(Part.makeCompound(cuts))
     return lower, upper, stations
 
 
@@ -823,7 +988,8 @@ def _bolt_station_phase(mould, params, pin_zones, segments, obstacles=()):
     if params.bolt_count < 1:
         return 0.5
     frame = mould.frame
-    bolt_radius = 0.5 * max(params.bolt_hole_diameter, params.bolt_tapped_diameter)
+    bolt_radius = _bolt_radius(params)
+    bolt_bore = 0.5 * params.bolt_hole_diameter
     candidates = sorted((step / float(BOLT_PHASE_SAMPLES)
                          for step in range(BOLT_PHASE_SAMPLES)),
                         key=lambda phase: abs(phase - 0.5))
@@ -832,7 +998,7 @@ def _bolt_station_phase(mould, params, pin_zones, segments, obstacles=()):
     for phase in candidates:
         lower, upper, stations = _bolt_tools(mould, params, phase)
         surplus = min(_surplus(frame, segments, station.x, station.y, bolt_radius,
-                               pin_zones)
+                               bolt_bore, pin_zones)
                       for station in stations)
         if surplus < 0.0:
             if widest is None or surplus > widest[0]:
@@ -888,66 +1054,70 @@ def _outline_segments(frame, part_line):
     return segments
 
 
-def _skirt_gaps(frame, segments, x, y, radius):
-    """``(wall, outline)`` gaps for a hole of ``radius`` at ``(x, y)``.
+def _skirt_gaps(frame, segments, x, y, wall_radius, cavity_radius):
+    """``(wall, outline)`` gaps for a hole at ``(x, y)``.
 
-    Edge to edge: from the hole's own edge out to the block wall, and in to the
+    Edge to edge, each against the radius that actually applies there: the widest
+    cut at the station for the wall, and the cut that reaches the cavity for the
     part outline. ``outline`` is ``None`` when the part line is not known, which
     is not the same as a clear one.
     """
     wall = min(x - frame.x_min, frame.x_max - x,
-               y - frame.y_min, frame.y_max - y) - radius
-    gaps = [_point_segment_distance(x, y, *segment) - radius
+               y - frame.y_min, frame.y_max - y) - wall_radius
+    gaps = [_point_segment_distance(x, y, *segment) - cavity_radius
             for segment in segments]
     return wall, (min(gaps) if gaps else None)
 
 
-def _surplus(frame, segments, x, y, radius, neighbours=()):
+def _surplus(frame, segments, x, y, wall_radius, cavity_radius, neighbours=()):
     """How much more gap a hole at ``(x, y)`` keeps than the rule demands.
 
     Negative means it breaks the rule. ``neighbours`` is ``(x, y, radius)`` of
-    the other holes it has to clear as well.
+    the other holes it has to clear as well, and those are measured against the
+    part, so the cavity radius is what counts between them.
     """
-    needed = _required_gap(radius)
-    wall, outline = _skirt_gaps(frame, segments, x, y, radius)
-    surplus = wall - needed
+    wall, outline = _skirt_gaps(frame, segments, x, y, wall_radius,
+                                cavity_radius)
+    surplus = wall - _required_gap(wall_radius)
     if outline is not None:
-        surplus = min(surplus, outline - needed)
+        surplus = min(surplus, outline - _required_gap(cavity_radius))
     for other_x, other_y, other_radius in neighbours:
         pair_gap = (math.hypot(x - other_x, y - other_y)
-                    - (radius + other_radius))
+                    - (cavity_radius + other_radius))
         surplus = min(surplus,
-                      pair_gap - _required_gap(max(radius, other_radius)))
+                      pair_gap - _required_gap(max(cavity_radius, other_radius)))
     return surplus
 
 
 def _clearance_issues(frame, segments, holes):
     """Holes keeping less than a diameter of gap from the skirt or each other.
 
-    ``holes`` is ``(label, offset_property, x, y, radius)``. A violation names
-    the property to raise, because the fix is a wider offset or a smaller hole,
-    never a thinner web.
+    ``holes`` is ``(label, offset_property, x, y, wall_radius, cavity_radius)``.
+    A violation names the property to raise, because the fix is a wider offset
+    or a smaller hole, never a thinner web.
     """
     issues = []
-    for label, offset_property, x, y, radius in holes:
-        needed = _required_gap(radius)
-        wall, outline = _skirt_gaps(frame, segments, x, y, radius)
-        if wall < needed:
+    for label, offset_property, x, y, wall_radius, cavity_radius in holes:
+        wall, outline = _skirt_gaps(frame, segments, x, y, wall_radius,
+                                    cavity_radius)
+        if wall < _required_gap(wall_radius):
             issues.append(
                 f"{label} keep {wall:.3f} mm to the block wall but need "
-                f"{needed:.3f} mm (2 x the {radius:.3f} mm radius): raise "
-                f"{offset_property}, or reduce the socket diameter"
+                f"{_required_gap(wall_radius):.3f} mm (2 x the "
+                f"{wall_radius:.3f} mm radius): raise {offset_property}, or "
+                f"reduce the size"
             )
-        if outline is not None and outline < needed:
+        if outline is not None and outline < _required_gap(cavity_radius):
             issues.append(
                 f"{label} keep {outline:.3f} mm to the part outline but need "
-                f"{needed:.3f} mm (2 x the {radius:.3f} mm radius): raise "
-                f"{offset_property}, or reduce the socket diameter"
+                f"{_required_gap(cavity_radius):.3f} mm (2 x the "
+                f"{cavity_radius:.3f} mm radius): raise {offset_property}, or "
+                f"reduce the size"
             )
-    for (label_a, _property_a, xa, ya, ra), (label_b, _property_b, xb, yb, rb) \
-            in combinations(holes, 2):
-        gap = math.hypot(xa - xb, ya - yb) - (ra + rb)
-        needed = _required_gap(max(ra, rb))
+    for (label_a, _property_a, xa, ya, _wa, ca), \
+            (label_b, _property_b, xb, yb, _wb, cb) in combinations(holes, 2):
+        gap = math.hypot(xa - xb, ya - yb) - (ca + cb)
+        needed = _required_gap(max(ca, cb))
         if gap < needed:
             issues.append(
                 f"{label_a} and {label_b} are {gap:.3f} mm apart at their "
@@ -1003,7 +1173,7 @@ def _pin_zones(frame, params):
     """
     if not params.enabled:
         return []
-    radius = 0.5 * max(params.pin_diameter, params.bush_diameter)
+    radius = _seat_radius(params)
     return [(x, y, radius)
             for x, y in corner_positions(frame, params.count, params.edge_offset)]
 
@@ -1014,18 +1184,21 @@ def _labeled(tools, label):
 
 
 def _hole_audit(request, pin_zones, bolt_stations):
-    """``(label, offset_property, x, y, radius)`` for every hole in the layout.
+    """``(label, offset_property, x, y, wall_radius, cavity_radius)`` per hole.
 
-    The sockets at a station are a pin in one half and a bush in the other, so
-    the larger of the two radii is what the site has to clear with.
+    Two radii, because a feature does not present the same size to both edges it
+    has to clear. A seat's shoulder is on the mating face, where the cavity is,
+    so it counts against both. A bolt's head counterbore is in the cap face, far
+    from the cavity in the draw direction, so it counts against the wall only -
+    the hole itself is what has to stand clear of the part.
     """
-    holes = [(ALIGN_KIND, PIN_OFFSET_PROPERTY, x, y, radius)
+    holes = [(ALIGN_KIND, PIN_OFFSET_PROPERTY, x, y, radius, radius)
              for x, y, radius in pin_zones]
     if request.clamping.bolts_enabled:
-        radius = 0.5 * max(request.clamping.bolt_hole_diameter,
-                           request.clamping.bolt_tapped_diameter)
+        wall = _bolt_radius(request.clamping)
+        cavity = 0.5 * request.clamping.bolt_hole_diameter
         holes.extend((CLAMP_KIND, BOLT_OFFSET_PROPERTY, station.x, station.y,
-                      radius) for station in bolt_stations)
+                      wall, cavity) for station in bolt_stations)
     return holes
 
 
@@ -1037,6 +1210,11 @@ def _clamping_tools(mould, params, pin_zones=(), segments=(), obstacles=()):
     """
     frame = mould.frame
     lower_tools, upper_tools, bolt_stations = [], [], []
+    if params.bolt_head_diameter > 0.0 and params.bolt_head_diameter <= params.bolt_hole_diameter:
+        raise MouldFixtureError(
+            f"bolt head diameter {params.bolt_head_diameter:.3f} mm does not "
+            f"counterbore the {params.bolt_hole_diameter:.3f} mm clearance hole"
+        )
     notches = 0
     if params.ears_enabled:
         for station in perimeter_stations(frame, params.ear_count, 0.0, phase=0.25):
@@ -1052,10 +1230,6 @@ def _clamping_tools(mould, params, pin_zones=(), segments=(), obstacles=()):
             mould, params, pin_zones, segments,
             tuple(obstacles) + tuple(lower_tools) + tuple(upper_tools))
         bolt_lower, bolt_upper, bolt_stations = _bolt_tools(mould, params, phase)
-        for station in bolt_stations:
-            mould.note_blind_socket("tapped bolt",
-                                    mould.mating_height(station.x, station.y),
-                                    params.bolt_depth, True)
         lower_tools.extend(bolt_lower)
         upper_tools.extend(bolt_upper)
         bolt_holes = len(bolt_lower)
@@ -1257,14 +1431,11 @@ def _in_plane_requirements(alignment, clamping, wedges):
     """
     required = []
     if alignment.enabled:
-        radius = 0.5 * max(alignment.pin_diameter, alignment.bush_diameter)
         required.append(("the align pin and bush sockets",
-                         alignment.edge_offset + radius))
+                         alignment.edge_offset + _seat_radius(alignment)))
     if clamping.bolts_enabled:
-        radius = 0.5 * max(clamping.bolt_hole_diameter,
-                           clamping.bolt_tapped_diameter)
         required.append(("the clamp bolt holes",
-                         clamping.bolt_edge_offset + radius))
+                         clamping.bolt_edge_offset + _bolt_radius(clamping)))
     if clamping.ears_enabled:
         required.append(("the clamp-ear notches", clamping.ear_depth))
     if wedges.enabled:

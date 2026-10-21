@@ -45,8 +45,9 @@ from ...features.MouldFixture import (
 PART_SIZE = (40.0, 30.0, 20.0)
 
 # Stock around the part.  Generous on purpose: the default 5 mm cannot hold the
-# default fixtures, whose corner pin alone needs about 41 mm for the skirt
-# clearance rule, and the wedge slots leave a 50 mm standoff at every corner.
+# default fixtures.  The clamp bolts are the widest of them, wanting a 26 mm
+# inset plus 3R of gap to the part - about 43 mm - and the wedge slots leave a
+# 50 mm standoff at every corner.
 STOCK_MARGIN = 60.0
 
 SOURCE_COLOUR = (0.85, 0.15, 0.15)

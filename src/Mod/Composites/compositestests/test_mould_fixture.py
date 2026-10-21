@@ -59,6 +59,7 @@ from Composites.tools.mould_fixture import (
     _pin_zones,
     _port_stations,
     _port_tools,
+    _seat_radius,
     _shared_volume,
     _summary,
     _wall_normals,
@@ -75,13 +76,13 @@ from Composites.tools.mould_fixture import (
 from .test_base import TestFreeCADFP
 
 # Block dimensions in the block's own frame, and the cavity inside it.
-# Wide enough for the default bolts under the skirt clearance rule, and for the
-# default wedge slots: a wedge leaves a 50 mm corner standoff at either end of
-# each wall, so the shortest wall has to be longer than 100 mm for a slot to
-# exist at all.  The 40 x 30 cavity is rotated 45 degrees in plane, so its
-# reach along the block axes is 35/sqrt(2) = 24.7 mm and the skirt is
-# (BLOCK - 24.7) / 2.
-BLOCK = (140.0, 120.0, 60.0)
+# Wide enough for the default fixtures: the wedge slots leave a 50 mm corner
+# standoff at either end of each wall, so the shortest wall has to exceed
+# 100 mm, and the default bolt pattern wants about 43 mm of skirt - a 26 mm
+# inset plus 3R for the 11 mm clearance hole against the part.  The 40 x 30
+# cavity is rotated 45 degrees in plane, so its reach along the block axes is
+# 35/sqrt(2) = 24.7 mm and the skirt is (BLOCK - 24.7) / 2.
+BLOCK = (180.0, 140.0, 60.0)
 SPLIT_Z = 30.0
 CAVITY_HALF = (20.0, 15.0)
 CAVITY_Z = (20.0, 40.0)
@@ -418,11 +419,12 @@ class TestFixtureCuts(unittest.TestCase):
         return build_fixtures(self._request(**flags))
 
     def _alignment(self, **overrides):
-        """Alignment params with a depth that leaves the bush a floor.
+        """Alignment params with a depth that leaves each seat a floor.
 
-        The block is 60 mm tall and the pins sit where the mating height is
-        about 32 mm, so the 25 mm default would run the 16 mm bush socket
-        into the cap face and leave no floor to prove it has one.
+        The stand-in block is 60 mm tall with the pins sitting where the mating
+        height is about 32 mm, so 15 mm leaves material below the pin and above
+        the bush. Pinned here so these tests do not shift when the production
+        default does.
         """
         settings = {"enabled": True, "count": 2, "depth": 15.0}
         settings.update(overrides)
@@ -489,8 +491,10 @@ class TestFixtureCuts(unittest.TestCase):
         self.assertEqual(result["issues"], [])
 
     def test_pins_and_bushes_are_different_diameters(self):
+        # The two seats are sized independently, which a dowel-and-bush pair
+        # needs even though the default round interlock pair does not.
         request = self._request()
-        request.alignment = self._alignment()
+        request.alignment = self._alignment(pin_diameter=8.0, bush_diameter=16.0)
         result = build_fixtures(request)
         geometry = block_frame(result["lower_shape"], result["upper_shape"], self.draw)
         x, y = corner_positions(geometry, 2, self._alignment().edge_offset)[0]
@@ -504,7 +508,200 @@ class TestFixtureCuts(unittest.TestCase):
         deeper = _probe(geometry, x, y, z_mate + 18.0, z_mate + 23.0, 6.0)
         self.assertGreater(_material(result["upper_shape"], deeper), 300.0)
 
-    def test_bolt_breaks_through_the_upper_half_only(self):
+    def _seat_ring_material(self, shape, geometry, offset):
+        """Material on a ring around each pin seat, just below the mating face.
+
+        Sampled off the seat's axis rather than on it, so it reads the annulus
+        between the bore wall and the counterbore wall and nothing else.
+        """
+        total = 0.0
+        for x, y in corner_positions(geometry, 2, self._alignment().edge_offset):
+            z_mate = self._mating_height(x, y, geometry)
+            probe = _probe(geometry, x + offset, y, z_mate - 3.0, z_mate - 1.0, 1.0)
+            total += _material(shape, probe)
+        return total
+
+    def test_seat_shoulder_cuts_a_counterbore(self):
+        """A locating part's flange seats on a counterbore, cut from the face."""
+        request = self._request()
+        request.alignment = self._alignment(pin_diameter=8.0,
+                                           shoulder_diameter=20.0,
+                                           shoulder_depth=5.0)
+        result = build_fixtures(request)
+        self.assertEqual(result["status"], "Ready", result["summary"])
+        geometry = block_frame(result["lower_shape"], result["upper_shape"], self.draw)
+        # Between the 4 mm bore wall and the 10 mm counterbore wall, just under
+        # the face: the counterbore has taken it.
+        self.assertLess(self._seat_ring_material(
+            result["lower_shape"], geometry, 5.0), PROBE_TOL)
+        # And it was material before the cut.
+        self.assertGreater(self._seat_ring_material(self.lower, geometry, 5.0), 1.0)
+
+    def test_no_counterbore_is_cut_unless_one_is_asked_for(self):
+        request = self._request()
+        request.alignment = self._alignment(pin_diameter=8.0)
+        result = build_fixtures(request)
+        geometry = block_frame(result["lower_shape"], result["upper_shape"], self.draw)
+        self.assertGreater(self._seat_ring_material(
+            result["lower_shape"], geometry, 5.0), 1.0)
+
+    def test_seat_vent_opens_the_floor_to_the_cap(self):
+        """A blind seat is a trapped volume, which reads as a leak under vacuum."""
+        request = self._request()
+        # The screw hole would also open the floor, so it is off here and the
+        # vent is the only cut that could reach below it. The head counterbore
+        # goes with it: there is nothing for it to sink a screw into.
+        request.alignment = self._alignment(depth=10.0, vent_diameter=2.0,
+                                           screw_diameter=0.0,
+                                           screw_head_diameter=0.0,
+                                           screw_head_depth=0.0)
+        result = build_fixtures(request)
+        self.assertEqual(result["status"], "Ready", result["summary"])
+        geometry = block_frame(result["lower_shape"], result["upper_shape"], self.draw)
+        for x, y in corner_positions(geometry, 2, self._alignment().edge_offset):
+            z_mate = self._mating_height(x, y, geometry)
+            # Below the seat floor, on the seat's own axis: the vent is the only
+            # cut that reaches there.
+            probe = _probe(geometry, x, y, z_mate - 12.0, z_mate - 11.0, 0.5)
+            self.assertLess(_material(result["lower_shape"], probe), PROBE_TOL)
+            self.assertGreater(_material(self.lower, probe), 0.5)
+
+    def test_no_vent_is_cut_unless_one_is_asked_for(self):
+        request = self._request()
+        request.alignment = self._alignment(depth=10.0, screw_diameter=0.0,
+                                           screw_head_diameter=0.0,
+                                           screw_head_depth=0.0)
+        result = build_fixtures(request)
+        geometry = block_frame(result["lower_shape"], result["upper_shape"], self.draw)
+        for x, y in corner_positions(geometry, 2, self._alignment().edge_offset):
+            z_mate = self._mating_height(x, y, geometry)
+            probe = _probe(geometry, x, y, z_mate - 12.0, z_mate - 11.0, 0.5)
+            self.assertGreater(_material(result["lower_shape"], probe), 0.5)
+
+    def test_the_default_part_is_screw_fixed(self):
+        """The defaults are a matched A1-10 interlock pair, held by an M5."""
+        params = AlignmentParams()
+        self.assertAlmostEqual(params.pin_diameter, 10.0, delta=1e-9)
+        self.assertAlmostEqual(params.bush_diameter, 10.0, delta=1e-9)
+        self.assertAlmostEqual(params.depth, 10.0, delta=1e-9)
+        self.assertAlmostEqual(params.screw_diameter, 5.5, delta=1e-9)
+        self.assertAlmostEqual(params.screw_head_diameter, 9.5, delta=1e-9)
+        self.assertAlmostEqual(params.screw_head_depth, 5.5, delta=1e-9)
+
+    def test_screw_head_counterbore_is_cut_at_the_cap_face(self):
+        """The head sinks into the face behind the seat, not the mating face."""
+        request = self._request()
+        request.alignment = self._alignment(depth=10.0, screw_diameter=5.5,
+                                           screw_head_diameter=9.5,
+                                           screw_head_depth=5.5)
+        result = build_fixtures(request)
+        self.assertEqual(result["status"], "Ready", result["summary"])
+        geometry = block_frame(result["lower_shape"], result["upper_shape"], self.draw)
+        for x, y in corner_positions(geometry, 2, self._alignment().edge_offset):
+            # Off the screw's axis but inside the 9.5 mm counterbore, at the cap
+            # face: material gone.
+            under_head = _probe(geometry, x + 4.0, y, geometry.z_min + 1.0,
+                                geometry.z_min + 3.0, 0.5)
+            self.assertLess(_material(result["lower_shape"], under_head), PROBE_TOL)
+            # Outside it: the cap face is intact.
+            beside_head = _probe(geometry, x + 6.0, y, geometry.z_min + 1.0,
+                                 geometry.z_min + 3.0, 0.5)
+            self.assertGreater(_material(result["lower_shape"], beside_head), 0.5)
+
+    def test_a_head_counterbore_that_swallows_the_screw_hole_is_refused(self):
+        # The block behind the seat is only about 17 mm at the test depth, so a
+        # 100 mm counterbore meets the seat floor and leaves the screw nowhere
+        # to pass. Nothing else could report that: the seat itself is sound.
+        request = self._request()
+        request.alignment = self._alignment(screw_head_depth=100.0)
+        result = build_fixtures(request)
+        self.assertEqual(result["status"], "Fail")
+        self.assertIn("leaves nothing", result["summary"])
+
+    def test_a_head_narrower_than_the_screw_is_refused(self):
+        request = self._request()
+        request.alignment = self._alignment(screw_diameter=5.5,
+                                           screw_head_diameter=5.0,
+                                           screw_head_depth=3.0)
+        result = build_fixtures(request)
+        self.assertEqual(result["status"], "Fail")
+        self.assertIn("does not counterbore", result["summary"])
+
+    def test_a_head_counterbore_without_a_screw_hole_is_refused(self):
+        request = self._request()
+        request.alignment = self._alignment(screw_diameter=0.0,
+                                           screw_head_diameter=9.5,
+                                           screw_head_depth=5.5)
+        result = build_fixtures(request)
+        self.assertEqual(result["status"], "Fail")
+        self.assertIn("needs a screw clearance hole", result["summary"])
+
+    def test_seat_screw_hole_opens_the_floor_to_the_back(self):
+        """A screw-fixed part is reached from the cap face behind its seat."""
+        request = self._request()
+        request.alignment = self._alignment(depth=10.0, screw_diameter=5.5)
+        result = build_fixtures(request)
+        self.assertEqual(result["status"], "Ready", result["summary"])
+        geometry = block_frame(result["lower_shape"], result["upper_shape"], self.draw)
+        for x, y in corner_positions(geometry, 2, self._alignment().edge_offset):
+            z_mate = self._mating_height(x, y, geometry)
+            # On the seat's axis, below its floor: the clearance hole is there.
+            through = _probe(geometry, x, y, z_mate - 13.0, z_mate - 12.0, 2.0)
+            self.assertLess(_material(result["lower_shape"], through), PROBE_TOL)
+            # Off the axis but inside the seat's own footprint, below the floor:
+            # untouched, so the hole did not widen the seat.
+            beside = _probe(geometry, x + 4.0, y, z_mate - 13.0, z_mate - 12.0, 0.5)
+            self.assertGreater(_material(result["lower_shape"], beside), 0.5)
+
+    def test_a_screw_clearance_as_wide_as_the_seat_is_refused(self):
+        request = self._request()
+        request.alignment = self._alignment(pin_diameter=10.0, bush_diameter=10.0,
+                                           screw_diameter=10.0)
+        result = build_fixtures(request)
+        self.assertEqual(result["status"], "Fail")
+        self.assertIn("seat screw clearance", result["summary"])
+
+    def test_a_shoulder_narrower_than_the_seat_is_refused(self):
+        request = self._request()
+        request.alignment = self._alignment(pin_diameter=10.0, bush_diameter=10.0,
+                                           shoulder_diameter=8.0,
+                                           shoulder_depth=3.0)
+        result = build_fixtures(request)
+        self.assertEqual(result["status"], "Fail")
+        self.assertIn("does not countersink", result["summary"])
+
+    def test_a_shoulder_deeper_than_the_seat_is_refused(self):
+        request = self._request()
+        request.alignment = self._alignment(depth=15.0, shoulder_diameter=20.0,
+                                           shoulder_depth=15.0)
+        result = build_fixtures(request)
+        self.assertEqual(result["status"], "Fail")
+        self.assertIn("reaches past", result["summary"])
+
+    def test_a_vent_as_wide_as_the_seat_is_refused(self):
+        request = self._request()
+        request.alignment = self._alignment(pin_diameter=8.0, vent_diameter=8.0)
+        result = build_fixtures(request)
+        self.assertEqual(result["status"], "Fail")
+        self.assertIn("seat vent diameter", result["summary"])
+
+    def test_the_clearance_rule_uses_the_shoulder_radius(self):
+        """The counterbore removes more than the bore, so it sets the clearance.
+
+        Holding the bore clear while the counterbore reaches the wall would
+        report nothing and cut into it.
+        """
+        params = AlignmentParams(enabled=True, pin_diameter=8.0,
+                                 bush_diameter=16.0, shoulder_diameter=30.0,
+                                 shoulder_depth=4.0)
+        self.assertAlmostEqual(_seat_radius(params), 15.0, delta=1e-9)
+        zones = _pin_zones(self.frame, params)
+        self.assertTrue(zones)
+        for _x, _y, radius in zones:
+            self.assertAlmostEqual(radius, 15.0, delta=1e-9)
+
+    def test_a_bolt_goes_right_through_both_halves(self):
+        """A through-bolt, nutted on top, with its head sunk in the lower face."""
         result = self._build(bolts=True)
         self.assertEqual(result["status"], "Ready", result["summary"])
         self.assertEqual(result["bolt_holes"], 4)
@@ -513,20 +710,23 @@ class TestFixtureCuts(unittest.TestCase):
         # from the result rather than recomputed at a guessed phase.
         for x, y in result["bolt_stations"]:
             z_mate = self._mating_height(x, y, geometry)
-            # The clearance hole reaches the upper cap face.
-            probe = _probe(geometry, x, y, z_mate + 0.5,
-                           geometry.z_max - 0.5, 3.0)
-            self.assertLess(_material(result["upper_shape"], probe), PROBE_TOL)
-            self.assertGreater(_material(self.upper, probe), 100.0)
-            # The tapped hole in the lower half does not break out of the
-            # bottom face: below the hole's 20 mm floor the material must be
-            # untouched, so the probe reads exactly what the original had.
-            probe = _probe(geometry, x, y, geometry.z_min + 0.5,
-                           z_mate - 20.5, 2.0)
-            untouched = _material(self.lower, probe)
-            self.assertGreater(untouched, 20.0)
-            self.assertAlmostEqual(_material(result["lower_shape"], probe),
-                                   untouched, delta=1e-6)
+            # Clearance right through the upper half, out at its cap face.
+            upper_probe = _probe(geometry, x, y, z_mate + 0.5,
+                                 geometry.z_max - 0.5, 3.0)
+            self.assertLess(_material(result["upper_shape"], upper_probe),
+                            PROBE_TOL)
+            self.assertGreater(_material(self.upper, upper_probe), 100.0)
+            # And right through the lower half, out at its cap face.
+            lower_probe = _probe(geometry, x, y, geometry.z_min + 0.5,
+                                 z_mate - 0.5, 3.0)
+            self.assertLess(_material(result["lower_shape"], lower_probe),
+                            PROBE_TOL)
+            # The head counterbore is in that lower cap face, where the head
+            # would otherwise stand proud of it.
+            under_head = _probe(geometry, x + 6.0, y, geometry.z_min + 1.0,
+                                geometry.z_min + 3.0, 0.5)
+            self.assertLess(_material(result["lower_shape"], under_head), PROBE_TOL)
+            self.assertGreater(_material(self.lower, under_head), 0.5)
 
     def test_clamp_ear_notches_cut_both_halves(self):
         result = self._build(ears=True)
@@ -833,15 +1033,17 @@ class TestSkirtClearance(unittest.TestCase):
                 for (ax, ay), (bx, by) in zip(corners, corners[1:] + corners[:1])]
 
     def test_a_socket_too_close_to_the_wall_is_reported(self):
-        issues = _clearance_issues(self._frame(), [],
-                                   [(ALIGN_KIND, PIN_OFFSET_PROPERTY, 5.0, 50.0, 4.0)])
+        issues = _clearance_issues(
+            self._frame(), [],
+            [(ALIGN_KIND, PIN_OFFSET_PROPERTY, 5.0, 50.0, 4.0, 4.0)])
         self.assertEqual(len(issues), 1)
         self.assertIn("block wall", issues[0])
         self.assertIn(PIN_OFFSET_PROPERTY, issues[0])
 
     def test_a_socket_too_close_to_the_part_outline_is_reported(self):
-        issues = _clearance_issues(self._frame(), self._square_outline(),
-                                   [(CLAMP_KIND, BOLT_OFFSET_PROPERTY, 50.0, 70.0, 4.0)])
+        issues = _clearance_issues(
+            self._frame(), self._square_outline(),
+            [(CLAMP_KIND, BOLT_OFFSET_PROPERTY, 50.0, 70.0, 4.0, 4.0)])
         self.assertEqual(len(issues), 1)
         self.assertIn("part outline", issues[0])
         self.assertIn(BOLT_OFFSET_PROPERTY, issues[0])
@@ -849,8 +1051,8 @@ class TestSkirtClearance(unittest.TestCase):
     def test_sockets_too_close_to_each_other_are_reported(self):
         issues = _clearance_issues(
             self._frame(), [],
-            [(ALIGN_KIND, PIN_OFFSET_PROPERTY, 30.0, 50.0, 4.0),
-             (CLAMP_KIND, BOLT_OFFSET_PROPERTY, 40.0, 50.0, 4.0)])
+            [(ALIGN_KIND, PIN_OFFSET_PROPERTY, 30.0, 50.0, 4.0, 4.0),
+             (CLAMP_KIND, BOLT_OFFSET_PROPERTY, 40.0, 50.0, 4.0, 4.0)])
         self.assertEqual(len(issues), 1)
         self.assertIn(ALIGN_KIND, issues[0])
         self.assertIn(CLAMP_KIND, issues[0])
@@ -858,8 +1060,8 @@ class TestSkirtClearance(unittest.TestCase):
     def test_sockets_with_a_diameter_of_web_are_not_reported(self):
         self.assertEqual(_clearance_issues(
             self._frame(), self._square_outline(),
-            [(ALIGN_KIND, PIN_OFFSET_PROPERTY, 20.0, 50.0, 4.0),
-             (CLAMP_KIND, BOLT_OFFSET_PROPERTY, 80.0, 50.0, 4.0)]), [])
+            [(ALIGN_KIND, PIN_OFFSET_PROPERTY, 20.0, 50.0, 4.0, 4.0),
+             (CLAMP_KIND, BOLT_OFFSET_PROPERTY, 80.0, 50.0, 4.0, 4.0)]), [])
 
     def test_the_rule_is_a_diameter_of_web(self):
         # A radius-4 socket needs 8 mm of gap, so its centre needs x >= 12.
@@ -867,22 +1069,36 @@ class TestSkirtClearance(unittest.TestCase):
         frame = self._frame()
         issues = _clearance_issues(
             frame, [],
-            [(ALIGN_KIND, PIN_OFFSET_PROPERTY, 11.9, 50.0, 4.0)])
+            [(ALIGN_KIND, PIN_OFFSET_PROPERTY, 11.9, 50.0, 4.0, 4.0)])
         self.assertEqual(len(issues), 1)
         self.assertEqual(_clearance_issues(
             frame, [],
-            [(ALIGN_KIND, PIN_OFFSET_PROPERTY, 12.1, 50.0, 4.0)]), [])
+            [(ALIGN_KIND, PIN_OFFSET_PROPERTY, 12.1, 50.0, 4.0, 4.0)]), [])
+
+    def test_a_cap_face_counterbore_counts_against_the_wall_only(self):
+        """Which radius applies depends on the edge, and the face it is on.
+
+        A bolt head counterbore widens the hole at the cap face, so it reaches
+        the wall. The cavity is at the mating face, so it is the hole - not the
+        counterbore - that has to stand clear of the part. Measuring the
+        counterbore against the part too would report a second violation here.
+        """
+        issues = _clearance_issues(
+            self._frame(), self._square_outline(),
+            [(CLAMP_KIND, BOLT_OFFSET_PROPERTY, 20.0, 50.0, 9.0, 5.5)])
+        self.assertEqual(len(issues), 1)
+        self.assertIn("block wall", issues[0])
 
 
 class TestStockMargins(unittest.TestCase):
     """The stock a mould declares, against the stock its fixtures need."""
 
     def test_required_margin_is_the_widest_enabled_fixture(self):
-        # Defaults: pins 24 + 8, bolts 18 + 5.5, wedges 11; the ears are off.
+        # Defaults: pins 24 + 5, bolts 26 + 8.5, wedges 11; the ears are off.
         self.assertAlmostEqual(
             required_in_plane_margin(AlignmentParams(), ClampingParams(),
                                      WedgeParams()),
-            32.0, delta=1e-9)
+            34.5, delta=1e-9)
 
     def test_short_margins_name_the_fixture_and_the_properties(self):
         issues = margin_issues(StockMargins(x=5.0, y=5.0), AlignmentParams(),
@@ -890,11 +1106,11 @@ class TestStockMargins(unittest.TestCase):
                                WedgeParams(enabled=False))
         self.assertEqual(len(issues), 1)
         self.assertIn("the align pin and bush sockets", issues[0])
-        self.assertIn("32.000", issues[0])
+        self.assertIn("29.000", issues[0])
         self.assertIn("PartingStockMarginX/Y", issues[0])
 
     def test_ample_margins_report_nothing(self):
-        self.assertEqual(margin_issues(StockMargins(x=35.0, y=35.0),
+        self.assertEqual(margin_issues(StockMargins(x=40.0, y=40.0),
                                        AlignmentParams(), ClampingParams(),
                                        WedgeParams()),
                          [])
@@ -1007,10 +1223,10 @@ class TestMouldFixtureFeature(TestFreeCADFP):
         mould, _lower, _upper = self._mould_with_stand_in_halves(margin=5.0)
         fixture = self._add_fixture_without_recompute(mould)
         CompositeMouldFixtureCommand().post_create(fixture)
-        # The widest fixture is the corner pin and bush: a 24 mm edge offset
-        # plus the 8 mm radius of the 16 mm bush socket.
-        self.assertAlmostEqual(mould.PartingStockMarginX, 32.0, delta=1e-9)
-        self.assertAlmostEqual(mould.PartingStockMarginY, 32.0, delta=1e-9)
+        # The widest fixture is the clamp bolt now: a 26 mm edge offset plus the
+        # 8.5 mm radius of its 17 mm head counterbore.
+        self.assertAlmostEqual(mould.PartingStockMarginX, 34.5, delta=1e-9)
+        self.assertAlmostEqual(mould.PartingStockMarginY, 34.5, delta=1e-9)
 
     def test_post_create_leaves_ample_margins_alone(self):
         from Composites.features.MouldFixture import CompositeMouldFixtureCommand
