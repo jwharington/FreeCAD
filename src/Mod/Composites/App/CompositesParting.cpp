@@ -89,7 +89,10 @@ PYBIND11_MODULE(Composites_parting, m) {
            double stock_margin_x, double stock_margin_y, double stock_margin_z,
            double part_line_tolerance, py::tuple footprint, bool part_line_only,
            bool run_withdrawal_clearance, const std::string& part_line_source,
-           double tessellation_band_tol_deg) {
+           double tessellation_band_tol_deg,
+           const std::string& skirt_levelling,
+           const std::string& skirt_levelling_extent,
+           double skirt_levelling_transition) {
             nextdrape::PartingParams params;
             params.stockMarginX = stock_margin_x;
             params.stockMarginY = stock_margin_y;
@@ -109,6 +112,31 @@ PYBIND11_MODULE(Composites_parting, m) {
                     part_line_source);
             }
             params.tessellationBandTolDeg = tessellation_band_tol_deg;
+            // Skirt outer-wall levelling (docs/spec-skirt-levelling.md). The
+            // defaults are nextdrape's own, so a caller that does not ask gets
+            // today's cast, and with it no level strip. A `fixed` extent is the
+            // only one that produces a level surface to export.
+            if (skirt_levelling == "off") {
+                params.skirtLevelling = nextdrape::SkirtLevelling::Off;
+            } else if (skirt_levelling == "direct") {
+                params.skirtLevelling = nextdrape::SkirtLevelling::Direct;
+            } else if (skirt_levelling == "s-curve" || skirt_levelling == "s_curve") {
+                params.skirtLevelling = nextdrape::SkirtLevelling::SCurve;
+            } else {
+                throw std::runtime_error(
+                    "skirt_levelling must be 'off', 'direct' or 's-curve', got: " +
+                    skirt_levelling);
+            }
+            if (skirt_levelling_extent == "whole") {
+                params.skirtLevellingExtent = nextdrape::SkirtLevellingExtent::Whole;
+            } else if (skirt_levelling_extent == "fixed") {
+                params.skirtLevellingExtent = nextdrape::SkirtLevellingExtent::Fixed;
+            } else {
+                throw std::runtime_error(
+                    "skirt_levelling_extent must be 'whole' or 'fixed', got: " +
+                    skirt_levelling_extent);
+            }
+            params.skirtLevellingTransitionMm = skirt_levelling_transition;
             // The incremental-withdrawal clearance scan is the most expensive
             // stage of the full pipeline and does NOT gate the mould halves
             // (they come from split/skirt/close). The caller decides whether
@@ -216,6 +244,26 @@ PYBIND11_MODULE(Composites_parting, m) {
                 py::arg("half_checks")   = wcHalfChecks,
                 py::arg("step_mm")       = r.withdrawalClearance.stepMm);
 
+            // The level strips (spec A14): per wall, the inboard boundary of
+            // the flat strip (`P_level_in`, at plan = t) and the wall base
+            // (`P_out`). Points, station for station, so a consumer can pair
+            // the two chains and close the ring across the walls. `present`
+            // and `note` say why they are absent, rather than leaving an empty
+            // list to be mistaken for a strip that is legitimately there.
+            py::list levelStripWalls;
+            for (const auto& wall : r.skirtLevelStrips.wall) {
+                levelStripWalls.append(py::dict(
+                    py::arg("wall")            = wall.wall,
+                    py::arg("level_in_points") = wrap_points3d(wall.levelInPoint),
+                    py::arg("outer_points")    = wrap_points3d(wall.outerPoint),
+                    py::arg("level_in_edges")  = wall.levelInEdge.size(),
+                    py::arg("outer_edges")     = wall.outerEdge.size()));
+            }
+            py::dict levelStrips = py::dict(
+                py::arg("present") = r.skirtLevelStrips.present,
+                py::arg("note")    = r.skirtLevelStrips.note,
+                py::arg("walls")   = levelStripWalls);
+
             return py::dict(
                 py::arg("success")               = ok,
                 py::arg("status")                = nextdrape::PartingStatusToString(r.status),
@@ -232,7 +280,8 @@ PYBIND11_MODULE(Composites_parting, m) {
                 py::arg("skirt")                 = wrap_shape(r.skirt),
                 py::arg("withdrawal_clearance")  = withdrawalClearance,
                 py::arg("tangent_face_midpoints") = midpoints,
-                py::arg("part_line_source")       = part_line_source
+                py::arg("part_line_source")       = part_line_source,
+                py::arg("level_strips")           = levelStrips
             );
         },
         py::arg("shape"), py::arg("draw_direction"),
@@ -245,6 +294,9 @@ PYBIND11_MODULE(Composites_parting, m) {
         py::arg("run_withdrawal_clearance") = false,
         py::arg("part_line_source") = "tessellation",
         py::arg("tessellation_band_tol_deg") = 2.0,
+        py::arg("skirt_levelling") = "off",
+        py::arg("skirt_levelling_extent") = "whole",
+        py::arg("skirt_levelling_transition") = 1.0,
         "Compute a non-planar parting surface + mould halves for a FreeCAD "
         "Part.Shape along a user-specified draw direction. Returns a dict; "
         "success=True iff the pipeline reached `ready` (full mould) or the "
@@ -258,5 +310,13 @@ PYBIND11_MODULE(Composites_parting, m) {
         "It must be at least the shallowest face's |n.d| that the part line "
         "has to cross, and as small as possible, since every face inside it "
         "loses its own opinion. "
+        "Skirt levelling (docs/spec-skirt-levelling.md) shapes the skirt's "
+        "outer wall: 'off' (default), 'direct' or 's-curve'. Only a 'fixed' "
+        "extent, whose transition spans the first skirt_levelling_transition "
+        "mm outboard of the cutline and then holds the outer z flat, produces "
+        "a level strip, exported as level_strips: {present, note, "
+        "walls:[{wall, level_in_points, outer_points, level_in_edges, "
+        "outer_edges}]}. 'off' and 'whole' export nothing and say so in the "
+        "note, since neither has a level surface for the strip to bound. "
         "Shapes are returned as live Part.Shape objects directly.");
 }
