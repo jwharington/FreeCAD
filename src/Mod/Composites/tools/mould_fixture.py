@@ -254,15 +254,15 @@ class PortParams:
     """Bores drilled in from a block wall: vacuum, ejector, thermocouple.
 
     A bore is drilled perpendicular to the wall it enters, offset clear of the
-    mating plane so it lies in one half. It breaks into the cavity when the
-    block is thin enough at that depth and is a blind pocket when it is not -
-    which is what a thermocouple pocket is.
+    mating plane so it lies in one half. Its depth is not asked for: the bore is
+    sized to reach the part, which is the whole point of it. A port that stopped
+    inside the stock would be a blind pocket, and the depth that reaches the
+    part is a property of the mould being fixtured, not of the fixture.
     """
 
     enabled: bool = True
     count: int = 2
     diameter: float = 6.0
-    depth: float = 40.0
     half: str = "Lower"
     offset_from_mating: float = 8.0
 
@@ -308,8 +308,10 @@ class MouldBlock:
     frame: BlockFrame
     parting_surface: object = None
     lower: object = None
+    upper: object = None
     mating_fallbacks: int = 0
     breakthroughs: list = field(default_factory=list)
+    unreached_ports: list = field(default_factory=list)
     _mating_cache: dict = field(default_factory=dict, repr=False)
 
     def mating_height(self, x, y):
@@ -1236,13 +1238,41 @@ def _clamping_tools(mould, params, pin_zones=(), segments=(), obstacles=()):
     return lower_tools, upper_tools, bolt_holes, notches, bolt_stations
 
 
+def _part_reach(frame, half, station, z, span):
+    """How far the part is from a block wall along the wall's own normal.
+
+    Measured by sectioning the half the bore is cut into, because the half ends
+    where the part begins: the first crossing past the wall face is the cavity.
+    That makes the measurement follow the part's real surface rather than the
+    block's bounding box, which a cavity does not fill.
+
+    Returns ``None`` when the ray crosses nothing but the wall itself, which is
+    the one case where a bore cannot be sized to reach the part.
+    """
+    if half is None or half.isNull():
+        return None
+    inward = _orient_inward(frame, station)
+    start = frame.point(station.x, station.y, z) - inward * TOOL_OVERSHOOT
+    try:
+        section = half.section(Part.makeLine(start, start + inward * span))
+    except Exception:
+        return None
+    crossings = sorted((vertex.Point - start).dot(inward)
+                       for vertex in section.Vertexes)
+    past = [along for along in crossings if along > 2.0 * TOOL_OVERSHOOT]
+    return past[0] if past else None
+
+
 def _port_tools(mould, params):
     """``(lower_tools, upper_tools, bore_count, specs)`` for the wall bores.
 
     Stations sit on the middle of the block's two shortest walls, so a bore
-    starts at a wall face and runs in towards the work. ``specs`` is
-    ``(station, radius, half)`` for each, which is what a parting wedge slot
-    needs to keep out of its way.
+    starts at a wall face and runs in towards the work. Each bore is cut to
+    reach the part and a little past it, so it opens into the cavity instead of
+    stopping in the stock.
+
+    ``specs`` is ``(station, radius, half)`` for each, which is what a parting
+    wedge slot needs to keep out of its way.
     """
     if not params.enabled:
         return [], [], 0, []
@@ -1253,6 +1283,9 @@ def _port_tools(mould, params):
     frame = mould.frame
     lower_tools, upper_tools = [], []
     specs = []
+    # Long enough to cross the block whatever the draw direction, so a missing
+    # crossing means the part is genuinely not in the way of the bore.
+    span = 2.0 * max(frame.size)
     for station in _port_stations(frame, params.count):
         specs.append((station, params.diameter / 2.0, params.half))
         z_mate = mould.mating_height(station.x, station.y)
@@ -1260,11 +1293,20 @@ def _port_tools(mould, params):
         for half, sign in (("Lower", -1.0), ("Upper", 1.0)):
             if params.half not in (half, "Both"):
                 continue
-            centre = frame.point(station.x, station.y,
-                                 z_mate + sign * params.offset_from_mating)
-            start = centre - inward * TOOL_OVERSHOOT
+            z = z_mate + sign * params.offset_from_mating
+            side = mould.lower if half == "Lower" else mould.upper
+            reach = _part_reach(frame, side, station, z, span)
+            if reach is None:
+                mould.unreached_ports.append(
+                    f"the process ports cannot reach the part from the "
+                    f"{params.half.lower()} wall at ({station.x:.3f}, "
+                    f"{station.y:.3f}): nothing was crossed along the bore, so "
+                    f"no bore was cut there"
+                )
+                continue
+            start = frame.point(station.x, station.y, z) - inward * TOOL_OVERSHOOT
             bore = Part.makeCylinder(params.diameter / 2.0,
-                                     params.depth + TOOL_OVERSHOOT, start, inward)
+                                     reach + 2.0 * TOOL_OVERSHOOT, start, inward)
             (lower_tools if half == "Lower" else upper_tools).append(bore)
     return lower_tools, upper_tools, len(lower_tools) + len(upper_tools), specs
 
@@ -1459,7 +1501,8 @@ def margin_issues(margins, alignment, clamping, wedges):
     reach the part, and only one that does not fit is certainly short of stock.
 
     Process ports are left out. A port is bored in from the wall in order to
-    reach the part, so the margin does not bound it.
+    reach the part, and its depth is measured from the part rather than set, so
+    the margin does not bound it either way.
     """
     if margins.explicit_footprint:
         return [FOOTPRINT_NOTE]
@@ -1501,7 +1544,7 @@ def build_fixtures(request):
         )
 
     mould = MouldBlock(frame=frame, parting_surface=request.parting_surface,
-                       lower=lower)
+                       lower=lower, upper=upper)
     try:
         pin_zones = _pin_zones(frame, request.alignment)
         segments = _outline_segments(frame, request.parting_surface)
@@ -1554,6 +1597,7 @@ def build_fixtures(request):
         bolt_stations=[(station.x, station.y) for station in bolt_stations],
     )
     result["issues"].extend(mould.breakthroughs)
+    result["issues"].extend(mould.unreached_ports)
     if request.stock_margins is not None:
         result["issues"].extend(
             margin_issues(request.stock_margins, request.alignment,

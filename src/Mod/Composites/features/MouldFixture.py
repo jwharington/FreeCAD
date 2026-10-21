@@ -204,7 +204,6 @@ def fixture_params(fp):
             enabled=bool(fp.ProcessPorts),
             count=int(fp.PortCount),
             diameter=float(fp.PortDiameter),
-            depth=float(fp.PortDepth),
             half=fp.PortHalf,
             offset_from_mating=float(fp.PortMatingOffset),
         ),
@@ -295,16 +294,14 @@ class MouldFixtureFP(CompositePartFP):
                       "Clamp-ear notch depth, into the block from the wall.", 12.0)
 
         _add_property(obj, "App::PropertyBool", "ProcessPorts",
-                      "Bore vacuum, ejector and thermocouple ports in from the block "
-                      "walls.", True)
+                      "Bore vacuum, ejector and thermocouple ports in from the "
+                      "block walls. Each bore is cut to reach the part and open "
+                      "into the cavity; there is no depth to set, because the "
+                      "depth that reaches the part belongs to the mould.", True)
         _add_property(obj, "App::PropertyInteger", "PortCount",
                       "Number of process ports around the block perimeter.", 2)
         _add_property(obj, "App::PropertyLength", "PortDiameter",
                       "Process port bore diameter.", 6.0)
-        _add_property(obj, "App::PropertyLength", "PortDepth",
-                      "Process port bore depth into the block from the wall. A bore "
-                      "that reaches the cavity breaks into it; one that does not stays "
-                      "a blind pocket.", 40.0)
         _add_property(obj, "App::PropertyLength", "PortMatingOffset",
                       "Offset of a bore from the mating plane, so it lies in one half "
                       "rather than being split by the parting surface.", 8.0)
@@ -392,18 +389,20 @@ class MouldFixtureFP(CompositePartFP):
     def execute(self, fp):
         signature = self._input_signature(fp)
         if signature is None:
-            fp.FixtureStatus = "Fail"
-            fp.FixtureSummary = "Fixture build failed: the source mould has no halves."
-            fp.FixtureIssues = [
-                "Source has no usable MouldHalfA/MouldHalfB; run the mould "
-                "analysis to completion first."
-            ]
-            self._fixtured_inputs = None
-            self._write_shapes(fp, Part.Shape(), Part.Shape())
+            self._write_failure(
+                fp,
+                "Fixture build failed: the source mould has no halves.",
+                ["Source has no usable MouldHalfA/MouldHalfB; run the mould "
+                 "analysis to completion first."],
+            )
             return
         if signature == getattr(self, "_fixtured_inputs", None):
             # Writing the outputs below leaves this object touched, so without
             # this guard every document recompute re-runs every boolean cut.
+            return
+        if signature == getattr(self, "_failed_inputs", None):
+            # A build that failed for this same input is not worth repeating
+            # either, and re-writing its report would touch the object again.
             return
 
         source = fp.Source
@@ -426,12 +425,37 @@ class MouldFixtureFP(CompositePartFP):
                 stock_margins=stock_margins(source),
             )
         )
+        if result["status"] == "Fail":
+            self._write_failure(fp, result["summary"], result["issues"])
+            return
         fp.FixtureStatus = result["status"]
         fp.FixtureSummary = result["summary"]
         fp.FixtureIssues = result["issues"]
         self._write_shapes(fp, result["lower_shape"], result["upper_shape"])
-        if result["status"] != "Fail":
-            self._fixtured_inputs = signature
+        self._fixtured_inputs = signature
+        self._failed_inputs = None
+
+    def _write_failure(self, fp, summary, issues):
+        """Report a failure once, then stop.
+
+        Writing the outputs touches this object and its children, which
+        re-schedules the recompute that produced them - so a failure that
+        re-wrote its report on every recompute looped instead of reporting.
+        Only changed text writes anything, and a half that is already empty is
+        left alone for the same reason. The failed input is remembered so a
+        failing build is not run again either, which matters when the build is
+        expensive.
+        """
+        if (fp.FixtureStatus != "Fail" or fp.FixtureSummary != summary
+                or list(fp.FixtureIssues) != list(issues)):
+            fp.FixtureStatus = "Fail"
+            fp.FixtureSummary = summary
+            fp.FixtureIssues = list(issues)
+            self._fixtured_inputs = None
+            for child in (fp.FixtureLower, fp.FixtureUpper):
+                if child is not None and not child.Shape.isNull():
+                    child.Shape = Part.Shape()
+        self._failed_inputs = self._input_signature(fp)
 
     def _write_shapes(self, fp, lower_shape, upper_shape):
         if fp.FixtureLower:

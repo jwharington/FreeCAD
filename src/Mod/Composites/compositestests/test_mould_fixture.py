@@ -831,7 +831,7 @@ class TestFixtureCuts(unittest.TestCase):
 
         frame = block_frame(self.lower, self.upper, self.draw)
         mould = MouldBlock(frame=frame, parting_surface=self.parting,
-                           lower=self.lower)
+                           lower=self.lower, upper=self.upper)
         for half, index in (("Lower", 0), ("Upper", 1)):
             port_lower, port_upper, bores, specs = _port_tools(
                 mould, PortParams(enabled=True, count=2, half=half))
