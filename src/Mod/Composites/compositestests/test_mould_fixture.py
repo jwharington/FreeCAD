@@ -1273,28 +1273,47 @@ class TestMouldFixtureFeature(TestFreeCADFP):
     """
 
     def _mould_with_stand_in_halves(self, margin=40.0):
+        """A mould-shaped source holding a fixed pair of halves.
+
+        Not an analysis. A fixture is driven by the inputs it reads, and these
+        tests need a block whose declared margins are deliberately no guide to
+        its size - one of them reports on exactly that mismatch. Nothing executes
+        on this object, so the halves stay as they are put; the real analysis has
+        its own tests, and a fixture no longer has to defeat one to hold its
+        ground.
+        """
+        lower, upper, parting, _draw = make_block_halves()
+        mould = self.doc.addObject("Part::FeaturePython", "Mould")
+        for name in ("MouldHalfA", "MouldHalfB", "PartingSurface"):
+            mould.addProperty("App::PropertyLink", name, "Mould", name, hidden=True)
+        for name in ("PartingStockMarginX", "PartingStockMarginY",
+                     "PartingStockMarginZ"):
+            mould.addProperty("App::PropertyLength", name, "Mould",
+                              "Declared in-plane stock", hidden=True)
+        mould.addProperty("App::PropertyVector", "BestDrawDirection", "Mould",
+                          "The draw direction", hidden=True)
+        for name, shape in (("MouldHalfA", lower), ("MouldHalfB", upper),
+                            ("PartingSurface", parting)):
+            child = self.doc.addObject("Part::Feature", name)
+            child.Shape = shape
+            setattr(mould, name, child)
+        mould.PartingStockMarginX = margin
+        mould.PartingStockMarginY = margin
+        mould.PartingStockMarginZ = margin
+        mould.BestDrawDirection = Z_AXIS
+        self.doc.recompute()
+        return mould, lower, upper
+
+    def _real_mould_analysis(self):
+        """A real mould analysis, for the tests about what a command accepts."""
         from Composites.features.MouldAnalysis import MouldAnalysisFP
 
         source = self.doc.addObject("Part::Feature", "Source")
-        source.Shape = Part.makeBox(20.0, 20.0, 20.0)
+        source.Shape = Part.makeBox(100.0, 100.0, 100.0)
         mould = self.doc.addObject("Part::FeaturePython", "Mould")
         MouldAnalysisFP(mould, source)
-        # The default fixtures need 28 mm at their widest - a corner pin at a
-        # 24 mm edge offset plus the 8 mm radius of the bush socket - so 40 mm
-        # is a mould that needs no fixture-driven resize. Set before the first
-        # recompute, because these margins are part of the analysis's guard.
-        mould.PartingStockMarginX = margin
-        mould.PartingStockMarginY = margin
-        # Let the real analysis run to its current (failing) conclusion first,
-        # so its recompute guard is armed and a later recompute cannot clobber
-        # the stand-in halves.
         self.doc.recompute()
-        lower, upper, parting, _draw = make_block_halves()
-        mould.MouldHalfA.Shape = lower
-        mould.MouldHalfB.Shape = upper
-        mould.PartingSurface.Shape = parting
-        mould.BestDrawDirection = Z_AXIS
-        return mould, lower, upper
+        return mould
 
     def _make_fixture(self, mould, name="Fixture"):
         from Composites.features.MouldFixture import MouldFixtureFP
@@ -1370,25 +1389,62 @@ class TestMouldFixtureFeature(TestFreeCADFP):
         self.assertIn("no halves", fixture.FixtureSummary)
         self.assertTrue(fixture.FixtureIssues)
 
-    def test_recompute_guard_skips_a_second_build(self):
+    def test_a_finished_build_leaves_nothing_to_rebuild(self):
+        """A build must not queue itself for another one.
+
+        Writing the outputs is what a build does last, and if those writes touch
+        the object then every later recompute - and every reopen - re-runs the
+        whole cut, which is minutes of boolean work on a real mould. FreeCAD's
+        own dependency tracking is the arbiter here: an object that is not
+        touched is not executed again, and nothing a build writes may leave one
+        behind.
+        """
+        mould, _lower, _upper = self._mould_with_stand_in_halves()
+        fixture = self._make_fixture(mould)
+        self.assertEqual(fixture.FixtureStatus, "Ready", fixture.FixtureSummary)
+        self.doc.recompute()
+        self.assertEqual(
+            [obj.Name for obj in self.doc.Objects if "Touched" in list(obj.State)],
+            [], "a finished build must leave nothing queued for a rebuild")
+
+        self._save_document(self.fcstd_path)
+        reloaded = self._load_document(self.fcstd_path)
+        try:
+            reopened = reloaded.getObject(fixture.Name)
+            self.assertIsNotNone(reopened)
+            self.assertEqual(reopened.FixtureStatus, "Ready",
+                             reopened.FixtureSummary)
+            self.assertEqual(
+                [obj.Name for obj in reloaded.Objects
+                 if "Touched" in list(obj.State)],
+                [], "a reopened fixture must have no rebuild to do")
+        finally:
+            FreeCAD.closeDocument(reloaded.Name)
+
+    def test_rebuilding_gives_the_same_fixtures(self):
+        """A build is a function of its inputs, so repeating it drifts nothing.
+
+        Nothing is remembered between builds to make that so: the outputs are
+        declared as outputs, so it is FreeCAD that decides when a build is due,
+        and this pins that a rebuild is not itself a source of change.
+        """
         mould, _lower, _upper = self._mould_with_stand_in_halves()
         fixture = self._make_fixture(mould)
         first = fixture.FixtureLower.Shape.Volume
-        self.assertIsNotNone(fixture.Proxy._fixtured_inputs)
         fixture.Proxy.execute(fixture)
         self.assertAlmostEqual(fixture.FixtureLower.Shape.Volume, first, delta=1e-9)
 
     def test_selection_validation_accepts_a_mould_with_solids(self):
         from Composites.features.MouldFixture import CompositeMouldFixtureCommand
 
-        mould, _lower, _upper = self._mould_with_stand_in_halves()
+        mould = self._real_mould_analysis()
         command = CompositeMouldFixtureCommand()
         self.assertIsNone(command.validate_selection({"source": mould}))
 
     def test_selection_validation_refuses_a_mould_without_halves(self):
         from Composites.features.MouldFixture import CompositeMouldFixtureCommand
 
-        mould, _lower, _upper = self._mould_with_stand_in_halves()
+        mould = self._real_mould_analysis()
         mould.MouldHalfB.Shape = Part.Shape()
         command = CompositeMouldFixtureCommand()
         reason = command.validate_selection({"source": mould})
@@ -1398,7 +1454,9 @@ class TestMouldFixtureFeature(TestFreeCADFP):
     def test_command_only_accepts_a_mould_analysis(self):
         from Composites.features.MouldFixture import is_mould_analysis
 
-        mould, _lower, _upper = self._mould_with_stand_in_halves()
+        # A real analysis, because this is about recognising one; the fixture's
+        # own tests use a stub that need not be an analysis at all.
+        mould = self._real_mould_analysis()
         plain = self.doc.addObject("Part::Feature", "Plain")
         plain.Shape = Part.makeBox(1.0, 1.0, 1.0)
         self.assertTrue(is_mould_analysis(mould))

@@ -54,17 +54,6 @@ def _add_enumeration(obj, name, description, options, default):
     setattr(obj, name, default)
 
 
-def _shape_key(shape):
-    """A comparable summary of a shape, for the recompute guard."""
-    if shape is None or shape.isNull():
-        return None
-    box = shape.BoundBox
-    return (round(shape.Volume, 6),
-            round(box.XMin, 6), round(box.XMax, 6),
-            round(box.YMin, 6), round(box.YMax, 6),
-            round(box.ZMin, 6), round(box.ZMax, 6))
-
-
 def _add_bolt_properties(obj):
     """The clamp bolts' shape, on its own so a restore can add it.
 
@@ -324,6 +313,9 @@ class MouldFixtureFP(CompositePartFP):
             )
             setattr(obj, f"Fixture{label}", child)
             obj.setPropertyStatus(f"Fixture{label}", "ReadOnly")
+            # The half's shape is an output of this feature; declared as one, the
+            # write stays out of the document's recompute bookkeeping.
+            child.setPropertyStatus("Shape", "Output")
 
         for name, description in (
             ("FixtureStatus", "Current fixture state"),
@@ -331,7 +323,10 @@ class MouldFixtureFP(CompositePartFP):
         ):
             obj.addProperty("App::PropertyString", name, PROPERTY_GROUP, description)
             setattr(obj, name, "Waiting for mould halves")
-            obj.setPropertyStatus(name, "ReadOnly")
+            # An output, not a user input: FreeCAD then leaves this object's
+            # recompute state alone when a build writes it, which is what makes
+            # a remembered signature unnecessary.
+            obj.setPropertyStatus(name, "Output")
 
         obj.addProperty(
             "App::PropertyStringList",
@@ -339,7 +334,7 @@ class MouldFixtureFP(CompositePartFP):
             PROPERTY_GROUP,
             "Fixture warnings and failures",
         ).FixtureIssues = ["Waiting for mould halves"]
-        obj.setPropertyStatus("FixtureIssues", "ReadOnly")
+        obj.setPropertyStatus("FixtureIssues", "Output")
 
         super().__init__(obj)
 
@@ -362,33 +357,19 @@ class MouldFixtureFP(CompositePartFP):
         if not hasattr(fp, "BoltHeadDiameter"):
             _add_bolt_properties(fp)
 
-    def _input_signature(self, fp):
-        """Everything that defines the fixtures, as one comparable tuple.
+    def execute(self, fp):
+        """Cut the fixtures, once per change of input.
 
-        A mould whose halves changed touches this object through the ``Source``
-        link, so the halves' own geometry distinguishes a real change from a
-        repeat recompute.
+        Nothing here remembers what it built or when. The outputs are declared
+        as outputs, so writing them leaves this object's recompute state alone,
+        and FreeCAD calls this again only when an input actually changes. A
+        remembered signature could only skip work FreeCAD had already decided
+        was needed - and it did not survive the reload it was most needed for.
         """
         source = fp.Source
-        if source is None:
-            return None
         lower, upper = mould_halves(source)
-        half_keys = tuple(
-            _shape_key(getattr(half, "Shape", None)) if half is not None else None
-            for half in (lower, upper)
-        )
-        if any(key is None for key in half_keys):
-            return None
-        parting = getattr(source, "PartingSurface", None)
-        parting_key = _shape_key(parting.Shape) if parting is not None else None
-        draw = getattr(source, "BestDrawDirection", None)
-        draw_key = None if draw is None else (round(draw.x, 6), round(draw.y, 6),
-                                             round(draw.z, 6))
-        return (half_keys, parting_key, draw_key, fixture_params(fp))
-
-    def execute(self, fp):
-        signature = self._input_signature(fp)
-        if signature is None:
+        if (lower is None or upper is None
+                or lower.Shape.isNull() or upper.Shape.isNull()):
             self._write_failure(
                 fp,
                 "Fixture build failed: the source mould has no halves.",
@@ -396,17 +377,6 @@ class MouldFixtureFP(CompositePartFP):
                  "analysis to completion first."],
             )
             return
-        if signature == getattr(self, "_fixtured_inputs", None):
-            # Writing the outputs below leaves this object touched, so without
-            # this guard every document recompute re-runs every boolean cut.
-            return
-        if signature == getattr(self, "_failed_inputs", None):
-            # A build that failed for this same input is not worth repeating
-            # either, and re-writing its report would touch the object again.
-            return
-
-        source = fp.Source
-        lower, upper = mould_halves(source)
         draw = getattr(source, "BestDrawDirection", None)
         if draw is None:
             draw = FreeCAD.Vector(0, 0, 1)
@@ -432,30 +402,21 @@ class MouldFixtureFP(CompositePartFP):
         fp.FixtureSummary = result["summary"]
         fp.FixtureIssues = result["issues"]
         self._write_shapes(fp, result["lower_shape"], result["upper_shape"])
-        self._fixtured_inputs = signature
-        self._failed_inputs = None
 
     def _write_failure(self, fp, summary, issues):
-        """Report a failure once, then stop.
+        """Report a failure, then stop.
 
-        Writing the outputs touches this object and its children, which
-        re-schedules the recompute that produced them - so a failure that
-        re-wrote its report on every recompute looped instead of reporting.
-        Only changed text writes anything, and a half that is already empty is
-        left alone for the same reason. The failed input is remembered so a
-        failing build is not run again either, which matters when the build is
-        expensive.
+        The report is written plainly: as an output it cannot re-schedule the
+        recompute that produced it, and FreeCAD runs this again only when an
+        input changes. Clearing the halves says the geometry is not there rather
+        than leaving the last good cut standing over a failed build.
         """
-        if (fp.FixtureStatus != "Fail" or fp.FixtureSummary != summary
-                or list(fp.FixtureIssues) != list(issues)):
-            fp.FixtureStatus = "Fail"
-            fp.FixtureSummary = summary
-            fp.FixtureIssues = list(issues)
-            self._fixtured_inputs = None
-            for child in (fp.FixtureLower, fp.FixtureUpper):
-                if child is not None and not child.Shape.isNull():
-                    child.Shape = Part.Shape()
-        self._failed_inputs = self._input_signature(fp)
+        fp.FixtureStatus = "Fail"
+        fp.FixtureSummary = summary
+        fp.FixtureIssues = list(issues)
+        for child in (fp.FixtureLower, fp.FixtureUpper):
+            if child is not None:
+                child.Shape = Part.Shape()
 
     def _write_shapes(self, fp, lower_shape, upper_shape):
         if fp.FixtureLower:

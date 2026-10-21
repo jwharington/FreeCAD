@@ -71,7 +71,10 @@ def _add_split_face_outputs(obj):
             f"{obj.Name}_{label}SplitFaces",
         )
         setattr(obj, f"{label}SplitFaces", pieces)
-        obj.setPropertyStatus(f"{label}SplitFaces", "ReadOnly")
+        obj.setPropertyStatus(f"{label}SplitFaces", "Output")
+        # The pieces are an output of this feature; declared as one, writing
+        # them stays out of the document's recompute bookkeeping.
+        pieces.setPropertyStatus("Shape", "Output")
 
         obj.addProperty(
             "App::PropertyIntegerList",
@@ -79,7 +82,7 @@ def _add_split_face_outputs(obj):
             "MouldAnalysis",
             f"Source face each {half} piece was cut from (1-based Face numbering)",
         )
-        obj.setPropertyStatus(f"{label}SourceFaces", "ReadOnly")
+        obj.setPropertyStatus(f"{label}SourceFaces", "Output")
 
         obj.addProperty(
             "App::PropertyBoolList",
@@ -88,7 +91,7 @@ def _add_split_face_outputs(obj):
             f"{half} pieces whose source face the part line did not cut at its "
             f"equator",
         )
-        obj.setPropertyStatus(f"{label}StraddlingFaces", "ReadOnly")
+        obj.setPropertyStatus(f"{label}StraddlingFaces", "Output")
 
 
 def analysis_split_faces(analysis, half):
@@ -135,7 +138,7 @@ def _add_draft_defect_outputs(obj):
         "MouldAnalysis",
         "Split-shell faces whose draft opposes their own mould half",
     ).DraftDefectSummary = "No source shape available."
-    obj.setPropertyStatus("DraftDefectSummary", "ReadOnly")
+    obj.setPropertyStatus("DraftDefectSummary", "Output")
 
     obj.addProperty(
         "App::PropertyLink",
@@ -148,11 +151,12 @@ def _add_draft_defect_outputs(obj):
         "Part::Feature",
         f"{obj.Name}_DraftDefects",
     )
+    draft_defects.setPropertyStatus("Shape", "Output")
     if FreeCAD.GuiUp:
         draft_defects.ViewObject.ShapeColor = DRAFT_DEFECT_COLOR
         draft_defects.ViewObject.LineColor = DRAFT_DEFECT_COLOR
     obj.DraftDefects = draft_defects
-    obj.setPropertyStatus("DraftDefects", "ReadOnly")
+    obj.setPropertyStatus("DraftDefects", "Output")
 
 
 class MouldAnalysisFP(CompositePartFP):
@@ -240,7 +244,7 @@ class MouldAnalysisFP(CompositePartFP):
             "MouldAnalysis",
             "Current analysis state",
         ).AnalysisStatus = "Waiting for source"
-        obj.setPropertyStatus("AnalysisStatus", "ReadOnly")
+        obj.setPropertyStatus("AnalysisStatus", "Output")
 
         obj.addProperty(
             "App::PropertyFloat",
@@ -248,7 +252,7 @@ class MouldAnalysisFP(CompositePartFP):
             "MouldAnalysis",
             "Normalized score for the preferred draw direction",
         ).DrawDirectionScore = 0.0
-        obj.setPropertyStatus("DrawDirectionScore", "ReadOnly")
+        obj.setPropertyStatus("DrawDirectionScore", "Output")
 
         obj.addProperty(
             "App::PropertyVector",
@@ -260,7 +264,7 @@ class MouldAnalysisFP(CompositePartFP):
             default_mould_analysis_draw_direction.y,
             default_mould_analysis_draw_direction.z,
         )
-        obj.setPropertyStatus("BestDrawDirection", "ReadOnly")
+        obj.setPropertyStatus("BestDrawDirection", "Output")
 
         obj.addProperty(
             "App::PropertyString",
@@ -268,7 +272,7 @@ class MouldAnalysisFP(CompositePartFP):
             "MouldAnalysis",
             "Current parting surface state",
         ).PartingSurfaceStatus = "Waiting for source"
-        obj.setPropertyStatus("PartingSurfaceStatus", "ReadOnly")
+        obj.setPropertyStatus("PartingSurfaceStatus", "Output")
 
         obj.addProperty(
             "App::PropertyVector",
@@ -280,7 +284,7 @@ class MouldAnalysisFP(CompositePartFP):
             default_mould_analysis_draw_direction.y,
             default_mould_analysis_draw_direction.z,
         )
-        obj.setPropertyStatus("PartingSurfaceNormal", "ReadOnly")
+        obj.setPropertyStatus("PartingSurfaceNormal", "Output")
 
         obj.addProperty(
             "App::PropertyFloat",
@@ -288,7 +292,7 @@ class MouldAnalysisFP(CompositePartFP):
             "MouldAnalysis",
             "Offset of the proposed parting surface",
         ).PartingSurfaceOffset = 0.0
-        obj.setPropertyStatus("PartingSurfaceOffset", "ReadOnly")
+        obj.setPropertyStatus("PartingSurfaceOffset", "Output")
 
         obj.addProperty(
             "App::PropertyFloat",
@@ -296,7 +300,7 @@ class MouldAnalysisFP(CompositePartFP):
             "MouldAnalysis",
             "Area of the proposed parting surface",
         ).PartingSurfaceArea = 0.0
-        obj.setPropertyStatus("PartingSurfaceArea", "ReadOnly")
+        obj.setPropertyStatus("PartingSurfaceArea", "Output")
 
         obj.addProperty(
             "App::PropertyString",
@@ -304,7 +308,7 @@ class MouldAnalysisFP(CompositePartFP):
             "MouldAnalysis",
             "Human-readable parting surface summary",
         ).PartingSurfaceSummary = "No source shape available."
-        obj.setPropertyStatus("PartingSurfaceSummary", "ReadOnly")
+        obj.setPropertyStatus("PartingSurfaceSummary", "Output")
 
         obj.addProperty(
             "App::PropertyLink",
@@ -317,8 +321,9 @@ class MouldAnalysisFP(CompositePartFP):
             "Part::Feature",
             f"{obj.Name}_PartingSurface",
         )
+        parting_surface.setPropertyStatus("Shape", "Output")
         obj.PartingSurface = parting_surface
-        obj.setPropertyStatus("PartingSurface", "ReadOnly")
+        obj.setPropertyStatus("PartingSurface", "Output")
 
         obj.addProperty(
             "App::PropertyString",
@@ -326,7 +331,7 @@ class MouldAnalysisFP(CompositePartFP):
             "MouldAnalysis",
             "Current mould halves state",
         ).MouldHalvesStatus = "Waiting for source"
-        obj.setPropertyStatus("MouldHalvesStatus", "ReadOnly")
+        obj.setPropertyStatus("MouldHalvesStatus", "Output")
 
         obj.addProperty(
             "App::PropertyString",
@@ -334,7 +339,7 @@ class MouldAnalysisFP(CompositePartFP):
             "MouldAnalysis",
             "Human-readable mould halves summary",
         ).MouldHalvesSummary = "No source shape available."
-        obj.setPropertyStatus("MouldHalvesSummary", "ReadOnly")
+        obj.setPropertyStatus("MouldHalvesSummary", "Output")
 
         obj.addProperty(
             "App::PropertyLink",
@@ -347,8 +352,9 @@ class MouldAnalysisFP(CompositePartFP):
             "Part::Feature",
             f"{obj.Name}_MouldHalfA",
         )
+        mould_half_a.setPropertyStatus("Shape", "Output")
         obj.MouldHalfA = mould_half_a
-        obj.setPropertyStatus("MouldHalfA", "ReadOnly")
+        obj.setPropertyStatus("MouldHalfA", "Output")
 
         obj.addProperty(
             "App::PropertyLink",
@@ -361,8 +367,9 @@ class MouldAnalysisFP(CompositePartFP):
             "Part::Feature",
             f"{obj.Name}_MouldHalfB",
         )
+        mould_half_b.setPropertyStatus("Shape", "Output")
         obj.MouldHalfB = mould_half_b
-        obj.setPropertyStatus("MouldHalfB", "ReadOnly")
+        obj.setPropertyStatus("MouldHalfB", "Output")
 
         _add_draft_defect_outputs(obj)
         _add_split_face_outputs(obj)
@@ -373,7 +380,7 @@ class MouldAnalysisFP(CompositePartFP):
             "MouldAnalysis",
             "Current validation state",
         ).ValidationStatus = "Waiting for source"
-        obj.setPropertyStatus("ValidationStatus", "ReadOnly")
+        obj.setPropertyStatus("ValidationStatus", "Output")
 
         obj.addProperty(
             "App::PropertyString",
@@ -381,7 +388,7 @@ class MouldAnalysisFP(CompositePartFP):
             "MouldAnalysis",
             "Human-readable validation summary",
         ).ValidationSummary = "No source shape available."
-        obj.setPropertyStatus("ValidationSummary", "ReadOnly")
+        obj.setPropertyStatus("ValidationSummary", "Output")
 
         obj.addProperty(
             "App::PropertyStringList",
@@ -389,7 +396,7 @@ class MouldAnalysisFP(CompositePartFP):
             "MouldAnalysis",
             "Validation check results",
         ).ValidationChecks = ["No source shape available."]
-        obj.setPropertyStatus("ValidationChecks", "ReadOnly")
+        obj.setPropertyStatus("ValidationChecks", "Output")
 
         obj.addProperty(
             "App::PropertyString",
@@ -397,39 +404,9 @@ class MouldAnalysisFP(CompositePartFP):
             "MouldAnalysis",
             "Human-readable analysis summary",
         ).AnalysisSummary = "Select a solid to begin mould analysis."
-        obj.setPropertyStatus("AnalysisSummary", "ReadOnly")
+        obj.setPropertyStatus("AnalysisSummary", "Output")
 
         super().__init__(obj)
-
-    def _input_signature(self, fp):
-        """Everything that defines the mould, as one comparable tuple.
-
-        A source whose geometry changed touches this object through the
-        ``Source`` link, so the configured properties plus the source's own
-        geometry distinguish a real change from a repeat recompute.
-        """
-        source = fp.Source
-        shape = getattr(source, "Shape", None) if source is not None else None
-        if shape is None or shape.isNull():
-            return None
-        box = shape.BoundBox
-        geometry = (source.Name, round(shape.Volume, 6),
-                    round(box.XMin, 6), round(box.XMax, 6),
-                    round(box.YMin, 6), round(box.YMax, 6),
-                    round(box.ZMin, 6), round(box.ZMax, 6))
-        draw = fp.PreferredDrawDirection
-        footprint = fp.PartingStockFootprint
-        return (geometry,
-                (draw.x, draw.y, draw.z),
-                fp.OutputMode,
-                fp.PartLineTolerance,
-                fp.PartingStockMarginX,
-                fp.PartingStockMarginY,
-                fp.PartingStockMarginZ,
-                (footprint.x, footprint.y, footprint.z),
-                bool(fp.WithdrawalClearance),
-                fp.TessellationBandTolDeg,
-                fp.PartLineSource)
 
     def onDocumentRestored(self, fp):
         super().onDocumentRestored(fp)
@@ -445,14 +422,14 @@ class MouldAnalysisFP(CompositePartFP):
             _add_split_face_outputs(fp)
 
     def execute(self, fp):
-        signature = self._input_signature(fp)
-        if signature is not None and signature == getattr(self, "_analysed_inputs", None):
-            # Nothing that defines the mould has changed. Writing the outputs
-            # below (Shape, the status strings, the child halves) leaves this
-            # object touched, so without this guard every document recompute
-            # runs the whole find-seed/split/skirt/close pipeline again - one
-            # build paid for three solves, each dominated by closeHalves.
-            return
+        """Analyse the source, once per change of input.
+
+        Nothing here remembers its inputs. The outputs are declared as outputs,
+        so writing them leaves this object's recompute state alone, and FreeCAD
+        runs this again only when something that defines the mould changed. A
+        remembered signature could only skip a solve FreeCAD had already decided
+        was due - and it did not survive the reload it was most needed for.
+        """
         source_shape = fp.Source.Shape if fp.Source else None
         footprint = fp.PartingStockFootprint
         stock_footprint = (
@@ -502,7 +479,6 @@ class MouldAnalysisFP(CompositePartFP):
         fp.ValidationChecks = result["validation_checks"]
         fp.AnalysisSummary = result["summary"]
         fp.Shape = result["shape"]
-        self._analysed_inputs = signature
 
     # There is deliberately no onChanged -> recompute hook here. Analysing on
     # the first property write makes the result depend on the order the caller
