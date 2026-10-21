@@ -59,6 +59,7 @@ from Composites.tools.mould_fixture import (
     _interference_issues,
     _part_crossing,
     _pin_zones,
+    _port_limit,
     _port_placement,
     _port_stations,
     _port_tools,
@@ -762,7 +763,7 @@ class TestFixtureCuts(unittest.TestCase):
         mould = MouldBlock(frame=frame, parting_surface=self.parting,
                            lower=self.lower, upper=self.upper)
         params = PortParams(enabled=True, count=2, half="Lower")
-        placements = _port_placement(mould, params)
+        placements = _port_placement(mould, params, StockMargins(x=80.0, y=80.0))
         self.assertEqual(len(placements), 2)
         for half, placement, target in placements:
             self.assertEqual(half, "Lower")
@@ -771,8 +772,10 @@ class TestFixtureCuts(unittest.TestCase):
             if placement is None:
                 continue
             station, z, reach = placement
-            # The bore reaches the part well inside the block...
-            self.assertLess(reach, max(frame.size))
+            # The bore meets the part within the mould's own stock margin,
+            # rather than running on to the far end of the block.
+            self.assertLessEqual(
+                reach, _port_limit(StockMargins(x=80.0, y=80.0), station))
             # ...clearing the mating plane on its own side...
             self.assertLessEqual(
                 z, mould.mating_height(station.x, station.y)
@@ -813,6 +816,35 @@ class TestFixtureCuts(unittest.TestCase):
         self.assertIsNotNone(crossing, "a ray into the cavity must still meet it")
         self.assertLess(crossing[0], frame.x_max - frame.x_min,
                         "the crossing must be the cavity, not the far wall")
+
+    def test_a_port_is_not_bored_the_length_of_the_block(self):
+        """A wall bore meets the part within the mould's own stock margin.
+
+        The bore is sized to reach the part, and reaching it has to mean the
+        part's near side. A ray that misses the near side runs the block in
+        stock and meets the far end instead - which is what drilled a
+        block-length hole through the loft example while the test counted it as
+        a port.
+        """
+        frame = block_frame(self.lower, self.upper, self.draw)
+        mould = MouldBlock(frame=frame, parting_surface=self.parting,
+                           lower=self.lower, upper=self.upper)
+        # The stand-in block's own skirt: (180 - 24.7) / 2, the material between
+        # the part outline and the wall.
+        margins = StockMargins(x=80.0, y=80.0)
+        params = PortParams(enabled=True, count=2, half="Lower")
+        placements = _port_placement(mould, params, margins)
+        self.assertTrue(placements)
+        for half, best, target in placements:
+            self.assertEqual(half, "Lower")
+            self.assertTrue(best is not None or target is not None,
+                            "every port must be placed, or aimed at a target")
+            if best is None:
+                continue
+            station, _z, reach = best
+            self.assertLessEqual(
+                reach, _port_limit(margins, station),
+                "a wall bore must meet the part within the stock margin")
 
     def test_unknown_port_half_is_refused(self):
         request = self._request()
