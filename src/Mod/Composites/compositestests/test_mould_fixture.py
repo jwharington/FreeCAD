@@ -65,6 +65,7 @@ from Composites.tools.mould_fixture import (
     _port_stations,
     _port_tools,
     _seat_radius,
+    _seal_groove_frames,
     _seal_groove_section,
     _seal_groove_tools,
     _shared_volume,
@@ -79,6 +80,7 @@ from Composites.tools.mould_fixture import (
     margin_issues,
     perimeter_stations,
     required_in_plane_margin,
+    seal_groove_corner_radius,
     seal_groove_depth,
     seal_groove_width,
     upper_lower,
@@ -328,16 +330,18 @@ class TestSealGroove(unittest.TestCase):
         self.assertIn("disagree", caught.exception.reason)
 
     def test_the_section_is_centred_on_its_station(self):
-        for point_in, point_out in level_strip_stations(*_strip()):
-            section = _seal_groove_section(point_in, point_out, 3.75, 2.25)
-            centre = 0.5 * (point_in + point_out)
+        """The tool is centred on the path, whatever direction the path runs."""
+        frames = _seal_groove_frames(level_strip_stations(*_strip()), 3.0)
+        for point, across, width in frames:
+            section = _seal_groove_section(point, across, 3.75, 2.25)
             box = section.BoundBox
-            self.assertAlmostEqual(0.5 * (box.XMin + box.XMax), centre.x, places=9)
-            self.assertAlmostEqual(0.5 * (box.YMin + box.YMax), centre.y, places=9)
+            self.assertAlmostEqual(0.5 * (box.XMin + box.XMax), point.x, places=9)
+            self.assertAlmostEqual(0.5 * (box.YMin + box.YMax), point.y, places=9)
+            self.assertGreater(width, 3.75)
 
     def test_the_section_spans_the_groove_and_sinks_it(self):
         section = _seal_groove_section(FreeCAD.Vector(-10.0, 5.0, 0.0),
-                                       FreeCAD.Vector(10.0, 5.0, 0.0), 3.75, 2.25)
+                                       FreeCAD.Vector(1.0, 0.0, 0.0), 3.75, 2.25)
         box = section.BoundBox
         self.assertAlmostEqual(box.XMax - box.XMin, 3.75, places=9)
         self.assertAlmostEqual(box.YMax - box.YMin, 0.0, places=9)
@@ -367,6 +371,7 @@ class TestSealGroove(unittest.TestCase):
         result = build_fixtures(_groove_request(*_strip()))
         self.assertIn("seal groove 1", result["summary"])
         self.assertIn("3.750 mm wide x 2.250 mm deep", result["summary"])
+        self.assertIn("corners rounded at 3.000 mm", result["summary"])
         self.assertIn("3.000 mm cord", result["summary"])
 
     def test_a_mould_with_no_level_strip_is_refused(self):
@@ -379,6 +384,45 @@ class TestSealGroove(unittest.TestCase):
         result = build_fixtures(_groove_request(strip_in, strip_out))
         self.assertEqual(result["status"], "Fail")
         self.assertIn("the seal groove is 3.750 mm wide", result["summary"])
+
+    def test_the_corner_radius_is_derived_from_the_cord(self):
+        params = SealGrooveParams(cord_diameter=3.0)
+        self.assertAlmostEqual(seal_groove_corner_radius(params), 3.0, places=9)
+
+    def test_an_explicit_corner_radius_overrides_the_cord(self):
+        params = SealGrooveParams(cord_diameter=3.0, corner_radius=9.0)
+        self.assertAlmostEqual(seal_groove_corner_radius(params), 9.0, places=9)
+
+    def test_a_corner_is_rounded_and_not_mitred(self):
+        """Every square corner is cut back to a tangent arc of the radius.
+
+        The stations are the midpoints of the four-station strip, so the path's
+        corners are 90 degrees and stand at ``radius / sin(45) - radius`` from
+        the sharp vertex. A mitred corner would run through that vertex, and
+        an O-ring cannot be seated round one.
+        """
+        radius = 4.0
+        frames = _seal_groove_frames(level_strip_stations(*_strip()), radius)
+        vertex = FreeCAD.Vector(15.0, 15.0, 0.0)
+        nearest = min(point.distanceToPoint(vertex) for point, _, _ in frames)
+        self.assertAlmostEqual(nearest, radius * (math.sqrt(2.0) - 1.0), places=6)
+        # The arc is sampled rather than jumped: more frames than stations.
+        self.assertGreater(len(frames), len(_strip()[0].OrderedVertexes))
+
+    def test_a_corner_too_short_to_round_is_refused(self):
+        strip_in, strip_out = _strip(in_radius=1.0, out_radius=2.0)
+        result = build_fixtures(_groove_request(strip_in, strip_out,
+                                                corner_radius=4.0))
+        self.assertEqual(result["status"], "Fail")
+        self.assertIn("too short to round", result["summary"])
+
+    def test_a_bigger_corner_radius_cuts_less_of_the_corner(self):
+        small = build_fixtures(_groove_request(*_strip(), corner_radius=3.0))
+        large = build_fixtures(_groove_request(*_strip(), corner_radius=12.0))
+        lower, _upper = _flat_block()
+        removed_small = lower.Volume - small["lower_shape"].Volume
+        removed_large = lower.Volume - large["lower_shape"].Volume
+        self.assertGreater(removed_small, removed_large)
 
 
 class TestBlockFrame(unittest.TestCase):

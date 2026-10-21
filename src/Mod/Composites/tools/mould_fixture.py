@@ -127,6 +127,18 @@ SEAL_KIND = "the O-ring seal groove"
 SEAL_GROOVE_WIDTH_FACTOR = 1.25
 SEAL_GROOVE_DEPTH_FACTOR = 0.75
 
+# A corner in the groove's path is rounded, never mitred. An elastomer ring
+# cannot be seated round a sharp turn, and a ruled loft between the two
+# stations either side of a block corner leaves exactly that. One cord diameter
+# is the tightest a cord of that size is normally asked to bend without being
+# creased into a kink, so it is the radius the groove is laid out with unless
+# the caller names its own.
+SEAL_GROOVE_CORNER_FACTOR = 1.0
+
+# A corner shallower than this is left in the run: rounding it would be
+# invisible and would only add sections to the loft.
+SEAL_GROOVE_STRAIGHT_TOL_DEG = 1.0
+
 STATUS_READY = "Ready"
 STATUS_FAIL = "Fail"
 STATUS_WAITING = "Waiting for mould"
@@ -309,6 +321,8 @@ class SealGrooveParams:
     # override for a table that says otherwise.
     width: float = 0.0
     depth: float = 0.0
+    # Zero derives it from the cord, at one cord diameter.
+    corner_radius: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -1685,6 +1699,13 @@ def seal_groove_depth(params):
     return SEAL_GROOVE_DEPTH_FACTOR * params.cord_diameter
 
 
+def seal_groove_corner_radius(params):
+    """The radius the groove's path turns a corner at."""
+    if params.corner_radius > 0.0:
+        return params.corner_radius
+    return SEAL_GROOVE_CORNER_FACTOR * params.cord_diameter
+
+
 def _ring_stations(shape, name):
     """One level-strip ring's stations in ring order, without the repeated first.
 
@@ -1723,45 +1744,133 @@ def level_strip_stations(level_strip_in, level_strip_out):
     return list(zip(in_points, out_points))
 
 
-def _seal_groove_section(point_in, point_out, width, depth):
-    """The groove's cross-section at one strip station, as a closed wire.
+def _station_frames(stations):
+    """Each strip station as a path frame: ``(midpoint, across, strip width)``.
 
-    Centred on the station's own across direction - inboard point to outboard
-    point, the ray the strip was built from - so the groove follows the strip's
-    width instead of assuming the walls are parallel. It is sunk from just
-    above the strip's surface down to the groove's floor; the overshoot above
-    the surface keeps a coincident face out of the cut.
+    ``across`` runs from the inboard point to the outboard one - the ray the
+    strip was built from - so a section drawn on it follows the strip's own
+    direction rather than assuming the walls are parallel.
     """
-    across = Vector(point_out.x - point_in.x, point_out.y - point_in.y, 0.0)
-    if across.Length <= PLANE_OFFSET_TOL:
+    frames = []
+    for point_in, point_out in stations:
+        across = Vector(point_out.x - point_in.x, point_out.y - point_in.y, 0.0)
+        if across.Length <= PLANE_OFFSET_TOL:
+            raise MouldFixtureError(
+                "a level strip station is zero width across: the two rings "
+                "coincide there, so there is no strip for a groove to sit in")
+        width = across.Length
+        across.normalize()
+        frames.append((0.5 * (point_in + point_out), across, width))
+    return frames
+
+
+def _round_corner(previous, vertex, following, radius, samples=8):
+    """``[(point, tangent)]`` along the arc that replaces one sharp vertex.
+
+    Tangent to both segments, so the path leaves the incoming direction, turns
+    through the corner at a constant radius and picks up the outgoing one - the
+    mitre a ruled loft would otherwise leave is exactly what this removes. An
+    empty list means the corner is too shallow to be worth rounding.
+    """
+    incoming = vertex - previous
+    incoming.z = 0.0
+    outgoing = following - vertex
+    outgoing.z = 0.0
+    if incoming.Length <= PLANE_OFFSET_TOL or outgoing.Length <= PLANE_OFFSET_TOL:
+        return []
+    incoming.normalize()
+    outgoing.normalize()
+    turn = incoming.getAngle(outgoing)
+    if turn <= math.radians(SEAL_GROOVE_STRAIGHT_TOL_DEG):
+        return []
+    cutback = radius * math.tan(turn / 2.0)
+    if (cutback > 0.5 * (vertex - previous).Length
+            or cutback > 0.5 * (following - vertex).Length):
         raise MouldFixtureError(
-            "a level strip station is zero width across: the two rings "
-            "coincide there, so there is no strip for a groove to sit in")
-    across.normalize()
-    centre = 0.5 * (point_in + point_out)
+            f"the strip turns a corner with less than {2.0 * cutback:.3f} mm "
+            f"of straight either side of it, too short to round at "
+            f"{radius:.3f} mm: cut a smaller corner radius, or fit a smaller "
+            f"cord")
+
+    start = vertex - incoming * cutback
+    end = vertex + outgoing * cutback
+    # The centre lies on the side the path turns towards, one radius from both
+    # segments; the cross product says which side that is.
+    left = Vector(-incoming.y, incoming.x, 0.0)
+    correction = 1.0 if incoming.cross(outgoing).z > 0.0 else -1.0
+    centre = start + left * (radius * correction)
+    start_angle = math.atan2(start.y - centre.y, start.x - centre.x)
+    sweep = turn * correction
+    points = []
+    for index in range(samples + 1):
+        angle = start_angle + sweep * index / samples
+        points.append((
+            Vector(centre.x + radius * math.cos(angle),
+                   centre.y + radius * math.sin(angle), 0.0),
+            Vector(-math.sin(angle) * correction,
+                   math.cos(angle) * correction, 0.0),
+        ))
+    return points
+
+
+def _seal_groove_frames(stations, radius):
+    """The groove path's frames: the strip's stations, with corners rounded.
+
+    Each station is rounded into a tangent arc, and the arc is sampled into
+    frames of its own, so the loft through them turns the corner at `radius`
+    instead of jumping the across-direction in one step. The arc carries its
+    corner station's own surface z and the narrowest of the three stations'
+    widths: it replaces that station and stays within the strip that bounds it.
+    """
+    base = _station_frames(stations)
+    count = len(base)
+    frames = []
+    for index, (point, across, width) in enumerate(base):
+        previous_frame = base[(index - 1) % count]
+        following_frame = base[(index + 1) % count]
+        arc = _round_corner(previous_frame[0], point, following_frame[0], radius)
+        if not arc:
+            frames.append((point, across, width))
+            continue
+        corner_width = min(width, previous_frame[2], following_frame[2])
+        for arc_point, tangent in arc:
+            arc_across = Vector(tangent.y, -tangent.x, 0.0)
+            if arc_across.dot(across) < 0.0:
+                arc_across = -arc_across
+            frames.append((Vector(arc_point.x, arc_point.y, point.z),
+                           arc_across, corner_width))
+    return frames
+
+
+def _seal_groove_section(point, across, width, depth):
+    """The groove's cross-section at one path frame, as a closed wire.
+
+    Sunk from just above the strip's surface down to the groove's floor; the
+    overshoot above the surface keeps a coincident face out of the cut.
+    """
     half_width = 0.5 * width
-    top = centre.z + TOOL_OVERSHOOT
-    floor = centre.z - depth
+    top = point.z + TOOL_OVERSHOOT
+    floor = point.z - depth
 
     def corner(side, z):
-        return Vector(centre.x + across.x * half_width * side,
-                      centre.y + across.y * half_width * side, z)
+        return Vector(point.x + across.x * half_width * side,
+                      point.y + across.y * half_width * side, z)
 
     return Part.Wire(Part.makePolygon(
         [corner(1.0, top), corner(-1.0, top),
          corner(-1.0, floor), corner(1.0, floor)], True))
 
 
-def _seal_groove_tool(stations, width, depth):
+def _seal_groove_tool(frames, width, depth):
     """One continuous groove round the whole strip.
 
-    A ruled loft through a section per station, with the first section repeated
-    at the end so the ring closes. The sections sit on the solver's own strip
-    stations, so the groove follows the same construction the band does and
-    carries no step between stations.
+    A ruled loft through a section per path frame, with the first repeated at
+    the end so the ring closes. The frames sit on the solver's own strip - its
+    stations, with every corner rounded into an arc - so the groove follows the
+    construction the band does and carries no step and no mitre.
     """
-    sections = [_seal_groove_section(point_in, point_out, width, depth)
-                for point_in, point_out in stations]
+    sections = [_seal_groove_section(point, across, width, depth)
+                for point, across, _width in frames]
     tool = Part.makeLoft(sections + [sections[0]], solid=True, ruled=True)
     if tool.isNull() or not tool.Solids:
         raise MouldFixtureError(
@@ -1792,8 +1901,9 @@ def _seal_groove_tools(params, level_strip_in, level_strip_out):
             f"needs at least 3")
     width = seal_groove_width(params)
     depth = seal_groove_depth(params)
-    narrowest = min(point_in.distanceToPoint(point_out)
-                    for point_in, point_out in stations)
+    radius = seal_groove_corner_radius(params)
+    frames = _seal_groove_frames(stations, radius)
+    narrowest = min(strip for _point, _across, strip in frames)
     if narrowest < width - PLANE_OFFSET_TOL:
         raise MouldFixtureError(
             f"the level strip is {narrowest:.3f} mm across at its narrowest "
@@ -1801,10 +1911,10 @@ def _seal_groove_tools(params, level_strip_in, level_strip_out):
             f"mould's in-plane stock margin (PartingStockMarginX/Y) until the "
             f"strip is wider than the groove, or cut a narrower groove")
     note = (f"{width:.3f} mm wide x {depth:.3f} mm deep in the level strip, "
-            f"centred on it")
+            f"centred on it, corners rounded at {radius:.3f} mm")
     if params.width <= 0.0 or params.depth <= 0.0:
         note += f", for a {params.cord_diameter:.3f} mm cord"
-    return [_seal_groove_tool(stations, width, depth)], note
+    return [_seal_groove_tool(frames, width, depth)], note
 
 
 def _cut_half(shape, tools):

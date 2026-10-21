@@ -166,6 +166,13 @@ def _add_seal_groove_properties(obj):
                   "Depth of the groove into the level strip. Zero derives it "
                   "from the cord, at 0.75 x the cord: shallower than the cord, "
                   "so it squeezes against the other half.", 0.0)
+    _add_property(obj, "App::PropertyLength", "SealGrooveCornerRadius",
+                  "Radius the groove's path turns a corner at. Zero derives it "
+                  "from the cord, at one cord diameter - an elastomer ring "
+                  "cannot be seated round a sharp turn, so the corners are "
+                  "rounded rather than mitred. A corner with too little "
+                  "straight either side of it to take the radius fails the "
+                  "build rather than cutting a sharp one.", 0.0)
 
 
 def mould_halves(source):
@@ -251,6 +258,7 @@ def fixture_params(fp):
             cord_diameter=float(fp.SealGrooveCordDiameter),
             width=float(fp.SealGrooveWidth),
             depth=float(fp.SealGrooveDepth),
+            corner_radius=float(fp.SealGrooveCornerRadius),
         ),
     )
 
