@@ -39,6 +39,10 @@ EXAMPLES = {
         "module": ".examples.mould_fixture",
         "name": "Mould fixtures (fixtured halves of a box mould)",
     },
+    "mould_fixture_loft": {
+        "module": ".examples.mould_fixture_loft",
+        "name": "Mould fixtures on a lofted part",
+    },
     "place_dart": {
         "module": ".examples.place_dart",
         "name": "Place dart (project wire cut onto shell)",

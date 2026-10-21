@@ -18,6 +18,8 @@ import FreeCAD as App
 import Part
 
 from Composites.tools.mould_analysis import (
+    DEFAULT_PART_LINE_SOURCE,
+    PART_LINE_SOURCES,
     analyze_source_shape,
     default_mould_analysis_draw_direction,
 )
@@ -92,13 +94,15 @@ def _make_shape(shape_name: str):
 
 
 def _build_inspection_report(shape_name: str, shape, direction, source_obj=None,
-                             tessellation_band_tol_deg=None, run_withdrawal_clearance=False):
+                             tessellation_band_tol_deg=None, run_withdrawal_clearance=False,
+                             part_line_source=DEFAULT_PART_LINE_SOURCE):
     result = analyze_source_shape(
         shape,
         direction,
         source_obj=source_obj,
         parting_tessellation_band_tol_deg=tessellation_band_tol_deg,
         run_withdrawal_clearance=run_withdrawal_clearance,
+        part_line_source=part_line_source,
     )
     # Native C++ withdrawal-clearance verdict, re-surfaced from the flattened
     # top-level analysis fields (there is no pure-Python fallback any more).
@@ -185,7 +189,8 @@ def _scale_shape(shape, scale):
 
 def inspect_benchmark_shape(shape_name: str, direction=None, fixture_path: Path = _DEFAULT_FIXTURE,
                             scale: float = 1.0, brep_path: Path = None,
-                            tessellation_band_tol_deg=None, run_withdrawal_clearance=False):
+                            tessellation_band_tol_deg=None, run_withdrawal_clearance=False,
+                            part_line_source=DEFAULT_PART_LINE_SOURCE):
     draw_direction = direction or default_mould_analysis_draw_direction
     doc = None
     try:
@@ -205,7 +210,8 @@ def inspect_benchmark_shape(shape_name: str, direction=None, fixture_path: Path 
             shape = _scale_shape(shape, scale)
         return _build_inspection_report(shape_name, shape, draw_direction, source_obj=obj,
                                         tessellation_band_tol_deg=tessellation_band_tol_deg,
-                                        run_withdrawal_clearance=run_withdrawal_clearance)
+                                        run_withdrawal_clearance=run_withdrawal_clearance,
+                                        part_line_source=part_line_source)
     finally:
         if doc is not None:
             try:
@@ -242,6 +248,15 @@ def build_parser():
         metavar="DEG",
         help="Tessellation part-line band tolerance in degrees passed to the parting "
              "binding. Defaults to the binding default.",
+    )
+    parser.add_argument(
+        "--part-line-source",
+        default=DEFAULT_PART_LINE_SOURCE,
+        choices=sorted(PART_LINE_SOURCES),
+        help="Part-line solver to inspect with. The tessellation march is the "
+             "drafted path and the default; hlr projects the outline instead and "
+             "still closes on shapes the march does not, which is the only way "
+             "to inspect those at all.",
     )
     parser.add_argument(
         "--withdrawal",
@@ -309,7 +324,10 @@ def main(argv=None):
     report = inspect_benchmark_shape(shape_name, direction=direction, fixture_path=args.fixture,
                                      scale=args.scale, brep_path=args.brep,
                                      tessellation_band_tol_deg=args.tessellation_band_tol,
-                                     run_withdrawal_clearance=args.withdrawal)
+                                     run_withdrawal_clearance=args.withdrawal,
+                                     part_line_source=args.part_line_source)
+
+    print(f"part-line source: {args.part_line_source}")
 
     if args.brep is not None:
         print(f"brep: {args.brep}")

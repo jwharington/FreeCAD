@@ -41,6 +41,7 @@ from ...features.MouldFixture import (
     MouldFixtureFP,
     ViewProviderMouldFixture,
 )
+from ._mould_example_common import _attach_view_provider, _hide, _paint
 
 PART_SIZE = (40.0, 30.0, 20.0)
 
@@ -53,38 +54,6 @@ STOCK_MARGIN = 60.0
 SOURCE_COLOUR = (0.85, 0.15, 0.15)
 LOWER_COLOUR = (0.25, 0.45, 0.85)
 UPPER_COLOUR = (0.30, 0.70, 0.35)
-
-
-def _attach_view_provider(obj, provider):
-    """Attach a feature's own ViewProvider when a GUI is up.
-
-    The command path does this (`cls_vp(obj.ViewObject)`); a bare `addObject`
-    example must do the same, or the GUI object carries no VP proxy — the tree
-    shows a default part feature, the icon is missing, and the object cannot be
-    enabled for display.
-    """
-    view = getattr(obj, "ViewObject", None)
-    if view is not None and getattr(view, "Proxy", None) is None:
-        provider(view)
-
-
-def _paint(obj, colour, transparency):
-    """Tint `obj` if there is a view provider to tint; headless just skips it."""
-    view = getattr(obj, "ViewObject", None)
-    if view is None:
-        return
-    try:
-        view.ShapeColor = colour
-        view.Transparency = transparency
-        view.DisplayMode = "Flat Lines"
-    except (AttributeError, TypeError, ValueError):
-        pass
-
-
-def _hide(obj):
-    view = getattr(obj, "ViewObject", None)
-    if view is not None:
-        view.Visibility = False
 
 
 def build(doc=None, run_solver=False, **_ignored):
