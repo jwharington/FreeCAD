@@ -40,3 +40,10 @@ def _hide(obj):
     view = getattr(obj, "ViewObject", None)
     if view is not None:
         view.Visibility = False
+
+
+def _show(obj):
+    """Show `obj`; headless there is no view provider and nothing to show."""
+    view = getattr(obj, "ViewObject", None)
+    if view is not None:
+        view.Visibility = True

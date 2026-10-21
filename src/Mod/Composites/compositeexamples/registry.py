@@ -43,6 +43,10 @@ EXAMPLES = {
         "module": ".examples.mould_fixture_loft",
         "name": "Mould fixtures on a lofted part",
     },
+    "mould_fixture_groove": {
+        "module": ".examples.mould_fixture_groove",
+        "name": "O-ring groove in a levelled mould's level strip",
+    },
     "place_dart": {
         "module": ".examples.place_dart",
         "name": "Place dart (project wire cut onto shell)",
