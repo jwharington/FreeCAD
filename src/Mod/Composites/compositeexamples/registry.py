@@ -35,6 +35,10 @@ EXAMPLES = {
         "module": ".examples.mould_analysis",
         "name": "Parametric mould analysis (MouldAnalysis feature)",
     },
+    "mould_fixture": {
+        "module": ".examples.mould_fixture",
+        "name": "Mould fixtures (fixtured halves of a box mould)",
+    },
     "place_dart": {
         "module": ".examples.place_dart",
         "name": "Place dart (project wire cut onto shell)",
