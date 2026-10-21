@@ -50,6 +50,7 @@ from Composites.tools.mould_fixture import (
     MouldBlock,
     MouldFixtureError,
     PortParams,
+    SealGrooveParams,
     PerimeterStation,
     StockMargins,
     WedgeParams,
@@ -64,6 +65,8 @@ from Composites.tools.mould_fixture import (
     _port_stations,
     _port_tools,
     _seat_radius,
+    _seal_groove_section,
+    _seal_groove_tools,
     _shared_volume,
     _summary,
     _wall_normals,
@@ -72,9 +75,12 @@ from Composites.tools.mould_fixture import (
     block_frame,
     build_fixtures,
     corner_positions,
+    level_strip_stations,
     margin_issues,
     perimeter_stations,
     required_in_plane_margin,
+    seal_groove_depth,
+    seal_groove_width,
     upper_lower,
 )
 from .test_base import TestFreeCADFP
@@ -237,6 +243,142 @@ def _only(**flags):
         ports=PortParams(enabled=flags.get("ports", False)),
         wedges=WedgeParams(enabled=flags.get("wedges", False)),
     )
+
+
+def _strip(in_radius=10.0, out_radius=20.0):
+    """A four-station square strip, in the shape the analysis hands one over.
+
+    Two closed rings through the same stations in the same order: the inner
+    square at ``in_radius`` and the outer at ``out_radius``. Real rings come
+    from a levelled solve; these pin the groove's own arithmetic without one.
+    """
+    def ring(radius):
+        corner = FreeCAD.Vector(radius, radius, 0.0)
+        return Part.makePolygon([
+            corner,
+            FreeCAD.Vector(-radius, radius, 0.0),
+            FreeCAD.Vector(-radius, -radius, 0.0),
+            FreeCAD.Vector(radius, -radius, 0.0),
+            corner,
+        ])
+
+    return ring(in_radius), ring(out_radius)
+
+
+def _flat_block():
+    """A plain block split on z = 0, wide enough to carry a strip ring.
+
+    The groove's geometry depends only on the rings and this mating plane, so a
+    block that carries them is all the build needs. A solved mould's own halves
+    are exercised by the groove example.
+    """
+    return (Part.makeBox(100.0, 100.0, 10.0, FreeCAD.Vector(-30.0, -30.0, -10.0)),
+            Part.makeBox(100.0, 100.0, 10.0, FreeCAD.Vector(-30.0, -30.0, 0.0)))
+
+
+def _groove_request(strip_in, strip_out, **seal):
+    """A request carrying only the seal groove, on the flat block."""
+    lower, upper = _flat_block()
+    seal.setdefault("enabled", True)
+    return FixtureRequest(
+        lower=lower,
+        upper=upper,
+        draw=FreeCAD.Vector(0.0, 0.0, 1.0),
+        alignment=AlignmentParams(enabled=False),
+        clamping=ClampingParams(bolts_enabled=False, ears_enabled=False),
+        ports=PortParams(enabled=False),
+        wedges=WedgeParams(enabled=False),
+        seal_groove=SealGrooveParams(**seal),
+        level_strip_in=strip_in,
+        level_strip_out=strip_out,
+    )
+
+
+class TestSealGroove(unittest.TestCase):
+    """The O-ring groove cut into the level strip of a levelled mould."""
+
+    def test_the_sizing_is_derived_from_the_cord(self):
+        params = SealGrooveParams(cord_diameter=3.0)
+        self.assertAlmostEqual(seal_groove_width(params), 3.75, places=9)
+        self.assertAlmostEqual(seal_groove_depth(params), 2.25, places=9)
+
+    def test_an_explicit_size_overrides_the_cord(self):
+        params = SealGrooveParams(cord_diameter=3.0, width=5.0, depth=1.5)
+        self.assertAlmostEqual(seal_groove_width(params), 5.0, places=9)
+        self.assertAlmostEqual(seal_groove_depth(params), 1.5, places=9)
+
+    def test_the_rings_pair_station_for_station(self):
+        stations = level_strip_stations(*_strip())
+        self.assertEqual(len(stations), 4)
+        self.assertAlmostEqual(stations[0][0].x, 10.0, places=9)
+        self.assertAlmostEqual(stations[0][1].x, 20.0, places=9)
+        self.assertAlmostEqual(stations[2][0].x, -10.0, places=9)
+        self.assertAlmostEqual(stations[2][1].x, -20.0, places=9)
+
+    def test_rings_that_disagree_are_refused(self):
+        strip_in, _strip_out = _strip()
+        lopsided = Part.makePolygon([
+            FreeCAD.Vector(1.0, 1.0, 0.0),
+            FreeCAD.Vector(-1.0, 1.0, 0.0),
+            FreeCAD.Vector(-1.0, -1.0, 0.0),
+            FreeCAD.Vector(1.0, 1.0, 0.0),
+        ])
+        with self.assertRaises(MouldFixtureError) as caught:
+            level_strip_stations(strip_in, lopsided)
+        self.assertIn("disagree", caught.exception.reason)
+
+    def test_the_section_is_centred_on_its_station(self):
+        for point_in, point_out in level_strip_stations(*_strip()):
+            section = _seal_groove_section(point_in, point_out, 3.75, 2.25)
+            centre = 0.5 * (point_in + point_out)
+            box = section.BoundBox
+            self.assertAlmostEqual(0.5 * (box.XMin + box.XMax), centre.x, places=9)
+            self.assertAlmostEqual(0.5 * (box.YMin + box.YMax), centre.y, places=9)
+
+    def test_the_section_spans_the_groove_and_sinks_it(self):
+        section = _seal_groove_section(FreeCAD.Vector(-10.0, 5.0, 0.0),
+                                       FreeCAD.Vector(10.0, 5.0, 0.0), 3.75, 2.25)
+        box = section.BoundBox
+        self.assertAlmostEqual(box.XMax - box.XMin, 3.75, places=9)
+        self.assertAlmostEqual(box.YMax - box.YMin, 0.0, places=9)
+        self.assertAlmostEqual(box.ZMin, -2.25, places=9)
+        # The top overshoots the strip's surface, so the cut carries no
+        # coincident face at the surface to trip the boolean.
+        self.assertGreater(box.ZMax, 0.0)
+
+    def test_the_groove_is_cut_in_the_lower_half_only(self):
+        result = build_fixtures(_groove_request(*_strip()))
+        self.assertEqual(result["status"], "Ready", result["summary"])
+        self.assertEqual(result["seal_grooves"], 1)
+        self.assertEqual(result["issues"], [])
+        lower, upper = _flat_block()
+        self.assertLess(result["lower_shape"].Volume, lower.Volume)
+        self.assertAlmostEqual(result["upper_shape"].Volume, upper.Volume, places=9)
+
+    def test_a_groove_nobody_asked_for_leaves_the_halves_alone(self):
+        result = build_fixtures(_groove_request(*_strip(), enabled=False))
+        self.assertEqual(result["status"], "Ready", result["summary"])
+        self.assertEqual(result["seal_grooves"], 0)
+        lower, upper = _flat_block()
+        self.assertAlmostEqual(result["lower_shape"].Volume, lower.Volume, places=9)
+        self.assertAlmostEqual(result["upper_shape"].Volume, upper.Volume, places=9)
+
+    def test_the_summary_names_the_groove_and_its_cord(self):
+        result = build_fixtures(_groove_request(*_strip()))
+        self.assertIn("seal groove 1", result["summary"])
+        self.assertIn("3.750 mm wide x 2.250 mm deep", result["summary"])
+        self.assertIn("3.000 mm cord", result["summary"])
+
+    def test_a_mould_with_no_level_strip_is_refused(self):
+        result = build_fixtures(_groove_request(None, None))
+        self.assertEqual(result["status"], "Fail")
+        self.assertIn("no level strip", result["summary"])
+
+    def test_a_strip_narrower_than_the_groove_is_refused(self):
+        strip_in, strip_out = _strip(in_radius=10.0, out_radius=11.0)
+        result = build_fixtures(_groove_request(strip_in, strip_out))
+        self.assertEqual(result["status"], "Fail")
+        self.assertIn("the seal groove is 3.750 mm wide", result["summary"])
 
 
 class TestBlockFrame(unittest.TestCase):

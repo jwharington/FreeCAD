@@ -22,6 +22,7 @@ from ..tools.mould_fixture import (
     ClampingParams,
     FixtureRequest,
     PortParams,
+    SealGrooveParams,
     StockMargins,
     WedgeParams,
     build_fixtures,
@@ -139,6 +140,34 @@ def _add_wedge_properties(obj):
                   "against a bolt edge 12.5 mm out.", 11.0)
 
 
+def _add_seal_groove_properties(obj):
+    """The O-ring seal groove, on its own so a restore can add it.
+
+    The groove is cut into the level strip a `fixed` levelled skirt leaves, and
+    its width and depth follow from the cord: the shop has the ring, not the
+    groove. Off by default, because a mould whose skirt was not levelled has no
+    strip to cut it into, so switching it on there fails the build.
+    """
+    _add_property(obj, "App::PropertyBool", "SealGroove",
+                  "Cut an O-ring groove into the lower half, centred in the "
+                  "level strip the skirt's levelling leaves. Needs the mould's "
+                  "skirt levelling on with a 'fixed' extent, and a strip wide "
+                  "enough for the groove: the build fails rather than cut "
+                  "outside the strip.", False)
+    _add_property(obj, "App::PropertyLength", "SealGrooveCordDiameter",
+                  "O-ring cord diameter the groove is sized for. It is the "
+                  "primary number - the shop has the ring - and the width and "
+                  "depth below follow from it while they are left at zero.", 3.0)
+    _add_property(obj, "App::PropertyLength", "SealGrooveWidth",
+                  "Width of the groove across the level strip. Zero derives it "
+                  "from the cord, at 1.25 x the cord: wide enough for the ring "
+                  "to compress into.", 0.0)
+    _add_property(obj, "App::PropertyLength", "SealGrooveDepth",
+                  "Depth of the groove into the level strip. Zero derives it "
+                  "from the cord, at 0.75 x the cord: shallower than the cord, "
+                  "so it squeezes against the other half.", 0.0)
+
+
 def mould_halves(source):
     """The ``(lower, upper)`` child objects of a mould analysis, or ``(None, None)``."""
     if source is None:
@@ -156,6 +185,21 @@ def stock_margins(source):
     explicit = footprint is not None and (footprint.x != 0.0 or footprint.y != 0.0)
     return StockMargins(x=float(margin_x), y=float(margin_y),
                         explicit_footprint=explicit)
+
+
+def level_strip_rings(source):
+    """The two rings bounding the mould's level strip, or ``(None, None)``.
+
+    The inboard ring first, then the wall base. Both are absent when the mould's
+    skirt was not levelled with a `fixed` extent; its LevelStripSummary says
+    which it was.
+    """
+    if source is None:
+        return None, None
+    in_ring = getattr(source, "LevelStripIn", None)
+    out_ring = getattr(source, "LevelStripOut", None)
+    return (in_ring.Shape if in_ring is not None else None,
+            out_ring.Shape if out_ring is not None else None)
 
 
 def fixture_params(fp):
@@ -202,6 +246,12 @@ def fixture_params(fp):
             height=float(fp.WedgeHeight),
             depth=float(fp.WedgeDepth),
         ),
+        SealGrooveParams(
+            enabled=bool(fp.SealGroove),
+            cord_diameter=float(fp.SealGrooveCordDiameter),
+            width=float(fp.SealGrooveWidth),
+            depth=float(fp.SealGrooveDepth),
+        ),
     )
 
 
@@ -219,7 +269,7 @@ def reserve_stock_margins(source, fixture):
     margins = stock_margins(source)
     if margins is None or margins.explicit_footprint:
         return []
-    alignment, clamping, _ports, wedges = fixture_params(fixture)
+    alignment, clamping, _ports, wedges, _seal = fixture_params(fixture)
     needed = required_in_plane_margin(alignment, clamping, wedges)
     raised = []
     for name, before in (("PartingStockMarginX", margins.x),
@@ -299,6 +349,7 @@ class MouldFixtureFP(CompositePartFP):
                          PORT_HALF_OPTIONS, "Lower")
 
         _add_wedge_properties(obj)
+        _add_seal_groove_properties(obj)
 
         for label in ("Lower", "Upper"):
             obj.addProperty(
@@ -347,6 +398,10 @@ class MouldFixtureFP(CompositePartFP):
         # reads it, and removing a user's property is worse than leaving one.
         if not hasattr(fp, "WedgeCornerStandoff"):
             _add_wedge_properties(fp)
+        # Documents saved before the O-ring groove existed carry none of its
+        # properties, and fixture_params reads both directly.
+        if not hasattr(fp, "SealGroove"):
+            _add_seal_groove_properties(fp)
         # Documents saved before the seat's extra cuts existed carry none of
         # them, and fixture_params reads all three directly.
         if not hasattr(fp, "SeatShoulderDiameter"):
@@ -381,7 +436,8 @@ class MouldFixtureFP(CompositePartFP):
         if draw is None:
             draw = FreeCAD.Vector(0, 0, 1)
         parting = getattr(source, "PartingSurface", None)
-        alignment, clamping, ports, wedges = fixture_params(fp)
+        alignment, clamping, ports, wedges, seal_groove = fixture_params(fp)
+        strip_in, strip_out = level_strip_rings(source)
         result = build_fixtures(
             FixtureRequest(
                 lower=lower.Shape,
@@ -392,6 +448,9 @@ class MouldFixtureFP(CompositePartFP):
                 clamping=clamping,
                 ports=ports,
                 wedges=wedges,
+                seal_groove=seal_groove,
+                level_strip_in=strip_in,
+                level_strip_out=strip_out,
                 stock_margins=stock_margins(source),
             )
         )

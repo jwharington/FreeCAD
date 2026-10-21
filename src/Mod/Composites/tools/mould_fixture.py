@@ -118,6 +118,14 @@ ALIGN_KIND = "the align pin and bush sockets"
 CLAMP_KIND = "the clamp bolt holes and clamp-ear notches"
 PORT_KIND = "the process ports"
 WEDGE_KIND = "the parting wedges"
+SEAL_KIND = "the O-ring seal groove"
+
+# The seal groove. An O-ring seals by being squeezed, so its groove is cut
+# wider than the cord it holds and shallower than it: the ring compresses into
+# the gap left between the groove floor and the face it seals against. The cord
+# is the number the shop has, so the width and depth follow from it here.
+SEAL_GROOVE_WIDTH_FACTOR = 1.25
+SEAL_GROOVE_DEPTH_FACTOR = 0.75
 
 STATUS_READY = "Ready"
 STATUS_FAIL = "Fail"
@@ -280,6 +288,30 @@ class WedgeParams:
 
 
 @dataclass(frozen=True)
+class SealGrooveParams:
+    """A groove for an O-ring, centred in the level strip of a levelled skirt.
+
+    The strip is what a `fixed` levelled skirt leaves flat between the
+    transition and the wall base, and it is the only land outside the cavity a
+    seal can be cut into. The groove is cut into the lower half alone: the ring
+    sits in it and the upper half's flat face closes over it. Its size comes
+    from the cord, because that is the number the shop has - see
+    ``seal_groove_width`` and ``seal_groove_depth``.
+    """
+
+    # Off by default, unlike every other kind: a groove needs the mould's level
+    # strip, which only a `fixed` levelled skirt leaves flat, so a mould that
+    # never asked for levelling must not start failing its build.
+    enabled: bool = False
+    cord_diameter: float = 3.0
+    # Zero asks for the cord's own derivation. The shop normally knows the ring
+    # and not the groove, so the cord stays the primary number and these are the
+    # override for a table that says otherwise.
+    width: float = 0.0
+    depth: float = 0.0
+
+
+@dataclass(frozen=True)
 class PortParams:
     """Bores drilled in from a block wall: vacuum, ejector, thermocouple.
 
@@ -323,6 +355,12 @@ class FixtureRequest:
     clamping: ClampingParams = field(default_factory=ClampingParams)
     ports: PortParams = field(default_factory=PortParams)
     wedges: WedgeParams = field(default_factory=WedgeParams)
+    seal_groove: SealGrooveParams = field(default_factory=SealGrooveParams)
+    # The two rings bounding the mould's level strip, as shapes: the inboard
+    # edge of the flat strip and the wall base. They carry the same stations in
+    # the same order, so the groove is centred on them station for station.
+    level_strip_in: object = None
+    level_strip_out: object = None
     stock_margins: object = None
 
 
@@ -1633,6 +1671,142 @@ def _wedge_tools(mould, params, ports=()):
     return lower_tools, upper_tools, len(runs)
 
 
+def seal_groove_width(params):
+    """The groove's width across the strip: the caller's, or the cord's own."""
+    if params.width > 0.0:
+        return params.width
+    return SEAL_GROOVE_WIDTH_FACTOR * params.cord_diameter
+
+
+def seal_groove_depth(params):
+    """The groove's depth into the strip: the caller's, or the cord's own."""
+    if params.depth > 0.0:
+        return params.depth
+    return SEAL_GROOVE_DEPTH_FACTOR * params.cord_diameter
+
+
+def _ring_stations(shape, name):
+    """One level-strip ring's stations in ring order, without the repeated first.
+
+    The ring is a closed polyline, so its last vertex repeats its first: the
+    duplicate goes, and the two rings' entries then line up station for
+    station.
+    """
+    if shape is None or shape.isNull():
+        return []
+    wires = shape.Wires
+    if len(wires) != 1:
+        raise MouldFixtureError(
+            f"the level strip's {name} ring is {len(wires)} wires, not one")
+    points = [vertex.Point for vertex in wires[0].OrderedVertexes]
+    if len(points) > 1 and points[0].distanceToPoint(points[-1]) <= AXIS_ALIGNMENT_TOL:
+        points.pop()
+    return points
+
+
+def level_strip_stations(level_strip_in, level_strip_out):
+    """The level strip's stations as ``[(inboard, outboard)]`` pairs in ring order.
+
+    The two rings bound the strip and carry the same stations in the same
+    order, so station ``i`` of one pairs with station ``i`` of the other. That
+    pairing is the strip's own, taken from the same construction as the band,
+    never re-derived from the geometry.
+    """
+    in_points = _ring_stations(level_strip_in, "inboard")
+    out_points = _ring_stations(level_strip_out, "outboard")
+    if not in_points and not out_points:
+        return []
+    if len(in_points) != len(out_points):
+        raise MouldFixtureError(
+            f"the level strip's rings disagree: {len(in_points)} inboard "
+            f"stations against {len(out_points)} outboard")
+    return list(zip(in_points, out_points))
+
+
+def _seal_groove_section(point_in, point_out, width, depth):
+    """The groove's cross-section at one strip station, as a closed wire.
+
+    Centred on the station's own across direction - inboard point to outboard
+    point, the ray the strip was built from - so the groove follows the strip's
+    width instead of assuming the walls are parallel. It is sunk from just
+    above the strip's surface down to the groove's floor; the overshoot above
+    the surface keeps a coincident face out of the cut.
+    """
+    across = Vector(point_out.x - point_in.x, point_out.y - point_in.y, 0.0)
+    if across.Length <= PLANE_OFFSET_TOL:
+        raise MouldFixtureError(
+            "a level strip station is zero width across: the two rings "
+            "coincide there, so there is no strip for a groove to sit in")
+    across.normalize()
+    centre = 0.5 * (point_in + point_out)
+    half_width = 0.5 * width
+    top = centre.z + TOOL_OVERSHOOT
+    floor = centre.z - depth
+
+    def corner(side, z):
+        return Vector(centre.x + across.x * half_width * side,
+                      centre.y + across.y * half_width * side, z)
+
+    return Part.Wire(Part.makePolygon(
+        [corner(1.0, top), corner(-1.0, top),
+         corner(-1.0, floor), corner(1.0, floor)], True))
+
+
+def _seal_groove_tool(stations, width, depth):
+    """One continuous groove round the whole strip.
+
+    A ruled loft through a section per station, with the first section repeated
+    at the end so the ring closes. The sections sit on the solver's own strip
+    stations, so the groove follows the same construction the band does and
+    carries no step between stations.
+    """
+    sections = [_seal_groove_section(point_in, point_out, width, depth)
+                for point_in, point_out in stations]
+    tool = Part.makeLoft(sections + [sections[0]], solid=True, ruled=True)
+    if tool.isNull() or not tool.Solids:
+        raise MouldFixtureError(
+            "the O-ring seal groove's loft did not produce a solid")
+    return tool
+
+
+def _seal_groove_tools(params, level_strip_in, level_strip_out):
+    """``(lower_tools, note)`` for the O-ring seal groove, cut in the lower half.
+
+    Fails loudly rather than cut a groove that is not there to cut. A mould
+    with no level strip has no flat land for the ring to seat on, and one whose
+    strip is narrower than the groove would have the groove cut through the
+    land's edge and out of the level surface - the face the ring seals against,
+    which is therefore never cut smaller than the groove fits.
+    """
+    if not params.enabled:
+        return [], ""
+    stations = level_strip_stations(level_strip_in, level_strip_out)
+    if not stations:
+        raise MouldFixtureError(
+            "the mould has no level strip to cut the O-ring groove into: a "
+            "level strip needs the skirt levelling switched on with a 'fixed' "
+            "extent, and a transition shorter than every ray's plan run")
+    if len(stations) < 3:
+        raise MouldFixtureError(
+            f"the level strip has {len(stations)} stations; a closed groove "
+            f"needs at least 3")
+    width = seal_groove_width(params)
+    depth = seal_groove_depth(params)
+    narrowest = min(point_in.distanceToPoint(point_out)
+                    for point_in, point_out in stations)
+    if narrowest < width - PLANE_OFFSET_TOL:
+        raise MouldFixtureError(
+            f"the level strip is {narrowest:.3f} mm across at its narrowest "
+            f"station, but the seal groove is {width:.3f} mm wide: raise the "
+            f"mould's in-plane stock margin (PartingStockMarginX/Y) until the "
+            f"strip is wider than the groove, or cut a narrower groove")
+    note = (f"{width:.3f} mm wide x {depth:.3f} mm deep in the level strip, "
+            f"centred on it")
+    if params.width <= 0.0 or params.depth <= 0.0:
+        note += f", for a {params.cord_diameter:.3f} mm cord"
+    return [_seal_groove_tool(stations, width, depth)], note
+
+
 def _cut_half(shape, tools):
     return shape.cut(tuple(tools)) if tools else shape
 
@@ -1663,6 +1837,8 @@ def _base_result():
         "clamp_notches": 0,
         "port_bores": 0,
         "wedge_count": 0,
+        "seal_grooves": 0,
+        "seal_groove_note": "",
         "mating_fallbacks": 0,
         "bolt_stations": [],
         "issues": [],
@@ -1786,15 +1962,18 @@ def build_fixtures(request):
             mould, request.ports, request.stock_margins)
         wedge_lower, wedge_upper, wedge_count = _wedge_tools(
             mould, request.wedges, port_specs)
+        seal_lower, seal_note = _seal_groove_tools(
+            request.seal_groove, request.level_strip_in, request.level_strip_out)
         # The bolts are placed last, around everything already in the block.
         clamp_lower, clamp_upper, bolt_holes, notches, bolt_stations = _clamping_tools(
             mould, request.clamping, pin_zones, segments,
             tuple(pin_lower) + tuple(pin_upper) + tuple(port_lower)
-            + tuple(port_upper) + tuple(wedge_lower) + tuple(wedge_upper))
+            + tuple(port_upper) + tuple(wedge_lower) + tuple(wedge_upper)
+            + tuple(seal_lower))
     except MouldFixtureError as exc:
         return _fail(result, exc.reason)
 
-    lower_tools = pin_lower + clamp_lower + port_lower + wedge_lower
+    lower_tools = pin_lower + clamp_lower + port_lower + wedge_lower + seal_lower
     upper_tools = pin_upper + clamp_upper + port_upper + wedge_upper
     # Each half is checked on its own: a bolt's clearance hole and its tapped
     # hole are meant to line up across the mating plane, and a wedge slot is
@@ -1805,7 +1984,8 @@ def build_fixtures(request):
     for half_tools in ((_labeled(pin_lower, ALIGN_KIND)
                         + _labeled(clamp_lower, CLAMP_KIND)
                         + _labeled(port_lower, PORT_KIND)
-                        + _labeled(wedge_lower, WEDGE_KIND)),
+                        + _labeled(wedge_lower, WEDGE_KIND)
+                        + _labeled(seal_lower, SEAL_KIND)),
                        (_labeled(pin_upper, ALIGN_KIND)
                         + _labeled(clamp_upper, CLAMP_KIND)
                         + _labeled(port_upper, PORT_KIND)
@@ -1827,6 +2007,8 @@ def build_fixtures(request):
         clamp_notches=notches,
         port_bores=bores,
         wedge_count=wedge_count,
+        seal_grooves=len(seal_lower),
+        seal_groove_note=seal_note,
         mating_fallbacks=mould.mating_fallbacks,
         bolt_stations=[(station.x, station.y) for station in bolt_stations],
         port_notes=mould.port_notes,
@@ -1849,6 +2031,9 @@ def _summary(result, frame):
     bores = f"process bores {result['port_bores']}"
     if result.get("port_notes"):
         bores += " (%s)" % ", ".join(result["port_notes"])
+    groove = f"seal groove {result.get('seal_grooves', 0)}"
+    if result.get("seal_groove_note"):
+        groove += " (%s)" % result["seal_groove_note"]
     parts = [
         f"block {width:.3f} x {depth:.3f} x {height:.3f} mm",
         f"alignment holes {result['alignment_holes']}",
@@ -1856,6 +2041,7 @@ def _summary(result, frame):
         f"clamp notches {result['clamp_notches']}",
         bores,
         f"parting wedges {result['wedge_count']}",
+        groove,
     ]
     if result["mating_fallbacks"]:
         parts.append(
