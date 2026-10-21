@@ -56,6 +56,20 @@ TOOL_OVERSHOOT = 1.0
 # surface takes a fraction of a millimetre inboard.
 MATING_PROBE_INSET = 0.5
 
+# A port is placed where the part comes nearest its wall, so the search walks
+# the wall and the heights that clear the mating plane. The part's bounding box
+# touches each wall face within the stock margin, so the nearest point on a wall
+# is within that margin of it: a port placed this way cannot be a long bore, and
+# one that still cannot reach the part is reported rather than cut.
+PORT_STATION_SAMPLES = 7
+PORT_HEIGHT_STEP_MM = 5.0
+PORT_HEIGHT_SAMPLES = 6
+PORT_SEARCH_SPAN = 0.35
+
+# How far past a crossing to look when deciding whether it opened into the
+# cavity. Small, because the cavity's surface can be nearly parallel to a bore.
+PORT_CROSSING_STEP_MM = 0.5
+
 # Corner pattern order. Fixed so a given count always lands on the same
 # corners, whatever order OCCT enumerates the half's faces in.
 _CORNER_ORDER = ((-1.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (1.0, -1.0))
@@ -313,6 +327,7 @@ class MouldBlock:
     mating_fallbacks: int = 0
     breakthroughs: list = field(default_factory=list)
     unreached_ports: list = field(default_factory=list)
+    port_warnings: list = field(default_factory=list)
     _mating_cache: dict = field(default_factory=dict, repr=False)
 
     def mating_height(self, x, y):
@@ -668,17 +683,12 @@ def _wall_runs(frame, standoff):
     return runs
 
 
-def _port_stations(frame, count):
-    """``count`` port positions along the block's two shortest walls.
+def _port_walls(frame, count):
+    """``((wall, per_wall), ...)``: the two shortest walls and their ports' share.
 
     A port is bored in from a wall face towards the work, so it belongs on a
-    wall: its stations are spread along the shortest pair of sides and centred
-    there. Equal spacing around the whole perimeter is wrong for this, because
-    the fractions it lands on are span boundaries - the corners - which is
-    where the two-port default used to put them.
-
-    ``count`` ports are shared between the pair, the first wall taking the odd
-    one, and each wall's own ports are centred on it.
+    wall, and the pair that faces the work is the shortest pair of sides.
+    ``count`` is shared between the pair, the first wall taking the odd one.
     """
     if count < 1:
         raise MouldFixtureError(f"port count {count} must be positive")
@@ -686,8 +696,20 @@ def _port_stations(frame, count):
     share = [count // len(walls)] * len(walls)
     for index in range(count % len(walls)):
         share[index] += 1
+    return list(zip(walls, share))
+
+
+def _port_stations(frame, count):
+    """``count`` nominal port positions, one per port, on the shortest walls.
+
+    Each wall's own ports are centred on it. Equal spacing around the whole
+    perimeter is wrong for this, because the fractions it lands on are span
+    boundaries - the corners - which is where the two-port default used to put
+    them. These are what the placement search starts from, not necessarily
+    where a port ends up.
+    """
     stations = []
-    for ((mid_x, mid_y), inward, length), per_wall in zip(walls, share):
+    for ((mid_x, mid_y), inward, length), per_wall in _port_walls(frame, count):
         tangent = (1.0, 0.0) if inward[0] == 0.0 else (0.0, 1.0)
         for slot in range(per_wall):
             along = ((slot + 0.5) / per_wall - 0.5) * length
@@ -1237,16 +1259,24 @@ def _clamping_tools(mould, params, pin_zones=(), segments=(), obstacles=()):
     return lower_tools, upper_tools, bolt_holes, notches, bolt_stations
 
 
-def _part_reach(frame, half, station, z, span):
-    """How far the part is from a block wall along the wall's own normal.
+def _inside_stock(frame, point):
+    """Whether a world point is inside the stock block, by the frame's own axes."""
+    x, y, z = frame.local(point)
+    return (frame.x_min - PLANE_OFFSET_TOL <= x <= frame.x_max + PLANE_OFFSET_TOL
+            and frame.y_min - PLANE_OFFSET_TOL <= y <= frame.y_max + PLANE_OFFSET_TOL
+            and frame.z_min - PLANE_OFFSET_TOL <= z <= frame.z_max + PLANE_OFFSET_TOL)
+
+
+def _part_crossing(frame, half, station, z, span):
+    """``(distance, point)`` where the ray meets the part, or ``None``.
 
     Measured by sectioning the half the bore is cut into, because the half ends
-    where the part begins: the first crossing past the wall face is the cavity.
-    That makes the measurement follow the part's real surface rather than the
-    block's bounding box, which a cavity does not fill.
-
-    Returns ``None`` when the ray crosses nothing but the wall itself, which is
-    the one case where a bore cannot be sized to reach the part.
+    where the part begins. The first crossing past the wall is NOT necessarily
+    the part: a bore passing under a cambered part runs the whole block in stock
+    and crosses the far wall instead, and taking that crossing drilled a bore
+    the length of the block. A crossing is the cavity only when the material
+    just beyond it is still inside the stock - the cavity is, the far wall is
+    not - so a crossing that leaves the block is refused.
     """
     if half is None or half.isNull():
         return None
@@ -1258,20 +1288,154 @@ def _part_reach(frame, half, station, z, span):
         return None
     crossings = sorted((vertex.Point - start).dot(inward)
                        for vertex in section.Vertexes)
-    past = [along for along in crossings if along > 2.0 * TOOL_OVERSHOOT]
-    return past[0] if past else None
+    for along in crossings:
+        if along <= 2.0 * TOOL_OVERSHOOT:
+            continue
+        beyond = start + inward * (along + PORT_CROSSING_STEP_MM)
+        if _inside_stock(frame, beyond) and not half.isInside(
+                beyond, PLANE_OFFSET_TOL, False):
+            return along, start + inward * along
+    return None
+
+
+def _along_wall(station, along):
+    """A station ``along`` the wall from this one, with the same directions."""
+    return PerimeterStation(
+        x=station.x + station.tangent[0] * along,
+        y=station.y + station.tangent[1] * along,
+        tangent=station.tangent,
+        inward=station.inward,
+    )
+
+
+def _aim_port(mould, params, station, half, span):
+    """The best ``(z, reach, point)`` on one half at this station, or ``None``.
+
+    The bore sits clear of the mating plane so it stays in its own half, so the
+    heights tried start ``offset_from_mating`` away from the interface and step
+    deeper until the part is met. The one that meets it soonest is the aim, and
+    the point it meets becomes the port's target.
+    """
+    side = mould.lower if half == "Lower" else mould.upper
+    sign = -1.0 if half == "Lower" else 1.0
+    mate = mould.mating_height(station.x, station.y)
+    best = None
+    for step in range(PORT_HEIGHT_SAMPLES):
+        z = mate + sign * (params.offset_from_mating + step * PORT_HEIGHT_STEP_MM)
+        crossing = _part_crossing(mould.frame, side, station, z, span)
+        if crossing is None:
+            continue
+        reach, point = crossing
+        if best is None or reach < best[1]:
+            best = (z, reach, point)
+    return best
+
+
+def _port_target(mould, params, station, half, span):
+    """The point nearest the wall this ray can meet, or ``None``.
+
+    Searched over the half's whole depth, because the point nearest the wall is
+    not necessarily one that a height clearing the mating plane would have met.
+    This is what a port keeps when no wall bore can reach it, so a bore from the
+    cap hits the same point rather than the port being lost.
+    """
+    frame = mould.frame
+    side = mould.lower if half == "Lower" else mould.upper
+    sign = -1.0 if half == "Lower" else 1.0
+    mate = mould.mating_height(station.x, station.y)
+    face = frame.z_min if half == "Lower" else frame.z_max
+    depth = abs(mate - face)
+    steps = max(1, int(depth / (2.0 * PORT_HEIGHT_STEP_MM)))
+    best = None
+    for step in range(steps + 1):
+        z = mate + sign * depth * step / steps
+        crossing = _part_crossing(frame, side, station, z, span)
+        if crossing is None:
+            continue
+        reach, point = crossing
+        if best is None or reach < best[0]:
+            best = (reach, point, z)
+    return best
+
+
+def _cap_bore(frame, params, half, target):
+    """A bore from the half's cap face to ``target``, along the draw.
+
+    The fallback for a port no wall bore can reach: aimed at the same point on
+    the part, but entered through the face away from the mating plane instead of
+    through a wall.
+    """
+    x, y, z = frame.local(target)
+    if half == "Lower":
+        start = frame.point(x, y, frame.z_min - TOOL_OVERSHOOT)
+        length = z - frame.z_min + 2.0 * TOOL_OVERSHOOT
+        direction = frame.z_axis
+    else:
+        start = frame.point(x, y, frame.z_max + TOOL_OVERSHOOT)
+        length = frame.z_max - z + 2.0 * TOOL_OVERSHOOT
+        direction = frame.z_axis * -1.0
+    return Part.makeCylinder(params.diameter / 2.0, length, start, direction)
+
+
+def _port_placement(mould, params):
+    """``(half, (station, z, reach) or None, target or None)`` per port.
+
+    A port exists to open into the cavity, so it is placed where the part comes
+    nearest its wall rather than at the wall's midpoint, and aimed at the height
+    that reaches it there. Walking both is what makes a long bore impossible
+    rather than merely unlikely: the part comes within the stock margin of every
+    wall face somewhere, so the nearest point on a wall is within that margin,
+    while a midpoint bore on a cambered part can run under it for the length of
+    the block.
+
+    Where the part is thin in this half, no height can both clear the mating
+    plane and meet it, and the port keeps the point it would have aimed at
+    (``target``) for a bore from the cap. ``None`` for both is a port no
+    position on that wall can place, which the caller reports.
+    """
+    frame = mould.frame
+    span = 2.0 * max(frame.size)
+    placements = []
+    for station, (wall, per_wall) in zip(_port_stations(frame, params.count),
+                                         _port_walls(frame, params.count)):
+        window = PORT_SEARCH_SPAN * wall[2] / per_wall
+        offsets = [(index / (PORT_STATION_SAMPLES - 1.0) - 0.5) * window
+                   for index in range(PORT_STATION_SAMPLES)]
+        for half in ("Lower", "Upper"):
+            if params.half not in (half, "Both"):
+                continue
+            best = None
+            for along in offsets:
+                probe = _along_wall(station, along)
+                aimed = _aim_port(mould, params, probe, half, span)
+                if aimed is None:
+                    continue
+                z, reach, _point = aimed
+                if best is None or reach < best[2]:
+                    best = (probe, z, reach)
+            target = None
+            if best is None:
+                for along in offsets:
+                    found = _port_target(mould, params, _along_wall(station, along),
+                                         half, span)
+                    if found is not None and (target is None or found[0] < target[0]):
+                        target = found
+            placements.append((half, best, target))
+    return placements
 
 
 def _port_tools(mould, params):
     """``(lower_tools, upper_tools, bore_count, specs)`` for the wall bores.
 
-    Stations sit on the middle of the block's two shortest walls, so a bore
-    starts at a wall face and runs in towards the work. Each bore is cut to
-    reach the part and a little past it, so it opens into the cavity instead of
-    stopping in the stock.
+    Each bore is aimed at the part's nearest point on its wall (see
+    ``_port_placement``), so it is as short as the stock allows and opens into
+    the cavity instead of running past it. A port no wall bore can reach keeps
+    its point and is bored from the cap instead, with a warning, and one that
+    cannot be placed at all is reported rather than drilled to whatever it
+    happens to hit.
 
-    ``specs`` is ``(station, radius, half)`` for each, which is what a parting
-    wedge slot needs to keep out of its way.
+    ``specs`` is ``(station, radius, half)`` for each wall bore, which is what a
+    parting wedge slot needs to keep out of its way.
     """
     if not params.enabled:
         return [], [], 0, []
@@ -1282,31 +1446,32 @@ def _port_tools(mould, params):
     frame = mould.frame
     lower_tools, upper_tools = [], []
     specs = []
-    # Long enough to cross the block whatever the draw direction, so a missing
-    # crossing means the part is genuinely not in the way of the bore.
-    span = 2.0 * max(frame.size)
-    for station in _port_stations(frame, params.count):
-        specs.append((station, params.diameter / 2.0, params.half))
-        z_mate = mould.mating_height(station.x, station.y)
-        inward = _orient_inward(frame, station)
-        for half, sign in (("Lower", -1.0), ("Upper", 1.0)):
-            if params.half not in (half, "Both"):
-                continue
-            z = z_mate + sign * params.offset_from_mating
-            side = mould.lower if half == "Lower" else mould.upper
-            reach = _part_reach(frame, side, station, z, span)
-            if reach is None:
-                mould.unreached_ports.append(
-                    f"the process ports cannot reach the part from the "
-                    f"{params.half.lower()} wall at ({station.x:.3f}, "
-                    f"{station.y:.3f}): nothing was crossed along the bore, so "
-                    f"no bore was cut there"
-                )
-                continue
+    for half, placement, target in _port_placement(mould, params):
+        tools = lower_tools if half == "Lower" else upper_tools
+        if placement is not None:
+            station, z, reach = placement
+            specs.append((station, params.diameter / 2.0, half))
+            inward = _orient_inward(frame, station)
             start = frame.point(station.x, station.y, z) - inward * TOOL_OVERSHOOT
-            bore = Part.makeCylinder(params.diameter / 2.0,
-                                     reach + 2.0 * TOOL_OVERSHOOT, start, inward)
-            (lower_tools if half == "Lower" else upper_tools).append(bore)
+            tools.append(Part.makeCylinder(
+                params.diameter / 2.0, reach + 2.0 * TOOL_OVERSHOOT,
+                start, inward))
+            continue
+        if target is None:
+            mould.unreached_ports.append(
+                f"the process ports cannot reach the part from the "
+                f"{half.lower()} wall: no position along that wall meets it, "
+                f"so no bore was cut there"
+            )
+            continue
+        _reach, point, _z = target
+        x, y, _ = frame.local(point)
+        tools.append(_cap_bore(frame, params, half, point))
+        mould.port_warnings.append(
+            f"the process port on the {half.lower()} wall cannot clear the "
+            f"mating plane and still reach the part, so it is bored from the "
+            f"cap at ({x:.3f}, {y:.3f}) to the same point"
+        )
     return lower_tools, upper_tools, len(lower_tools) + len(upper_tools), specs
 
 
@@ -1608,6 +1773,7 @@ def build_fixtures(request):
     )
     result["issues"].extend(mould.breakthroughs)
     result["issues"].extend(mould.unreached_ports)
+    result["issues"].extend(mould.port_warnings)
     if request.stock_margins is not None:
         result["issues"].extend(
             margin_issues(request.stock_margins, request.alignment,

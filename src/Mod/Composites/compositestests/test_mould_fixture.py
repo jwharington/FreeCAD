@@ -50,13 +50,16 @@ from Composites.tools.mould_fixture import (
     MouldBlock,
     MouldFixtureError,
     PortParams,
+    PerimeterStation,
     StockMargins,
     WedgeParams,
     _alignment_tools,
     _clamping_tools,
     _clearance_issues,
     _interference_issues,
+    _part_crossing,
     _pin_zones,
+    _port_placement,
     _port_stations,
     _port_tools,
     _seat_radius,
@@ -742,23 +745,42 @@ class TestFixtureCuts(unittest.TestCase):
         self.assertLess(result["upper_shape"].Volume, self.upper.Volume)
 
     def test_process_ports_bore_in_from_the_wall(self):
+        """Each port is aimed at the part's nearest point on its own wall.
+
+        The bore meets the part and not the far wall: a wall that has more stock
+        than part in this half, where no height clearing the mating plane can
+        meet it, keeps the point it aimed at and is bored from the cap instead -
+        so a port is never drilled the length of the block to whatever it
+        happens to hit.
+        """
         request = self._request()
         request.ports = PortParams(enabled=True, count=2, half="Lower")
         result = build_fixtures(request)
         self.assertEqual(result["status"], "Ready", result["summary"])
         self.assertEqual(result["port_bores"], 2)
-        geometry = block_frame(result["lower_shape"], result["upper_shape"], self.draw)
-        for station in _port_stations(self.frame, 2):
-            z_bore = self._mating_height(station.x, station.y, geometry) - 8.0
-            # The bore opens at the wall...
-            mouth = _bore_probe(geometry, station, z_bore, 0.5, 2.0, 2.0)
+        frame = block_frame(self.lower, self.upper, self.draw)
+        mould = MouldBlock(frame=frame, parting_surface=self.parting,
+                           lower=self.lower, upper=self.upper)
+        params = PortParams(enabled=True, count=2, half="Lower")
+        placements = _port_placement(mould, params)
+        self.assertEqual(len(placements), 2)
+        for half, placement, target in placements:
+            self.assertEqual(half, "Lower")
+            self.assertTrue(placement is not None or target is not None,
+                            "a port must be placed, or aimed at a target")
+            if placement is None:
+                continue
+            station, z, reach = placement
+            # The bore reaches the part well inside the block...
+            self.assertLess(reach, max(frame.size))
+            # ...clearing the mating plane on its own side...
+            self.assertLessEqual(
+                z, mould.mating_height(station.x, station.y)
+                - params.offset_from_mating + PROBE_TOL)
+            # ...and it opens at the wall it was bored through.
+            mouth = _bore_probe(frame, station, z, 0.5, 2.0, 2.0)
             self.assertLess(_material(result["lower_shape"], mouth), PROBE_TOL)
             self.assertGreater(_material(self.lower, mouth), 10.0)
-            # ...and runs on into the block.
-            shaft = _bore_probe(geometry, station, z_bore, 4.0, 30.0, 2.0)
-            self.assertGreater(_material(self.lower, shaft), 10.0)
-            self.assertLess(_material(result["lower_shape"], shaft),
-                            _material(self.lower, shaft))
         # A lower-half port leaves the other half alone.
         self.assertAlmostEqual(result["upper_shape"].Volume, self.upper.Volume,
                                delta=1e-6)
@@ -771,6 +793,26 @@ class TestFixtureCuts(unittest.TestCase):
         self.assertEqual(result["port_bores"], 4)
         self.assertLess(result["lower_shape"].Volume, self.lower.Volume)
         self.assertLess(result["upper_shape"].Volume, self.upper.Volume)
+
+    def test_a_ray_that_misses_the_part_reports_no_reach(self):
+        """The far wall is not the part.
+
+        A bore passing under the cavity crosses nothing but stock and the far
+        wall, and reading that crossing as the part is what drilled a bore the
+        length of the block. So a ray below the cavity must report no crossing -
+        and the same ray raised into the cavity must report a short one, or the
+        refusal would be a blanket no rather than a measurement.
+        """
+        frame = block_frame(self.lower, self.upper, self.draw)
+        station = PerimeterStation(x=frame.x_max, y=frame.y_mid,
+                                   tangent=(0.0, 1.0), inward=(-1.0, 0.0))
+        span = 2.0 * max(frame.size)
+        self.assertIsNone(
+            _part_crossing(frame, self.lower, station, 5.0, span))
+        crossing = _part_crossing(frame, self.lower, station, 25.0, span)
+        self.assertIsNotNone(crossing, "a ray into the cavity must still meet it")
+        self.assertLess(crossing[0], frame.x_max - frame.x_min,
+                        "the crossing must be the cavity, not the far wall")
 
     def test_unknown_port_half_is_refused(self):
         request = self._request()
@@ -829,7 +871,9 @@ class TestFixtureCuts(unittest.TestCase):
 
         Shown by contrast: the same slot built without the keep-out does share
         material with the bore, so it is the interruption that stops it rather
-        than the two happening to miss.
+        than the two happening to miss. A port that had to be bored from the cap
+        instead enters no wall at all, so no slot crosses it - checked too, so
+        neither case can hide behind the other.
         """
         result = self._build(ports=True, wedges=True)
         self.assertEqual(result["status"], "Ready", result["summary"])
@@ -839,20 +883,26 @@ class TestFixtureCuts(unittest.TestCase):
         mould = MouldBlock(frame=frame, parting_surface=self.parting,
                            lower=self.lower, upper=self.upper)
         for half, index in (("Lower", 0), ("Upper", 1)):
-            port_lower, port_upper, bores, specs = _port_tools(
-                mould, PortParams(enabled=True, count=2, half=half))
+            params = PortParams(enabled=True, count=2, half=half)
+            port_lower, port_upper, bores, specs = _port_tools(mould, params)
             ports = port_lower if half == "Lower" else port_upper
             # The bores land in the half they are bored into, not the other.
             self.assertEqual(len(ports), bores)
             self.assertTrue(ports)
+            placed = [(one_half, best, target)
+                      for (one_half, best, target) in _port_placement(mould, params)
+                      if one_half == half and (best is not None or target is not None)]
+            self.assertEqual(len(ports), len(placed))
             uninterrupted = _wedge_tools(mould, WedgeParams())[index]
             interrupted = _wedge_tools(mould, WedgeParams(), specs)[index]
             self.assertTrue(interrupted)
-            for port in ports:
+            for port, (_half, best, _target) in zip(ports, placed):
                 for wedge in interrupted:
                     self.assertLessEqual(
                         _shared_volume(port, wedge), INTERFERENCE_VOLUME_TOL,
                         "the %s slot was not interrupted" % half)
+                if best is None:
+                    continue
                 self.assertTrue(
                     any(_shared_volume(port, wedge) > INTERFERENCE_VOLUME_TOL
                         for wedge in uninterrupted),
@@ -1240,8 +1290,11 @@ class TestMouldFixtureFeature(TestFreeCADFP):
         self.assertEqual(fixture.FixtureStatus, "Ready", fixture.FixtureSummary)
         self.assertLess(fixture.FixtureLower.Shape.Volume, lower.Volume)
         self.assertLess(fixture.FixtureUpper.Shape.Volume, upper.Volume)
-        # A clean build reports no issues; the readable account is the summary.
-        self.assertEqual(fixture.FixtureIssues, [])
+        # A clean build reports only what it had to say: any issue here is a
+        # port the wall cannot deliver, which is bored from the cap instead. The
+        # readable account of what was built is the summary.
+        for issue in fixture.FixtureIssues:
+            self.assertIn("process port", issue)
         self.assertIn("alignment holes", fixture.FixtureSummary)
 
     def test_build_reports_short_margins_without_writing_them(self):
