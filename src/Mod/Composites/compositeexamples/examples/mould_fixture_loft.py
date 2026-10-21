@@ -95,3 +95,12 @@ def build(doc=None, run_solver=False, **_ignored):
     _paint(fixture.FixtureUpper, UPPER_COLOUR, 78)
 
     return {"doc": doc, "mould": mould, "fixture": fixture}
+
+
+def main():
+    """Run the example in its own document."""
+    build()
+
+
+if __name__ == "__main__":
+    main()
