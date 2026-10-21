@@ -6,8 +6,8 @@
 The mould analysis builds a stock block around the part and parts it into two
 halves.  `MouldFixture` then cuts the fittings into those halves: alignment
 dowel and bush sockets in the corners, clamp bolt holes through the upper into
-a tapped hole in the lower, process bores in from the walls, and triangular
-parting wedges whose apex sits on the mating plane.
+a tapped hole in the lower, process bores in from the walls, and a triangular
+parting slot along each wall whose apex sits on the mating plane.
 
 The fixtures are cut *into* the halves rather than added beside them, so
 `MouldFixture` has no shape of its own — the block you see is its two hidden
@@ -18,8 +18,12 @@ fittings taken out of it.  Compare them with the analysis's own `MouldHalfA` /
 The source is a plain box, so all the interesting geometry is the block the
 analysis builds around it and what the fixture cuts into that: the part (red)
 sits in the cavity, `FixtureLower` (blue) carries the dowels, the tapped bolt
-holes and the wedge apexes, and `FixtureUpper` (green, more transparent so the
-lower shows through) carries the bushes and the bolt clearance holes.
+holes and the lower half of every parting slot, and `FixtureUpper` (green, more
+transparent so the lower shows through) carries the bushes and the bolt
+clearance holes.  Each slot runs its wall's full length less a 50 mm standoff
+at either corner (`WedgeCornerStandoff`), so a wedge can be driven in wherever
+the halves stick while the corners that hold the alignment stay whole, and it
+is interrupted over each process port so the bore does not break into it.
 
 The part-line solver is set to 'hlr'.  The tessellation march is the drafted
 path and the default, but on a box in this tree it never closes its loop
@@ -41,8 +45,9 @@ from ...features.MouldFixture import (
 PART_SIZE = (40.0, 30.0, 20.0)
 
 # Stock around the part.  Generous on purpose: the default 5 mm cannot hold the
-# default fixtures, whose corner pin alone reaches 28 mm in from the wall.
-STOCK_MARGIN = 40.0
+# default fixtures, whose corner pin alone needs about 41 mm for the skirt
+# clearance rule, and the wedge slots leave a 50 mm standoff at every corner.
+STOCK_MARGIN = 60.0
 
 SOURCE_COLOUR = (0.85, 0.15, 0.15)
 LOWER_COLOUR = (0.25, 0.45, 0.85)

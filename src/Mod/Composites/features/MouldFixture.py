@@ -65,6 +65,26 @@ def _shape_key(shape):
             round(box.ZMin, 6), round(box.ZMax, 6))
 
 
+def _add_wedge_properties(obj):
+    """The parting-wedge slot's shape, on its own so a restore can add it."""
+    _add_property(obj, "App::PropertyBool", "PartingWedges",
+                  "Cut a triangular parting slot along each block wall, apex "
+                  "on the mating plane, so a driven wedge separates the "
+                  "halves.", True)
+    _add_property(obj, "App::PropertyLength", "WedgeCornerStandoff",
+                  "Length of wall left uncut at each corner. The corners keep "
+                  "the alignment sockets and survive a wedge driven too hard; "
+                  "the slot runs the rest of the wall, interrupted where a "
+                  "process port is bored through it.", 50.0)
+    _add_property(obj, "App::PropertyLength", "WedgeHeight",
+                  "Parting wedge height, across the mating plane.", 12.0)
+    _add_property(obj, "App::PropertyLength", "WedgeDepth",
+                  "Parting wedge depth, into the block from the wall. It has "
+                  "to stay clear of the clamp bolt holes and the process "
+                  "bores: at the 11 mm default the slot reaches 12 mm in, "
+                  "against a bolt edge 12.5 mm out.", 11.0)
+
+
 def mould_halves(source):
     """The ``(lower, upper)`` child objects of a mould analysis, or ``(None, None)``."""
     if source is None:
@@ -119,8 +139,7 @@ def fixture_params(fp):
         ),
         WedgeParams(
             enabled=bool(fp.PartingWedges),
-            count=int(fp.WedgeCount),
-            width=float(fp.WedgeWidth),
+            corner_standoff=float(fp.WedgeCornerStandoff),
             height=float(fp.WedgeHeight),
             depth=float(fp.WedgeDepth),
         ),
@@ -229,17 +248,7 @@ class MouldFixtureFP(CompositePartFP):
                          "Half, or halves, each process port is bored into.",
                          PORT_HALF_OPTIONS, "Lower")
 
-        _add_property(obj, "App::PropertyBool", "PartingWedges",
-                      "Cut triangular parting wedges into the block walls, apex on the "
-                      "mating plane, so a driven wedge separates the halves.", True)
-        _add_property(obj, "App::PropertyInteger", "WedgeCount",
-                      "Number of parting wedges around the block perimeter.", 4)
-        _add_property(obj, "App::PropertyLength", "WedgeWidth",
-                      "Parting wedge width, along the block wall.", 20.0)
-        _add_property(obj, "App::PropertyLength", "WedgeHeight",
-                      "Parting wedge height, across the mating plane.", 12.0)
-        _add_property(obj, "App::PropertyLength", "WedgeDepth",
-                      "Parting wedge depth, into the block from the wall.", 15.0)
+        _add_wedge_properties(obj)
 
         for label in ("Lower", "Upper"):
             obj.addProperty(
@@ -272,6 +281,16 @@ class MouldFixtureFP(CompositePartFP):
         obj.setPropertyStatus("FixtureIssues", "ReadOnly")
 
         super().__init__(obj)
+
+    def onDocumentRestored(self, fp):
+        super().onDocumentRestored(fp)
+        # A wedge used to be a notch at each of `WedgeCount` stations, `WedgeWidth`
+        # long. Documents saved then carry neither of the properties that
+        # replaced them, so the slot's shape is added back here rather than
+        # leaving the fixture unbuildable. The stale pair is left alone: nothing
+        # reads it, and removing a user's property is worse than leaving one.
+        if not hasattr(fp, "WedgeCornerStandoff"):
+            _add_wedge_properties(fp)
 
     def _input_signature(self, fp):
         """Everything that defines the fixtures, as one comparable tuple.

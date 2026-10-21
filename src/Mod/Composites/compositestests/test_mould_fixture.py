@@ -57,8 +57,13 @@ from Composites.tools.mould_fixture import (
     _clearance_issues,
     _interference_issues,
     _pin_zones,
+    _port_stations,
+    _port_tools,
+    _shared_volume,
     _summary,
     _wall_normals,
+    _wall_runs,
+    _wedge_tools,
     block_frame,
     build_fixtures,
     corner_positions,
@@ -70,10 +75,12 @@ from Composites.tools.mould_fixture import (
 from .test_base import TestFreeCADFP
 
 # Block dimensions in the block's own frame, and the cavity inside it.
-# Wide enough for the default bolts under the skirt clearance rule: a bolt at
-# a 15 mm inset with a 4.25 mm radius needs 8.5 mm of gap to the part outline,
-# and the 40 x 30 cavity is rotated 45 degrees in plane, so its reach along the
-# block axes is 35/sqrt(2) = 24.7 mm and the skirt is (BLOCK - 24.7) / 2.
+# Wide enough for the default bolts under the skirt clearance rule, and for the
+# default wedge slots: a wedge leaves a 50 mm corner standoff at either end of
+# each wall, so the shortest wall has to be longer than 100 mm for a slot to
+# exist at all.  The 40 x 30 cavity is rotated 45 degrees in plane, so its
+# reach along the block axes is 35/sqrt(2) = 24.7 mm and the skirt is
+# (BLOCK - 24.7) / 2.
 BLOCK = (140.0, 120.0, 60.0)
 SPLIT_Z = 30.0
 CAVITY_HALF = (20.0, 15.0)
@@ -356,21 +363,40 @@ class TestFixtureLayouts(unittest.TestCase):
         second = perimeter_stations(self.frame, 4, 0.0, phase=0.25)
         self.assertEqual(first, second)
 
-    def test_bolts_and_wedges_do_not_share_a_station(self):
-        # The bolt pattern's phase is chosen by the build, so the layout is read
-        # from one rather than assuming where the pattern starts.
-        request = _only(bolts=True, wedges=True)
-        request.lower, request.upper = self.lower, self.upper
-        request.draw = self.draw
-        request.parting_surface = self.parting
-        result = build_fixtures(request)
-        self.assertTrue(result["bolt_stations"])
-        wedges = perimeter_stations(self.frame, 4, 0.0, phase=0.0)
-        for x, y in result["bolt_stations"]:
-            for wedge in wedges:
-                bolt_point = self.frame.point(x, y, 0.0)
-                wedge_point = self.frame.point(wedge.x, wedge.y, 0.0)
-                self.assertGreater(bolt_point.distanceToPoint(wedge_point), 10.0)
+    def test_wedge_slots_stop_short_of_every_corner(self):
+        """Each wall carries one slot, trimmed back from both of its corners.
+
+        A parting wedge is driven in along a wall, so the slot runs the wall
+        rather than sitting at a point: what it leaves is the corner standoff,
+        which keeps the alignment sockets clear and gives a wedge somewhere to
+        bite without running out of the block edge.
+        """
+        standoff = 50.0
+        runs = _wall_runs(self.frame, standoff)
+        self.assertEqual(len(runs), 4)
+        spans = [self.frame.x_max - self.frame.x_min,
+                 self.frame.y_max - self.frame.y_min]
+        for station, length in runs:
+            # The run is the wall's full span less the standoff at either end.
+            full = spans[0] if abs(station.tangent[0]) > 0.5 else spans[1]
+            self.assertAlmostEqual(length, full - 2.0 * standoff, delta=1e-9)
+            self.assertAlmostEqual(math.hypot(*station.tangent), 1.0, delta=SIZE_TOL)
+            self.assertAlmostEqual(math.hypot(*station.inward), 1.0, delta=SIZE_TOL)
+            # Centred on the wall, and on it rather than inside the block.
+            if abs(station.tangent[0]) > 0.5:
+                self.assertAlmostEqual(station.x, self.frame.x_mid, delta=1e-9)
+                self.assertIn(round(station.y, 6),
+                              (round(self.frame.y_min, 6), round(self.frame.y_max, 6)))
+            else:
+                self.assertAlmostEqual(station.y, self.frame.y_mid, delta=1e-9)
+                self.assertIn(round(station.x, 6),
+                              (round(self.frame.x_min, 6), round(self.frame.x_max, 6)))
+
+    def test_wedge_standoff_that_consumes_the_wall_is_refused(self):
+        with self.assertRaises(MouldFixtureError):
+            _wall_runs(self.frame, 1.0e6)
+        with self.assertRaises(MouldFixtureError):
+            _wall_runs(self.frame, -1.0)
 
 
 class TestFixtureCuts(unittest.TestCase):
@@ -516,7 +542,7 @@ class TestFixtureCuts(unittest.TestCase):
         self.assertEqual(result["status"], "Ready", result["summary"])
         self.assertEqual(result["port_bores"], 2)
         geometry = block_frame(result["lower_shape"], result["upper_shape"], self.draw)
-        for station in perimeter_stations(self.frame, 2, 0.0, phase=0.75):
+        for station in _port_stations(self.frame, 2):
             z_bore = self._mating_height(station.x, station.y, geometry) - 8.0
             # The bore opens at the wall...
             mouth = _bore_probe(geometry, station, z_bore, 0.5, 2.0, 2.0)
@@ -555,6 +581,76 @@ class TestFixtureCuts(unittest.TestCase):
         removed_upper = self.upper.Volume - result["upper_shape"].Volume
         self.assertGreater(removed_lower, 100.0)
         self.assertAlmostEqual(removed_lower, removed_upper, delta=1e-3)
+
+    def test_wedge_slots_run_each_wall_and_stop_at_the_corner_standoff(self):
+        """The slot reaches the run's ends and leaves the standoff uncut.
+
+        Probed either side of the run's end, because that is what the standoff
+        means: a wedge has to be able to bite anywhere along the wall, and the
+        corners have to survive one driven too hard.
+        """
+        params = WedgeParams()
+        request = self._request(wedges=True)
+        request.wedges = params
+        result = build_fixtures(request)
+        self.assertEqual(result["status"], "Ready", result["summary"])
+        frame = block_frame(result["lower_shape"], result["upper_shape"], self.draw)
+        for station, length in _wall_runs(frame, params.corner_standoff):
+            tangent = (frame.x_axis * station.tangent[0]
+                       + frame.y_axis * station.tangent[1])
+            centre = frame.point(station.x, station.y, 0.0)
+            for end in (-1.0, 1.0):
+                for offset, cut in ((length / 2.0 - 2.0, True),
+                                    (length / 2.0 + 2.0, False)):
+                    local = frame.local(centre + tangent * (end * offset))
+                    x, y = local[0], local[1]
+                    z_mate = self._mating_height(x, y, frame)
+                    probe = _probe(frame, x, y, z_mate - 3.0, z_mate - 1.0, 1.0)
+                    whole = _material(self.lower, probe)
+                    self.assertGreater(whole, 1.0)
+                    left = _material(result["lower_shape"], probe)
+                    if cut:
+                        self.assertLess(
+                            left, PROBE_TOL,
+                            "no slot %.3f mm along the wall" % offset)
+                    else:
+                        self.assertAlmostEqual(
+                            left, whole, delta=1e-6,
+                            msg="standoff cut %.3f mm along the wall" % offset)
+
+    def test_wedge_slots_are_interrupted_where_a_port_enters(self):
+        """A bore in the same wall must not break into the slot.
+
+        Shown by contrast: the same slot built without the keep-out does share
+        material with the bore, so it is the interruption that stops it rather
+        than the two happening to miss.
+        """
+        result = self._build(ports=True, wedges=True)
+        self.assertEqual(result["status"], "Ready", result["summary"])
+        self.assertEqual([issue for issue in result["issues"] if "share" in issue], [])
+
+        frame = block_frame(self.lower, self.upper, self.draw)
+        mould = MouldBlock(frame=frame, parting_surface=self.parting,
+                           lower=self.lower)
+        for half, index in (("Lower", 0), ("Upper", 1)):
+            port_lower, port_upper, bores, specs = _port_tools(
+                mould, PortParams(enabled=True, count=2, half=half))
+            ports = port_lower if half == "Lower" else port_upper
+            # The bores land in the half they are bored into, not the other.
+            self.assertEqual(len(ports), bores)
+            self.assertTrue(ports)
+            uninterrupted = _wedge_tools(mould, WedgeParams())[index]
+            interrupted = _wedge_tools(mould, WedgeParams(), specs)[index]
+            self.assertTrue(interrupted)
+            for port in ports:
+                for wedge in interrupted:
+                    self.assertLessEqual(
+                        _shared_volume(port, wedge), INTERFERENCE_VOLUME_TOL,
+                        "the %s slot was not interrupted" % half)
+                self.assertTrue(
+                    any(_shared_volume(port, wedge) > INTERFERENCE_VOLUME_TOL
+                        for wedge in uninterrupted),
+                    "the %s bore does not reach the slot anyway" % half)
 
     def test_every_fixture_kind_together(self):
         result = self._build(alignment=True, bolts=True, ears=True, ports=True,
@@ -782,7 +878,7 @@ class TestStockMargins(unittest.TestCase):
     """The stock a mould declares, against the stock its fixtures need."""
 
     def test_required_margin_is_the_widest_enabled_fixture(self):
-        # Defaults: pins 24 + 8, bolts 15 + 4.25, wedges 15; the ears are off.
+        # Defaults: pins 24 + 8, bolts 18 + 5.5, wedges 11; the ears are off.
         self.assertAlmostEqual(
             required_in_plane_margin(AlignmentParams(), ClampingParams(),
                                      WedgeParams()),

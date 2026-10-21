@@ -64,6 +64,12 @@ _CORNER_ORDER = ((-1.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (1.0, -1.0))
 # alignment sockets and the skirt.
 BOLT_PHASE_SAMPLES = 72
 
+# A wedge slot runs the whole wall, and the interface it straddles varies along
+# that wall, so a run is cut as segments about this long, each measured at its
+# own midpoint. Shorter segments follow the parting geometry more closely; every
+# seam between them is a step the shop floor dresses.
+WEDGE_SLOT_SEGMENT_MM = 25.0
+
 # Every hole keeps this multiple of its radius of gap from every other hole and
 # from both edges of the skirt: the part outline inboard, the block wall
 # outboard. A clear diameter of web is what keeps a socket from breaking into
@@ -202,13 +208,20 @@ class ClampingParams:
 
 @dataclass(frozen=True)
 class WedgeParams:
-    """Triangular notches straddling the parting plane, one per pry point."""
+    """A triangular slot along each wall, straddling the parting plane.
+
+    A driven wedge separates the halves, so every wall carries one slot running
+    its full length less ``corner_standoff`` at each end. The corners are left
+    intact: they hold the alignment sockets and take the blow if a wedge is
+    driven too hard.
+    """
 
     enabled: bool = True
-    count: int = 4
-    width: float = 20.0
+    corner_standoff: float = 50.0
     height: float = 12.0
-    depth: float = 15.0
+    # 11 mm keeps the slot's reach (plus the tool overshoot) clear of the clamp
+    # bolt holes at their default edge offset: 11 + 1 against 18 - 5.5.
+    depth: float = 11.0
 
 
 @dataclass(frozen=True)
@@ -581,6 +594,84 @@ def perimeter_stations(frame, count, inset, phase=0.0):
     ]
 
 
+def _all_walls(frame):
+    """The four block walls, wound anticlockwise in the block frame.
+
+    Each entry is ``((mid_x, mid_y), (inward_x, inward_y), length)``: the wall's
+    midpoint, the direction into the block, and how far the wall runs along its
+    own span. A wall's length is the span it runs along, so the pair with the
+    shorter span is the pair whose own run is shortest.
+    """
+    span_x = frame.x_max - frame.x_min
+    span_y = frame.y_max - frame.y_min
+    return [((frame.x_mid, frame.y_max), (0.0, -1.0), span_x),
+            ((frame.x_max, frame.y_mid), (-1.0, 0.0), span_y),
+            ((frame.x_mid, frame.y_min), (0.0, 1.0), span_x),
+            ((frame.x_min, frame.y_mid), (1.0, 0.0), span_y)]
+
+
+def _shortest_walls(frame):
+    """The opposite pair of block walls that runs the shorter way."""
+    walls = _all_walls(frame)
+    return walls[0::2] if walls[0][2] <= walls[1][2] else walls[1::2]
+
+
+def _wall_runs(frame, standoff):
+    """The four walls as runs trimmed ``standoff`` back from each corner.
+
+    As ``(station, length)`` with the station at the middle of the run, so a
+    slot cut about it runs the wall's full length less the standoff at either
+    end. A standoff that would consume the wall is refused rather than cut to
+    nothing.
+    """
+    if standoff < 0.0:
+        raise MouldFixtureError(
+            f"wedge corner standoff {standoff:.3f} mm is negative")
+    runs = []
+    for (mid_x, mid_y), inward, span in _all_walls(frame):
+        length = span - 2.0 * standoff
+        if length <= PLANE_OFFSET_TOL:
+            raise MouldFixtureError(
+                f"wedge corner standoff {standoff:.3f} mm leaves none of a "
+                f"{span:.3f} mm wall left to cut")
+        tangent = (1.0, 0.0) if inward[0] == 0.0 else (0.0, 1.0)
+        runs.append((PerimeterStation(x=mid_x, y=mid_y, tangent=tangent,
+                                      inward=inward), length))
+    return runs
+
+
+def _port_stations(frame, count):
+    """``count`` port positions along the block's two shortest walls.
+
+    A port is bored in from a wall face towards the work, so it belongs on a
+    wall: its stations are spread along the shortest pair of sides and centred
+    there. Equal spacing around the whole perimeter is wrong for this, because
+    the fractions it lands on are span boundaries - the corners - which is
+    where the two-port default used to put them.
+
+    ``count`` ports are shared between the pair, the first wall taking the odd
+    one, and each wall's own ports are centred on it.
+    """
+    if count < 1:
+        raise MouldFixtureError(f"port count {count} must be positive")
+    walls = _shortest_walls(frame)
+    share = [count // len(walls)] * len(walls)
+    for index in range(count % len(walls)):
+        share[index] += 1
+    stations = []
+    for ((mid_x, mid_y), inward, length), per_wall in zip(walls, share):
+        tangent = (1.0, 0.0) if inward[0] == 0.0 else (0.0, 1.0)
+        for slot in range(per_wall):
+            along = ((slot + 0.5) / per_wall - 0.5) * length
+            stations.append(PerimeterStation(
+                x=mid_x + tangent[0] * along,
+                y=mid_y + tangent[1] * along,
+                tangent=tangent,
+                inward=inward,
+            ))
+    return stations
+
+
 def _orient_inward(frame, station):
     """The station's block-frame inward pair as a world direction."""
     return frame.x_axis * station.inward[0] + frame.y_axis * station.inward[1]
@@ -632,20 +723,22 @@ def _wall_notch(frame, station, z_mate, width, height, depth):
     return _prism(corners, inward * (depth + TOOL_OVERSHOOT))
 
 
-def _parting_wedge(frame, station, z_mate, width, height, depth):
-    """A triangular notch in the wall, apex on the mating plane.
+def _parting_wedge(frame, station, z_mate, length, height, depth):
+    """A triangular slot along the wall, apex on the mating plane.
 
     Driven in, a wedge separates the halves. The apex sits *on* the mating
-    plane so each half receives a mirror-image half of the notch.
+    plane so each half receives a mirror-image half of the notch, and the slot
+    runs ``length`` along the wall, centred on the station.
     """
     inward = _orient_inward(frame, station)
+    tangent = _orient_tangent(frame, station)
     base = frame.point(station.x, station.y, z_mate) - inward * TOOL_OVERSHOOT
     wall_bottom = base - frame.z_axis * (height / 2.0)
     wall_top = base + frame.z_axis * (height / 2.0)
     apex = base + inward * (depth + TOOL_OVERSHOOT)
-    shift = _orient_tangent(frame, station) * (width / 2.0)
+    shift = tangent * (length / 2.0)
     triangle = [wall_bottom - shift, wall_top - shift, apex - shift]
-    return _prism(triangle, _orient_tangent(frame, station) * width)
+    return _prism(triangle, tangent * length)
 
 
 def _alignment_tools(mould, params):
@@ -735,6 +828,7 @@ def _bolt_station_phase(mould, params, pin_zones, segments, obstacles=()):
                          for step in range(BOLT_PHASE_SAMPLES)),
                         key=lambda phase: abs(phase - 0.5))
     widest = None
+    ruled = None
     for phase in candidates:
         lower, upper, stations = _bolt_tools(mould, params, phase)
         surplus = min(_surplus(frame, segments, station.x, station.y, bolt_radius,
@@ -745,8 +839,16 @@ def _bolt_station_phase(mould, params, pin_zones, segments, obstacles=()):
                 widest = (surplus, phase)
             continue
         if _clashes(lower + upper, obstacles):
+            # A parting wedge slot runs the whole wall, so some phases obey the
+            # clearance rule and still touch it, and no phase can miss it. Keep
+            # the best of those rather than dropping to one that breaks the
+            # rule outright; the clash itself is reported as interference.
+            if ruled is None or surplus > ruled[0]:
+                ruled = (surplus, phase)
             continue
         return phase
+    if ruled is not None:
+        return ruled[1]
     return widest[1] if widest is not None else 0.5
 
 
@@ -961,21 +1063,24 @@ def _clamping_tools(mould, params, pin_zones=(), segments=(), obstacles=()):
 
 
 def _port_tools(mould, params):
-    """``(lower_tools, upper_tools, bore_count)`` for the wall bores.
+    """``(lower_tools, upper_tools, bore_count, specs)`` for the wall bores.
 
-    Stations sit on the block walls (no inset) so a bore starts at the wall,
-    at a phase that interleaves with the bolts, clamp-ear notches and wedges
-    instead of sharing their positions.
+    Stations sit on the middle of the block's two shortest walls, so a bore
+    starts at a wall face and runs in towards the work. ``specs`` is
+    ``(station, radius, half)`` for each, which is what a parting wedge slot
+    needs to keep out of its way.
     """
     if not params.enabled:
-        return [], [], 0
+        return [], [], 0, []
     if params.half not in PORT_HALVES:
         raise MouldFixtureError(
             f"process port half must be one of {PORT_HALVES}, not {params.half!r}"
         )
     frame = mould.frame
     lower_tools, upper_tools = [], []
-    for station in perimeter_stations(frame, params.count, 0.0, phase=0.75):
+    specs = []
+    for station in _port_stations(frame, params.count):
+        specs.append((station, params.diameter / 2.0, params.half))
         z_mate = mould.mating_height(station.x, station.y)
         inward = _orient_inward(frame, station)
         for half, sign in (("Lower", -1.0), ("Upper", 1.0)):
@@ -987,23 +1092,96 @@ def _port_tools(mould, params):
             bore = Part.makeCylinder(params.diameter / 2.0,
                                      params.depth + TOOL_OVERSHOOT, start, inward)
             (lower_tools if half == "Lower" else upper_tools).append(bore)
-    return lower_tools, upper_tools, len(lower_tools) + len(upper_tools)
+    return lower_tools, upper_tools, len(lower_tools) + len(upper_tools), specs
 
 
-def _wedge_tools(mould, params):
-    """``(tools, count)`` for the parting wedges.
+def _slot_keepouts(station, ports):
+    """Along-wall spans a slot must leave uncut, as distances from its centre.
 
-    The notch straddles the mating plane, so the same tool applies to both
-    halves and each receives its own half of the triangular void.
+    A bore entering the same wall would break into the slot, so the slot is
+    interrupted over it. The bore keeps ``SKIRT_CLEARANCE_FACTOR`` of its own
+    radius of gap from the slot's end - the same web the hole rule asks for
+    between two holes - so the keep-out reaches ``radius`` to the bore's edge
+    and a further ``2 * radius`` of web beyond it.
+    """
+    keepouts = []
+    for port_station, radius, _half in ports:
+        if any(abs(port_station.inward[index] - station.inward[index]) > 1e-9
+               for index in (0, 1)):
+            continue
+        along = ((port_station.x - station.x) * station.tangent[0]
+                 + (port_station.y - station.y) * station.tangent[1])
+        reach = radius + _required_gap(radius)
+        keepouts.append((along - reach, along + reach))
+    return keepouts
+
+
+def _subtract_keepouts(span, keepouts):
+    """``span`` less every keep-out, as the remaining sub-spans."""
+    spans = [span]
+    for low, high in keepouts:
+        remaining = []
+        for start, end in spans:
+            if high <= start or low >= end:
+                remaining.append((start, end))
+                continue
+            if low > start:
+                remaining.append((start, min(low, end)))
+            if high < end:
+                remaining.append((max(high, start), end))
+        spans = remaining
+    return [(start, end) for start, end in spans
+            if end - start > PLANE_OFFSET_TOL]
+
+
+def _slot_segments(mould, station, start, end, params):
+    """The tools covering ``start``..``end`` of one wall, measured per piece.
+
+    Each piece is measured at its own midpoint, so the slot follows the parting
+    geometry rather than one plane across the wall.
+    """
+    length = end - start
+    if length <= PLANE_OFFSET_TOL:
+        return []
+    segments = max(1, int(math.ceil(length / WEDGE_SLOT_SEGMENT_MM)))
+    piece = length / segments
+    tools = []
+    for index in range(segments):
+        along = start + (index + 0.5) * piece
+        segment = PerimeterStation(
+            x=station.x + station.tangent[0] * along,
+            y=station.y + station.tangent[1] * along,
+            tangent=station.tangent,
+            inward=station.inward,
+        )
+        tools.append(_parting_wedge(
+            mould.frame, segment,
+            mould.mating_height(segment.x, segment.y),
+            piece, params.height, params.depth))
+    return tools
+
+
+def _wedge_tools(mould, params, ports=()):
+    """``(lower_tools, upper_tools, slot_count)`` for the parting wedge slots.
+
+    One slot per wall, running the wall's full length less the corner standoff,
+    and interrupted over any process port bored into that same wall - in the
+    half that port serves, because a bore entering there would otherwise break
+    into the slot. The notch straddles the mating plane, so each half receives
+    its own share of the triangular void.
     """
     if not params.enabled:
-        return [], 0
-    tools = [
-        _parting_wedge(mould.frame, station, mould.mating_height(station.x, station.y),
-                       params.width, params.height, params.depth)
-        for station in perimeter_stations(mould.frame, params.count, 0.0, phase=0.0)
-    ]
-    return tools, len(tools)
+        return [], [], 0
+    runs = _wall_runs(mould.frame, params.corner_standoff)
+    lower_tools, upper_tools = [], []
+    for station, length in runs:
+        full = (-length / 2.0, length / 2.0)
+        for half, tools in (("Lower", lower_tools), ("Upper", upper_tools)):
+            keepouts = _slot_keepouts(
+                station, [port for port in ports if port[2] in (half, "Both")])
+            for start, end in _subtract_keepouts(full, keepouts):
+                tools.extend(_slot_segments(mould, station, start, end, params))
+    return lower_tools, upper_tools, len(runs)
 
 
 def _cut_half(shape, tools):
@@ -1157,31 +1335,33 @@ def build_fixtures(request):
         pin_zones = _pin_zones(frame, request.alignment)
         segments = _outline_segments(frame, request.parting_surface)
         pin_lower, pin_upper, align_holes = _alignment_tools(mould, request.alignment)
-        port_lower, port_upper, bores = _port_tools(mould, request.ports)
-        wedges, wedge_count = _wedge_tools(mould, request.wedges)
+        port_lower, port_upper, bores, port_specs = _port_tools(mould, request.ports)
+        wedge_lower, wedge_upper, wedge_count = _wedge_tools(
+            mould, request.wedges, port_specs)
         # The bolts are placed last, around everything already in the block.
         clamp_lower, clamp_upper, bolt_holes, notches, bolt_stations = _clamping_tools(
             mould, request.clamping, pin_zones, segments,
             tuple(pin_lower) + tuple(pin_upper) + tuple(port_lower)
-            + tuple(port_upper) + tuple(wedges))
+            + tuple(port_upper) + tuple(wedge_lower) + tuple(wedge_upper))
     except MouldFixtureError as exc:
         return _fail(result, exc.reason)
 
-    lower_tools = pin_lower + clamp_lower + port_lower + wedges
-    upper_tools = pin_upper + clamp_upper + port_upper + [tool.copy() for tool in wedges]
+    lower_tools = pin_lower + clamp_lower + port_lower + wedge_lower
+    upper_tools = pin_upper + clamp_upper + port_upper + wedge_upper
     # Each half is checked on its own: a bolt's clearance hole and its tapped
-    # hole are meant to line up across the mating plane. The wedges belong to
-    # both halves, so they are checked against each.
+    # hole are meant to line up across the mating plane, and a wedge slot is
+    # interrupted in the half a port serves but not in the other.
     result["issues"].extend(_clearance_issues(
         frame, segments, _hole_audit(request, pin_zones, bolt_stations)))
 
-    both_halves = (_labeled(wedges, WEDGE_KIND))
     for half_tools in ((_labeled(pin_lower, ALIGN_KIND)
                         + _labeled(clamp_lower, CLAMP_KIND)
-                        + _labeled(port_lower, PORT_KIND) + both_halves),
+                        + _labeled(port_lower, PORT_KIND)
+                        + _labeled(wedge_lower, WEDGE_KIND)),
                        (_labeled(pin_upper, ALIGN_KIND)
                         + _labeled(clamp_upper, CLAMP_KIND)
-                        + _labeled(port_upper, PORT_KIND) + both_halves)):
+                        + _labeled(port_upper, PORT_KIND)
+                        + _labeled(wedge_upper, WEDGE_KIND))):
         result["issues"].extend(_interference_issues(half_tools))
     cut_lower = _cut_half(lower, lower_tools)
     cut_upper = _cut_half(upper, upper_tools)
