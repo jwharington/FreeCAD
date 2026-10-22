@@ -1,0 +1,209 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Copyright 2026 John Wharington jwharington@gmail.com
+
+"""Inspect whether the A14 level strip is level, station by station.
+
+The level strip is the flat land a `fixed` skirt levelling leaves on the mould.
+A14 exports it as two rings - P_level_in, the transition's far end on each ray,
+and P_out, the wall base - and a land has both rings at one z at every station.
+That is exactly what a groove sunk into the strip needs, so a strip whose rings
+diverge in z is one no groove can be cut into.
+
+This reads the rings through the same level_strip_stations() the fixture uses,
+so it cannot disagree with what the groove sees. It prints each wall run's drop
+(outboard z - inboard z) and plan width, names the stations that are not level
+or have no plan width, and exits non-zero unless every station is level.
+
+The box is the control: its land is flat, drop zero everywhere. The loft is the
+case under diagnosis: it reads level along its lands and climbs its own step at
+two run ends, where the two rings share a plan point and stand 51.457 mm apart
+in z.
+"""
+
+from __future__ import annotations
+
+import argparse
+import time
+from dataclasses import dataclass
+
+import FreeCAD as App
+import Part
+
+from Composites.tools.mould_analysis import analyze_source_shape
+from Composites.tools.mould_fixture import level_strip_stations
+from Composites.tools.profile_mould_analysis import _make_loft_shape
+
+# The benchmark shapes, sized as their examples build them: the 40 x 40 x 60 box
+# of mould_fixture_groove.py, and the loft of mould_fixture_loft.py scaled by ten
+# to the 262 x 52 x 320 mm its fixture defaults are chosen for.
+BOX_SIZE_MM = (40.0, 40.0, 60.0)
+LOFT_SCALE = 10.0
+
+# In-plane stock around each shape. The box needs 25 mm to leave a 15 mm land;
+# the loft needs the 60 mm its fixtures are sized for. The margin's z has no
+# bearing on the strip, which is what the in-plane margin leaves.
+BOX_STOCK_MM = 25.0
+LOFT_STOCK_MM = 60.0
+
+# The loft is drawn through its thickness (see mould_fixture_loft.py); the box is
+# drawn along z, as its own example does.
+BOX_DRAW = (0.0, 0.0, 1.0)
+LOFT_DRAW = (0.0, 1.0, 0.0)
+
+# A `fixed` levelling takes its whole fall in the first 10 mm outboard of the
+# cutline, so this is the strip's plan width before the wall's own run adds to it.
+TRANSITION_MM = 10.0
+
+# At or below this a drop counts as zero, and a plan width as no land at all.
+DEFAULT_TOLERANCE_MM = 0.01
+
+
+@dataclass(frozen=True)
+class StripReading:
+    """A strip's stations, with the drop and the plan width read off each.
+
+    A drop is the outboard z less the inboard one: zero on a land, and the step's
+    height where the strip climbs one. A plan width of zero means the two rings
+    share a plan point, so the strip has no width across for a groove to sit in.
+    """
+
+    stations: tuple
+    drops: tuple
+    plan_widths: tuple
+
+    @classmethod
+    def of(cls, stations):
+        """Read `stations`, as ``(inboard point, outboard point)`` pairs."""
+        drops = []
+        plan_widths = []
+        for point_in, point_out in stations:
+            across = App.Vector(point_out.x - point_in.x,
+                                point_out.y - point_in.y, 0.0)
+            drops.append(point_out.z - point_in.z)
+            plan_widths.append(across.Length)
+        return cls(tuple(stations), tuple(drops), tuple(plan_widths))
+
+    def is_level_within(self, tolerance):
+        """True when every station's two rings share a z: the strip is a land."""
+        return all(abs(drop) <= tolerance for drop in self.drops)
+
+    def not_level(self, tolerance):
+        """The indices whose two rings are further apart in z than `tolerance`."""
+        return tuple(index for index, drop in enumerate(self.drops)
+                     if abs(drop) > tolerance)
+
+    def with_no_land(self, tolerance):
+        """The indices with no plan width across, so nothing to groove."""
+        return tuple(index for index, width in enumerate(self.plan_widths)
+                     if width <= tolerance)
+
+
+def _say(text):
+    """Print one line, flushed.
+
+    FreeCADCmd leaves Python's stdout block-buffered and exits without
+    flushing it, so a short run's whole report is discarded. Every line here
+    is flushed so the report survives the process.
+    """
+    print(text, flush=True)
+
+
+def _source_shape(case):
+    """The benchmark shape for `case`, scaled as its example scales it."""
+    if case == "loft":
+        return _make_loft_shape().scaled(LOFT_SCALE)
+    return Part.makeBox(*BOX_SIZE_MM)
+
+
+def _case_setup(case):
+    """``(draw, stock)`` for `case`, as its example sets them."""
+    if case == "loft":
+        return App.Vector(*LOFT_DRAW), LOFT_STOCK_MM
+    return App.Vector(*BOX_DRAW), BOX_STOCK_MM
+
+
+def analyze(case):
+    """``(result, seconds)``: the analysis for `case`, in the fixture's own mode."""
+    draw, stock = _case_setup(case)
+    started = time.perf_counter()
+    result = analyze_source_shape(
+        _source_shape(case), draw,
+        parting_stock_margin_x=stock, parting_stock_margin_y=stock,
+        skirt_levelling="s-curve", skirt_levelling_extent="fixed",
+        skirt_levelling_transition_mm=TRANSITION_MM)
+    return result, time.perf_counter() - started
+
+
+def _print_walls(walls, reading):
+    """Print each wall run's station count, drop range and plan width range."""
+    first = 0
+    for wall in walls:
+        count = len(wall["level_in_points"])
+        window = slice(first, first + count)
+        _say(f"  wall {wall['wall']:>2}: {count:4d} stations  "
+             f"drop [{min(reading.drops[window]):8.3f}, "
+             f"{max(reading.drops[window]):8.3f}] mm  "
+             f"plan width [{min(reading.plan_widths[window]):8.3f}, "
+             f"{max(reading.plan_widths[window]):8.3f}] mm")
+        first += count
+
+
+def _print_offenders(reading, tolerance):
+    """Print the stations that are not level, and those with no land at all."""
+    not_level = reading.not_level(tolerance)
+    no_land = reading.with_no_land(tolerance)
+    _say(f"\nstations not level (|drop| > {tolerance} mm): "
+         f"{len(not_level)} {list(not_level)}")
+    for index in not_level:
+        point_in, point_out = reading.stations[index]
+        _say(f"  {index:5d}  in z={point_in.z:9.3f} "
+             f"out z={point_out.z:9.3f} drop={reading.drops[index]:8.3f}  "
+             f"plan width={reading.plan_widths[index]:8.3f}  "
+             f"plan=({point_in.x:9.3f}, {point_in.y:8.3f})")
+    _say(f"stations with no plan width (nothing to groove): "
+         f"{len(no_land)} {list(no_land)}")
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--case",
+        default="loft",
+        choices=("box", "loft"),
+        help="Benchmark case to inspect. The box is the control, whose land is "
+             "flat; the loft is the case under diagnosis.",
+    )
+    parser.add_argument(
+        "--tolerance",
+        type=float,
+        default=DEFAULT_TOLERANCE_MM,
+        metavar="MM",
+        help="Drop at or below which a station counts as level, and plan width "
+             "at or below which it counts as having no land. Defaults to "
+             "%(default)s mm.",
+    )
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    result, seconds = analyze(args.case)
+
+    stations = level_strip_stations(result["level_strip_in_shape"],
+                                    result["level_strip_out_shape"])
+    walls = (result["parting_level_strips"] or {}).get("walls", ())
+    reading = StripReading.of(stations)
+
+    _say(f"case {args.case}: {len(walls)} wall runs, {len(stations)} stations, "
+         f"analysis {seconds:.1f} s")
+    _say(f"summary: {result['level_strip_summary']}")
+    _print_walls(walls, reading)
+    _print_offenders(reading, args.tolerance)
+
+    level = reading.is_level_within(args.tolerance)
+    _say(f"\nVERDICT case {args.case}: {'LEVEL' if level else 'NOT LEVEL'}")
+    return 0 if level else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
