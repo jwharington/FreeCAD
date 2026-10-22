@@ -24,7 +24,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from itertools import combinations
-from FreeCAD import Vector
+from FreeCAD import Placement, Rotation, Vector
 import Part
 
 from .mould_analysis import _face_midpoint_normal, _normalized
@@ -1949,8 +1949,31 @@ def _seal_groove_tool(frames, width, depth):
     return tool
 
 
-def _seal_groove_tools(params, level_strip_in, level_strip_out):
+def _draw_frame_rotation(draw):
+    """The rotation taking the draw onto +Z, or None when it is +Z already.
+
+    A between-vectors rotation is degenerate for parallel vectors, and world Z is
+    the common case - the box - so that one is no rotation rather than an empty
+    one, and every caller here treats None as already there.
+    """
+    if draw is None:
+        return None
+    normal = Vector(draw.x, draw.y, draw.z).normalize()
+    up = Vector(0.0, 0.0, 1.0)
+    if normal.dot(up) > 1.0 - AXIS_ALIGNMENT_TOL:
+        return None
+    return Rotation(normal, up)
+
+
+def _seal_groove_tools(params, level_strip_in, level_strip_out, draw):
     """``(lower_tools, note)`` for the O-ring seal groove, cut in the lower half.
+
+    The groove's geometry is written for a draw of world Z - `across` the strip in
+    plan, the corner arcs in plan, the section sunk down from the strip's surface -
+    so the strip is rotated into that frame first and the cut rotated back out of
+    it. On a mould drawn along world Z that rotation is the identity and the
+    geometry is exactly what it always was; on one drawn along anything else it is
+    what stops `across` collapsing to nothing.
 
     Fails loudly rather than cut a groove that is not there to cut. A mould
     with no level strip has no flat land for the ring to seat on, and one whose
@@ -1961,6 +1984,11 @@ def _seal_groove_tools(params, level_strip_in, level_strip_out):
     if not params.enabled:
         return [], ""
     stations = level_strip_stations(level_strip_in, level_strip_out)
+    to_draw_frame = _draw_frame_rotation(draw)
+    if to_draw_frame is not None:
+        stations = [(to_draw_frame.multVec(point_in),
+                     to_draw_frame.multVec(point_out))
+                    for point_in, point_out in stations]
     if not stations:
         raise MouldFixtureError(
             "the mould has no level strip to cut the O-ring groove into: a "
@@ -1989,7 +2017,11 @@ def _seal_groove_tools(params, level_strip_in, level_strip_out):
             f"{len(path)} path sections from {len(frames)} frames")
     if params.width <= 0.0 or params.depth <= 0.0:
         note += f", for a {params.cord_diameter:.3f} mm cord"
-    return [_seal_groove_tool(path, width, depth)], note
+    tool = _seal_groove_tool(path, width, depth)
+    if to_draw_frame is not None:
+        tool = tool.transformGeometry(
+            Placement(Vector(), to_draw_frame.inverted()).toMatrix())
+    return [tool], note
 
 
 def _cut_half(shape, tools):
@@ -2148,7 +2180,8 @@ def build_fixtures(request):
         wedge_lower, wedge_upper, wedge_count = _wedge_tools(
             mould, request.wedges, port_specs)
         seal_lower, seal_note = _seal_groove_tools(
-            request.seal_groove, request.level_strip_in, request.level_strip_out)
+            request.seal_groove, request.level_strip_in, request.level_strip_out,
+            request.draw)
         # The bolts are placed last, around everything already in the block.
         clamp_lower, clamp_upper, bolt_holes, notches, bolt_stations = _clamping_tools(
             mould, request.clamping, pin_zones, segments,
