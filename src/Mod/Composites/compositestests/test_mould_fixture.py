@@ -1517,6 +1517,44 @@ class TestStockMargins(unittest.TestCase):
                                      WedgeParams(enabled=False)),
             0.0)
 
+    def test_a_groove_widens_the_stock_past_the_widest_fixture(self):
+        # The groove is centred in the level strip, so it stands half the
+        # strip's width off the wall, and the strip has to be twice the reach of
+        # the widest hardware plus the groove's own two-radius gap out from it
+        # and its half width - plus the transition, which is stock in front of
+        # the strip that the groove cannot be laid out in. Defaults: the bolts
+        # reach 34.5 mm, a 3 mm cord is a 3.75 mm groove, and the sample
+        # transition is 10 mm, so the strip needs 80.25 mm and the stock 90.25.
+        needed = required_in_plane_margin(
+            AlignmentParams(), ClampingParams(), WedgeParams(),
+            SealGrooveParams(enabled=True), transition_mm=10.0)
+        self.assertAlmostEqual(needed, 90.25, delta=1e-9)
+        self.assertAlmostEqual(needed, 2.0 * (34.5 + 3.75 + 1.875) + 10.0,
+                               delta=1e-9)
+
+    def test_a_groove_with_no_hardware_needs_three_of_its_own_widths(self):
+        # Nothing to clear, so the groove is bounded by itself: the groove and
+        # its two-radius gap either side, which is three groove widths.
+        groove = SealGrooveParams(enabled=True)
+        self.assertAlmostEqual(
+            required_in_plane_margin(
+                AlignmentParams(enabled=False),
+                ClampingParams(bolts_enabled=False),
+                WedgeParams(enabled=False), groove),
+            3.0 * seal_groove_width(groove), delta=1e-9)
+
+    def test_a_groove_over_short_stock_names_itself(self):
+        # The stock the bolts alone need is not enough once a groove is centred
+        # in the strip, so the shortfall has to name the groove rather than the
+        # fixture that happens to sit under it.
+        issues = margin_issues(StockMargins(x=60.0, y=60.0), AlignmentParams(),
+                               ClampingParams(), WedgeParams(),
+                               SealGrooveParams(enabled=True),
+                               transition_mm=10.0)
+        self.assertEqual(len(issues), 1)
+        self.assertIn("the O-ring seal groove", issues[0])
+        self.assertIn("90.250", issues[0])
+
     def test_an_explicit_footprint_replaces_the_comparison(self):
         issues = margin_issues(
             StockMargins(x=5.0, y=5.0, explicit_footprint=True),

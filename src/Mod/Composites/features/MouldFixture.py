@@ -194,6 +194,16 @@ def stock_margins(source):
                         explicit_footprint=explicit)
 
 
+def levelling_transition(source):
+    """The mould's levelling transition in mm, or 0.0 when it declares none.
+
+    The transition is the inboard part of the skirt the level strip does not
+    cover, so it is stock a groove centred in that strip cannot be laid out in.
+    """
+    transition = getattr(source, "SkirtLevellingTransition", None)
+    return float(transition) if transition is not None else 0.0
+
+
 def level_strip_rings(source):
     """The two rings bounding the mould's level strip, or ``(None, None)``.
 
@@ -277,8 +287,9 @@ def reserve_stock_margins(source, fixture):
     margins = stock_margins(source)
     if margins is None or margins.explicit_footprint:
         return []
-    alignment, clamping, _ports, wedges, _seal = fixture_params(fixture)
-    needed = required_in_plane_margin(alignment, clamping, wedges)
+    alignment, clamping, _ports, wedges, seal = fixture_params(fixture)
+    needed = required_in_plane_margin(alignment, clamping, wedges, seal,
+                                      levelling_transition(source))
     raised = []
     for name, before in (("PartingStockMarginX", margins.x),
                          ("PartingStockMarginY", margins.y)):
@@ -457,6 +468,7 @@ class MouldFixtureFP(CompositePartFP):
                 ports=ports,
                 wedges=wedges,
                 seal_groove=seal_groove,
+                seal_transition_mm=levelling_transition(source),
                 level_strip_in=strip_in,
                 level_strip_out=strip_out,
                 stock_margins=stock_margins(source),

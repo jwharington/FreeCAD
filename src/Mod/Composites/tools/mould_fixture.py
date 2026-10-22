@@ -378,6 +378,10 @@ class FixtureRequest:
     ports: PortParams = field(default_factory=PortParams)
     wedges: WedgeParams = field(default_factory=WedgeParams)
     seal_groove: SealGrooveParams = field(default_factory=SealGrooveParams)
+    # The mould's levelling transition, in mm: the inboard part of the skirt that
+    # the level strip does not cover, so stock a groove centred in the strip
+    # cannot be laid out in.
+    seal_transition_mm: float = 0.0
     # The two rings bounding the mould's level strip, as shapes: the inboard
     # edge of the flat strip and the wall base. They carry the same stations in
     # the same order, so the groove is centred on them station for station.
@@ -2090,12 +2094,35 @@ FOOTPRINT_NOTE = (
 )
 
 
-def _in_plane_requirements(alignment, clamping, wedges):
+def _groove_stock_need(hardware, groove, transition_mm):
+    """The stock a centred seal groove needs between the block wall and the part.
+
+    The groove is centred in the level strip, so its distance from the wall is
+    half the strip's width: widening the strip carries the groove inboard, away
+    from hardware that sits at a fixed offset from the wall whatever the strip
+    does. The widest enabled fixture sets the reach the groove has to clear, the
+    groove's own two-radius gap sets how far clear of it the groove has to be,
+    and the transition in front of the strip is stock the groove cannot use.
+    """
+    half = 0.5 * seal_groove_width(groove)
+    reach = max((needed for _what, needed in hardware), default=0.0)
+    return 2.0 * (reach + _required_gap(half) + half) + transition_mm
+
+
+def _in_plane_requirements(alignment, clamping, wedges, groove=None,
+                           transition_mm=0.0):
     """``(what, needed)`` for each enabled fixture cut in from a block wall.
 
     Each need is a distance from the wall the fixture is measured from. The
     socket or notch reaches that far into the block, so that much material has
     to stand between the wall and the part for the cut to stay in the stock.
+
+    A seal groove is a different kind of need: it is not a hole cut in from the
+    wall but a ring centred in the level strip, and it is the *strip* that has
+    to be wide enough to carry it clear of the rest. Its need is therefore read
+    from the widest of the others rather than from its own size alone, and a
+    groove over a fixture that already reaches past it widens the strip until
+    the two are clear instead of cutting through each other.
     """
     required = []
     if alignment.enabled:
@@ -2108,17 +2135,23 @@ def _in_plane_requirements(alignment, clamping, wedges):
         required.append(("the clamp-ear notches", clamping.ear_depth))
     if wedges.enabled:
         required.append(("the parting wedges", wedges.depth))
+    if groove is not None and groove.enabled:
+        required.append((SEAL_KIND,
+                         _groove_stock_need(required, groove, transition_mm)))
     return required
 
 
-def required_in_plane_margin(alignment, clamping, wedges):
+def required_in_plane_margin(alignment, clamping, wedges, groove=None,
+                             transition_mm=0.0):
     """The stock the enabled in-plane fixtures need, or 0.0 when none are."""
     needs = [needed for _what, needed
-             in _in_plane_requirements(alignment, clamping, wedges)]
+             in _in_plane_requirements(alignment, clamping, wedges, groove,
+                                       transition_mm)]
     return max(needs, default=0.0)
 
 
-def margin_issues(margins, alignment, clamping, wedges):
+def margin_issues(margins, alignment, clamping, wedges, groove=None,
+                  transition_mm=0.0):
     """Fixtures that need more in-plane stock than the mould declares.
 
     The margin is measured from the part's bounding box and a cavity does not
@@ -2134,7 +2167,8 @@ def margin_issues(margins, alignment, clamping, wedges):
         return [FOOTPRINT_NOTE]
     available = min(margins.x, margins.y)
     issues = []
-    for what, needed in _in_plane_requirements(alignment, clamping, wedges):
+    for what, needed in _in_plane_requirements(alignment, clamping, wedges,
+                                               groove, transition_mm):
         if needed > available:
             issues.append(
                 f"{what} need {needed:.3f} mm of stock between the block wall "
@@ -2237,7 +2271,8 @@ def build_fixtures(request):
     if request.stock_margins is not None:
         result["issues"].extend(
             margin_issues(request.stock_margins, request.alignment,
-                          request.clamping, request.wedges)
+                          request.clamping, request.wedges, request.seal_groove,
+                          request.seal_transition_mm)
         )
     result["status"] = STATUS_READY
     result["summary"] = _summary(result, frame)
