@@ -50,6 +50,12 @@ LOFT_STOCK_MM = 60.0
 BOX_DRAW = (0.0, 0.0, 1.0)
 LOFT_DRAW = (0.0, 1.0, 0.0)
 
+# The levelling the fixture asks for, and the one A14's level strip belongs to.
+# `s-curve` is the mode under diagnosis: it is the one whose rays are Bezier
+# transitions, and the one the fixture examples build with.
+LEVELLING_MODE = "s-curve"
+LEVELLING_EXTENT = "fixed"
+
 # A `fixed` levelling takes its whole fall in the first 10 mm outboard of the
 # cutline, so this is the strip's plan width before the wall's own run adds to it.
 TRANSITION_MM = 10.0
@@ -129,7 +135,8 @@ def analyze(case):
     result = analyze_source_shape(
         _source_shape(case), draw,
         parting_stock_margin_x=stock, parting_stock_margin_y=stock,
-        skirt_levelling="s-curve", skirt_levelling_extent="fixed",
+        skirt_levelling=LEVELLING_MODE,
+        skirt_levelling_extent=LEVELLING_EXTENT,
         skirt_levelling_transition_mm=TRANSITION_MM)
     return result, time.perf_counter() - started
 
@@ -194,8 +201,9 @@ def main(argv=None):
     walls = (result["parting_level_strips"] or {}).get("walls", ())
     reading = StripReading.of(stations)
 
-    _say(f"case {args.case}: {len(walls)} wall runs, {len(stations)} stations, "
-         f"analysis {seconds:.1f} s")
+    _say(f"case {args.case}: {LEVELLING_MODE}/{LEVELLING_EXTENT} "
+         f"t={TRANSITION_MM:g} mm, {len(walls)} wall runs, {len(stations)} "
+         f"stations, analysis {seconds:.1f} s")
     _say(f"summary: {result['level_strip_summary']}")
     _print_walls(walls, reading)
     _print_offenders(reading, args.tolerance)
