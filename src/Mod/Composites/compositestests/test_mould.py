@@ -355,6 +355,9 @@ class TestNonPlanarPartingInterface(TestFreeCADFP):
         obj = self._make_analysis(source)
         self.assertEqual(obj.OutputMode, "Full mould")
         self.assertEqual(obj.PartLineSource, "tessellation")
+        self.assertEqual(obj.getTypeIdOfProperty("PartLineRadius"),
+                         "App::PropertyLength")
+        self.assertAlmostEqual(obj.PartLineRadius, 0.0, places=6)
         self.assertEqual(list(obj.getEnumerationsOfProperty("PartLineSource")),
                          ["tessellation", "hlr"])
         self.assertAlmostEqual(obj.PartLineTolerance, 0.1, places=6)
@@ -422,6 +425,29 @@ class TestNonPlanarPartingInterface(TestFreeCADFP):
         # The params thread through to the C++ solver; a box is degenerate
         # (side walls ⊥ D) so the marching-equator path reaches `ready` and
         # the analysis produces a Ready verdict.
+        self.assertEqual(result["non_planar_status"], "ready")
+        self.assertEqual(result["status"], "Ready")
+
+    def test_part_line_radius_is_threaded_to_the_solver(self):
+        # The radius is passed to the binding as a keyword, so a name the
+        # binding does not know fails loudly here rather than silently leaving
+        # the part line unfilleted - and the pipeline still reaches Ready with a
+        # radius asked for.
+        from Composites.tools.mould_analysis import (
+            analyze_source_shape,
+            default_mould_analysis_draw_direction,
+        )
+
+        shape = Part.makeBox(20.0, 15.0, 10.0)
+        result = analyze_source_shape(
+            shape,
+            default_mould_analysis_draw_direction,
+            parting_stock_margin_x=5.0,
+            parting_stock_margin_y=5.0,
+            parting_stock_margin_z=5.0,
+            parting_line_tolerance=0.1,
+            part_line_radius_mm=2.0,
+        )
         self.assertEqual(result["non_planar_status"], "ready")
         self.assertEqual(result["status"], "Ready")
 

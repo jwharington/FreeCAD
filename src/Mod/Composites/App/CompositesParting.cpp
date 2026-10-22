@@ -92,7 +92,8 @@ PYBIND11_MODULE(Composites_parting, m) {
            double tessellation_band_tol_deg,
            const std::string& skirt_levelling,
            const std::string& skirt_levelling_extent,
-           double skirt_levelling_transition) {
+           double skirt_levelling_transition,
+           double part_line_radius) {
             nextdrape::PartingParams params;
             params.stockMarginX = stock_margin_x;
             params.stockMarginY = stock_margin_y;
@@ -137,6 +138,12 @@ PYBIND11_MODULE(Composites_parting, m) {
                     skirt_levelling_extent);
             }
             params.skirtLevellingTransitionMm = skirt_levelling_transition;
+            // Rounding the skirt creases (ridge plan 12.11/12.12): the walked
+            // part line's s-z profile is filleted at exactly this radius before
+            // the split, so a crease is machined as a fillet rather than left
+            // as a sharp step. Only the tessellation source walks a profile to
+            // fillet, so it is inert on HLR; 0 leaves the part line alone.
+            params.partLineRadiusMm = part_line_radius;
             // The incremental-withdrawal clearance scan is the most expensive
             // stage of the full pipeline and does NOT gate the mould halves
             // (they come from split/skirt/close). The caller decides whether
@@ -297,6 +304,7 @@ PYBIND11_MODULE(Composites_parting, m) {
         py::arg("skirt_levelling") = "off",
         py::arg("skirt_levelling_extent") = "whole",
         py::arg("skirt_levelling_transition") = 1.0,
+        py::arg("part_line_radius") = 0.0,
         "Compute a non-planar parting surface + mould halves for a FreeCAD "
         "Part.Shape along a user-specified draw direction. Returns a dict; "
         "success=True iff the pipeline reached `ready` (full mould) or the "
@@ -310,6 +318,10 @@ PYBIND11_MODULE(Composites_parting, m) {
         "It must be at least the shallowest face's |n.d| that the part line "
         "has to cross, and as small as possible, since every face inside it "
         "loses its own opinion. "
+        "part_line_radius fillets the walked part line's s-z profile at that "
+        "radius before the split, rounding the skirt creases (ridge plan "
+        "12.11/12.12); 0 (default) leaves the part line alone, and it is inert "
+        "on the HLR source, which walks no profile. "
         "Skirt levelling (docs/spec-skirt-levelling.md) shapes the skirt's "
         "outer wall: 'off' (default), 'direct' or 's-curve'. Only a 'fixed' "
         "extent, whose transition spans the first skirt_levelling_transition "

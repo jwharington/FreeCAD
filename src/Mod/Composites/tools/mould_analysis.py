@@ -30,6 +30,9 @@ DEFAULT_TESSELLATION_BAND_TOL_DEG = 2.0
 # outline instead and still closes on cases the march does not.
 PART_LINE_SOURCES = ("tessellation", "hlr")
 DEFAULT_PART_LINE_SOURCE = "tessellation"
+# Rounding the skirt creases is off by default, like every other shaping input:
+# a mould that does not ask for it casts exactly what it did before.
+DEFAULT_PART_LINE_RADIUS_MM = 0.0
 
 # Skirt outer-wall levelling (src/3rdParty/nextdrape/docs/spec-skirt-levelling.md).
 # The C++ binding's own defaults are off / whole / 1.0 mm, so a caller that
@@ -816,6 +819,8 @@ def _plan_split_strategies(ranked, limit=MAX_SPLIT_STRATEGIES):
                     "parting_tessellation_band_tol_deg"),
                 "part_line_source": item.get("part_line_source",
                                              DEFAULT_PART_LINE_SOURCE),
+                "part_line_radius_mm": item.get("part_line_radius_mm",
+                                                 DEFAULT_PART_LINE_RADIUS_MM),
                 "skirt_levelling": item.get("skirt_levelling",
                                             DEFAULT_SKIRT_LEVELLING),
                 "skirt_levelling_extent": item.get(
@@ -866,6 +871,8 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         run_withdrawal_clearance=run_withdrawal_clearance,
         tessellation_band_tol_deg=strategy.get("parting_tessellation_band_tol_deg"),
         part_line_source=strategy.get("part_line_source", DEFAULT_PART_LINE_SOURCE),
+        part_line_radius_mm=strategy.get("part_line_radius_mm",
+                                         DEFAULT_PART_LINE_RADIUS_MM),
         skirt_levelling=strategy.get("skirt_levelling", DEFAULT_SKIRT_LEVELLING),
         skirt_levelling_extent=strategy.get("skirt_levelling_extent",
                                             DEFAULT_SKIRT_LEVELLING_EXTENT),
@@ -1344,6 +1351,7 @@ def _propose_non_planar_parting(
     run_withdrawal_clearance=False,
     part_line_source=DEFAULT_PART_LINE_SOURCE,
     tessellation_band_tol_deg=None,
+    part_line_radius_mm=DEFAULT_PART_LINE_RADIUS_MM,
     skirt_levelling=DEFAULT_SKIRT_LEVELLING,
     skirt_levelling_extent=DEFAULT_SKIRT_LEVELLING_EXTENT,
     skirt_levelling_transition_mm=None,
@@ -1403,6 +1411,11 @@ def _propose_non_planar_parting(
             part_line_source=part_line_source,
             **({} if tessellation_band_tol_deg is None
                else {"tessellation_band_tol_deg": float(tessellation_band_tol_deg)}),
+            # Rounding the skirt creases fillets the walked part line's s-z
+            # profile before the split. It needs the tessellation source, which
+            # is the one that walks a profile to fillet.
+            **({} if part_line_radius_mm is None
+               else {"part_line_radius": float(part_line_radius_mm)}),
             # Levelling shapes the skirt's outer wall; only a `fixed` extent
             # leaves the level surface the strip export bounds.
             skirt_levelling=skirt_levelling,
@@ -2289,6 +2302,7 @@ def analyze_source_shape(
     run_withdrawal_clearance=False,
     parting_tessellation_band_tol_deg=None,
     part_line_source=DEFAULT_PART_LINE_SOURCE,
+    part_line_radius_mm=DEFAULT_PART_LINE_RADIUS_MM,
     skirt_levelling=DEFAULT_SKIRT_LEVELLING,
     skirt_levelling_extent=DEFAULT_SKIRT_LEVELLING_EXTENT,
     skirt_levelling_transition_mm=DEFAULT_SKIRT_LEVELLING_TRANSITION_MM,
@@ -2384,6 +2398,7 @@ def analyze_source_shape(
             "parting_stock_footprint": parting_stock_footprint,
             "parting_tessellation_band_tol_deg": parting_tessellation_band_tol_deg,
             "part_line_source": part_line_source,
+            "part_line_radius_mm": part_line_radius_mm,
             "skirt_levelling": skirt_levelling,
             "skirt_levelling_extent": skirt_levelling_extent,
             "skirt_levelling_transition_mm": skirt_levelling_transition_mm,

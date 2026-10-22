@@ -8,6 +8,7 @@ from FreeCAD import Vector
 
 from .. import MOULD_TOOL_ICON, is_comp_type
 from ..tools.mould_analysis import (
+    DEFAULT_PART_LINE_RADIUS_MM,
     DEFAULT_PART_LINE_SOURCE,
     DEFAULT_SKIRT_LEVELLING,
     DEFAULT_SKIRT_LEVELLING_EXTENT,
@@ -58,6 +59,20 @@ def _add_part_line_source_property(obj):
         "changes the part line, so it changes both halves.",
     ).PartLineSource = list(PART_LINE_SOURCES)
     obj.PartLineSource = DEFAULT_PART_LINE_SOURCE
+
+
+def _add_part_line_radius_property(obj):
+    obj.addProperty(
+        "App::PropertyLength",
+        "PartLineRadius",
+        "MouldAnalysis",
+        "Round the skirt creases: the walked part line's s-z profile is "
+        "filleted at exactly this radius (mm) before the split, so a crease is "
+        "machined as a fillet rather than left as a sharp step (ridge plan "
+        "12.11/12.12). 0 (default) leaves the part line alone. The tessellation "
+        "part line is the one that walks a profile to fillet, so this is inert "
+        "on 'hlr'.",
+    ).PartLineRadius = DEFAULT_PART_LINE_RADIUS_MM
 
 
 def _add_skirt_levelling_properties(obj):
@@ -287,6 +302,7 @@ class MouldAnalysisFP(CompositePartFP):
 
         _add_tessellation_band_property(obj)
         _add_part_line_source_property(obj)
+        _add_part_line_radius_property(obj)
         _add_skirt_levelling_properties(obj)
 
         obj.addProperty(
@@ -495,6 +511,8 @@ class MouldAnalysisFP(CompositePartFP):
             _add_tessellation_band_property(fp)
         if not hasattr(fp, "PartLineSource"):
             _add_part_line_source_property(fp)
+        if not hasattr(fp, "PartLineRadius"):
+            _add_part_line_radius_property(fp)
         # Documents saved before the defect display get its outputs.
         if not hasattr(fp, "DraftDefects"):
             _add_draft_defect_outputs(fp)
@@ -536,6 +554,7 @@ class MouldAnalysisFP(CompositePartFP):
             run_withdrawal_clearance=fp.WithdrawalClearance,
             parting_tessellation_band_tol_deg=fp.TessellationBandTolDeg,
             part_line_source=fp.PartLineSource,
+            part_line_radius_mm=float(fp.PartLineRadius),
             skirt_levelling=fp.SkirtLevelling,
             skirt_levelling_extent=fp.SkirtLevellingExtent,
             skirt_levelling_transition_mm=float(fp.SkirtLevellingTransition),
