@@ -42,6 +42,7 @@ from Composites.tools.mould_fixture import (
     CLAMP_KIND,
     INTERFERENCE_VOLUME_TOL,
     PIN_OFFSET_PROPERTY,
+    SEAL_GROOVE_PATH_TOL_MM,
     SKIRT_CLEARANCE_FACTOR,
     AlignmentParams,
     BlockFrame,
@@ -57,6 +58,7 @@ from Composites.tools.mould_fixture import (
     _alignment_tools,
     _clamping_tools,
     _clearance_issues,
+    _decimate_frames,
     _interference_issues,
     _part_crossing,
     _pin_zones,
@@ -65,6 +67,7 @@ from Composites.tools.mould_fixture import (
     _port_stations,
     _port_tools,
     _seat_radius,
+    _seal_groove_corners,
     _seal_groove_frames,
     _seal_groove_section,
     _seal_groove_tools,
@@ -296,6 +299,37 @@ def _groove_request(strip_in, strip_out, **seal):
     )
 
 
+def _dense_strip(half_in=50.0, half_out=60.0, samples=10):
+    """A rectangle strip whose rays stand perpendicular to its sides.
+
+    Mimics the strip the solver hands over along a straight wall: many stations
+    on a straight run, all cast the same way, and four corners where the cast
+    turns. The straight stations are exactly what a ruled loft interpolates.
+    Sized so a 3 mm corner radius fits - the corner needs 2 x radius of
+    straight either side of it, and these stations are 10 mm apart.
+    """
+    thickness = half_out - half_in
+    sides = (
+        ((1.0, 1.0), (-1.0, 1.0), (0.0, 1.0)),
+        ((-1.0, 1.0), (-1.0, -1.0), (-1.0, 0.0)),
+        ((-1.0, -1.0), (1.0, -1.0), (0.0, -1.0)),
+        ((1.0, -1.0), (1.0, 1.0), (1.0, 0.0)),
+    )
+    stations = []
+    for start, end, outward in sides:
+        for step in range(samples):
+            along = step / float(samples)
+            point_in = FreeCAD.Vector(
+                (start[0] + (end[0] - start[0]) * along) * half_in,
+                (start[1] + (end[1] - start[1]) * along) * half_in, 0.0)
+            point_out = point_in + FreeCAD.Vector(*outward) * thickness
+            stations.append((point_in, point_out))
+    return (Part.makePolygon([point_in for point_in, _ in stations]
+                             + [stations[0][0]]),
+            Part.makePolygon([point_out for _, point_out in stations]
+                             + [stations[0][1]]))
+
+
 class TestSealGroove(unittest.TestCase):
     """The O-ring groove cut into the level strip of a levelled mould."""
 
@@ -423,6 +457,49 @@ class TestSealGroove(unittest.TestCase):
         removed_small = lower.Volume - small["lower_shape"].Volume
         removed_large = lower.Volume - large["lower_shape"].Volume
         self.assertGreater(removed_small, removed_large)
+
+    def test_a_straight_run_of_stations_is_decimated(self):
+        """Stations the ruled loft already reaches are dropped, not approximated.
+
+        Each dropped frame's own section must lie within the stated tolerance of
+        the straight interpolation between the frames kept either side of it -
+        recomputed here rather than read back from the decimation.
+        """
+        frames = _seal_groove_frames(level_strip_stations(*_dense_strip()), 3.0)
+        path = _decimate_frames(frames, 3.75, 2.25, SEAL_GROOVE_PATH_TOL_MM)
+        self.assertLess(len(path), len(frames))
+        # The path is a subsequence of the frames, so pair them by identity.
+        kept, cursor = [], 0
+        for frame in path:
+            while frames[cursor] is not frame:
+                cursor += 1
+            kept.append(cursor)
+        for side in range(len(kept) - 1):
+            before, after = frames[kept[side]], frames[kept[side + 1]]
+            span = after[0] - before[0]
+            span.z = 0.0
+            start = _seal_groove_corners(before[0], before[1], 3.75, 2.25)
+            end = _seal_groove_corners(after[0], after[1], 3.75, 2.25)
+            for index in range(kept[side] + 1, kept[side + 1]):
+                point, across, _strip = frames[index]
+                reach = point - before[0]
+                reach.z = 0.0
+                where = min(1.0, max(0.0, reach.dot(span) / span.dot(span)))
+                for corner, first, last in zip(
+                        _seal_groove_corners(point, across, 3.75, 2.25),
+                        start, end):
+                    interpolated = first * (1.0 - where) + last * where
+                    self.assertLessEqual(corner.distanceToPoint(interpolated),
+                                         SEAL_GROOVE_PATH_TOL_MM)
+
+    def test_decimation_keeps_the_rounded_corners(self):
+        """Thinning the path must not lose the rounding A8 of the groove needs."""
+        radius = 4.0
+        frames = _seal_groove_frames(level_strip_stations(*_strip()), radius)
+        path = _decimate_frames(frames, 3.75, 2.25, SEAL_GROOVE_PATH_TOL_MM)
+        vertex = FreeCAD.Vector(15.0, 15.0, 0.0)
+        nearest = min(point.distanceToPoint(vertex) for point, _, _ in path)
+        self.assertAlmostEqual(nearest, radius * (math.sqrt(2.0) - 1.0), places=6)
 
 
 class TestBlockFrame(unittest.TestCase):

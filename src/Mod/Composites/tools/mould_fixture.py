@@ -139,6 +139,14 @@ SEAL_GROOVE_CORNER_FACTOR = 1.0
 # invisible and would only add sections to the loft.
 SEAL_GROOVE_STRAIGHT_TOL_DEG = 1.0
 
+# A path frame is kept only where the ruled loft cannot already reach it. Within
+# this deviation the dropped section lies on the loft's own interpolation, so
+# dropping it leaves the cut unchanged to a tolerance far finer than the
+# tessellation of the halves it is cut into. A strip walked at the part line's
+# own density has hundreds of such frames - a 261 mm part gave 523 - and every
+# one of them is a face in the loft and again in the boolean that cuts it.
+SEAL_GROOVE_PATH_TOL_MM = 0.01
+
 STATUS_READY = "Ready"
 STATUS_FAIL = "Fail"
 STATUS_WAITING = "Waiting for mould"
@@ -1842,8 +1850,8 @@ def _seal_groove_frames(stations, radius):
     return frames
 
 
-def _seal_groove_section(point, across, width, depth):
-    """The groove's cross-section at one path frame, as a closed wire.
+def _seal_groove_corners(point, across, width, depth):
+    """The four corners of the groove's profile at one path frame.
 
     Sunk from just above the strip's surface down to the groove's floor; the
     overshoot above the surface keeps a coincident face out of the cut.
@@ -1856,9 +1864,72 @@ def _seal_groove_section(point, across, width, depth):
         return Vector(point.x + across.x * half_width * side,
                       point.y + across.y * half_width * side, z)
 
+    return (corner(1.0, top), corner(-1.0, top),
+            corner(-1.0, floor), corner(1.0, floor))
+
+
+def _seal_groove_section(point, across, width, depth):
+    """The groove's cross-section at one path frame, as a closed wire."""
     return Part.Wire(Part.makePolygon(
-        [corner(1.0, top), corner(-1.0, top),
-         corner(-1.0, floor), corner(1.0, floor)], True))
+        list(_seal_groove_corners(point, across, width, depth)), True))
+
+
+def _frame_matters(frames, corners, before, candidate, after,
+                   width, depth, tolerance):
+    """Does the loft need the candidate frame's own section?
+
+    The loft is ruled, so between two frames it is the straight interpolation
+    of their profile corners. A frame earns its faces only if its own corners
+    lie further than ``tolerance`` from that interpolation, read at the
+    parameter the frame's centre projects to between its neighbours - which is
+    where the loft would meet it. ``before``, ``candidate`` and ``after`` are
+    indices into ``frames``; ``corners`` holds each frame's profile corners.
+    """
+    point, across, _strip = frames[candidate]
+    span = frames[after][0] - frames[before][0]
+    span.z = 0.0
+    if span.Length <= PLANE_OFFSET_TOL:
+        return True
+    reach = point - frames[before][0]
+    reach.z = 0.0
+    where = min(1.0, max(0.0, reach.dot(span) / span.dot(span)))
+    for index, corner in enumerate(_seal_groove_corners(point, across,
+                                                        width, depth)):
+        interpolated = (corners[before][index] * (1.0 - where)
+                        + corners[after][index] * where)
+        if corner.distanceToPoint(interpolated) > tolerance:
+            return True
+    return False
+
+
+def _decimate_frames(frames, width, depth, tolerance):
+    """Drop the path frames a ruled loft already passes through.
+
+    Only the frames the loft cannot reach are worth a section. The frame the
+    scan starts at is always kept, and each frame is tested against the
+    neighbours that have survived so far, so dropping one never widens the
+    deviation past ``tolerance``: the path is thinned, not approximated.
+    """
+    if len(frames) <= 3:
+        return frames
+    corners = [_seal_groove_corners(point, across, width, depth)
+               for point, across, _strip in frames]
+    order = list(range(len(frames)))
+    index = 1
+    while index < len(order) - 1 and len(order) > 3:
+        previous, frame, following = order[index - 1], order[index], order[index + 1]
+        if _frame_matters(frames, corners, previous, frame, following,
+                          width, depth, tolerance):
+            index += 1
+            continue
+        del order[index]
+        # The frame before it now has a different neighbour, so test it again.
+        index = max(1, index - 1)
+    if len(order) > 3 and not _frame_matters(
+            frames, corners, order[-2], order[-1], order[0],
+            width, depth, tolerance):
+        del order[-1]
+    return [frames[index] for index in order]
 
 
 def _seal_groove_tool(frames, width, depth):
@@ -1903,6 +1974,8 @@ def _seal_groove_tools(params, level_strip_in, level_strip_out):
     depth = seal_groove_depth(params)
     radius = seal_groove_corner_radius(params)
     frames = _seal_groove_frames(stations, radius)
+    # The fit check reads every frame the strip produced, not the thinned path:
+    # the groove has to fit the strip where the strip is narrowest.
     narrowest = min(strip for _point, _across, strip in frames)
     if narrowest < width - PLANE_OFFSET_TOL:
         raise MouldFixtureError(
@@ -1910,11 +1983,13 @@ def _seal_groove_tools(params, level_strip_in, level_strip_out):
             f"station, but the seal groove is {width:.3f} mm wide: raise the "
             f"mould's in-plane stock margin (PartingStockMarginX/Y) until the "
             f"strip is wider than the groove, or cut a narrower groove")
+    path = _decimate_frames(frames, width, depth, SEAL_GROOVE_PATH_TOL_MM)
     note = (f"{width:.3f} mm wide x {depth:.3f} mm deep in the level strip, "
-            f"centred on it, corners rounded at {radius:.3f} mm")
+            f"centred on it, corners rounded at {radius:.3f} mm, "
+            f"{len(path)} path sections from {len(frames)} frames")
     if params.width <= 0.0 or params.depth <= 0.0:
         note += f", for a {params.cord_diameter:.3f} mm cord"
-    return [_seal_groove_tool(frames, width, depth)], note
+    return [_seal_groove_tool(path, width, depth)], note
 
 
 def _cut_half(shape, tools):
