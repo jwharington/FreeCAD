@@ -12,7 +12,14 @@ output is a log rather than a frozen window.
 The document is built through the examples' own registry and runner, so this
 holds no example-specific knowledge: it names an example, and the example builds
 itself. Anything the example leaves switched off is still switched off when the
-saved document is opened.
+saved document is opened — which for the mould examples is the levelling and the
+seal groove, so showing those means asking for them by name:
+
+    --set Mould.SkirtLevelling=s-curve --set MouldFixture.SealGroove=True
+
+The document is recomputed after the settings, because a property that changes
+geometry only takes effect on a recompute — and for these examples that recompute
+is the expensive part, so it is timed and reported.
 
 Run it through the headless wrapper, which owns the environment:
 
@@ -67,14 +74,49 @@ def _document_of(built):
     return next(iter(documents.values()))
 
 
-def build(example, out_path):
-    """Build `example`, save its document to `out_path`.
+def _property_value(obj, name, text):
+    """`text` as the type of `obj`'s `name` property expects.
+
+    Read from the property itself rather than guessed from the text, so a bool,
+    an int, a length and a string can all be written the obvious way.
+    """
+    kind = obj.getTypeIdOfProperty(name)
+    if kind.endswith("PropertyBool"):
+        return text.strip().lower() in ("1", "true", "yes", "on")
+    if kind.endswith("PropertyInteger"):
+        return int(text)
+    if kind.endswith(("PropertyFloat", "PropertyLength", "PropertyAngle")):
+        return float(text)
+    return text
+
+
+def _apply_settings(document, settings):
+    """Set each `Object.Property=value` on `document`, saying what it set."""
+    for setting in settings:
+        path, _, text = setting.partition("=")
+        name, _, prop = path.partition(".")
+        obj = document.getObject(name)
+        if obj is None or not prop:
+            raise SystemExit(f"--set expects Object.Property=value, not '{setting}'")
+        if not hasattr(obj, prop):
+            raise SystemExit(f"{name} has no property '{prop}'")
+        value = _property_value(obj, prop, text)
+        setattr(obj, prop, value)
+        _say(f"set    : {name}.{prop} = {value!r}")
+
+
+def build(example, out_path, settings=()):
+    """Build `example`, apply `settings`, save its document to `out_path`.
 
     ``(document, saved path, seconds)``. The seconds cover the example's own
-    recompute, which is the part that can take minutes.
+    recompute plus the one the settings force, which is the part that can take
+    minutes.
     """
     started = time.perf_counter()
     document = _document_of(runner.run(example))
+    if settings:
+        _apply_settings(document, settings)
+        document.recompute()
     elapsed = time.perf_counter() - started
     out_path.parent.mkdir(parents=True, exist_ok=True)
     document.saveAs(str(out_path))
@@ -97,6 +139,16 @@ def build_parser():
         help="Where to write the document. Defaults to the temporary directory, "
              "as <example id>.FCStd.",
     )
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="OBJ.PROP=VALUE",
+        dest="settings",
+        help="Set a property on a built object, once per property, before the "
+             "document is recomputed and saved. The value is read as the "
+             "property's own type. Repeatable.",
+    )
     return parser
 
 
@@ -105,7 +157,7 @@ def main(argv=None):
     example = _resolve_example(args.example)
     out_path = args.out or Path(tempfile.gettempdir()) / f"{example}.FCStd"
 
-    document, saved, elapsed = build(example, out_path)
+    document, saved, elapsed = build(example, out_path, args.settings)
 
     _say(f"example : {example}")
     _say(f"document: {document.Name}")
