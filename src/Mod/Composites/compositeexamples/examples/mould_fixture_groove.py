@@ -30,12 +30,11 @@ And the two rings come from the solve, not from a re-derivation: they are the
 same stations the band is lofted through, in the same order, which is what lets
 the groove be centred on the strip station for station.
 
-The source is a plain box. The cambered loft the fixture example uses would be
-the better showcase, but its skirt cannot be levelled on this tree: nextdrape
-refuses it with "A8: outer relief rose from 1.761523 to 2.894227 mm" at ray
-486, the ray that closes the part line, so no halves come out of it and there
-is no strip to groove. The box levels, and the strip it leaves is what the
-groove is cut into.
+The source is a plain box: a 40 mm part keeps this example's recompute to
+seconds, and the groove is the subject rather than the part. The cambered loft
+the fixture example uses levels too - its outer rail lands on one draw height,
+measured flat to 0.000 mm over all 487 stations - and
+`build_grooved_mould.py --case loft` cuts this same groove into it.
 
 Only the groove and the process bores are cut here. The other fittings are the
 neighbouring examples' subject, and on this part the default clamp bolts and a
