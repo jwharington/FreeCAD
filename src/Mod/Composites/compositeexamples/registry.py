@@ -41,7 +41,7 @@ EXAMPLES = {
     },
     "mould_fixture_loft": {
         "module": ".examples.mould_fixture_loft",
-        "name": "Mould fixtures on a lofted part",
+        "name": "Complete fixtured mould on a lofted part (land, groove, fittings)",
     },
     "mould_fixture_groove": {
         "module": ".examples.mould_fixture_groove",

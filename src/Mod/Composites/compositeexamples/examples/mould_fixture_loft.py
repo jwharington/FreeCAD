@@ -1,27 +1,42 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2026 John Wharington jwharington@gmail.com
 
-"""Mould fixtures on a lofted part — the same fittings, on a curved shape.
+"""A complete fixtured mould on a lofted part — land, seal groove and fittings.
 
-The box example shows what the fittings are; this one shows that nothing in
-them assumed a box. The part is the cambered, slightly twisted loft the mould
-profiler benchmarks with, and the block is built around it and parted by the
-HLR part line.
+The box examples show what the fittings are and what the groove is; this one
+builds them together on the shape that makes them hard. The part is the
+cambered, slightly twisted loft the mould profiler benchmarks with, and the
+block is built around it and parted by the HLR part line.
 
-Two things are worth watching.
+What it builds, in the order the mould needs it. The skirt is levelled with an
+s-curve held flat for 10 mm outboard of the cutline, which is what leaves a
+flat land outside the cavity for a seal to be cut into — a skirt that meets the
+wall at a slope cannot be machined and leaves no land at all. The O-ring groove
+is centred in that land, in the lower half alone, sized from a 3 mm cord
+because the cord is the number the shop has. The four parting wedges, four
+alignment sockets and four clamp bolts are the box example's own defaults, cut
+the same way.
+
+Three things are worth watching.
 
 The draw direction is Y, through the part's thickness, so the parting follows
 its camber. Along its own axis (Z) this loft produces no halves at all — the
 part line does not span the candidate network — and across the chord (X) it
 parts, but that is not the direction the part is moulded in.
 
-And the block the analysis builds is not aligned to the world axes, so every
+The block the analysis builds is not aligned to the world axes, so every
 position is worked out in the recovered block frame rather than in XYZ: the
 walls a pin is inset from are the block's own, and the mating height is a
 different plane at every station, read from the halves rather than assumed.
 
-The wedge slot along each wall and the seating of each locating part are the
-same cuts as in the box example, on the same default hardware.
+And the groove and the fittings size the block between them, which is why the
+groove is asked for before the fixture command does that sizing. A groove is
+centred in the land, so it stands half the land's width off the block wall,
+while a clamp bolt sits at a fixed 26 mm inset with a 17 mm head. On this part
+the land ran 51.450 mm at its narrowest, so the groove went straight through
+the bolts — 131.265 mm^3 shared. Asking for the groove up front raises the
+parting stock to 90.250 mm, which widens the land until the two are clear, and
+the mould comes out with no interference.
 """
 
 import FreeCAD
