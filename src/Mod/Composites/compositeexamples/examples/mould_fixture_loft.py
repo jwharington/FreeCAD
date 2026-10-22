@@ -37,6 +37,7 @@ from ._mould_example_common import (
     LEVELLING,
     LEVELLING_EXTENT,
     LEVELLING_TRANSITION_MM,
+    SEAL_GROOVE,
     _attach_view_provider,
     _hide,
     _paint,
@@ -87,6 +88,10 @@ def build(doc=None, run_solver=False, **_ignored):
     fixture = doc.addObject("Part::FeaturePython", "MouldFixture")
     MouldFixtureFP(fixture, mould)
     _attach_view_provider(fixture, ViewProviderMouldFixture)
+    # The groove is asked for before the command sizes the block, so the stock
+    # the groove needs to clear the clamp bolts is part of that sizing rather
+    # than a shortfall reported after the fact.
+    fixture.SealGroove = SEAL_GROOVE
     # The command gives the mould the stock the fixtures need as it creates
     # them; an example creating the object by hand asks for the same thing
     # rather than duplicating the arithmetic.

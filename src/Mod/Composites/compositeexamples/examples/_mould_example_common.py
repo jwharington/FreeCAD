@@ -18,6 +18,12 @@ LEVELLING = "s-curve"
 LEVELLING_EXTENT = "fixed"
 LEVELLING_TRANSITION_MM = 10.0
 
+# Cut the O-ring groove into that land. The groove has to be asked for before the
+# fixture command sizes the block, because that sizing is what gives the strip
+# the width to carry the groove clear of the clamp bolts; asking for it after
+# only gets the shortfall reported.
+SEAL_GROOVE = True
+
 
 def _attach_view_provider(obj, provider):
     """Attach a feature's own ViewProvider when a GUI is up.
