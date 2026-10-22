@@ -15,9 +15,18 @@ so it cannot disagree with what the groove sees. It prints each wall run's drop
 or have no plan width, and exits non-zero unless every station is level.
 
 The box is the control: its land is flat, drop zero everywhere. The loft is the
-case under diagnosis: it reads level along its lands and climbs its own step at
-two run ends, where the two rings share a plan point and stand 51.457 mm apart
-in z.
+case under diagnosis: it is drawn along its thickness, so its level plane is the
+one normal to that draw.
+
+A level strip is one flat land normal to the **draw direction**, so both of the
+quantities this reads are taken in that plane:
+
+- the **drop** is `(outboard - inboard)` projected onto the draw, which is zero
+  on a land however that land happens to lie in world z;
+- the **plan width** is the same vector with its draw component removed.
+
+Measuring either on world x-y or world z is only right for a draw of world z —
+which is what the box is, and the loft is not.
 """
 
 from __future__ import annotations
@@ -68,9 +77,10 @@ DEFAULT_TOLERANCE_MM = 0.01
 class StripReading:
     """A strip's stations, with the drop and the plan width read off each.
 
-    A drop is the outboard z less the inboard one: zero on a land, and the step's
-    height where the strip climbs one. A plan width of zero means the two rings
-    share a plan point, so the strip has no width across for a groove to sit in.
+    A drop is the outboard point less the inboard one, projected on the draw:
+    zero wherever the strip is a landing, whatever its two rings do in world z.
+    A plan width of zero means the two rings share a point in the parting plane,
+    so the strip has no width across for a groove to sit in.
     """
 
     stations: tuple
@@ -78,19 +88,23 @@ class StripReading:
     plan_widths: tuple
 
     @classmethod
-    def of(cls, stations):
-        """Read `stations`, as ``(inboard point, outboard point)`` pairs."""
+    def of(cls, stations, draw):
+        """Read `stations` against `draw`, as ``(inboard, outboard)`` pairs.
+
+        Both quantities are measured in the parting plane, so `draw` has to be a
+        unit vector — the case constants are.
+        """
         drops = []
         plan_widths = []
         for point_in, point_out in stations:
-            across = App.Vector(point_out.x - point_in.x,
-                                point_out.y - point_in.y, 0.0)
-            drops.append(point_out.z - point_in.z)
-            plan_widths.append(across.Length)
+            reach = point_out - point_in
+            along = reach.dot(draw)
+            drops.append(along)
+            plan_widths.append((reach - draw * along).Length)
         return cls(tuple(stations), tuple(drops), tuple(plan_widths))
 
     def is_level_within(self, tolerance):
-        """True when every station's two rings share a z: the strip is a land."""
+        """True when every station's two rings share their draw coordinate."""
         return all(abs(drop) <= tolerance for drop in self.drops)
 
     def not_level(self, tolerance):
@@ -142,7 +156,7 @@ def analyze(case):
 
 
 def _print_walls(walls, reading):
-    """Print each wall run's station count, drop range and plan width range."""
+    """Print each wall run's station count, drop range and in-plane width."""
     first = 0
     for wall in walls:
         count = len(wall["level_in_points"])
@@ -150,7 +164,7 @@ def _print_walls(walls, reading):
         _say(f"  wall {wall['wall']:>2}: {count:4d} stations  "
              f"drop [{min(reading.drops[window]):8.3f}, "
              f"{max(reading.drops[window]):8.3f}] mm  "
-             f"plan width [{min(reading.plan_widths[window]):8.3f}, "
+             f"in-plane width [{min(reading.plan_widths[window]):8.3f}, "
              f"{max(reading.plan_widths[window]):8.3f}] mm")
         first += count
 
@@ -159,15 +173,16 @@ def _print_offenders(reading, tolerance):
     """Print the stations that are not level, and those with no land at all."""
     not_level = reading.not_level(tolerance)
     no_land = reading.with_no_land(tolerance)
-    _say(f"\nstations not level (|drop| > {tolerance} mm): "
+    _say(f"\nstations not level (|drop along the draw| > {tolerance} mm): "
          f"{len(not_level)} {list(not_level)}")
     for index in not_level:
         point_in, point_out = reading.stations[index]
-        _say(f"  {index:5d}  in z={point_in.z:9.3f} "
-             f"out z={point_out.z:9.3f} drop={reading.drops[index]:8.3f}  "
-             f"plan width={reading.plan_widths[index]:8.3f}  "
-             f"plan=({point_in.x:9.3f}, {point_in.y:8.3f})")
-    _say(f"stations with no plan width (nothing to groove): "
+        _say(f"  {index:5d}  in=({point_in.x:9.3f}, {point_in.y:9.3f}, "
+             f"{point_in.z:9.3f}) out=({point_out.x:9.3f}, "
+             f"{point_out.y:9.3f}, {point_out.z:9.3f})  "
+             f"drop={reading.drops[index]:8.3f}  "
+             f"in-plane width={reading.plan_widths[index]:8.3f}")
+    _say(f"stations with no in-plane width (nothing to groove): "
          f"{len(no_land)} {list(no_land)}")
 
 
@@ -199,7 +214,8 @@ def main(argv=None):
     stations = level_strip_stations(result["level_strip_in_shape"],
                                     result["level_strip_out_shape"])
     walls = (result["parting_level_strips"] or {}).get("walls", ())
-    reading = StripReading.of(stations)
+    draw, _stock = _case_setup(args.case)
+    reading = StripReading.of(stations, draw)
 
     _say(f"case {args.case}: {LEVELLING_MODE}/{LEVELLING_EXTENT} "
          f"t={TRANSITION_MM:g} mm, {len(walls)} wall runs, {len(stations)} "
