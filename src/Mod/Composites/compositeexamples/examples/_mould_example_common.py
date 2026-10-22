@@ -9,6 +9,15 @@ command does on the way past: attach each feature's own ViewProvider, and show
 the right objects in the right colours.
 """
 
+# The land the mould halves close on: an s-curve levelling of the outer rail, held
+# flat for the first 10 mm outboard of the cutline - the spec's absolute minimum
+# transition, below which an S-curve reads as a crease. Downstream cuts the seal
+# groove into that strip, so a mould example that wants one asks for this, and the
+# examples share these rather than each keeping its own copy.
+LEVELLING = "s-curve"
+LEVELLING_EXTENT = "fixed"
+LEVELLING_TRANSITION_MM = 10.0
+
 
 def _attach_view_provider(obj, provider):
     """Attach a feature's own ViewProvider when a GUI is up.

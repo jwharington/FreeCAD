@@ -53,7 +53,15 @@ from ...features.MouldFixture import (
     MouldFixtureFP,
     ViewProviderMouldFixture,
 )
-from ._mould_example_common import _attach_view_provider, _hide, _paint, _show
+from ._mould_example_common import (
+    LEVELLING,
+    LEVELLING_EXTENT,
+    LEVELLING_TRANSITION_MM,
+    _attach_view_provider,
+    _hide,
+    _paint,
+    _show,
+)
 
 PART_SIZE = (40.0, 30.0, 20.0)
 
@@ -64,13 +72,6 @@ PART_SIZE = (40.0, 30.0, 20.0)
 # block wall past 100 mm, and the command raises the margin to fit the fittings
 # if this is too small.
 STOCK_MARGIN = 40.0
-
-# The levelling the strip comes from: a `fixed` S-curve transition of 10 mm -
-# the spec's absolute minimum, below which an S-curve reads as a crease - and
-# the rest of every ray flat at the wall's own z.
-LEVELLING = "s-curve"
-LEVELLING_EXTENT = "fixed"
-LEVELLING_TRANSITION_MM = 10.0
 
 # The ring the groove is cut for. A 3 mm cord gives a 3.75 mm wide, 2.25 mm deep
 # groove; set SealGrooveWidth and SealGrooveDepth to use a table that disagrees.

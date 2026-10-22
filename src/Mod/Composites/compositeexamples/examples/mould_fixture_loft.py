@@ -33,7 +33,14 @@ from ...features.MouldFixture import (
     ViewProviderMouldFixture,
 )
 from ...tools.profile_mould_analysis import _make_loft_shape
-from ._mould_example_common import _attach_view_provider, _hide, _paint
+from ._mould_example_common import (
+    LEVELLING,
+    LEVELLING_EXTENT,
+    LEVELLING_TRANSITION_MM,
+    _attach_view_provider,
+    _hide,
+    _paint,
+)
 
 # Through the part's thickness, so the parting follows its camber. Parted along
 # its own axis (Z) this loft produces no halves: the part line does not span the
@@ -69,6 +76,11 @@ def build(doc=None, run_solver=False, **_ignored):
     mould.PartingStockMarginX = STOCK_MARGIN
     mould.PartingStockMarginY = STOCK_MARGIN
     mould.PartingStockMarginZ = STOCK_MARGIN
+    # The land the mould closes on, so the seal groove has a strip to cut into:
+    # this is the fixtured loft, and without it the mould has no land at all.
+    mould.SkirtLevelling = LEVELLING
+    mould.SkirtLevellingExtent = LEVELLING_EXTENT
+    mould.SkirtLevellingTransition = LEVELLING_TRANSITION_MM
     _attach_view_provider(mould, ViewProviderMouldAnalysis)
     doc.recompute()
 
