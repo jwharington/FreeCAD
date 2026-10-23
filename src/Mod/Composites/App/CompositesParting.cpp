@@ -143,11 +143,10 @@ PYBIND11_MODULE(Composites_parting, m) {
                     skirt_levelling_extent);
             }
             params.skirtLevellingTransitionMm = skirt_levelling_transition;
-            // Rounding the skirt creases (ridge plan 12.11/12.12): the walked
-            // part line's s-z profile is filleted at exactly this radius before
-            // the split, so a crease is machined as a fillet rather than left
-            // as a sharp step. Only the tessellation source walks a profile to
-            // fillet, so it is inert on HLR; 0 leaves the part line alone.
+            // Rounding the skirt creases (ridge plan 12.11/12.12): the part
+            // line's s-z profile is filleted at exactly this radius before the
+            // split, so a crease is machined as a fillet rather than left as a
+            // sharp step. 0 leaves the profile alone.
             params.partLineRadiusMm = part_line_radius;
             // Douglas-Peucker simplification of the walked part line (ridge plan
             // 12.7). The simplified walk IS the cut, so the radius and the split
@@ -330,10 +329,9 @@ PYBIND11_MODULE(Composites_parting, m) {
         "It must be at least the shallowest face's |n.d| that the part line "
         "has to cross, and as small as possible, since every face inside it "
         "loses its own opinion. "
-        "part_line_radius fillets the walked part line's s-z profile at that "
-        "radius before the split, rounding the skirt creases (ridge plan "
-        "12.11/12.12); 0 (default) leaves the part line alone, and it is inert "
-        "on the HLR source, which walks no profile. "
+        "part_line_radius fillets the part line's s-z profile at that radius "
+        "before the split, rounding the skirt creases (ridge plan 12.11/12.12); "
+        "0 (default) leaves the profile alone. "
         "part_line_simplify_distance applies Douglas-Peucker to the walked part "
         "line before the split (ridge plan 12.7): a node survives when its span's "
         "worst chord deviation exceeds that distance, at a carrier junction, or "

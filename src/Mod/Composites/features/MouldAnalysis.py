@@ -77,12 +77,10 @@ def _add_part_line_radius_property(obj):
         "App::PropertyLength",
         "PartLineRadius",
         "MouldAnalysis",
-        "Round the skirt creases: the walked part line's s-z profile is "
-        "filleted at exactly this radius (mm) before the split, so a crease is "
-        "machined as a fillet rather than left as a sharp step (ridge plan "
-        "12.11/12.12). 0 (default) leaves the part line alone. The tessellation "
-        "part line is the one that walks a profile to fillet, so this is inert "
-        "on 'hlr'.",
+        "Round the skirt creases: the part line's s-z profile is filleted at "
+        "exactly this radius (mm) before the split, so a crease is machined as "
+        "a fillet rather than left as a sharp step (ridge plan 12.11/12.12). "
+        "0 (default) leaves the profile alone.",
     ).PartLineRadius = DEFAULT_PART_LINE_RADIUS_MM
 
 
