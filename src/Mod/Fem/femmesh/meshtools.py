@@ -54,7 +54,31 @@ JUNCTION_TOL = 1.0e-3
 
 
 # ************************************************************************************************
+_femnodes_cache = {}
+
+
 def get_femnodes_by_femobj_with_references(femmesh, femobj):
+    """The femobj's node set, memoised per mesh and reference set.
+
+    The node set depends only on the mesh and the constraint's references,
+    which are identical for every load state of a batch run - a batch deck
+    writes one step per state and would otherwise re-run the geometric
+    node search for each step.  The cache key carries the mesh's node
+    count, so a re-mesh invalidates it.
+    """
+    try:
+        refs = tuple(
+            (obj.Name, tuple(subs))
+            for obj, subs in femobj["Object"].References
+        )
+    except Exception:
+        refs = None
+    cache_key = None
+    if refs is not None:
+        cache_key = (id(femmesh), femmesh.NodeCount, refs)
+        cached = _femnodes_cache.get(cache_key)
+        if cached is not None:
+            return cached
     node_set = []
     if femmesh.GroupCount:
         node_set = get_femmesh_groupdata_sets_by_name(femmesh, femobj, "Node")
@@ -75,7 +99,10 @@ def get_femnodes_by_femobj_with_references(femmesh, femobj):
     # use set for node sets to be sure all nodes are unique
     # use sorted to be sure the order is the same on different runs
     # be aware a sorted set returns a list, because set are not sorted by default
-    return sorted(set(node_set))
+    node_set = sorted(set(node_set))
+    if cache_key is not None:
+        _femnodes_cache[cache_key] = node_set
+    return node_set
 
 
 # ************************************************************************************************

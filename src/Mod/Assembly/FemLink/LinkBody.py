@@ -506,11 +506,42 @@ class LinkBody(FPBase):
                 }
         return vf_snapshot, reaction_snapshot
 
+    def _apply_state_values(self, analysis, state):
+        """Apply one state's constraint values without the full LOAD update.
+
+        The references, mesh and node sets are identical for every state of
+        a batch run - only the force/torque values change - so the per-state
+        LOAD update's reference resolution and recomputes are skipped and
+        the saved values are written straight onto the constraints the
+        first state's LOAD update created.  Keys that are not constraint
+        values (body state entries) are ignored.
+        """
+        for key, value in state.items():
+            jid, field = key
+            if not jid.startswith(("Reaction_", "Jig_")):
+                continue
+            obj = analysis.Document.getObject(jid)
+            if obj is None:
+                continue
+            if field == "Force":
+                obj.Force = Vector(value)
+            elif field == "Torque":
+                obj.Torque = Vector(value)
+            elif field == "Origin":
+                obj.Origin.Base = Vector(value)
+            elif field == "CenterOfMass" and hasattr(obj, "CenterOfMass"):
+                obj.CenterOfMass = Vector(value)
+
     def _collect_batch_step_states(self, fp, states, analysis):
         step_states = []
         for index, state in enumerate(states):
             self.state_set(fp, state)
-            self.updateFEMLinks(fp, mode=UpdateMode.LOAD)
+            if index == 0:
+                # The first state runs the full LOAD update: it creates the
+                # lazy constraints and resolves every reference once.
+                self.updateFEMLinks(fp, mode=UpdateMode.LOAD)
+            else:
+                self._apply_state_values(analysis, state)
             vf_snapshot, reaction_snapshot = self._snapshot_constraint_state(analysis)
             step_states.append(
                 BatchStepState(
