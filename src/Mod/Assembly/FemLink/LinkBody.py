@@ -541,7 +541,9 @@ class LinkBody(FPBase):
                 # lazy constraints and resolves every reference once.
                 self.updateFEMLinks(fp, mode=UpdateMode.LOAD)
             else:
-                self._apply_state_values(analysis, state)
+                # state_set has restored the dict form into self.state -
+                # the row passed in is the flat numpy vector.
+                self._apply_state_values(analysis, self.state)
             vf_snapshot, reaction_snapshot = self._snapshot_constraint_state(analysis)
             step_states.append(
                 BatchStepState(
