@@ -622,7 +622,9 @@ class LinkBody(FPBase):
             # the reference assignment died with "does not support external
             # object".  It also left strays in those documents that the next
             # lookup then found instead of creating the real constraint.
-            doc = analysis.Document
+            # Mock analyses (tests) may carry no Document; fall back to the
+            # active document for them.
+            doc = getattr(analysis, "Document", None) or FreeCAD.ActiveDocument
             obj = maker(doc)
             obj.Label = label
             if on_new:
