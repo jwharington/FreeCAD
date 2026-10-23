@@ -194,6 +194,9 @@ def run_stored_analysis(femlnk, reduced=False, dry_run=False, batch_mode=None):
         batch_mode = _batch_mode_enabled()
 
     states = np.array(list(femlnk.Proxy.states_vector(femlnk)))
+    Console.PrintMessage(
+        "... states_vector rows: %d, all_states entries: %d\n"
+        % (len(states), femlnk.Proxy.num_states()))
     if batch_mode and len(states) > 0:
         # Some FEM-link constraints (including Jig321) are created lazily during
         # LOAD updates, so prime the first state before deciding batch eligibility.

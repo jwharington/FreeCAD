@@ -548,7 +548,8 @@ class LinkBody(FPBase):
 
     def _collect_batch_step_states(self, fp, states, analysis):
         Console.PrintMessage(
-            f"FemLink batch: {len(states)} state(s)\n")
+            f"FemLink batch: {len(states)} state(s), all_states "
+            f"{self.num_states()}\n")
         step_states = []
         for index, state in enumerate(states):
             # The full LOAD update per state: a values-only fast path that
@@ -560,6 +561,10 @@ class LinkBody(FPBase):
             # keeps the deck write fast.
             self.state_set(fp, state)
             self.updateFEMLinks(fp, mode=UpdateMode.LOAD)
+            if index < 3 or index % 10 == 0:
+                Console.PrintMessage(
+                    f"FemLink batch: state {index} set, all_states now "
+                    f"{self.num_states()}\n")
             vf_snapshot, reaction_snapshot = self._snapshot_constraint_state(analysis)
             step_states.append(
                 BatchStepState(
