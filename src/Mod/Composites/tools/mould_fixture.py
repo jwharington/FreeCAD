@@ -129,11 +129,12 @@ SEAL_GROOVE_DEPTH_FACTOR = 0.75
 
 # A corner in the groove's path is rounded, never mitred. An elastomer ring
 # cannot be seated round a sharp turn, and a ruled loft between the two
-# stations either side of a block corner leaves exactly that. One cord diameter
-# is the tightest a cord of that size is normally asked to bend without being
-# creased into a kink, so it is the radius the groove is laid out with unless
-# the caller names its own.
-SEAL_GROOVE_CORNER_FACTOR = 1.0
+# stations either side of a block corner leaves exactly that. Three cord
+# diameters is a comfortable bend for a cord of that size - one is the tightest
+# it is normally asked to take - so the groove is laid out at three unless the
+# caller names its own radius, and taken down to the largest the strip's
+# corners carry where even that does not fit.
+SEAL_GROOVE_CORNER_FACTOR = 3.0
 
 # A corner shallower than this is left in the run: rounding it would be
 # invisible and would only add sections to the loft.
@@ -1825,6 +1826,40 @@ def _round_corner(previous, vertex, following, radius, samples=8):
     return points
 
 
+def _largest_fitting_corner_radius(stations, radius):
+    """The largest corner radius this strip can carry.
+
+    ``_round_corner`` needs ``radius * tan(turn/2)`` of straight either side of
+    a corner.  A strip whose stations crowd a shallow turn has less than the
+    cord's derived radius asks for, and no single radius satisfies both the cord
+    and the geometry - the geometry wins, at the largest value that fits,
+    because a groove that cannot be rounded cannot be cut at all.  Returns
+    `radius` unchanged when every corner carries it.
+    """
+    base = _station_frames(stations)
+    count = len(base)
+    limit = radius
+    for index, (point, _across, _width) in enumerate(base):
+        previous = base[(index - 1) % count][0]
+        following = base[(index + 1) % count][0]
+        incoming = point - previous
+        incoming.z = 0.0
+        outgoing = following - point
+        outgoing.z = 0.0
+        if (incoming.Length <= PLANE_OFFSET_TOL
+                or outgoing.Length <= PLANE_OFFSET_TOL):
+            continue
+        incoming.normalize()
+        outgoing.normalize()
+        turn = incoming.getAngle(outgoing)
+        if turn <= math.radians(SEAL_GROOVE_STRAIGHT_TOL_DEG):
+            continue
+        straight = 0.5 * min((point - previous).Length,
+                             (following - point).Length)
+        limit = min(limit, straight / math.tan(turn / 2.0))
+    return limit
+
+
 def _seal_groove_frames(stations, radius):
     """The groove path's frames: the strip's stations, with corners rounded.
 
@@ -2005,6 +2040,9 @@ def _seal_groove_tools(params, level_strip_in, level_strip_out, draw):
     width = seal_groove_width(params)
     depth = seal_groove_depth(params)
     radius = seal_groove_corner_radius(params)
+    cord_radius = radius
+    if params.corner_radius <= 0.0:
+        radius = _largest_fitting_corner_radius(stations, radius)
     frames = _seal_groove_frames(stations, radius)
     # The fit check reads every frame the strip produced, not the thinned path:
     # the groove has to fit the strip where the strip is narrowest.
@@ -2019,6 +2057,9 @@ def _seal_groove_tools(params, level_strip_in, level_strip_out, draw):
     note = (f"{width:.3f} mm wide x {depth:.3f} mm deep in the level strip, "
             f"centred on it, corners rounded at {radius:.3f} mm, "
             f"{len(path)} path sections from {len(frames)} frames")
+    if radius < cord_radius:
+        note += (f"; reduced from the cord's {cord_radius:.3f} mm, the strip's "
+                 f"corners cannot carry more")
     if params.width <= 0.0 or params.depth <= 0.0:
         note += f", for a {params.cord_diameter:.3f} mm cord"
     tool = _seal_groove_tool(path, width, depth)

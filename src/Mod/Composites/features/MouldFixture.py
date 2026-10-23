@@ -440,6 +440,7 @@ class MouldFixtureFP(CompositePartFP):
         remembered signature could only skip work FreeCAD had already decided
         was needed - and it did not survive the reload it was most needed for.
         """
+        print("[recompute] %s: MouldFixture.execute" % fp.Name, flush=True)
         source = fp.Source
         lower, upper = mould_halves(source)
         if (lower is None or upper is None

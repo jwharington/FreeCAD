@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright 2025 John Wharington jwharington@gmail.com
 
+import hashlib
+
 import FreeCAD
 import Part
 
@@ -21,6 +23,7 @@ from ..tools.mould_analysis import (
     default_mould_analysis_draw_direction,
     split_faces,
 )
+from ..util.geometry_util import shape_stamp
 from .Command import BaseCommand
 from .VPCompositePart import CompositePartFP, VPCompositePart
 
@@ -259,6 +262,65 @@ def _add_level_strip_outputs(obj):
         ring.setPropertyStatus("Shape", "Output")
         setattr(obj, name, ring)
         obj.setPropertyStatus(name, "Output")
+
+
+def _add_solved_fingerprint_property(obj):
+    """The input fingerprint the current outputs were solved from.
+
+    Stored on the object rather than on the Python proxy: a proxy attribute is
+    gone after a reload, which is exactly when a full re-solve is least wanted.
+    """
+    obj.addProperty(
+        "App::PropertyString",
+        "SolvedInputFingerprint",
+        "MouldAnalysis",
+        "Fingerprint of the inputs the current outputs were solved from; a "
+        "recompute arriving with the same one has nothing to do",
+    ).SolvedInputFingerprint = ""
+    obj.setPropertyStatus("SolvedInputFingerprint", "Output")
+
+
+def _solve_inputs_fingerprint(fp):
+    """Hash everything the parting solve reads.
+
+    A recompute that arrives with an unchanged fingerprint is skipped.
+    Something has to need that, and it is this: the analysis owns the half
+    objects, so a caller writing ``MouldHalfA.Shape`` - boring the bolt hole,
+    for one - touches this object and the document's recompute runs the
+    analysis again. Without the guard that re-parts fresh halves, discarding
+    the caller's edit and charging a full solve for it.
+    """
+    # shape_stamp, not shape_fingerprint: the latter walks vertices in
+    # traversal order, which changes when a shape is rebuilt - and loading the
+    # document rebuilds it, so the fingerprint would never match on reload and
+    # the guard would never skip.
+    source = getattr(fp, "Source", None)
+    try:
+        source_hash = (shape_stamp(source.Shape) if source is not None
+                       else "no-source")
+    except Exception:
+        source_hash = "shape-error"
+    footprint = fp.PartingStockFootprint
+    draw = fp.PreferredDrawDirection
+    fields = [
+        source_hash,
+        "%g,%g,%g" % (draw.x, draw.y, draw.z),
+        str(fp.OutputMode),
+        str(bool(fp.WithdrawalClearance)),
+        "%g" % float(fp.PartLineTolerance),
+        "%g,%g,%g" % (float(fp.PartingStockMarginX),
+                      float(fp.PartingStockMarginY),
+                      float(fp.PartingStockMarginZ)),
+        "%g,%g,%g" % (footprint.x, footprint.y, footprint.z),
+        "%g" % float(fp.TessellationBandTolDeg),
+        "%g" % float(fp.TessellationDeflection),
+        str(fp.PartLineSource),
+        "%g" % float(fp.PartLineRadius),
+        str(fp.SkirtLevelling),
+        str(fp.SkirtLevellingExtent),
+        "%g" % float(fp.SkirtLevellingTransition),
+    ]
+    return hashlib.sha256("|".join(fields).encode()).hexdigest()
 
 
 class MouldAnalysisFP(CompositePartFP):
@@ -512,6 +574,8 @@ class MouldAnalysisFP(CompositePartFP):
         ).AnalysisSummary = "Select a solid to begin mould analysis."
         obj.setPropertyStatus("AnalysisSummary", "Output")
 
+        _add_solved_fingerprint_property(obj)
+
         super().__init__(obj)
 
     def onDocumentRestored(self, fp):
@@ -536,16 +600,28 @@ class MouldAnalysisFP(CompositePartFP):
             _add_skirt_levelling_properties(fp)
         if not hasattr(fp, "LevelStripIn"):
             _add_level_strip_outputs(fp)
+        if not hasattr(fp, "SolvedInputFingerprint"):
+            _add_solved_fingerprint_property(fp)
 
     def execute(self, fp):
         """Analyse the source, once per change of input.
 
-        Nothing here remembers its inputs. The outputs are declared as outputs,
-        so writing them leaves this object's recompute state alone, and FreeCAD
-        runs this again only when something that defines the mould changed. A
-        remembered signature could only skip a solve FreeCAD had already decided
-        was due - and it did not survive the reload it was most needed for.
+        The fingerprint of everything the solve reads is kept on the object, so
+        a recompute arriving with the same one returns immediately. That is not
+        only an optimisation: writing a half's Shape touches this object, so a
+        caller that has just bored the bolt hole would otherwise have the
+        analysis re-part the halves and throw the bore away. Keeping the
+        fingerprint as a property rather than a proxy attribute is what makes it
+        survive the reload.
         """
+        fingerprint = _solve_inputs_fingerprint(fp)
+        if (fingerprint == fp.SolvedInputFingerprint
+                and not fp.Shape.isNull()):
+            print("[recompute] %s: MouldAnalysis.execute skipped (inputs "
+                  "unchanged)" % fp.Name, flush=True)
+            return
+        print("[recompute] %s: MouldAnalysis.execute (inputs changed)"
+              % fp.Name, flush=True)
         source_shape = fp.Source.Shape if fp.Source else None
         footprint = fp.PartingStockFootprint
         stock_footprint = (
@@ -605,6 +681,7 @@ class MouldAnalysisFP(CompositePartFP):
         fp.ValidationChecks = result["validation_checks"]
         fp.AnalysisSummary = result["summary"]
         fp.Shape = result["shape"]
+        fp.SolvedInputFingerprint = fingerprint
 
     # There is deliberately no onChanged -> recompute hook here. Analysing on
     # the first property write makes the result depend on the order the caller
