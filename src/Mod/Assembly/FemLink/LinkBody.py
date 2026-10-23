@@ -566,7 +566,14 @@ class LinkBody(FPBase):
 
         obj = find_analysis_obj()
         if not obj:
-            doc = FreeCAD.ActiveDocument
+            # The constraint belongs in the ANALYSIS's document.  Creating it
+            # in FreeCAD.ActiveDocument put it in whatever document the
+            # pipeline's recompute had made active (the article, a part
+            # document) - where the assembly's own objects are external, and
+            # the reference assignment died with "does not support external
+            # object".  It also left strays in those documents that the next
+            # lookup then found instead of creating the real constraint.
+            doc = analysis.Document
             obj = maker(doc)
             obj.Label = label
             if on_new:
@@ -829,6 +836,15 @@ class LinkBody(FPBase):
 
     def updateJig(self, fp, analysis, body, mode: UpdateMode):
         body_obj = body.getLinkedObject()
+        if body_obj is not None and analysis is not None \
+                and body_obj.Document != analysis.Document:
+            # The linked object can live in another document (the article
+            # behind the assembly's link), and PropertyLinkSubList refuses
+            # external objects - the constraint creation then dies with
+            # "does not support external object" and the batch run loses its
+            # constraints.  The local link carries the same shape (the mesh
+            # is cut on it), so reference THAT for every constraint.
+            body_obj = body
 
         def jig_matcher(obj):
             proxy = getattr(obj, "Proxy", None)
