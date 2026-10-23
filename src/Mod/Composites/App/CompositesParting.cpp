@@ -90,10 +90,12 @@ PYBIND11_MODULE(Composites_parting, m) {
            double part_line_tolerance, py::tuple footprint, bool part_line_only,
            bool run_withdrawal_clearance, const std::string& part_line_source,
            double tessellation_band_tol_deg,
+           double tessellation_deflection,
            const std::string& skirt_levelling,
            const std::string& skirt_levelling_extent,
            double skirt_levelling_transition,
-           double part_line_radius) {
+           double part_line_radius,
+           double part_line_simplify_distance) {
             nextdrape::PartingParams params;
             params.stockMarginX = stock_margin_x;
             params.stockMarginY = stock_margin_y;
@@ -113,6 +115,9 @@ PYBIND11_MODULE(Composites_parting, m) {
                     part_line_source);
             }
             params.tessellationBandTolDeg = tessellation_band_tol_deg;
+            // The scan deflection: nextdrape's own default when the caller
+            // does not name one.
+            params.tessellationDeflectionMm = tessellation_deflection;
             // Skirt outer-wall levelling (docs/spec-skirt-levelling.md). The
             // defaults are nextdrape's own, so a caller that does not ask gets
             // today's cast, and with it no level strip. A `fixed` extent is the
@@ -144,6 +149,11 @@ PYBIND11_MODULE(Composites_parting, m) {
             // as a sharp step. Only the tessellation source walks a profile to
             // fillet, so it is inert on HLR; 0 leaves the part line alone.
             params.partLineRadiusMm = part_line_radius;
+            // Douglas-Peucker simplification of the walked part line (ridge plan
+            // 12.7). The simplified walk IS the cut, so the radius and the split
+            // both run through it; 0/0 (default) leaves the walk as the mesh
+            // placed it.
+            params.partLineSimplifyDistanceMm = part_line_simplify_distance;
             // The incremental-withdrawal clearance scan is the most expensive
             // stage of the full pipeline and does NOT gate the mould halves
             // (they come from split/skirt/close). The caller decides whether
@@ -301,10 +311,12 @@ PYBIND11_MODULE(Composites_parting, m) {
         py::arg("run_withdrawal_clearance") = false,
         py::arg("part_line_source") = "tessellation",
         py::arg("tessellation_band_tol_deg") = 2.0,
+        py::arg("tessellation_deflection") = 0.05,
         py::arg("skirt_levelling") = "off",
         py::arg("skirt_levelling_extent") = "whole",
         py::arg("skirt_levelling_transition") = 1.0,
         py::arg("part_line_radius") = 0.0,
+        py::arg("part_line_simplify_distance") = 0.0,
         "Compute a non-planar parting surface + mould halves for a FreeCAD "
         "Part.Shape along a user-specified draw direction. Returns a dict; "
         "success=True iff the pipeline reached `ready` (full mould) or the "
@@ -322,6 +334,10 @@ PYBIND11_MODULE(Composites_parting, m) {
         "radius before the split, rounding the skirt creases (ridge plan "
         "12.11/12.12); 0 (default) leaves the part line alone, and it is inert "
         "on the HLR source, which walks no profile. "
+        "part_line_simplify_distance applies Douglas-Peucker to the walked part "
+        "line before the split (ridge plan 12.7): a node survives when its span's "
+        "worst chord deviation exceeds that distance, at a carrier junction, or "
+        "when it is alone on its face. 0 (default) = off. "
         "Skirt levelling (docs/spec-skirt-levelling.md) shapes the skirt's "
         "outer wall: 'off' (default), 'direct' or 's-curve'. Only a 'fixed' "
         "extent, whose transition spans the first skirt_levelling_transition "

@@ -48,6 +48,17 @@ def _add_tessellation_band_property(obj):
     ).TessellationBandTolDeg = DEFAULT_TESSELLATION_BAND_TOL_DEG
 
 
+def _add_tessellation_deflection_property(obj):
+    obj.addProperty(
+        "App::PropertyLength",
+        "TessellationDeflection",
+        "MouldAnalysis",
+        "Absolute deflection (mm) of the tessellation the part-line scan is "
+        "run on. Smaller is finer; nextdrape's own default is 0.05, and an "
+        "article that needs a finer scan sets it lower.",
+    ).TessellationDeflection = 0.05
+
+
 def _add_part_line_source_property(obj):
     obj.addProperty(
         "App::PropertyEnumeration",
@@ -301,6 +312,7 @@ class MouldAnalysisFP(CompositePartFP):
         ).PartLineTolerance = 0.1
 
         _add_tessellation_band_property(obj)
+        _add_tessellation_deflection_property(obj)
         _add_part_line_source_property(obj)
         _add_part_line_radius_property(obj)
         _add_skirt_levelling_properties(obj)
@@ -509,6 +521,8 @@ class MouldAnalysisFP(CompositePartFP):
         # Documents saved before the band was configurable get the default.
         if not hasattr(fp, "TessellationBandTolDeg"):
             _add_tessellation_band_property(fp)
+        if not hasattr(fp, "TessellationDeflection"):
+            _add_tessellation_deflection_property(fp)
         if not hasattr(fp, "PartLineSource"):
             _add_part_line_source_property(fp)
         if not hasattr(fp, "PartLineRadius"):
@@ -553,6 +567,7 @@ class MouldAnalysisFP(CompositePartFP):
             part_line_only=(fp.OutputMode == "Part-line only"),
             run_withdrawal_clearance=fp.WithdrawalClearance,
             parting_tessellation_band_tol_deg=fp.TessellationBandTolDeg,
+            parting_tessellation_deflection_mm=float(fp.TessellationDeflection),
             part_line_source=fp.PartLineSource,
             part_line_radius_mm=float(fp.PartLineRadius),
             skirt_levelling=fp.SkirtLevelling,

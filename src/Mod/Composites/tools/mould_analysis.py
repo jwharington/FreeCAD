@@ -817,6 +817,8 @@ def _plan_split_strategies(ranked, limit=MAX_SPLIT_STRATEGIES):
                 "parting_stock_footprint": item.get("parting_stock_footprint"),
                 "parting_tessellation_band_tol_deg": item.get(
                     "parting_tessellation_band_tol_deg"),
+                "parting_tessellation_deflection_mm": item.get(
+                    "parting_tessellation_deflection_mm"),
                 "part_line_source": item.get("part_line_source",
                                              DEFAULT_PART_LINE_SOURCE),
                 "part_line_radius_mm": item.get("part_line_radius_mm",
@@ -870,6 +872,8 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         part_line_only=part_line_only,
         run_withdrawal_clearance=run_withdrawal_clearance,
         tessellation_band_tol_deg=strategy.get("parting_tessellation_band_tol_deg"),
+        tessellation_deflection_mm=strategy.get(
+            "parting_tessellation_deflection_mm"),
         part_line_source=strategy.get("part_line_source", DEFAULT_PART_LINE_SOURCE),
         part_line_radius_mm=strategy.get("part_line_radius_mm",
                                          DEFAULT_PART_LINE_RADIUS_MM),
@@ -1351,6 +1355,7 @@ def _propose_non_planar_parting(
     run_withdrawal_clearance=False,
     part_line_source=DEFAULT_PART_LINE_SOURCE,
     tessellation_band_tol_deg=None,
+    tessellation_deflection_mm=None,
     part_line_radius_mm=DEFAULT_PART_LINE_RADIUS_MM,
     skirt_levelling=DEFAULT_SKIRT_LEVELLING,
     skirt_levelling_extent=DEFAULT_SKIRT_LEVELLING_EXTENT,
@@ -1411,6 +1416,9 @@ def _propose_non_planar_parting(
             part_line_source=part_line_source,
             **({} if tessellation_band_tol_deg is None
                else {"tessellation_band_tol_deg": float(tessellation_band_tol_deg)}),
+            **({} if tessellation_deflection_mm is None
+               else {"tessellation_deflection":
+                     float(tessellation_deflection_mm)}),
             # Rounding the skirt creases fillets the walked part line's s-z
             # profile before the split. It needs the tessellation source, which
             # is the one that walks a profile to fillet.
@@ -2301,6 +2309,7 @@ def analyze_source_shape(
     part_line_only=False,
     run_withdrawal_clearance=False,
     parting_tessellation_band_tol_deg=None,
+    parting_tessellation_deflection_mm=None,
     part_line_source=DEFAULT_PART_LINE_SOURCE,
     part_line_radius_mm=DEFAULT_PART_LINE_RADIUS_MM,
     skirt_levelling=DEFAULT_SKIRT_LEVELLING,
@@ -2397,6 +2406,7 @@ def analyze_source_shape(
             "parting_stock_margin_z": parting_stock_margin_z,
             "parting_stock_footprint": parting_stock_footprint,
             "parting_tessellation_band_tol_deg": parting_tessellation_band_tol_deg,
+            "parting_tessellation_deflection_mm": parting_tessellation_deflection_mm,
             "part_line_source": part_line_source,
             "part_line_radius_mm": part_line_radius_mm,
             "skirt_levelling": skirt_levelling,
