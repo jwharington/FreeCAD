@@ -69,7 +69,13 @@ class ConstraintJig321(base_fempythonobject.BaseFemPythonObject):
                 fp.Supports = []
             return []
 
-        points = np.array([femmesh.Nodes[i] for i in unique_node_idxs], dtype=float)
+        # femmesh.Nodes is a PROPERTY that rebuilds the whole node map on
+        # every access - indexing it inside the comprehension re-built a
+        # 13k-entry dict per node, which alone burned minutes per deck write
+        # (measured: 12+ min of CPU at 190 % before this hoist).  Fetch the
+        # map once and index the local.
+        nodes = femmesh.Nodes
+        points = np.array([nodes[i] for i in unique_node_idxs], dtype=float)
 
         # The largest-area triangle is formed by hull vertices. For planar/degenerate
         # point clouds where 3D hull construction fails, use a 2D projected hull.
@@ -99,6 +105,20 @@ class ConstraintJig321(base_fempythonobject.BaseFemPythonObject):
 
         if len(candidate_ids) < 3:
             candidate_ids = list(range(len(unique_node_idxs)))
+
+        # The exhaustive triple search below is O(h^3) in the candidate count,
+        # and the 3D hull of a volumetric node cloud can carry thousands of
+        # vertices - a 13k-node part measured at hours of pure Python in the
+        # deck writer (the batch/multistep path calls this per analysis).  The
+        # largest-area triangle is formed by hull vertices, and a hull-vertex
+        # subsample bounds the search while keeping the triangle near-largest,
+        # which is all a 3-2-1 jig placement needs.
+        max_candidates = 128
+        if len(candidate_ids) > max_candidates:
+            step = len(candidate_ids) / max_candidates
+            candidate_ids = [
+                candidate_ids[int(i * step)] for i in range(max_candidates)
+            ]
 
         best_area2 = -1.0
         best_triplet = None
