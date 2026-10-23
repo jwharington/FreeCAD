@@ -327,6 +327,7 @@ def write_meshdata_constraint(f, femobj, prs_obj, ccxwriter, op_new=False):
             REACTION_COUPLING_SHIFT_SCALE,
             Console,
             op_new=op_new,
+            femobj=femobj,
         )
         return
 

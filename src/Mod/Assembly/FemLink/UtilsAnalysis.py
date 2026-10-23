@@ -61,8 +61,17 @@ def _update_view_object(obj):
 
 
 def _batch_mode_enabled() -> bool:
-    raw = os.environ.get("FREECAD_FEMLINK_BATCH_ANALYSIS", "0")
-    return raw not in {"", "0", "false", "False", "no", "No"}
+    """Whether assembly load states run as one multi-step deck.
+
+    Batch is the default: the solver writes one ``*STEP`` block per load
+    state into a single deck and runs once. Set
+    FREECAD_FEMLINK_BATCH_ANALYSIS to a false value to debug the legacy
+    one-solve-per-state loop instead.
+    """
+    raw = os.environ.get("FREECAD_FEMLINK_BATCH_ANALYSIS")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
 
 
 def extract_results(femlnk) -> dict:

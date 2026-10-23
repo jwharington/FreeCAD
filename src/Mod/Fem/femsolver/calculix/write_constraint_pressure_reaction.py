@@ -174,6 +174,7 @@ def write_reaction_distributing_coupling(
     reaction_coupling_shift_scale,
     Console,
     op_new=False,
+    femobj=None,
 ):
     # Experimental alternative to face-pressure DLOAD delivery:
     # build a DCOUP3D + *DISTRIBUTING COUPLING from the selected
@@ -215,17 +216,24 @@ def write_reaction_distributing_coupling(
                 )
             )
 
-    node_weights = _build_contact_weighted_node_weights(prs_obj, elem_info)
-    if not node_weights:
-        node_weights = _build_area_node_weights(elem_info)
+    reaction_nodes = femobj.get("ReactionNodes") if isinstance(femobj, dict) else None
+    if reaction_nodes:
+        # Nodal reaction: the references resolve to mesh nodes, so the
+        # wrench is delivered there at equal weight instead of being spread
+        # over the area of selected faces.
+        node_weights = {nid: 1.0 for nid in reaction_nodes}
     else:
-        total_contact_weight = sum(node_weights.values())
-        if total_contact_weight <= 0.0:
-            Console.PrintWarning(
-                "ConstraintReaction {}: contact weighting collapsed to zero; "
-                "falling back to area-based node weighting.\n".format(prs_obj.Name)
-            )
+        node_weights = _build_contact_weighted_node_weights(prs_obj, elem_info)
+        if not node_weights:
             node_weights = _build_area_node_weights(elem_info)
+        else:
+            total_contact_weight = sum(node_weights.values())
+            if total_contact_weight <= 0.0:
+                Console.PrintWarning(
+                    "ConstraintReaction {}: contact weighting collapsed to zero; "
+                    "falling back to area-based node weighting.\n".format(prs_obj.Name)
+                )
+                node_weights = _build_area_node_weights(elem_info)
 
     # Exclude Jig321-constrained nodes to avoid *BOUNDARY/*DISTRIBUTING COUPLING DOF conflict.
     # The Jig321 support nodes are fully constrained (*BOUNDARY), so DCOUP3D cannot couple to them.

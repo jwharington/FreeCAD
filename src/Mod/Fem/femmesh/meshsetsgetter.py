@@ -654,6 +654,21 @@ class MeshSetsGetter:
 
         return result
 
+    @staticmethod
+    def _is_nodal_reaction(femobj):
+        """A reaction constraint applied at referenced points or edges.
+
+        A reaction's force and moment are a point wrench, so vertex or edge
+        references are a nodal load, not a face selection: the writer
+        delivers it at the mesh nodes the references resolve to. Only
+        reactions take this path - a face pressure keeps the face path
+        whatever its reference type.
+        """
+        if femobj.get("RefShapeType") not in ("Vertex", "Edge"):
+            return False
+        proxy = getattr(femobj["Object"], "Proxy", None)
+        return getattr(proxy, "Type", "") == "Fem::ConstraintReaction"
+
     # faces sets
     def get_constraints_pressure_faces(self):
 
@@ -855,6 +870,22 @@ class MeshSetsGetter:
 
         for femobj in self.member.cons_pressure:
             obj = femobj["Object"]
+            if self._is_nodal_reaction(femobj):
+                # Nodal reaction: resolve the referenced points or edges to
+                # mesh nodes the way the force constraints do, and leave the
+                # face tables empty. The face path would send a vertex
+                # reference into the element-edge binary search, which does
+                # not exist for it.
+                print_obj_info(obj)
+                femobj["PressureFaces"] = []
+                femobj["PressureFaceInfo"] = {}
+                femobj["PressureNodeInfo"] = {}
+                femobj["PressureFaceGaussData"] = {}
+                femobj["ReactionNodes"] = meshtools.get_femnodes_by_femobj_with_references(
+                    self.femmesh, femobj
+                )
+                continue
+
             result = self._get_elements(obj)
             femobj["PressureFaces"] = result
 
