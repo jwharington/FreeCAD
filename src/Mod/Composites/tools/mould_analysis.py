@@ -28,7 +28,7 @@ DEFAULT_TESSELLATION_BAND_TOL_DEG = 2.0
 # The part-line solvers the C++ binding accepts (CompositesParting.cpp rejects
 # anything else). The tessellation march is the drafted path; HLR projects the
 # outline instead and still closes on cases the march does not.
-PART_LINE_SOURCES = ("tessellation", "hlr")
+PART_LINE_SOURCES = ("tessellation", "hlr", "refinedtesselation")
 DEFAULT_PART_LINE_SOURCE = "tessellation"
 # Rounding the skirt creases is off by default, like every other shaping input:
 # a mould that does not ask for it casts exactly what it did before.
