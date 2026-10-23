@@ -1019,8 +1019,29 @@ class LinkBody(FPBase):
         def attr_side(label, default):
             return getattr(joint, label + str(side), default)
 
+        def local_reference(reference):
+            """Re-base the joint's reference to this analysis's document.
+
+            The joints reference the article's parts through the assembly's
+            links, and get_reference_subobject deliberately follows the link
+            to the article's object - which PropertyLinkSubList then refuses
+            ("does not support external object"), aborting the per-frame
+            state capture.  The constraint is on THIS body, so an external
+            resolved object is re-based to the local body link with the same
+            plain sub-element names: the mesh is cut on that body, so the
+            named vertices/faces resolve through it.
+            """
+            if not reference or len(reference) != 2:
+                return reference
+            obj, subs = reference
+            if (obj is not None and analysis is not None
+                    and obj.Document != analysis.Document):
+                obj = body
+            return (obj, list(subs))
+
         def on_new(obj):
-            reference = get_reference_subobject(attr_side("Reference", None))
+            reference = local_reference(
+                get_reference_subobject(attr_side("Reference", None)))
             if has_valid_reference_subobject(reference):
                 obj.References = reference
 
@@ -1044,7 +1065,8 @@ class LinkBody(FPBase):
                 com = self.state[(id, "CenterOfMass")]
                 obj.CenterOfMass = Vector(com.x, com.y, com.z)
 
-            reference = get_reference_subobject(attr_side("Reference", None))
+            reference = local_reference(
+                get_reference_subobject(attr_side("Reference", None)))
             if has_valid_reference_subobject(reference):
                 obj.References = reference
             return
@@ -1067,7 +1089,8 @@ class LinkBody(FPBase):
             if hasattr(body, "CenterOfMass") and hasattr(obj, "CenterOfMass"):
                 obj.CenterOfMass = body.CenterOfMass
 
-            reference = get_reference_subobject(attr_side("Reference", None))
+            reference = local_reference(
+                get_reference_subobject(attr_side("Reference", None)))
             if has_valid_reference_subobject(reference):
                 obj.References = reference
 
