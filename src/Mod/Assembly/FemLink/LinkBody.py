@@ -551,13 +551,15 @@ class LinkBody(FPBase):
             f"FemLink batch: {len(states)} state(s)\n")
         step_states = []
         for index, state in enumerate(states):
+            # The full LOAD update per state: a values-only fast path that
+            # wrote state values straight onto the constraints produced
+            # decks whose steps all carried the first state's loads (the
+            # snapshot source did not see the values-only writes), so it is
+            # reverted - distinctness of the per-state loads outranks the
+            # collect-phase time.  The node-set memoisation in meshtools
+            # keeps the deck write fast.
             self.state_set(fp, state)
-            if index == 0:
-                # The first state runs the full LOAD update: it creates the
-                # lazy constraints and resolves every reference once.
-                self.updateFEMLinks(fp, mode=UpdateMode.LOAD)
-            elif not self._apply_state_values(analysis, self.state):
-                self.updateFEMLinks(fp, mode=UpdateMode.LOAD)
+            self.updateFEMLinks(fp, mode=UpdateMode.LOAD)
             vf_snapshot, reaction_snapshot = self._snapshot_constraint_state(analysis)
             step_states.append(
                 BatchStepState(
