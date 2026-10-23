@@ -1706,6 +1706,66 @@ def _shape_common_volume(shape_a, shape_b):
     return max(0.0, volume)
 
 
+def _validation_reason_code(severity, label):
+    slug = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
+    return f"{severity}_{slug}" if slug else severity
+
+
+def _extract_validation_reasons(checks):
+    reasons = []
+    for check in checks:
+        if check.startswith("FAIL:"):
+            severity = "fail"
+            body = check[len("FAIL:") :].strip()
+        elif check.startswith("WARN:"):
+            severity = "warning"
+            body = check[len("WARN:") :].strip()
+        else:
+            continue
+
+        if " — " in body:
+            label, detail = body.split(" — ", 1)
+        else:
+            label, detail = body, ""
+
+        label = label.strip()
+        detail = detail.strip()
+        reasons.append(
+            {
+                "severity": severity,
+                "code": _validation_reason_code(severity, label),
+                "label": label,
+                "detail": detail,
+            }
+        )
+    return reasons
+
+
+def _dedupe_validation_reasons(reasons):
+    deduped = []
+    seen = set()
+    for reason in reasons:
+        key = (
+            reason.get("severity", ""),
+            reason.get("code", ""),
+            reason.get("label", ""),
+            reason.get("detail", ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(reason)
+    return deduped
+
+
+def _validation_reason_payload(checks):
+    reasons = _dedupe_validation_reasons(_extract_validation_reasons(list(checks or [])))
+    return {
+        "reasons": reasons,
+        "reason_codes": [reason["code"] for reason in reasons],
+    }
+
+
 def validate_mould_result(
     parting_surface_status,
     mould_halves_status,
