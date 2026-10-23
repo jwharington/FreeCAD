@@ -59,3 +59,24 @@ bump stops, and detent springs.  The LS8e pylon restraint cable
 is the driving case; its in-run verification (slack baseline vs law
 solve, 0.00 N drift) is the pattern we recommend requiring for any
 conditional-capable extension.
+
+## Correction (2026-10-23, measured)
+
+`rampstep` does not evaluate in `TensionFunc` at all — it silently yields
+0. On the same saved model, one solve each at the last frame:
+
+| TensionFunc | Joint002 | Joint004 |
+|---|---|---|
+| `0d` (baseline) | 196.3 N | 1361.4 N |
+| `2000d` (constant) | 4786.2 N | 6591.9 N |
+| `rampstep(rIJ(self), 0d, 0d, 1d, 2000d)` (must engage at any distance) | 196.3 N | 1361.4 N |
+
+The must-engage rampstep is bit-identical to the zero baseline, while a
+constant on the same force moves the loads 4.4/5.2 kN — so the force
+element and `rIJ(self)` work and the intrinsic itself is dead. The
+"verified, 0.00 N drift" claim in the section above was a vacuous pass:
+the cable was slack in both solves, so identical peaks proved nothing
+about the law. Constants and linear-in-`rIJ` expressions are the only
+observed-working forms. The verification pattern we recommend should
+therefore include a must-engage probe (a law that has to be nonzero at
+the test pose) before any law is trusted.
