@@ -513,16 +513,25 @@ class LinkBody(FPBase):
         a batch run - only the force/torque values change - so the per-state
         LOAD update's reference resolution and recomputes are skipped and
         the saved values are written straight onto the constraints the
-        first state's LOAD update created.  Keys that are not constraint
-        values (body state entries) are ignored.
+        first state's LOAD update created.  The constraints are found by
+        LABEL - get_analysis_obj sets the label, FreeCAD autogenerates the
+        name.  Returns False when any constraint value could not be applied,
+        so the caller can fall back to the full LOAD update.
         """
+        by_label = {}
+        for obj in analysis.Group:
+            by_label[obj.Label] = obj
+        applied = 0
         for key, value in state.items():
             jid, field = key
             if not jid.startswith(("Reaction_", "Jig_")):
                 continue
-            obj = analysis.Document.getObject(jid)
+            obj = by_label.get(jid)
             if obj is None:
-                continue
+                Console.PrintWarning(
+                    f"FemLink batch: no constraint labelled {jid} for a "
+                    f"values-only state update; falling back\n")
+                return False
             if field == "Force":
                 obj.Force = Vector(value)
             elif field == "Torque":
@@ -531,8 +540,15 @@ class LinkBody(FPBase):
                 obj.Origin.Base = Vector(value)
             elif field == "CenterOfMass" and hasattr(obj, "CenterOfMass"):
                 obj.CenterOfMass = Vector(value)
+            else:
+                return False
+            applied += 1
+        return applied > 0 or not any(
+            k[0].startswith(("Reaction_", "Jig_")) for k in state)
 
     def _collect_batch_step_states(self, fp, states, analysis):
+        Console.PrintMessage(
+            f"FemLink batch: {len(states)} state(s)\n")
         step_states = []
         for index, state in enumerate(states):
             self.state_set(fp, state)
@@ -540,10 +556,8 @@ class LinkBody(FPBase):
                 # The first state runs the full LOAD update: it creates the
                 # lazy constraints and resolves every reference once.
                 self.updateFEMLinks(fp, mode=UpdateMode.LOAD)
-            else:
-                # state_set has restored the dict form into self.state -
-                # the row passed in is the flat numpy vector.
-                self._apply_state_values(analysis, self.state)
+            elif not self._apply_state_values(analysis, self.state):
+                self.updateFEMLinks(fp, mode=UpdateMode.LOAD)
             vf_snapshot, reaction_snapshot = self._snapshot_constraint_state(analysis)
             step_states.append(
                 BatchStepState(
