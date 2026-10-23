@@ -22,6 +22,7 @@
 #include <Mod/Part/App/TopoShape.h>
 
 // OpenCASCADE
+#include <chrono>
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Compound.hxx>
 #include <gp_Dir.hxx>
@@ -34,6 +35,7 @@
 #include <nextdrape/partline/FaceSegment.hpp>
 #include <nextdrape/partline/PartingSolver.hpp>
 #include <nextdrape/mould/MouldHelper.hpp>
+#include <nextdrape/shared/Log.hpp>
 
 namespace py = pybind11;
 
@@ -173,8 +175,25 @@ PYBIND11_MODULE(Composites_parting, m) {
             const auto stopAt = part_line_only
                 ? nextdrape::SolveStopStage::AfterPartLine
                 : nextdrape::SolveStopStage::FullPipeline;
+            const auto solveStart = std::chrono::steady_clock::now();
             bool ok = solver->Solve(source, D, params, stopAt);
             const auto& r = solver->Result();
+            // The solve returning is not the job finishing: everything below
+            // materialises the result as Python objects, and on a large article
+            // that takes minutes with no other output - which is indistinguishable
+            // from a hang. Report the solve, then where the marshalling is.
+            nextdrape::Log::info("[MOULD-MARSHAL] solve ", (ok ? "ok" : "failed"), " in ",
+                      std::chrono::duration<double>(std::chrono::steady_clock::now() - solveStart)
+                          .count(),
+                      " s; marshalling the result (this can take minutes on a large article)");
+            const auto marshalStart = std::chrono::steady_clock::now();
+            const auto marshalMark = [&marshalStart](const char* what, std::size_t count) {
+                nextdrape::Log::info("[MOULD-MARSHAL] ", what, " count=", count, " elapsed=",
+                          std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                                        marshalStart)
+                              .count(),
+                          " s");
+            };
             // Marshal tangent_face_midpoints: list of (face_shape, z_mid).
             py::list midpoints;
             for (const auto& tfm : r.tangentFaceMidpoints) {
@@ -182,6 +201,7 @@ PYBIND11_MODULE(Composites_parting, m) {
                     wrap_shape(tfm.face), tfm.zMidpoint));
             }
 
+            marshalMark("tangent_midpoints", midpoints.size());
             // Marshal the split faces: the cut pieces of each half with the
             // source face each was cut from (1-based, TopExp::MapShapes order =
             // FreeCAD's FaceN) and whether the part line failed to cut that
@@ -199,6 +219,7 @@ PYBIND11_MODULE(Composites_parting, m) {
             py::list upperSplitFaces = packSplitFaces(r.UpperSplitFaces());
             py::list lowerSplitFaces = packSplitFaces(r.LowerSplitFaces());
 
+            marshalMark("split_faces", upperSplitFaces.size() + lowerSplitFaces.size());
             // Derive the part-line 3D shape on demand from the canonical
             // segment chain (never a cached duplicate; partLine3d was removed).
             // Inlined in the dict so the returned shape's lifetime is owned by
@@ -237,6 +258,17 @@ PYBIND11_MODULE(Composites_parting, m) {
 
             // Marshal the native withdrawal-clearance result so the Python
             // layer can consume it instead of re-running the (Python) check.
+            nextdrape::Log::info("[MOULD-MARSHAL] part_line_segments count=",
+                              segments.size(), " elapsed=",
+                              std::chrono::duration<double>(
+                                  std::chrono::steady_clock::now() - marshalStart)
+                                  .count(),
+                              " s");
+            nextdrape::Log::info("[MOULD-MARSHAL] tail groups reached (withdrawal, level strips, final dict) elapsed=",
+                              std::chrono::duration<double>(
+                                  std::chrono::steady_clock::now() - marshalStart)
+                                  .count(),
+                              " s");
             py::list wcHalfChecks;
             for (const auto& hc : r.withdrawalClearance.halfChecks) {
                 wcHalfChecks.append(py::dict(
@@ -280,6 +312,11 @@ PYBIND11_MODULE(Composites_parting, m) {
                 py::arg("note")    = r.skirtLevelStrips.note,
                 py::arg("walls")   = levelStripWalls);
 
+            nextdrape::Log::info("[MOULD-MARSHAL] result marshalled, elapsed=",
+                              std::chrono::duration<double>(
+                                  std::chrono::steady_clock::now() - marshalStart)
+                                  .count(),
+                              " s - returning to Python");
             return py::dict(
                 py::arg("success")               = ok,
                 py::arg("status")                = nextdrape::PartingStatusToString(r.status),

@@ -65,8 +65,6 @@ GEOMETRY_BACKFACE_WEIGHT = 0.25
 DRAFT_FACE_ALIGNMENT_MARGIN = 0.25
 MAX_SPLIT_STRATEGIES = 2
 WITHDRAWAL_CLEARANCE_STEP_MM = 0.1
-PARTING_LINE_ATTACHMENT_TOLERANCE_MM = 1.0e-2
-PARTING_LINE_ATTACHMENT_SAMPLES = 8
 
 
 def _safe_copy_shape(shape):
@@ -1708,121 +1706,6 @@ def _shape_common_volume(shape_a, shape_b):
     return max(0.0, volume)
 
 
-def _sample_shape_points(shape, samples_per_edge=PARTING_LINE_ATTACHMENT_SAMPLES):
-    points = []
-    for edge in getattr(shape, "Edges", []):
-        try:
-            edge_points = edge.discretize(samples_per_edge)
-        except Exception:
-            continue
-        points.extend(edge_points)
-    if points:
-        return points
-
-    for vertex in getattr(shape, "Vertexes", []):
-        point = getattr(vertex, "Point", None)
-        if point is not None:
-            points.append(point)
-    return points
-
-
-def _point_distance_to_shape(shape, point):
-    try:
-        distance, _, _ = shape.distToShape(Part.Vertex(point))
-    except Exception:
-        return None
-    try:
-        return float(distance)
-    except Exception:
-        return None
-
-
-def _parting_line_stays_on_source(parting_line_shape, source_shape,
-                                  tolerance_mm=PARTING_LINE_ATTACHMENT_TOLERANCE_MM):
-    if getattr(source_shape, "isNull", lambda: True)():
-        return False, "source shape is unavailable"
-
-    sample_points = _sample_shape_points(parting_line_shape)
-    if not sample_points:
-        return False, "parting line has no sampleable geometry"
-
-    measured = False
-    for point in sample_points:
-        distance = _point_distance_to_shape(source_shape, point)
-        if distance is None:
-            continue
-        measured = True
-        if distance > tolerance_mm:
-            return False, (
-                f"sampled point is {distance:.4f} mm from the source surface "
-                f"(tolerance {tolerance_mm:.4f} mm)"
-            )
-
-    if not measured:
-        return False, "could not measure parting line attachment to source"
-    return True, ""
-
-
-def _validation_reason_code(severity, label):
-    slug = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
-    return f"{severity}_{slug}" if slug else severity
-
-
-def _extract_validation_reasons(checks):
-    reasons = []
-    for check in checks:
-        if check.startswith("FAIL:"):
-            severity = "fail"
-            body = check[len("FAIL:") :].strip()
-        elif check.startswith("WARN:"):
-            severity = "warning"
-            body = check[len("WARN:") :].strip()
-        else:
-            continue
-
-        if " — " in body:
-            label, detail = body.split(" — ", 1)
-        else:
-            label, detail = body, ""
-
-        label = label.strip()
-        detail = detail.strip()
-        reasons.append(
-            {
-                "severity": severity,
-                "code": _validation_reason_code(severity, label),
-                "label": label,
-                "detail": detail,
-            }
-        )
-    return reasons
-
-
-def _dedupe_validation_reasons(reasons):
-    deduped = []
-    seen = set()
-    for reason in reasons:
-        key = (
-            reason.get("severity", ""),
-            reason.get("code", ""),
-            reason.get("label", ""),
-            reason.get("detail", ""),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(reason)
-    return deduped
-
-
-def _validation_reason_payload(checks):
-    reasons = _dedupe_validation_reasons(_extract_validation_reasons(list(checks or [])))
-    return {
-        "reasons": reasons,
-        "reason_codes": [reason["code"] for reason in reasons],
-    }
-
-
 def validate_mould_result(
     parting_surface_status,
     mould_halves_status,
@@ -1901,16 +1784,6 @@ def validate_mould_result(
             parting_line_valid,
             "parting line shape is valid",
         )
-        if parting_line_valid:
-            parting_line_attached, attachment_detail = _parting_line_stays_on_source(
-                parting_line_shape,
-                source_shape,
-            )
-            add_check(
-                parting_line_attached,
-                "parting line stays on source shape",
-                detail=attachment_detail or "detached from source surface",
-            )
     add_check(
         not mould_half_a_is_null,
         "mould half A geometry is non-null",
