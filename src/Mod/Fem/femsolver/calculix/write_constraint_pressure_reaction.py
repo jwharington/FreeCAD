@@ -164,6 +164,42 @@ def decompose_wrench(force, moment, shift_scale, free_m_limit):
     return shift, m_parallel + m_perp * (1.0 - scale)
 
 
+def jig321_support_nodes(ccxwriter, femmesh):
+    """The mesh nodes held by the analysis's Jig321 constraints.
+
+    The ids come from write_constraint_jig321 when it has run.  When they are
+    absent the node nearest each support position is searched for - and that
+    search walks every node of the mesh, in Python, for every support.  This
+    runs once per load step, so the result is remembered on the constraint:
+    without that, a batch deck spends a full mesh walk on every step, which
+    measured as ~2 minutes per step on a 77k-node part.
+    """
+    nodes = set()
+    for femobj in getattr(ccxwriter.member, "cons_jig321", []):
+        support_ids = femobj.get("SupportNodeIds", [])
+        if not support_ids:
+            jig321_obj = femobj.get("Object")
+            if jig321_obj and hasattr(jig321_obj, "Supports"):
+                for support_pos in jig321_obj.Supports:
+                    min_dist = float("inf")
+                    closest_nid = None
+                    for nid, node_pos in femmesh.Nodes.items():
+                        try:
+                            node_vec = Vector(node_pos[0], node_pos[1], node_pos[2])
+                            dist = (node_vec - support_pos).Length
+                            if dist < min_dist:
+                                min_dist = dist
+                                closest_nid = nid
+                        except Exception:
+                            continue
+                    if closest_nid is not None and min_dist < 1.0:
+                        support_ids = list(support_ids) + [closest_nid]
+                if isinstance(femobj, dict):
+                    femobj["SupportNodeIds"] = list(support_ids)
+        nodes.update(support_ids)
+    return nodes
+
+
 def write_reaction_distributing_coupling(
     f,
     prs_obj,
@@ -237,30 +273,7 @@ def write_reaction_distributing_coupling(
 
     # Exclude Jig321-constrained nodes to avoid *BOUNDARY/*DISTRIBUTING COUPLING DOF conflict.
     # The Jig321 support nodes are fully constrained (*BOUNDARY), so DCOUP3D cannot couple to them.
-    jig321_nodes = set()
-    for femobj in getattr(ccxwriter.member, "cons_jig321", []):
-        # Try the new SupportNodeIds key first (if write_constraint_jig321 has populated it)
-        support_ids = femobj.get("SupportNodeIds", [])
-        if not support_ids:
-            # Fallback: try to map jig321_obj.Supports positions to mesh nodes
-            jig321_obj = femobj.get("Object")
-            if jig321_obj and hasattr(jig321_obj, "Supports"):
-                mesh = femmesh
-                for support_pos in jig321_obj.Supports:
-                    min_dist = float("inf")
-                    closest_nid = None
-                    for nid, node_pos in mesh.Nodes.items():
-                        try:
-                            node_vec = Vector(node_pos[0], node_pos[1], node_pos[2])
-                            dist = (node_vec - support_pos).Length
-                            if dist < min_dist:
-                                min_dist = dist
-                                closest_nid = nid
-                        except Exception:
-                            continue
-                    if closest_nid is not None and min_dist < 1.0:
-                        support_ids = list(support_ids) + [closest_nid]
-        jig321_nodes.update(support_ids)
+    jig321_nodes = jig321_support_nodes(ccxwriter, femmesh)
 
     nodes_excluded = 0
     for nid in jig321_nodes:

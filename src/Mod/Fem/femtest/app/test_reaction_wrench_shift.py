@@ -25,6 +25,7 @@ import pytest
 
 from femsolver.calculix.write_constraint_pressure_reaction import (
     decompose_wrench,
+    jig321_support_nodes,
 )
 
 Vector = FreeCAD.Vector
@@ -100,6 +101,65 @@ def test_no_force_returns_moment_unchanged():
     shift, reduced = decompose_wrench(Vector(0, 0, 0), moment, 1.0, 50.0)
     assert shift.Length == pytest.approx(0.0, abs=1e-12)
     assert (reduced - moment).Length < 1e-9
+
+
+class _CountingMesh:
+    """A mesh whose node access is counted, like the real one's cost."""
+
+    def __init__(self, nodes):
+        self._nodes = nodes
+        self.scans = 0
+
+    @property
+    def Nodes(self):
+        self.scans += 1
+        return self._nodes
+
+
+def _jig(supports):
+    class _Jig:
+        Supports = supports
+
+    return {"Object": _Jig()}
+
+
+def _writer(jigs):
+    class _Member:
+        cons_jig321 = jigs
+
+    class _Writer:
+        member = _Member()
+
+    return _Writer()
+
+
+def test_jig321_support_nodes_finds_the_nearest_node():
+    mesh = _CountingMesh({1: (0.0, 0.0, 0.0), 2: (0.0, 0.0, 5.0),
+                          3: (10.0, 0.0, 0.0)})
+    found = jig321_support_nodes(_writer([_jig([Vector(0.1, 0.0, 4.9)])]),
+                                 mesh)
+    assert found == {2}, "nearest node to the support position, got %r" % found
+
+
+def test_jig321_support_nodes_walks_the_mesh_once_not_per_step():
+    """The node search is remembered, so a batch step does not repeat it.
+
+    The search visits every node of the mesh for every support position and
+    this runs once per load step: left uncached, a batch deck spent minutes
+    per step on a 77k-node part (measured ~2 minutes per step).
+    """
+    mesh = _CountingMesh({1: (0.0, 0.0, 0.0), 2: (0.0, 0.0, 5.0)})
+    jigs = [_jig([Vector(0.0, 0.0, 5.0)])]
+    writer = _writer(jigs)
+
+    jig321_support_nodes(writer, mesh)
+    after_first = mesh.scans
+    jig321_support_nodes(writer, mesh)
+
+    assert after_first == 1, "one walk per support position, got %d" % after_first
+    assert mesh.scans == after_first, (
+        "the second step re-walked the mesh (%d walks) - the result was not "
+        "remembered on the constraint" % mesh.scans)
 
 
 def test_scale_clamping():

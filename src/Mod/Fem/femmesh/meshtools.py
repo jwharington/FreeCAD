@@ -63,8 +63,13 @@ def get_femnodes_by_femobj_with_references(femmesh, femobj):
     The node set depends only on the mesh and the constraint's references,
     which are identical for every load state of a batch run - a batch deck
     writes one step per state and would otherwise re-run the geometric
-    node search for each step.  The cache key carries the mesh's node
-    count, so a re-mesh invalidates it.
+    node search for each step.
+
+    The key is the constraint object's name, the mesh's node count and the
+    references - NOT id(femmesh): FreeCAD hands back a fresh Python wrapper
+    for a mesh access, so an id() key never matches twice and the cache
+    silently did nothing (measured: a batch step still cost ~2 minutes,
+    with only 7.7k cards to write, so the time was this search).
     """
     try:
         refs = tuple(
@@ -75,7 +80,7 @@ def get_femnodes_by_femobj_with_references(femmesh, femobj):
         refs = None
     cache_key = None
     if refs is not None:
-        cache_key = (id(femmesh), femmesh.NodeCount, refs)
+        cache_key = (femobj["Object"].Name, femmesh.NodeCount, refs)
         cached = _femnodes_cache.get(cache_key)
         if cached is not None:
             return cached
