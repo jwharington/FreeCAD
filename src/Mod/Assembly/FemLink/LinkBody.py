@@ -1251,7 +1251,7 @@ class LinkBody(FPBase):
             for body in bodies:
                 m = state[(body.Label, "Placement")].toMatrix()
                 vector.extend(m.A)
-                yield vector
+            yield vector
 
     def state_set(self, fp, vector):
         bodies = get_assembly_bodies(fp.getParentGroup())

@@ -117,6 +117,42 @@ class _ReactionModel:
 
 @pytest.mark.slow
 
+
+def test_states_vector_yields_one_row_per_state():
+    """One state is one row - no matter how many bodies the assembly has.
+
+    ``state_set`` reads every body's placement from a single vector, so
+    ``states_vector`` must build that one vector and yield it once.  Yielding
+    inside the per-body loop instead emits one row per body per state (each
+    row a little longer than the last), which multiplies the load cases the
+    batch writes - ten bodies meant ten deck steps per state.
+    """
+    from unittest.mock import Mock, patch
+
+    from FemLink import LinkBody as linkbody
+
+    # TWO bodies on purpose: the bug this pins emits one row per body, so a
+    # single-body fixture cannot see it.
+    bodies = []
+    state = {("Reaction_X", "Force"): FreeCAD.Vector(1, 2, 3)}
+    for label in ("B1", "B2"):
+        body = Mock()
+        body.Label = label
+        bodies.append(body)
+        state[(label, "Placement")] = FreeCAD.Placement(
+            FreeCAD.Vector(4, 5, 6), FreeCAD.Rotation())
+
+    fp = Mock()
+    proxy = linkbody.LinkBody.__new__(linkbody.LinkBody)
+    proxy.all_states = [state, dict(state)]
+    fp.Proxy = proxy
+
+    with patch.object(linkbody, "get_assembly_bodies", return_value=bodies):
+        rows = list(proxy.states_vector(fp))
+
+    assert len(rows) == 2, (
+        "2 states over 2 bodies must yield 2 rows, got %d" % len(rows))
+
 def test_a_repeated_state_does_not_get_its_own_deck_step():
     """A load state that repeats must not cost another deck step.
 

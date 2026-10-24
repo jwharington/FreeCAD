@@ -206,6 +206,38 @@ def dedupe_states(states):
     return np.array(unique) if unique else np.empty((0, 0))
 
 
+def _state_wrenches(femlnk, vector):
+    """One state vector's reaction wrenches, as readable text.
+
+    The vector is flat - three numbers per state key, placement keys
+    excluded - exactly the layout ``state_set`` reads it back with.
+    """
+    keys = getattr(femlnk.Proxy, "state_keys", None)
+    if not isinstance(keys, (list, tuple)):
+        return ""   # instrumentation must not break a stub proxy
+    parts = []
+    offset = 0
+    for key in keys:
+        if isinstance(key, tuple) and key[1] == "Placement":
+            continue
+        values = vector[offset:offset + 3]
+        offset += 3
+        if (isinstance(key, tuple) and key[0].startswith("Reaction_")
+                and key[1] in ("Force", "Torque")):
+            magnitude = float(np.linalg.norm(np.asarray(values, dtype=float)))
+            unit = "N" if key[1] == "Force" else "Nmm"
+            parts.append("%s %.1f %s" % (key[0], magnitude, unit))
+    return ", ".join(parts)
+
+
+def log_state_set(femlnk, states, title):
+    """Print the load cases of a state set - what the solver will run."""
+    Console.PrintMessage("... %s: %d case(s)\n" % (title, len(states)))
+    for index, vector in enumerate(states):
+        Console.PrintMessage(
+            "...   case %d: %s\n" % (index, _state_wrenches(femlnk, vector)))
+
+
 def run_stored_analysis(femlnk, reduced=False, dry_run=False, batch_mode=None):
     Console.PrintMessage("... assembly FEM analysis\n")
     if not femlnk.Proxy.num_states():
@@ -230,8 +262,10 @@ def run_stored_analysis(femlnk, reduced=False, dry_run=False, batch_mode=None):
         n_bodies=femlnk.Proxy.num_bodies(femlnk),
     )
     if reduced:
+        log_state_set(femlnk, states_reduced, "SVD-reduced subset (what runs)")
         out_forces(femlnk, states_reduced, dry_run=dry_run, batch_mode=batch_mode)
     else:
+        log_state_set(femlnk, states, "full state set (what runs)")
         out_forces(femlnk, states, dry_run=dry_run, batch_mode=batch_mode)
     return hull, dim_reduced
 
@@ -244,7 +278,11 @@ def assembly_collect_states(assembly, femlnk, index=None):
     initialPlcs = saveAssemblyPartsPlacements(assembly)
     nsim = assembly.numberOfFrames()
     if (not nsim) or (nsim < 2):
+        Console.PrintWarning(
+            "... assemble collect load states: the assembly has %d frame(s) - "
+            "nothing to collect\n" % (nsim or 0))
         return finish()
+    Console.PrintMessage("... collecting from %d frame(s)\n" % nsim)
 
     for idx in range(1, nsim):
         if index and (idx is not index):
@@ -336,6 +374,10 @@ def exercise_load_case_pipeline(
     num_states = femlnk.Proxy.num_states()
     if num_states == 0:
         num_states = synthesize_load_cases(femlnk, scale_factors=scale_factors)
+        Console.PrintWarning(
+            "... NO states collected from the assembly's frames - SYNTHESISED "
+            "%d scaled copies of the current pose instead.  These are NOT the "
+            "frame sweep.\n" % num_states)
 
     if num_states == 0:
         return {
