@@ -116,6 +116,45 @@ class _ReactionModel:
 
 
 @pytest.mark.slow
+
+def test_a_repeated_state_does_not_get_its_own_deck_step():
+    """A load state that repeats must not cost another deck step.
+
+    The LinkBody collects one state per simulation frame.  A mechanism that
+    dwells - or a sweep whose loads land on the same wrench on many frames -
+    produces the same state again and again, and a deck step per frame makes
+    the solver solve the same case as many times as the frame appeared.
+    run_stored_analysis must hand the batch only the distinct states.
+    """
+    from unittest.mock import Mock, patch
+
+    from FemLink import UtilsAnalysis as ua
+
+    first = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    second = [9.0, 8.0, 7.0, 6.0, 5.0, 4.0]
+    states = [first, first, second, first, second]
+
+    femlnk = Mock()
+    proxy = femlnk.Proxy
+    proxy.num_states.return_value = len(states)
+    proxy.states_vector.return_value = states
+    proxy.num_bodies.return_value = 0
+    analysis = Mock()
+    analysis.Group = []
+    proxy.findAnalysis.return_value = analysis
+
+    with (
+        patch.object(ua, "svd_qhull_reduce",
+                     return_value=(states, [], [])),
+        patch.object(ua, "out_forces") as out_forces,
+    ):
+        ua.run_stored_analysis(femlnk, reduced=False, dry_run=True,
+                              batch_mode=True)
+
+    handed = out_forces.call_args.args[1]
+    assert len(handed) == 2, (
+        "5 states, 2 distinct - the batch was handed %d" % len(handed))
+
 def test_multistep_deck_has_one_step_per_case(tmp_path):
     model = _ReactionModel()
     try:

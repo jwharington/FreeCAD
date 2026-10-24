@@ -186,6 +186,26 @@ def out_forces(femlnk, states, dry_run=False, batch_mode=False):
     _run_state_sequence(femlnk, states, dry_run=dry_run, batch_mode=batch_mode)
 
 
+def dedupe_states(states):
+    """The states with exact duplicates removed, order preserved.
+
+    The LinkBody collects one state per simulation frame, and frames that
+    repeat a pose carry the same loads.  A deck step per frame spends solver
+    time solving the same case again, so the batch is handed the distinct
+    states only.  Rows are compared on every value - loads and placements
+    alike - so a state that differs in any of them is kept.
+    """
+    unique = []
+    seen = set()
+    for row in states:
+        key = tuple(float(value) for value in np.asarray(row).ravel())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(row)
+    return np.array(unique) if unique else np.empty((0, 0))
+
+
 def run_stored_analysis(femlnk, reduced=False, dry_run=False, batch_mode=None):
     Console.PrintMessage("... assembly FEM analysis\n")
     if not femlnk.Proxy.num_states():
@@ -194,9 +214,11 @@ def run_stored_analysis(femlnk, reduced=False, dry_run=False, batch_mode=None):
         batch_mode = _batch_mode_enabled()
 
     states = np.array(list(femlnk.Proxy.states_vector(femlnk)))
+    collected = len(states)
+    states = dedupe_states(states)
     Console.PrintMessage(
-        "... states_vector rows: %d, all_states entries: %d\n"
-        % (len(states), femlnk.Proxy.num_states()))
+        "... %d state(s) collected, %d distinct after dedupe\n"
+        % (collected, len(states)))
     if batch_mode and len(states) > 0:
         # Some FEM-link constraints (including Jig321) are created lazily during
         # LOAD updates, so prime the first state before deciding batch eligibility.
