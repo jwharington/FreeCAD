@@ -1121,10 +1121,17 @@ class LinkBody(FPBase):
                 com = self.state[(id, "CenterOfMass")]
                 obj.CenterOfMass = Vector(com.x, com.y, com.z)
 
-            reference = local_reference(
-                get_reference_subobject(attr_side("Reference", None)))
-            if has_valid_reference_subobject(reference):
-                obj.References = reference
+            # A reference is geometry, not load state: it is set when the
+            # constraint is created, and only filled in here if it is still
+            # empty.  Rewriting it on every load state destroyed a selection
+            # made on the constraint (needed when the FEM's load interface is
+            # not the same feature the joint pivots on) and repeated the same
+            # reference resolution once per state.
+            if not getattr(obj, "References", None):
+                reference = local_reference(
+                    get_reference_subobject(attr_side("Reference", None)))
+                if has_valid_reference_subobject(reference):
+                    obj.References = reference
             return
 
         # SAVE or EXECUTE: read live joint reactions.
@@ -1145,10 +1152,11 @@ class LinkBody(FPBase):
             if hasattr(body, "CenterOfMass") and hasattr(obj, "CenterOfMass"):
                 obj.CenterOfMass = body.CenterOfMass
 
-            reference = local_reference(
-                get_reference_subobject(attr_side("Reference", None)))
-            if has_valid_reference_subobject(reference):
-                obj.References = reference
+            if not getattr(obj, "References", None):
+                reference = local_reference(
+                    get_reference_subobject(attr_side("Reference", None)))
+                if has_valid_reference_subobject(reference):
+                    obj.References = reference
 
         if mode is UpdateMode.SAVE:
             self.state[(id, "Force")] = force
