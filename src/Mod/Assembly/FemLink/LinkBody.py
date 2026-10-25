@@ -254,12 +254,33 @@ class LinkBody(FPBase):
 
         super().__init__(obj)
 
+    def ensure_states_property(self, fp):
+        """Give the object the states property if it predates it.
+
+        A document written before the states were kept has a LinkBody with
+        no AllStates property, and addProperty only runs when the object is
+        created - so an older document needs it adding on first use.
+        """
+        if hasattr(fp, "AllStates"):
+            return
+        fp.addProperty(
+            "App::PropertyString",
+            "AllStates",
+            "Assembly",
+            "The collected load states, kept so a saved assembly reopens "
+            "with them",
+            locked=True,
+        )
+        fp.AllStates = ""
+
     def store_states(self, fp):
         """Write the states onto the document object."""
+        self.ensure_states_property(fp)
         fp.AllStates = encode_states(getattr(self, "all_states", []))
 
     def load_states(self, fp):
         """Take the states from the document object, if it carries any."""
+        self.ensure_states_property(fp)
         self.all_states = decode_states(getattr(fp, "AllStates", ""))
 
     def ensure_states(self, fp):
