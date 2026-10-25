@@ -164,6 +164,21 @@ def decompose_wrench(force, moment, shift_scale, free_m_limit):
     return shift, m_parallel + m_perp * (1.0 - scale)
 
 
+def require_coupling_weights(node_weights, prs_obj):
+    """Refuse a distributing coupling that has no nodes left.
+
+    A coupling with no nodes is not a solver error: the reaction is simply
+    never applied, so the part is analysed unloaded and the stresses come
+    back plausible.  That is worse than stopping, so it stops.
+    """
+    if sum(node_weights.values()) <= 0.0:
+        raise RuntimeError(
+            "ConstraintReaction %s: the distributing coupling has no nodes "
+            "left - its faces produced no weights, or Jig321 holds them all - "
+            "so the reaction would silently not be applied"
+            % getattr(prs_obj, "Name", prs_obj))
+
+
 def exclude_jig321_nodes(node_weights, jig321_nodes):
     """Drop the Jig321-held nodes from the coupling weights, and count them.
 
@@ -307,13 +322,8 @@ def write_reaction_distributing_coupling(
             )
         )
 
+    require_coupling_weights(node_weights, prs_obj)
     total_weight = sum(node_weights.values())
-    if total_weight <= 0.0:
-        Console.PrintWarning(
-            "ConstraintReaction {}: distributing-coupling mode requested but "
-            "no valid face-node weights were built; reaction is skipped.\n".format(prs_obj.Name)
-        )
-        return
 
     if step_scoped:
         # Batch-safe path: do not define new nodes/elements inside step blocks.

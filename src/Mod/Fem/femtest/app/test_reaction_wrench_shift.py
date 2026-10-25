@@ -20,6 +20,8 @@ nose-up case delivered −1602, and only the verification parse of the
 written *CLOAD caught it.
 """
 
+from types import SimpleNamespace
+
 import FreeCAD
 import pytest
 
@@ -27,6 +29,7 @@ from femsolver.calculix.write_constraint_pressure_reaction import (
     decompose_wrench,
     exclude_jig321_nodes,
     jig321_support_nodes,
+    require_coupling_weights,
 )
 
 Vector = FreeCAD.Vector
@@ -161,6 +164,22 @@ def test_jig321_support_nodes_walks_the_mesh_once_not_per_step():
     assert mesh.scans == after_first, (
         "the second step re-walked the mesh (%d walks) - the result was not "
         "remembered on the constraint" % mesh.scans)
+
+
+def test_a_coupling_with_no_nodes_is_refused():
+    """A reaction that cannot be applied must stop the write, not be skipped.
+
+    An empty distributing coupling is not a solver error: the reaction is
+    simply never applied, so the part is analysed unloaded and the stresses
+    come back plausible.  Silently skipping it is the one outcome that looks
+    fine and is wrong.
+    """
+    with pytest.raises(RuntimeError):
+        require_coupling_weights({}, SimpleNamespace(Name="ConA"))
+
+
+def test_a_coupling_with_nodes_is_accepted():
+    require_coupling_weights({1: 1.0, 2: 0.0}, SimpleNamespace(Name="ConA"))
 
 
 def test_exclude_jig321_nodes_removes_only_the_held_nodes():
