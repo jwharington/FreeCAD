@@ -29,6 +29,7 @@ from femsolver.calculix.write_constraint_pressure_reaction import (
     decompose_wrench,
     exclude_jig321_nodes,
     jig321_support_nodes,
+    node_position,
     require_coupling_weights,
 )
 
@@ -164,6 +165,41 @@ def test_jig321_support_nodes_walks_the_mesh_once_not_per_step():
     assert mesh.scans == after_first, (
         "the second step re-walked the mesh (%d walks) - the result was not "
         "remembered on the constraint" % mesh.scans)
+
+
+def test_node_position_does_not_build_the_whole_node_table():
+    """Reading one node must not rebuild the mesh's node dict.
+
+    ``femmesh.Nodes`` builds a dict of every node in the mesh on each access
+    (77k on the measured part), and the coupling loop read it once per node,
+    per load step.  That was the entire cost of writing a batch deck -
+    measured at ~85 seconds per step, and 65% of a py-spy profile's samples.
+    """
+
+    class _Mesh:
+        def __init__(self):
+            self.table = {i: (float(i), 0.0, 0.0) for i in range(1, 200)}
+            self.table_reads = 0
+
+        @property
+        def Nodes(self):
+            self.table_reads += 1
+            return self.table
+
+        def getNodeById(self, nid):
+            return self.table[nid]
+
+    mesh = _Mesh()
+    assert node_position(mesh, 5) == Vector(5.0, 0.0, 0.0)
+    assert mesh.table_reads == 0, (
+        "the whole node table was built to read one node")
+
+
+def test_node_position_falls_back_to_the_node_table():
+    class _Mesh:
+        Nodes = {5: (1.0, 2.0, 3.0)}
+
+    assert node_position(_Mesh(), 5) == Vector(1.0, 2.0, 3.0)
 
 
 def test_a_coupling_with_no_nodes_is_refused():

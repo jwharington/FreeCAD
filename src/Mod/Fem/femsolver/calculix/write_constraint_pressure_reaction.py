@@ -164,6 +164,30 @@ def decompose_wrench(force, moment, shift_scale, free_m_limit):
     return shift, m_parallel + m_perp * (1.0 - scale)
 
 
+def node_position(femmesh, nid, table=None):
+    """One node's position, without rebuilding the node table for it.
+
+    ``femmesh.Nodes`` builds a dict of every node in the mesh on each access
+    - 77k on the part this was measured on - so reading it inside a loop over
+    nodes costs the whole mesh once per node, per load step.  That was the
+    batch deck's cost: minutes per step.  Ask by id when the mesh can, and
+    pass the table in when the caller already holds it.
+    """
+    getter = getattr(femmesh, "getNodeById", None)
+    if getter is not None:
+        position = getter(nid)
+        if position is not None:
+            if hasattr(position, "x"):
+                return Vector(position.x, position.y, position.z)
+            return Vector(*position)
+    if table is None:
+        table = femmesh.Nodes
+    position = table[nid]
+    if hasattr(position, "x"):
+        return position
+    return Vector(*position)
+
+
 def require_coupling_weights(node_weights, prs_obj):
     """Refuse a distributing coupling that has no nodes left.
 
@@ -324,6 +348,9 @@ def write_reaction_distributing_coupling(
 
     require_coupling_weights(node_weights, prs_obj)
     total_weight = sum(node_weights.values())
+    # Read the node table once for the whole call, not once per node: see
+    # node_position.  Both branches below need it.
+    node_table = None if hasattr(femmesh, "getNodeById") else femmesh.Nodes
 
     if step_scoped:
         # Batch-safe path: do not define new nodes/elements inside step blocks.
@@ -346,11 +373,7 @@ def write_reaction_distributing_coupling(
 
         for nid, area_w in node_weights.items():
             w = area_w / total_weight
-            node_pos = femmesh.Nodes[nid]
-            if hasattr(node_pos, "x"):
-                node_vec = node_pos
-            else:
-                node_vec = Vector(node_pos[0], node_pos[1], node_pos[2])
+            node_vec = node_position(femmesh, nid, node_table)
             r = node_vec - ref_base
             weighted_nodes.append((nid, w, r))
             centroid += r * w
@@ -458,8 +481,9 @@ def write_reaction_distributing_coupling(
 
     max_node_id = 0
     try:
-        if femmesh.Nodes:
-            max_node_id = max(femmesh.Nodes.keys())
+        table = femmesh.Nodes
+        if table:
+            max_node_id = max(table)
     except Exception:
         max_node_id = getattr(femmesh, "NodeCount", 0)
 
@@ -537,7 +561,7 @@ def write_reaction_distributing_coupling(
         centroid = Vector(0, 0, 0)
         for nid, area_w in node_weights.items():
             w = area_w / total_weight
-            r = femmesh.Nodes[nid] - ref_base
+            r = node_position(femmesh, nid, node_table) - ref_base
             weighted_nodes.append((nid, w, r))
             centroid += r * w
 
