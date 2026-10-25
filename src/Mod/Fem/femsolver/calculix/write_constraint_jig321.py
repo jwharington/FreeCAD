@@ -78,6 +78,25 @@ def write_meshdata_constraint(f, femobj, jig321_obj, ccxwriter):
         f.write(f"{n},\n")
 
 
+def node_position(femmesh, node):
+    """One node's coordinates, without building the whole node table.
+
+    ``femmesh.Nodes`` materialises a dict of every node in the mesh - 77k on
+    the part this was measured on - and the caller runs once per load step,
+    for the three support nodes it actually needs.  That was the whole cost
+    of writing a batch deck: minutes per step.  The node is asked for by id
+    when the mesh supports it, and the table is the fallback.
+    """
+    getter = getattr(femmesh, "getNodeById", None)
+    if getter is not None:
+        position = getter(node)
+        if position is not None:
+            if hasattr(position, "x"):
+                return Vector(position.x, position.y, position.z)
+            return Vector(*position)
+    return Vector(*femmesh.Nodes[node])
+
+
 def write_constraint(f, femobj, jig321_obj, ccxwriter):
     if len(femobj["Nodes"]) < 3:
         Console.PrintError("ConstraintJig321: Need at least 3 nodes to define a triangle.\n")
@@ -85,7 +104,7 @@ def write_constraint(f, femobj, jig321_obj, ccxwriter):
 
     femmesh = ccxwriter.mesh_object.FemMesh
 
-    support_pos = [Vector(*femmesh.Nodes[node]) for node in femobj["Nodes"]]
+    support_pos = [node_position(femmesh, node) for node in femobj["Nodes"]]
     X = support_pos[1] - support_pos[0]
     Y = support_pos[2] - support_pos[0]
 

@@ -83,6 +83,44 @@ class TestHydroJigCommits(unittest.TestCase):
         )
 
     # ********************************************************************************************
+    def test_jig321_node_position_does_not_build_the_whole_node_table(self):
+        """The per-step Jig321 write must not materialise every mesh node.
+
+        write_constraint runs once per load step and needs the three support
+        nodes.  Reading femmesh.Nodes builds a dict of every node in the mesh
+        - 77k on the part this was measured on - which made writing a batch
+        deck take minutes per step.
+        """
+
+        class _Mesh:
+            def __init__(self):
+                self.table = {i: (float(i), 0.0, 0.0) for i in range(1, 500)}
+                self.table_reads = 0
+
+            @property
+            def Nodes(self):
+                self.table_reads += 1
+                return self.table
+
+            def getNodeById(self, node):
+                return self.table[node]
+
+        mesh = _Mesh()
+        position = write_constraint_jig321.node_position(mesh, 7)
+
+        self.assertEqual(Vector(7.0, 0.0, 0.0), position)
+        self.assertEqual(0, mesh.table_reads,
+                         "the whole node table was built to read one node")
+
+    def test_jig321_node_position_falls_back_to_the_node_table(self):
+        """A mesh with no by-id lookup still gives the position."""
+
+        class _Mesh:
+            Nodes = {7: (1.0, 2.0, 3.0)}
+
+        self.assertEqual(Vector(1.0, 2.0, 3.0),
+                         write_constraint_jig321.node_position(_Mesh(), 7))
+
     def test_write_step_output_writes_jig321_reaction_sets(self):
         # Keep this writer test small and focused by using
         # a minimal writer stub.
