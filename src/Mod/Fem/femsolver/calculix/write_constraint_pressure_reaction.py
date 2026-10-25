@@ -164,6 +164,22 @@ def decompose_wrench(force, moment, shift_scale, free_m_limit):
     return shift, m_parallel + m_perp * (1.0 - scale)
 
 
+def exclude_jig321_nodes(node_weights, jig321_nodes):
+    """Drop the Jig321-held nodes from the coupling weights, and count them.
+
+    They are fully constrained (*BOUNDARY), so a distributing coupling
+    cannot also claim them.  Removing every node is possible, and the caller
+    must then not write the coupling: an emptied coupling is a reaction that
+    silently does not get applied.
+    """
+    excluded = 0
+    for nid in jig321_nodes:
+        if nid in node_weights:
+            del node_weights[nid]
+            excluded += 1
+    return excluded
+
+
 def jig321_support_nodes(ccxwriter, femmesh):
     """The mesh nodes held by the analysis's Jig321 constraints.
 
@@ -275,11 +291,7 @@ def write_reaction_distributing_coupling(
     # The Jig321 support nodes are fully constrained (*BOUNDARY), so DCOUP3D cannot couple to them.
     jig321_nodes = jig321_support_nodes(ccxwriter, femmesh)
 
-    nodes_excluded = 0
-    for nid in jig321_nodes:
-        if nid in node_weights:
-            del node_weights[nid]
-            nodes_excluded += 1
+    nodes_excluded = exclude_jig321_nodes(node_weights, jig321_nodes)
     if nodes_excluded > 0:
         Console.PrintWarning(
             "ConstraintReaction {}: excluded {} Jig321-constrained nodes from "

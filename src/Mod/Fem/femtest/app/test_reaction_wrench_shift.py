@@ -25,6 +25,7 @@ import pytest
 
 from femsolver.calculix.write_constraint_pressure_reaction import (
     decompose_wrench,
+    exclude_jig321_nodes,
     jig321_support_nodes,
 )
 
@@ -160,6 +161,27 @@ def test_jig321_support_nodes_walks_the_mesh_once_not_per_step():
     assert mesh.scans == after_first, (
         "the second step re-walked the mesh (%d walks) - the result was not "
         "remembered on the constraint" % mesh.scans)
+
+
+def test_exclude_jig321_nodes_removes_only_the_held_nodes():
+    weights = {1: 1.0, 2: 1.0, 3: 1.0}
+    removed = exclude_jig321_nodes(weights, {2, 3})
+    assert removed == 2
+    assert weights == {1: 1.0}, "only the held nodes may be dropped"
+
+
+def test_excluding_every_node_empties_the_coupling():
+    """The case the caller must refuse: a coupling with no nodes left.
+
+    An emptied coupling is not an error the solver reports - the reaction
+    is simply not applied, so the part is analysed unloaded and the result
+    looks plausible.  The caller guards on a zero total weight, and this
+    pins what that guard is guarding against.
+    """
+    weights = {1: 1.0, 2: 1.0}
+    exclude_jig321_nodes(weights, {1, 2})
+    assert weights == {}
+    assert sum(weights.values()) <= 0.0
 
 
 def test_scale_clamping():

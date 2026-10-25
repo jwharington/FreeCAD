@@ -57,6 +57,24 @@ JUNCTION_TOL = 1.0e-3
 _femnodes_cache = {}
 
 
+def node_cache_key(femobj, femmesh):
+    """The key a femobj's node set may be cached under, or None.
+
+    It must separate every input the node set depends on - the constraint
+    (its name) and its references - because a key that is too broad returns
+    ANOTHER constraint's nodes, which is worse than not caching at all.  The
+    mesh's node count is carried so a re-mesh invalidates it.
+    """
+    try:
+        refs = tuple(
+            (obj.Name, tuple(subs))
+            for obj, subs in femobj["Object"].References
+        )
+    except Exception:
+        return None
+    return (femobj["Object"].Name, femmesh.NodeCount, refs)
+
+
 def get_femnodes_by_femobj_with_references(femmesh, femobj):
     """The femobj's node set, memoised per mesh and reference set.
 
@@ -71,16 +89,8 @@ def get_femnodes_by_femobj_with_references(femmesh, femobj):
     silently did nothing (measured: a batch step still cost ~2 minutes,
     with only 7.7k cards to write, so the time was this search).
     """
-    try:
-        refs = tuple(
-            (obj.Name, tuple(subs))
-            for obj, subs in femobj["Object"].References
-        )
-    except Exception:
-        refs = None
-    cache_key = None
-    if refs is not None:
-        cache_key = (femobj["Object"].Name, femmesh.NodeCount, refs)
+    cache_key = node_cache_key(femobj, femmesh)
+    if cache_key is not None:
         cached = _femnodes_cache.get(cache_key)
         if cached is not None:
             return cached

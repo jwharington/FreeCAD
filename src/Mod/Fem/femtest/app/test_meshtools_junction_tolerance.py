@@ -18,11 +18,43 @@ but far outside the default 1e-7 face tolerance) and a mesh whose nodes
 sit on the *other* plan.
 """
 
+from types import SimpleNamespace
+
 import FreeCAD
 import Part
 import pytest
 
 from femmesh import meshtools
+
+
+def _constraint_femobj(name, references):
+    return {"Object": SimpleNamespace(Name=name, References=references)}
+
+
+def test_node_cache_key_separates_constraints_and_references():
+    """A node-set cache key must not let one constraint answer for another.
+
+    A key that is too broad returns ANOTHER constraint's nodes, which is
+    worse than not caching: the deck gets a load applied to the wrong nodes.
+    """
+    mesh = SimpleNamespace(NodeCount=100)
+    body = SimpleNamespace(Name="Body")
+    first = _constraint_femobj("ConA", [(body, ["Face1"])])
+    other_constraint = _constraint_femobj("ConB", [(body, ["Face1"])])
+    other_faces = _constraint_femobj("ConA", [(body, ["Face2"])])
+
+    keys = {meshtools.node_cache_key(first, mesh),
+            meshtools.node_cache_key(other_constraint, mesh),
+            meshtools.node_cache_key(other_faces, mesh)}
+    assert len(keys) == 3, "constraint name and references must both key it"
+
+
+def test_node_cache_key_changes_with_the_mesh():
+    body = SimpleNamespace(Name="Body")
+    femobj = _constraint_femobj("ConA", [(body, ["Face1"])])
+    before = meshtools.node_cache_key(femobj, SimpleNamespace(NodeCount=100))
+    after = meshtools.node_cache_key(femobj, SimpleNamespace(NodeCount=200))
+    assert before != after, "a re-mesh must not reuse the old node set"
 
 
 @pytest.fixture(name="offset_mesh_and_face")
