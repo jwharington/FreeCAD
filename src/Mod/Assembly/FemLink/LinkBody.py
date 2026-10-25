@@ -1,3 +1,4 @@
+import json
 import math
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -13,6 +14,65 @@ from FreeCAD import Console, Vector
 
 from .FPBase import FPBase
 from .UtilsFemLink import find_common_group_objects, get_assembly_bodies
+
+# The separator between the parts of a state key when it is written into the
+# document: a unit separator, which cannot occur in an object's name.
+STATE_KEY_SEPARATOR = "\x1f"
+
+
+def encode_states(states):
+    """The load states as text, for the document to carry them.
+
+    A Vector becomes its three numbers and a Placement its position and its
+    quaternion (seven); a key that is a tuple is joined by the separator.  The
+    placement is written as its own numbers rather than as a matrix, because
+    matrix-to-quaternion does not return the identical rotation.  The states
+    are otherwise transient - they live on the Python proxy and are lost when
+    the document is closed - so a saved assembly reopens with no load cases
+    and every rerun has to rebuild them.
+    """
+    encoded = []
+    for state in states:
+        entry = []
+        for key, value in state.items():
+            text = (STATE_KEY_SEPARATOR.join(key)
+                    if isinstance(key, tuple) else key)
+            if isinstance(value, Vector):
+                data = [value.x, value.y, value.z]
+            elif isinstance(value, FreeCAD.Placement):
+                data = [value.Base.x, value.Base.y, value.Base.z,
+                        *value.Rotation.Q]
+            else:
+                data = float(value)
+            entry.append([text, data])
+        encoded.append(entry)
+    return json.dumps(encoded)
+
+
+def decode_states(text):
+    """The states ``encode_states`` wrote, rebuilt."""
+    if not text:
+        return []
+    states = []
+    for entry in json.loads(text):
+        state = {}
+        for key_text, data in entry:
+            key = (tuple(key_text.split(STATE_KEY_SEPARATOR))
+                   if STATE_KEY_SEPARATOR in key_text else key_text)
+            if isinstance(data, list):
+                if len(data) == 3:
+                    state[key] = Vector(*data)
+                elif len(data) == 7:
+                    state[key] = FreeCAD.Placement(Vector(*data[:3]),
+                                                   FreeCAD.Rotation(*data[3:]))
+                else:
+                    raise ValueError(
+                        "a state value has %d numbers - neither a vector nor "
+                        "a placement: %r" % (len(data), key_text))
+            else:
+                state[key] = float(data)
+        states.append(state)
+    return states
 
 # create FEM analysis for each body?
 
@@ -176,11 +236,46 @@ class LinkBody(FPBase):
             locked=True,
         ).InertialCorrectionFactor = 1.0
 
+        # The collected load states are held on the Python proxy, which is
+        # not saved: without this the document reopens with no load cases and
+        # every rerun must rebuild them from the assembly's frames.
+        obj.addProperty(
+            "App::PropertyString",
+            "AllStates",
+            "Assembly",
+            "The collected load states, kept so a saved assembly reopens with "
+            "them",
+            locked=True,
+        ).AllStates = ""
+
         if obj.Body:
             if obj.Body.getLinkedObject():
                 obj.Label = f"LinkBody_{obj.Body.getLinkedObject().Label}"
 
         super().__init__(obj)
+
+    def store_states(self, fp):
+        """Write the states onto the document object."""
+        fp.AllStates = encode_states(getattr(self, "all_states", []))
+
+    def load_states(self, fp):
+        """Take the states from the document object, if it carries any."""
+        self.all_states = decode_states(getattr(fp, "AllStates", ""))
+
+    def ensure_states(self, fp):
+        """The states, loaded from the document when this proxy has none.
+
+        A reopened document gives a fresh proxy with no states of its own, so
+        the document's copy is adopted on first use rather than requiring an
+        explicit load.
+        """
+        if not hasattr(self, "all_states"):
+            self.load_states(fp)
+        if not hasattr(self, "state_keys") and self.all_states:
+            # The key order defines the flat vector layout state_set reads,
+            # and the decode preserves the order the states were written in.
+            self.state_keys = list(self.all_states[-1].keys())
+        return self.all_states
 
     def execute(self, fp):
         if not hasattr(fp, "Body"):
@@ -192,6 +287,9 @@ class LinkBody(FPBase):
         if self._get_body_mass_tons(fp.Body) is None:
             return
 
+        # Adopt the document's load states if this proxy has none: a reopened
+        # document gives a fresh proxy, and its states live on the object.
+        self.ensure_states(fp)
         self.updateFEMLinks(fp, mode=UpdateMode.EXECUTE)
 
         # line_info lives on the Python proxy, so force a ViewProvider refresh
@@ -888,7 +986,7 @@ class LinkBody(FPBase):
         # Console.PrintMessage(f"force_total {self.force_total}\n")
 
         if mode is UpdateMode.SAVE:
-            self.capture()
+            self.capture(fp)
 
     def updateJig(self, fp, analysis, body, mode: UpdateMode):
         body_obj = body.getLinkedObject()
@@ -1233,14 +1331,16 @@ class LinkBody(FPBase):
                 for i in [1, 2]:
                     joint_match(assembly, joint, i)
 
-    def capture(self):
-        if not hasattr(self, "all_states"):
-            self.all_states = []
+    def capture(self, fp):
+        """Keep the state just built, and write the set into the document."""
+        self.ensure_states(fp)
         self.all_states.append(self.state)
         self.state_keys = list(self.state.keys())
+        self.store_states(fp)
 
     def clear(self, fp):
         self.all_states = []
+        self.store_states(fp)
 
     def num_bodies(self, fp):
         return len(get_assembly_bodies(fp.getParentGroup()))
@@ -1248,7 +1348,7 @@ class LinkBody(FPBase):
     def states_vector(self, fp):
         bodies = get_assembly_bodies(fp.getParentGroup())
 
-        for state in self.all_states:
+        for state in self.ensure_states(fp):
             vector = []
             for key, v in state.items():
                 if isinstance(key, tuple) and (key[1] == "Placement"):

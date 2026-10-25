@@ -12,6 +12,7 @@ import shutil
 import statistics
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import FreeCAD as App
@@ -317,6 +318,68 @@ class TestLinkBody(unittest.TestCase):
 
     def tearDown(self):
         App.closeDocument(self.doc.Name)
+
+    def test_a_fresh_proxy_adopts_the_documents_states(self):
+        """The wiring, not just the encoding: a new proxy reads them back.
+
+        A reopened document gives a fresh proxy object while the states live
+        on the document object, so this is the path that was missing - the
+        document reopens with no load cases at all.
+        """
+        mod = self._import_linkbody()
+        document_object = SimpleNamespace(AllStates="")
+        document_object.AllStates = ""
+
+        writer = mod.LinkBody.__new__(mod.LinkBody)
+        writer.all_states = [
+            {("Reaction_BodyX_JointA", "Force"): App.Vector(1.0, 2.0, 3.0),
+             ("BodyX", "Placement"): App.Placement()},
+            {("Reaction_BodyX_JointA", "Force"): App.Vector(4.0, 5.0, 6.0),
+             ("BodyX", "Placement"): App.Placement()},
+        ]
+        writer.store_states(document_object)
+        self.assertNotEqual("", document_object.AllStates)
+
+        reopened = mod.LinkBody.__new__(mod.LinkBody)
+        states = reopened.ensure_states(document_object)
+
+        self.assertEqual(2, len(states))
+        self.assertEqual(App.Vector(4.0, 5.0, 6.0),
+                         states[1][("Reaction_BodyX_JointA", "Force")])
+        self.assertEqual(list(writer.all_states[-1].keys()), reopened.state_keys,
+                         "the key order the flat vectors are read with")
+
+    def test_states_survive_the_document_round_trip(self):
+        """The load states must be written into the document, not only the proxy.
+
+        They live on the Python proxy, which is not saved, so a document
+        reopened with no states makes every rerun rebuild the whole sweep -
+        and a batch-only rerun impossible.
+        """
+        mod = self._import_linkbody()
+        placement = App.Placement(App.Vector(4.0, 5.0, 6.0),
+                                  App.Rotation(App.Vector(0, 0, 1), 30.0))
+        state = {
+            ("Reaction_BodyX_JointA", "Force"): App.Vector(1.0, 2.0, 3.0),
+            ("Reaction_BodyX_JointA", "Torque"): App.Vector(0.5, 0.0, -0.5),
+            ("BodyX", "Placement"): placement,
+        }
+
+        back = mod.decode_states(mod.encode_states([state]))
+
+        self.assertEqual(1, len(back))
+        self.assertEqual(state, back[0])
+
+    def test_a_state_with_no_numbers_is_refused(self):
+        """A value that is neither a vector nor a placement must be refused.
+
+        Guessing at its shape would silently rebuild a state with the wrong
+        geometry, which is worse than refusing the file.
+        """
+        mod = self._import_linkbody()
+        with self.assertRaises(ValueError):
+            mod.decode_states(json.dumps([[["Reaction_X_JointY", "Force",
+                                            [1.0, 2.0]]]]))
 
     def _import_linkbody(self):
         try:
