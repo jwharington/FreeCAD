@@ -12,11 +12,13 @@ from .. import MOULD_TOOL_ICON, is_comp_type
 from ..tools.mould_analysis import (
     DEFAULT_PART_LINE_RADIUS_MM,
     DEFAULT_PART_LINE_SOURCE,
+    DEFAULT_SKIRT_CONTINUITY,
     DEFAULT_SKIRT_LEVELLING,
     DEFAULT_SKIRT_LEVELLING_EXTENT,
     DEFAULT_SKIRT_LEVELLING_TRANSITION_MM,
     DEFAULT_TESSELLATION_BAND_TOL_DEG,
     PART_LINE_SOURCES,
+    SKIRT_CONTINUITY_MODES,
     SKIRT_LEVELLING_EXTENTS,
     SKIRT_LEVELLING_MODES,
     analyze_source_shape,
@@ -126,6 +128,26 @@ def _add_skirt_levelling_properties(obj):
         "reads as a crease - and the mould's in-plane stock margin grows to "
         "hold it.",
     ).SkirtLevellingTransition = DEFAULT_SKIRT_LEVELLING_TRANSITION_MM
+
+
+def _add_skirt_continuity_property(obj):
+    """Whether the skirt band is built C1 across the stations of a wall run.
+
+    'c0' (default) is the band whose rings are chains of chords, so every station
+    line is a crease. 'c1' builds each ring's edges as slices of a C1 spline
+    through the same vertices, so a station line is not a crease. Off by default,
+    so a mould that does not ask for it casts exactly what it did before.
+    """
+    obj.addProperty(
+        "App::PropertyEnumeration",
+        "SkirtContinuity",
+        "MouldAnalysis",
+        "Station continuity of the skirt band's rings: 'c0' (default) keeps the "
+        "chorded rings, 'c1' makes each ring's edges C1 spline slices so a station "
+        "line is not a crease. 'c1' covers off, direct and s-curve is not yet "
+        "served.",
+    ).SkirtContinuity = list(SKIRT_CONTINUITY_MODES)
+    obj.SkirtContinuity = DEFAULT_SKIRT_CONTINUITY
 
 
 def _add_split_face_outputs(obj):
@@ -319,6 +341,7 @@ def _solve_inputs_fingerprint(fp):
         str(fp.SkirtLevelling),
         str(fp.SkirtLevellingExtent),
         "%g" % float(fp.SkirtLevellingTransition),
+        str(fp.SkirtContinuity),
     ]
     return hashlib.sha256("|".join(fields).encode()).hexdigest()
 
@@ -376,6 +399,7 @@ class MouldAnalysisFP(CompositePartFP):
         _add_part_line_source_property(obj)
         _add_part_line_radius_property(obj)
         _add_skirt_levelling_properties(obj)
+        _add_skirt_continuity_property(obj)
 
         obj.addProperty(
             "App::PropertyFloat",
@@ -598,6 +622,8 @@ class MouldAnalysisFP(CompositePartFP):
         # inputs, and the rings the groove is cut between are new outputs.
         if not hasattr(fp, "SkirtLevelling"):
             _add_skirt_levelling_properties(fp)
+        if not hasattr(fp, "SkirtContinuity"):
+            _add_skirt_continuity_property(fp)
         if not hasattr(fp, "LevelStripIn"):
             _add_level_strip_outputs(fp)
         if not hasattr(fp, "SolvedInputFingerprint"):
@@ -647,6 +673,7 @@ class MouldAnalysisFP(CompositePartFP):
             skirt_levelling=fp.SkirtLevelling,
             skirt_levelling_extent=fp.SkirtLevellingExtent,
             skirt_levelling_transition_mm=float(fp.SkirtLevellingTransition),
+            skirt_continuity=fp.SkirtContinuity,
         )
         fp.AnalysisStatus = result["status"]
         fp.DrawDirectionScore = result["draw_direction_score"]

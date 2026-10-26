@@ -96,6 +96,7 @@ PYBIND11_MODULE(Composites_parting, m) {
            const std::string& skirt_levelling,
            const std::string& skirt_levelling_extent,
            double skirt_levelling_transition,
+           const std::string& skirt_continuity,
            double part_line_radius,
            double part_line_simplify_distance) {
             nextdrape::PartingParams params;
@@ -145,6 +146,17 @@ PYBIND11_MODULE(Composites_parting, m) {
                     skirt_levelling_extent);
             }
             params.skirtLevellingTransitionMm = skirt_levelling_transition;
+            // Station continuity of the band's rings (nextdrape
+            // docs/plan-band-station-continuity-2026-10-24). Default c0 is today's
+            // chorded band, so a caller that does not ask gets what it did before.
+            if (skirt_continuity == "c0") {
+                params.skirtContinuity = nextdrape::SkirtContinuity::C0;
+            } else if (skirt_continuity == "c1") {
+                params.skirtContinuity = nextdrape::SkirtContinuity::C1;
+            } else {
+                throw std::runtime_error(
+                    "skirt_continuity must be 'c0' or 'c1', got: " + skirt_continuity);
+            }
             // Rounding the skirt creases (ridge plan 12.11/12.12): the part
             // line's s-z profile is filleted at exactly this radius before the
             // split, so a crease is machined as a fillet rather than left as a
@@ -351,6 +363,7 @@ PYBIND11_MODULE(Composites_parting, m) {
         py::arg("skirt_levelling") = "off",
         py::arg("skirt_levelling_extent") = "whole",
         py::arg("skirt_levelling_transition") = 1.0,
+        py::arg("skirt_continuity") = "c0",
         py::arg("part_line_radius") = 0.0,
         py::arg("part_line_simplify_distance") = 0.0,
         "Compute a non-planar parting surface + mould halves for a FreeCAD "
@@ -381,5 +394,8 @@ PYBIND11_MODULE(Composites_parting, m) {
         "walls:[{wall, level_in_points, outer_points, level_in_edges, "
         "outer_edges}]}. 'off' and 'whole' export nothing and say so in the "
         "note, since neither has a level surface for the strip to bound. "
+        "skirt_continuity ('c0' default or 'c1') sets whether each ring of the "
+        "band is a chain of chords (c0) or C1 spline slices across a station (c1); "
+        "'c1' does not apply to an s-curve extent. "
         "Shapes are returned as live Part.Shape objects directly.");
 }

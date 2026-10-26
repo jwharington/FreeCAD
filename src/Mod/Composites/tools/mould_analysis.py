@@ -48,6 +48,15 @@ DEFAULT_SKIRT_LEVELLING = "off"
 DEFAULT_SKIRT_LEVELLING_EXTENT = "whole"
 DEFAULT_SKIRT_LEVELLING_TRANSITION_MM = 10.0
 
+# Station continuity of the skirt band's rings (nextdrape
+# docs/plan-band-station-continuity-2026-10-24). 'c0' is today's band, whose rings
+# are chains of chords; 'c1' builds each ring's edges as slices of a C1 spline
+# through the same vertices, so a station line is not a crease. Off by default, so
+# a mould that does not ask for it casts exactly what it did before. 'c1' covers
+# off, direct/whole and direct/fixed; s-curve is not yet served.
+SKIRT_CONTINUITY_MODES = ("c0", "c1")
+DEFAULT_SKIRT_CONTINUITY = "c0"
+
 
 def _no_level_strips(note):
     """The A14 level-strip export for a run that produced none, with the reason."""
@@ -827,6 +836,8 @@ def _plan_split_strategies(ranked, limit=MAX_SPLIT_STRATEGIES):
                     "skirt_levelling_extent", DEFAULT_SKIRT_LEVELLING_EXTENT),
                 "skirt_levelling_transition_mm": item.get(
                     "skirt_levelling_transition_mm"),
+                "skirt_continuity": item.get("skirt_continuity",
+                                             DEFAULT_SKIRT_CONTINUITY),
                 "part_line_only": item.get("part_line_only", False),
                 "run_withdrawal_clearance": item.get("run_withdrawal_clearance", False),
                 "status": "planned",
@@ -880,6 +891,7 @@ def _evaluate_split_strategy_attempt(shape, strategy):
                                             DEFAULT_SKIRT_LEVELLING_EXTENT),
         skirt_levelling_transition_mm=strategy.get(
             "skirt_levelling_transition_mm"),
+        skirt_continuity=strategy.get("skirt_continuity", DEFAULT_SKIRT_CONTINUITY),
     )
     solver_ready = (
         non_planar_result is not None and non_planar_result["status"] == "ready"
@@ -1358,6 +1370,7 @@ def _propose_non_planar_parting(
     skirt_levelling=DEFAULT_SKIRT_LEVELLING,
     skirt_levelling_extent=DEFAULT_SKIRT_LEVELLING_EXTENT,
     skirt_levelling_transition_mm=None,
+    skirt_continuity=DEFAULT_SKIRT_CONTINUITY,
 ):
     """Call the C++ marching-equator solver and map to the Phase 0 contract.
 
@@ -1429,6 +1442,7 @@ def _propose_non_planar_parting(
             **({} if skirt_levelling_transition_mm is None
                else {"skirt_levelling_transition":
                      float(skirt_levelling_transition_mm)}),
+            skirt_continuity=skirt_continuity,
         )
     except Exception as exc:
         return {
@@ -2248,6 +2262,7 @@ def analyze_source_shape(
     skirt_levelling=DEFAULT_SKIRT_LEVELLING,
     skirt_levelling_extent=DEFAULT_SKIRT_LEVELLING_EXTENT,
     skirt_levelling_transition_mm=DEFAULT_SKIRT_LEVELLING_TRANSITION_MM,
+    skirt_continuity=DEFAULT_SKIRT_CONTINUITY,
 ):
     """Return a lightweight analysis preview for a selected source shape.
 
@@ -2345,6 +2360,7 @@ def analyze_source_shape(
             "skirt_levelling": skirt_levelling,
             "skirt_levelling_extent": skirt_levelling_extent,
             "skirt_levelling_transition_mm": skirt_levelling_transition_mm,
+            "skirt_continuity": skirt_continuity,
             "part_line_only": part_line_only,
             "run_withdrawal_clearance": run_withdrawal_clearance,
         }
