@@ -105,15 +105,17 @@ def _apply_settings(document, settings):
         _say(f"set    : {name}.{prop} = {value!r}")
 
 
-def build(example, out_path, settings=()):
+def build(example, out_path, settings=(), build_kwargs=None):
     """Build `example`, apply `settings`, save its document to `out_path`.
 
-    ``(document, saved path, seconds)``. The seconds cover the example's own
-    recompute plus the one the settings force, which is the part that can take
-    minutes.
+    ``build_kwargs`` are passed to the example's own ``build()``, so an option that is
+    a solve input (the skirt continuity) reaches the first recompute instead of forcing
+    a second one through ``settings``. ``(document, saved path, seconds)``. The seconds
+    cover the example's own recompute plus the one the settings force, which is the part
+    that can take minutes.
     """
     started = time.perf_counter()
-    document = _document_of(runner.run(example))
+    document = _document_of(runner.run(example, **(build_kwargs or {})))
     if settings:
         _apply_settings(document, settings)
         document.recompute()
@@ -140,6 +142,13 @@ def build_parser():
              "as <example id>.FCStd.",
     )
     parser.add_argument(
+        "--skirt-continuity",
+        choices=("c0", "c1"),
+        default=None,
+        help="Skirt band continuity to build with, for the examples that take one. It "
+             "is a solve input, so unlike --set it does not cost a second solve.",
+    )
+    parser.add_argument(
         "--set",
         action="append",
         default=[],
@@ -157,7 +166,10 @@ def main(argv=None):
     example = _resolve_example(args.example)
     out_path = args.out or Path(tempfile.gettempdir()) / f"{example}.FCStd"
 
-    document, saved, elapsed = build(example, out_path, args.settings)
+    build_kwargs = (
+        {"skirt_continuity": args.skirt_continuity} if args.skirt_continuity else {}
+    )
+    document, saved, elapsed = build(example, out_path, args.settings, build_kwargs)
 
     _say(f"example : {example}")
     _say(f"document: {document.Name}")

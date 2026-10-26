@@ -77,8 +77,13 @@ LOWER_COLOUR = (0.25, 0.45, 0.85)
 UPPER_COLOUR = (0.30, 0.70, 0.35)
 
 
-def build(doc=None, run_solver=False, **_ignored):
-    """Source loft, its mould analysis, and the fixtures cut into the halves."""
+def build(doc=None, run_solver=False, skirt_continuity=None, **_ignored):
+    """Source loft, its mould analysis, and the fixtures cut into the halves.
+
+    ``skirt_continuity`` selects the skirt band's continuity (``c0`` or ``c1``). It is
+    a solve input, so it is set before the document recomputes rather than afterwards:
+    setting it later would solve the mould a second time.
+    """
     doc = doc or FreeCAD.newDocument("MouldFixtureLoftExample")
 
     source = doc.addObject("Part::Feature", "Source")
@@ -97,6 +102,8 @@ def build(doc=None, run_solver=False, **_ignored):
     mould.SkirtLevelling = LEVELLING
     mould.SkirtLevellingExtent = LEVELLING_EXTENT
     mould.SkirtLevellingTransition = LEVELLING_TRANSITION_MM
+    if skirt_continuity is not None:
+        mould.SkirtContinuity = skirt_continuity
     _attach_view_provider(mould, ViewProviderMouldAnalysis)
     doc.recompute()
 
