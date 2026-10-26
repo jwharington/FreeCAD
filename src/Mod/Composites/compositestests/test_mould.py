@@ -357,7 +357,7 @@ class TestNonPlanarPartingInterface(TestFreeCADFP):
         self.assertEqual(obj.PartLineSource, "tessellation")
 
         self.assertEqual(list(obj.getEnumerationsOfProperty("PartLineSource")),
-                         ["tessellation", "hlr"])
+                         ["tessellation", "hlr", "refinedtesselation"])
         self.assertAlmostEqual(obj.PartLineTolerance, 0.1, places=6)
         self.assertAlmostEqual(obj.PartingStockMarginX, 5.0, places=6)
         self.assertAlmostEqual(obj.PartingStockMarginY, 5.0, places=6)
@@ -423,6 +423,25 @@ class TestNonPlanarPartingInterface(TestFreeCADFP):
         # The params thread through to the C++ solver; a box is degenerate
         # (side walls ⊥ D) so the marching-equator path reaches `ready` and
         # the analysis produces a Ready verdict.
+        self.assertEqual(result["non_planar_status"], "ready")
+        self.assertEqual(result["status"], "Ready")
+
+    def test_refined_tessellation_source_is_accepted_by_the_binding(self):
+        # The source is offered by PartLineSource, so the binding has to accept
+        # it rather than throw on a name it does not know: stage 0 shares the
+        # tessellation builder, so a box reaches Ready as the plain tessellation
+        # source does.
+        from Composites.tools.mould_analysis import (
+            analyze_source_shape,
+            default_mould_analysis_draw_direction,
+        )
+
+        shape = Part.makeBox(20.0, 15.0, 10.0)
+        result = analyze_source_shape(
+            shape,
+            default_mould_analysis_draw_direction,
+            part_line_source="refinedtesselation",
+        )
         self.assertEqual(result["non_planar_status"], "ready")
         self.assertEqual(result["status"], "Ready")
 

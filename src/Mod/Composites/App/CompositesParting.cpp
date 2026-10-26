@@ -110,12 +110,18 @@ PYBIND11_MODULE(Composites_parting, m) {
             // HLR part line, however good the tessellation one is).
             if (part_line_source == "tessellation" || part_line_source == "tess") {
                 params.partLineSource = nextdrape::PartLineSource::Tessellation;
+            } else if (part_line_source == "refinedtesselation" ||
+                       part_line_source == "refined") {
+                // Stage 0 shares the tessellation builder, and the result is
+                // tessellation-derived for the veil band (DrawSide.hpp) rather
+                // than a source of its own; see makePartingSolver.
+                params.partLineSource = nextdrape::PartLineSource::RefinedTessellation;
             } else if (part_line_source == "hlr") {
                 params.partLineSource = nextdrape::PartLineSource::Hlr;
             } else {
                 throw std::runtime_error(
-                    "part_line_source must be 'tessellation' or 'hlr', got: " +
-                    part_line_source);
+                    "part_line_source must be 'tessellation', 'hlr' or "
+                    "'refinedtesselation', got: " + part_line_source);
             }
             params.tessellationBandTolDeg = tessellation_band_tol_deg;
             // The scan deflection: nextdrape's own default when the caller
@@ -372,8 +378,10 @@ PYBIND11_MODULE(Composites_parting, m) {
         "part line only (part_line_only=True, solver stops at AfterPartLine). "
         "stock_margin_x/y/z set the independent mould block margins. "
         "part_line_source selects the part-line solver: 'tessellation' "
-        "(default, the drafted-path solver) or 'hlr' (the projected-outline "
-        "debugging reference). tessellation_band_tol_deg is the equator-band "
+        "(default, the drafted-path solver), 'refinedtesselation' (the "
+        "tessellation walk refined onto exact geometry, which at stage 0 shares "
+        "the tessellation builder) or 'hlr' (the projected-outline debugging "
+        "reference). tessellation_band_tol_deg is the equator-band "
         "half-width the tessellation source treats as the veil: faces within "
         "it carry no draft opinion and the part line may cross them anywhere. "
         "It must be at least the shallowest face's |n.d| that the part line "
