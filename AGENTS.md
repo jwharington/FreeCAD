@@ -101,3 +101,16 @@
 - If a fix seems to require touching another workbench or core module, stop and
   raise it with the user first: the answer is almost always a fix at the
   Composites/Fem layer, or an upstream report — not a local hack to core.
+
+## Commit messages and code comments
+
+Strictly prohibited in a commit message, a code comment, or a docstring:
+
+- Any reference to a project name or id that identifies a downstream user
+  project, and any path that identifies one.
+- Any path under a user home directory (`/home/<user>/...`), any expanded home
+  path, any `~` path, and any user name. Name a location by its role in the
+  work ("the assembly document", "the article model"), never by where it
+  happens to sit on disk.
+
+Describe the work, not the project it belongs to or where it lives.
