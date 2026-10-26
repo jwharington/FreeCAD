@@ -33,6 +33,9 @@ DEFAULT_PART_LINE_SOURCE = "tessellation"
 # Rounding the skirt creases is off by default, like every other shaping input:
 # a mould that does not ask for it casts exactly what it did before.
 DEFAULT_PART_LINE_RADIUS_MM = 0.0
+# Simplifying the walked part line is off by default, for the same reason: a
+# mould that does not ask for it casts exactly what it did before.
+DEFAULT_PART_LINE_SIMPLIFY_DISTANCE_MM = 0.0
 
 # Skirt outer-wall levelling (src/3rdParty/nextdrape/docs/spec-skirt-levelling.md).
 # The C++ binding's own defaults are off / whole / 1.0 mm, so a caller that
@@ -826,6 +829,9 @@ def _plan_split_strategies(ranked, limit=MAX_SPLIT_STRATEGIES):
                     "parting_tessellation_band_tol_deg"),
                 "parting_tessellation_deflection_mm": item.get(
                     "parting_tessellation_deflection_mm"),
+                "part_line_simplify_distance_mm": item.get(
+                    "part_line_simplify_distance_mm",
+                    DEFAULT_PART_LINE_SIMPLIFY_DISTANCE_MM),
                 "part_line_source": item.get("part_line_source",
                                              DEFAULT_PART_LINE_SOURCE),
                 "part_line_radius_mm": item.get("part_line_radius_mm",
@@ -883,6 +889,9 @@ def _evaluate_split_strategy_attempt(shape, strategy):
         tessellation_band_tol_deg=strategy.get("parting_tessellation_band_tol_deg"),
         tessellation_deflection_mm=strategy.get(
             "parting_tessellation_deflection_mm"),
+        part_line_simplify_distance_mm=strategy.get(
+            "part_line_simplify_distance_mm",
+            DEFAULT_PART_LINE_SIMPLIFY_DISTANCE_MM),
         part_line_source=strategy.get("part_line_source", DEFAULT_PART_LINE_SOURCE),
         part_line_radius_mm=strategy.get("part_line_radius_mm",
                                          DEFAULT_PART_LINE_RADIUS_MM),
@@ -1366,6 +1375,7 @@ def _propose_non_planar_parting(
     part_line_source=DEFAULT_PART_LINE_SOURCE,
     tessellation_band_tol_deg=None,
     tessellation_deflection_mm=None,
+    part_line_simplify_distance_mm=DEFAULT_PART_LINE_SIMPLIFY_DISTANCE_MM,
     part_line_radius_mm=DEFAULT_PART_LINE_RADIUS_MM,
     skirt_levelling=DEFAULT_SKIRT_LEVELLING,
     skirt_levelling_extent=DEFAULT_SKIRT_LEVELLING_EXTENT,
@@ -1430,6 +1440,11 @@ def _propose_non_planar_parting(
             **({} if tessellation_deflection_mm is None
                else {"tessellation_deflection":
                      float(tessellation_deflection_mm)}),
+            # Simplifying the walked part line replaces it, so the cut is built
+            # through the simplified line (ridge plan 12.7).
+            **({} if part_line_simplify_distance_mm is None
+               else {"part_line_simplify_distance":
+                     float(part_line_simplify_distance_mm)}),
             # Rounding the skirt creases fillets the walked part line's s-z
             # profile before the split. It needs the tessellation source, which
             # is the one that walks a profile to fillet.
@@ -2257,6 +2272,7 @@ def analyze_source_shape(
     run_withdrawal_clearance=False,
     parting_tessellation_band_tol_deg=None,
     parting_tessellation_deflection_mm=None,
+    part_line_simplify_distance_mm=DEFAULT_PART_LINE_SIMPLIFY_DISTANCE_MM,
     part_line_source=DEFAULT_PART_LINE_SOURCE,
     part_line_radius_mm=DEFAULT_PART_LINE_RADIUS_MM,
     skirt_levelling=DEFAULT_SKIRT_LEVELLING,
@@ -2355,6 +2371,7 @@ def analyze_source_shape(
             "parting_stock_footprint": parting_stock_footprint,
             "parting_tessellation_band_tol_deg": parting_tessellation_band_tol_deg,
             "parting_tessellation_deflection_mm": parting_tessellation_deflection_mm,
+            "part_line_simplify_distance_mm": part_line_simplify_distance_mm,
             "part_line_source": part_line_source,
             "part_line_radius_mm": part_line_radius_mm,
             "skirt_levelling": skirt_levelling,

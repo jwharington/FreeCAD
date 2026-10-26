@@ -11,6 +11,7 @@ from FreeCAD import Vector
 from .. import MOULD_TOOL_ICON, is_comp_type
 from ..tools.mould_analysis import (
     DEFAULT_PART_LINE_RADIUS_MM,
+    DEFAULT_PART_LINE_SIMPLIFY_DISTANCE_MM,
     DEFAULT_PART_LINE_SOURCE,
     DEFAULT_SKIRT_CONTINUITY,
     DEFAULT_SKIRT_LEVELLING,
@@ -87,6 +88,20 @@ def _add_part_line_radius_property(obj):
         "a fillet rather than left as a sharp step (ridge plan 12.11/12.12). "
         "0 (default) leaves the profile alone.",
     ).PartLineRadius = DEFAULT_PART_LINE_RADIUS_MM
+
+
+def _add_part_line_simplify_distance_property(obj):
+    obj.addProperty(
+        "App::PropertyLength",
+        "PartLineSimplifyDistance",
+        "MouldAnalysis",
+        "Douglas-Peucker distance (mm) applied to the walked part line before "
+        "the split (ridge plan 12.7): a node survives when its span's worst "
+        "chord deviation exceeds this distance, at a carrier junction, or when "
+        "it is alone on its face. The simplified line replaces the walked one, "
+        "so the cut is built through it. 0 (default) = off; every station the "
+        "scan kept is kept.",
+    ).PartLineSimplifyDistance = DEFAULT_PART_LINE_SIMPLIFY_DISTANCE_MM
 
 
 def _add_skirt_levelling_properties(obj):
@@ -338,6 +353,7 @@ def _solve_inputs_fingerprint(fp):
         "%g" % float(fp.TessellationDeflection),
         str(fp.PartLineSource),
         "%g" % float(fp.PartLineRadius),
+        "%g" % float(fp.PartLineSimplifyDistance),
         str(fp.SkirtLevelling),
         str(fp.SkirtLevellingExtent),
         "%g" % float(fp.SkirtLevellingTransition),
@@ -398,6 +414,7 @@ class MouldAnalysisFP(CompositePartFP):
         _add_tessellation_deflection_property(obj)
         _add_part_line_source_property(obj)
         _add_part_line_radius_property(obj)
+        _add_part_line_simplify_distance_property(obj)
         _add_skirt_levelling_properties(obj)
         _add_skirt_continuity_property(obj)
 
@@ -613,6 +630,8 @@ class MouldAnalysisFP(CompositePartFP):
             _add_part_line_source_property(fp)
         if not hasattr(fp, "PartLineRadius"):
             _add_part_line_radius_property(fp)
+        if not hasattr(fp, "PartLineSimplifyDistance"):
+            _add_part_line_simplify_distance_property(fp)
         # Documents saved before the defect display get its outputs.
         if not hasattr(fp, "DraftDefects"):
             _add_draft_defect_outputs(fp)
@@ -670,6 +689,7 @@ class MouldAnalysisFP(CompositePartFP):
             parting_tessellation_deflection_mm=float(fp.TessellationDeflection),
             part_line_source=fp.PartLineSource,
             part_line_radius_mm=float(fp.PartLineRadius),
+            part_line_simplify_distance_mm=float(fp.PartLineSimplifyDistance),
             skirt_levelling=fp.SkirtLevelling,
             skirt_levelling_extent=fp.SkirtLevellingExtent,
             skirt_levelling_transition_mm=float(fp.SkirtLevellingTransition),
